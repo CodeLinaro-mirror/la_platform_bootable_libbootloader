@@ -14,12 +14,10 @@
 
 workspace(name = "gbl")
 
-load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
-git_repository(
+http_archive(
     name = "rules_rust",
-    commit = "78760f889ea04beeb880185cdee6a0ebcc71aeb2",
-
     # The rust toolchains we need have "uefi" as the system type, which upstream
     # bazel rust rules doesn't recognize. Apply a patch to fix it.
     #
@@ -28,7 +26,7 @@ git_repository(
     # local_repository().
     patch_args = ["-p1"],
     patches = ["//bazel_patches:0001-rules_rust-add-uefi-support.patch"],
-    remote = "https://android.googlesource.com/platform/external/bazelbuild-rules_rust",
+    url = "https://android.googlesource.com/platform/external/bazelbuild-rules_rust/+archive/78760f889ea04beeb880185cdee6a0ebcc71aeb2.tar.gz",
 )
 
 load(
@@ -40,7 +38,17 @@ load(
 
 rules_rust_dependencies()
 
-rust_register_toolchains()
+# We need to use the same version for both the host and cross-compile toolchains. This is
+# because proc-macro crates are compiled using host rust toolchain. The resulting dylib are
+# then added as input when cross-compiling for target architecture. If version doesn't match,
+# there is a risk that dylib metadata format is different and rustc gives confusing error
+# "invalid metadata version found ...".
+RUST_VERSION = ["1.71.0"]
+
+rust_register_toolchains(
+    edition = "2021",
+    versions = RUST_VERSION,
+)
 
 # We need "x86_64-unknown-uefi", "aarch64-unknown-uefi" variants of rust toolchain.
 # Fetch directly from upstream rust distribution.
@@ -55,16 +63,7 @@ rust_repository_set(
     exec_triple = "x86_64-unknown-linux-gnu",
     extra_target_triples = ["x86_64-unknown-uefi"],
     target_settings = ["@gbl//toolchain:gbl_rust_uefi_x86_64"],
-    versions = ["1.71.0"],
-)
-
-rust_repository_set(
-    name = "rust_uefi_aarch64",
-    edition = "2021",
-    exec_triple = "x86_64-unknown-linux-gnu",
-    extra_target_triples = ["aarch64-unknown-uefi"],
-    target_settings = ["@gbl//toolchain:gbl_rust_uefi_aarch64"],
-    versions = ["1.71.0"],
+    versions = RUST_VERSION,
 )
 
 rust_repository_set(
@@ -73,7 +72,27 @@ rust_repository_set(
     exec_triple = "x86_64-unknown-linux-gnu",
     extra_target_triples = ["i686-unknown-uefi"],
     target_settings = ["@gbl//toolchain:gbl_rust_uefi_x86_32"],
-    versions = ["1.71.0"],
+    versions = RUST_VERSION,
+)
+
+rust_repository_set(
+    name = "rust_uefi_aarch64",
+    edition = "2021",
+    exec_triple = "x86_64-unknown-linux-gnu",
+    extra_target_triples = ["aarch64-unknown-uefi"],
+    target_settings = ["@gbl//toolchain:gbl_rust_uefi_aarch64"],
+    versions = RUST_VERSION,
+)
+
+rust_repository_set(
+    name = "rust_elf_riscv64",
+    edition = "2021",
+    exec_triple = "x86_64-unknown-linux-gnu",
+    extra_target_triples = ["riscv64gc-unknown-linux-gnu"],
+    # We re-define the toolchain in "toolchain/BUILD" to override `stdlib_linkflags`.
+    register_toolchain = False,
+    target_settings = ["@gbl//toolchain:gbl_rust_elf_riscv64"],
+    versions = RUST_VERSION,
 )
 
 load("//toolchain:gbl_workspace_util.bzl", "gbl_llvm_toolchain_info_repo")
@@ -86,7 +105,7 @@ gbl_llvm_toolchain_info_repo(name = "gbl_llvm_toolchain_info")
 register_toolchains("//toolchain:all")
 
 # The repo contains ELF definitions needed for our elf library.
-git_repository(
+http_archive(
     name = "elfutils",
     build_file_content = """
 cc_library(
@@ -95,13 +114,15 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 """,
-    commit = "c960c2539c11a01346c58f8bafde978fc413d19f",
-    remote = "https://android.googlesource.com/platform/external/elfutils",
+    url = "https://android.googlesource.com/platform/external/elfutils/+archive/refs/heads/main.tar.gz",
 )
 
 # For C/C++ unit-tests
-git_repository(
+http_archive(
     name = "googletest",
-    commit = "817e9f6edc2fc8301b92403962478d2df0024924",
-    remote = "https://android.googlesource.com/platform/external/googletest",
+    url = "https://android.googlesource.com/platform/external/googletest/+archive/refs/heads/main.tar.gz",
 )
+
+load("@gbl//android_external_rust_crates:repositories.bzl", "android_external_rust_crates_repositories")
+
+android_external_rust_crates_repositories()

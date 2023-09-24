@@ -1,66 +1,108 @@
 # Generic Bootloader Library
 
-This directory hosts sources for the generic bootloader library. A Bazel
-workspace is setup for building the library as well as a EFI executable that
-can be loaded directly from the firmware. To build the efi executable, enter
-directory `libgbl` and run the following:
+This directory hosts the Generic Bootloader Library project. A Bazel
+workspace is setup for building the library as well as an EFI executable that
+can be loaded directly from the firmware.
 
-1. Build for x86_64:
+## Build
 
-    ```
-    bazel build //efi:main \
-        --platforms=//toolchain:gbl_uefi_x86_64 \
-        --cpu=x86_64
-    ```
+The library and the EFI application can be built using the
+[build_gbl.py](tools/build/build_gbl.py) script. There are two ways of invoking
+it:
 
-    The above looks for system installed LLVM toolchain at `/usr/bin/clang++`
-    by default. To use a different one, define environment variable
-    `GBL_LLVM_CLANG_PATH=<path to clang++>` before running the command.
+### Build from AOSP
 
-    TODO(b/292250955): Android has a
-    [git repo](https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/)
-    that hosts LLVM prebuilts. The next step is to investigate
-    integrating these in a `repo init` checkout, where the LLVM prebuilts and this
-    repo can be checkedout togehter. Then we can point bazel to the LLVM
-    prebuilts for hermetic build, without depending on user system installed
-    LLVM.
+If you already have an AOSP checkout, simply provide the path to the script.
+i.e.
 
-    To test on QEMU:
-    ```
-    mkdir -p /tmp/esp/EFI/BOOT
-    cp bazel-bin/efi/main.efi /tmp/esp/EFI/BOOT/bootx64.efi
-    qemu-system-x86_64 -nographic \
-        -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
-        -drive format=raw,file=fat:rw:/tmp/esp
-    ```
+```.sh
+python3 build_gbl.py --aosp_root=<path to AOSP source root> <output directory>
+```
 
-    (QEMU and OVMF prebuilts can be installed by
-    "`sudo apt-get install qemu-system ovmf`")
+You can skip the option if you have run `source build/envsetup.sh` from an AOSP
+checkout. The script will get the root from emitted environmental variable
+`ANDROID_BUILD_TOP`.
 
-     TODO(b/292250955): The longer term plan is to integrate the efi image into
-     the cuttlefish workflow.
+The script will auto select the needed LLVM and Bazel tools from the AOSP
+source. After build completes, the EFI image will be available in
+`<output director>/gbl/`. By default, the script builds for all of `x86_64`,
+`x86_32`, `aarch64` and `riscv64` architectures. If you only want to build for
+a subset, append option `--arch <x86_64|x86_32|aarch64|riscv64>` one by one.
 
-1. Build for x86_32(i386/i686):
+The AOSP source can either be a full
+[main AOSP](https://source.android.com/docs/setup/download/downloading)
+checkout, or a
+[bootloader development](https://source.android.com/docs/setup/create/cuttlefish-bootloader-dev)
+checkout, both of which includes this repo and the needed tools.
 
-    ```
-    bazel build //efi:main \
-        --platforms=//toolchain:gbl_uefi_x86_32 \
-        --cpu=x86_32
-    ```
+### Build without AOSP
 
-1. Build for aarch64
+If a full AOSP source checkout is too heavy-weight and you prefer to just
+checkout this repo and provide your own Bazel and LLVM tools, use the following
+options:
 
-    ```
-    bazel build //efi:main \
-        --platforms=//toolchain:gbl_uefi_aarch64 \
-        --cpu=aarch64
-    ```
+```
+python3 build_gbl.py \
+    --clang=<path to LLVM clang> \
+    --bazel=<path to Bazel executable> \
+    <output directory>
+```
 
-    To test on QEMU:
-    ```
-    mkdir -p /tmp/esp/EFI/BOOT
-    cp bazel-bin/efi/main.efi /tmp/esp/EFI/BOOT/bootaa64.efi
-    qemu-system-aarch64 -nographic -machine virt -m 1G -cpu cortex-a57 \
-        -drive if=pflash,format=raw,readonly=on,file=/usr/share/AAVMF/AAVMF_CODE.fd \
-        -drive format=raw,file=fat:rw:/tmp/esp
-    ```
+## Run on emulator
+
+### Run on Cuttlefish
+
+If you have a main AOSP checkout and is setup to run
+[Cuttlefish](https://source.android.com/docs/setup/create/cuttlefish), you can
+run the EFI image directly with it:
+
+```
+launch_cvd --android_efi_loader=<path to the EFI image> ...
+```
+
+The above uses the same setting as a normal `launch_cvd` run, except that
+insted of booting Android directly, the emulator first hands off to your EFI
+application.
+
+Note: For x86 platform, use the EFI image built for `x86_32`.
+
+### Run on standalone QEMU
+
+If you simply want to test the EFI image as a standalone application on QEMU
+directly:
+
+1. Install EDK, QEMU and u-boot prebuilts
+
+   ```
+   sudo apt-get install qemu-system ovmf u-boot-qemu
+   ```
+
+1. Depending on the target achitecture you want to run:
+
+   For `x86_64`:
+   ```
+   mkdir -p /tmp/esp/EFI/BOOT && \
+   cp <path to EFI image> /tmp/esp/EFI/BOOT/bootx64.efi && \
+   qemu-system-x86_64 -nographic \
+       -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+       -drive format=raw,file=fat:rw:/tmp/esp
+   ```
+
+   For `aarch64`:
+   ```
+   mkdir -p /tmp/esp/EFI/BOOT && \
+   cp <path to EFI image> /tmp/esp/EFI/BOOT/bootaa64.efi && \
+   qemu-system-aarch64 -nographic -machine virt -m 1G -cpu cortex-a57 \
+       -drive if=pflash,format=raw,readonly=on,file=/usr/share/AAVMF/AAVMF_CODE.fd \
+       -drive format=raw,file=fat:rw:/tmp/esp
+   ```
+
+   For `riscv64`:
+   ```
+   mkdir -p /tmp/esp/EFI/BOOT && \
+   cp <path to EFI image> /tmp/esp/EFI/BOOT/bootriscv64.efi && \
+   qemu-system-riscv64 -nographic -machine virt -m 256M \
+       -bios /usr/lib/u-boot/qemu-riscv64/u-boot.bin \
+       -drive format=raw,file=fat:rw:/tmp/esp,id=blk0 \
+       -device virtio-blk-device,drive=blk0
+   ```
