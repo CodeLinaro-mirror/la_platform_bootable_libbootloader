@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+This file contains rules and logic to initialize GBL workspace.
+"""
+
 def _gbl_llvm_toolchain_info_repo_impl(repo_ctx):
     """Implementation for gbl_llvm_toolchain_info_repo
 
@@ -23,7 +27,21 @@ def _gbl_llvm_toolchain_info_repo_impl(repo_ctx):
 
     # Get clang path from "GBL_LLVM_BIN_DIR" environment variable. Default to
     # host installed LLVM if it is not set.
-    clang = repo_ctx.os.environ.get("GBL_LLVM_CLANG_PATH", "/usr/bin/clang++")
+    clang = repo_ctx.os.environ.get("GBL_LLVM_CLANG_PATH")
+    if clang == None:
+        fail("""
+
+No LLVM clang provided in `GBL_LLVM_CLANG_PATH`.
+
+Please set environment variable `GBL_LLVM_CLANG_PATH` to the path of the LLVM clang binary to use.
+
+It is recommended to use the Android upstream LLVM prebuilt. For example, if you have a local Android source checkout, you can set it to:
+
+    export GBL_LLVM_CLANG_PATH=<path to android source checkout>/prebuilts/clang/host/linux-x86/clang-r475365b/bin/clang
+
+Note: The stable version number "clang-r475365b" might be different.
+
+""")
 
     # Resolve absolute path if the given path is a symlink.
     clang = repo_ctx.execute(["readlink", "-f", clang]).stdout.strip("\n")
@@ -52,5 +70,40 @@ def gbl_llvm_builtin_include():
 gbl_llvm_toolchain_info_repo = repository_rule(
     implementation = _gbl_llvm_toolchain_info_repo_impl,
     local = True,
-    environ = ["GBL_LLVM_BIN_DIR"],
+    environ = ["GBL_LLVM_CLANG_PATH"],
+)
+
+def _gbl_custom_rust_sysroot(repo_ctx):
+    """Implementation for gbl_custom_rust_sysroot
+
+    The repository rule checks if a custom rust sysroot is provided via environmental variable
+    `GBL_CUSTOM_RUST_SYSROOT`. If yes, it sets up a repo with a `rust_stdlib_filegroup` target to
+    export the sysroot libraries. The rule is used when we need to export our own built sysroot
+    libraries via //rust_sysroot:sysroot. See build_gbl.py for more detail.
+    """
+    sysroot_dir = repo_ctx.os.environ.get("GBL_CUSTOM_RUST_SYSROOT")
+    if sysroot_dir:
+        repo_ctx.symlink(sysroot_dir, "sysroot")
+
+    # Always make a build file so that reference to the repository is always valid. When `sysroot`
+    # does not exist, reference is a harmless noop (empty file group). This is the case when we are
+    # building the sysroot itself.
+    repo_ctx.file("BUILD", """
+load("@rules_rust//rust:toolchain.bzl", "rust_stdlib_filegroup")
+
+# Export all .rlib files found in this repo
+rust_stdlib_filegroup(
+    name = "stdlib",
+    srcs = glob(
+        ["**/*.rlib"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+""")
+
+gbl_custom_rust_sysroot = repository_rule(
+    implementation = _gbl_custom_rust_sysroot,
+    local = True,
+    environ = ["GBL_CUSTOM_RUST_SYSROOT"],
 )

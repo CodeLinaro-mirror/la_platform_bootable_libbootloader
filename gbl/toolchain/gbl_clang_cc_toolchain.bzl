@@ -21,7 +21,7 @@ load(
     "tool_path",
 )
 load("@gbl_llvm_toolchain_info//:info.bzl", "gbl_llvm_builtin_include", "gbl_llvm_tool_path")
-load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
+load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES", "ALL_CC_COMPILE_ACTION_NAMES")
 
 def _flag_set(flags):
     """Convert a list of compile/link flags to a flag_set type."""
@@ -35,7 +35,6 @@ def _flag_set(flags):
 
 def _gbl_clang_cc_toolchain_config_impl(ctx):
     """Implementation for rule _gbl_clang_cc_toolchain_config()"""
-
     return cc_common.create_cc_toolchain_config_info(
         ctx = ctx,
         cxx_builtin_include_directories = [gbl_llvm_builtin_include()],
@@ -49,7 +48,7 @@ def _gbl_clang_cc_toolchain_config_impl(ctx):
         abi_libc_version = "unknown",
         action_configs = [
             action_config(
-                action_name = ACTION_NAMES.cpp_compile,
+                action_name = action_name,
                 enabled = True,
                 tools = [tool(path = gbl_llvm_tool_path("clang++"))],
                 flag_sets = [
@@ -58,18 +57,19 @@ def _gbl_clang_cc_toolchain_config_impl(ctx):
                         "-nostdinc",
                         "-no-canonical-prefixes",
                         "-I{}".format(gbl_llvm_builtin_include()),
+                        "-Werror",
+                        "-Wall",
                     ]),
                     _flag_set(ctx.attr.cc_flags),
                 ],
-            ),
+            )
+            for action_name in ALL_CC_COMPILE_ACTION_NAMES
+        ] + [
             action_config(
                 action_name = ACTION_NAMES.cpp_link_executable,
                 enabled = True,
-                tools = [tool(path = gbl_llvm_tool_path("clang++"))],
-                flag_sets = [
-                    _flag_set(["--target={}".format(ctx.attr.target_system_triple)]),
-                    _flag_set(ctx.attr.ld_flags),
-                ],
+                tools = [tool(path = gbl_llvm_tool_path("lld"))],
+                flag_sets = [] if ctx.attr.ld_flags == [] else [_flag_set(ctx.attr.ld_flags)],
             ),
         ],
         tool_paths = [
@@ -124,8 +124,8 @@ def gbl_clang_cc_toolchain(
         name,
         target_cpu,
         target_system_triple,
-        cc_flags,
-        ld_flags):
+        cc_flags = None,
+        ld_flags = None):
     """Configure a clang based cc_toolchain().
 
     Args:
@@ -135,6 +135,8 @@ def gbl_clang_cc_toolchain(
         cc_flags (List): clang compile flags.
         ld_flags (List): clang link flags
     """
+    cc_flags = cc_flags or []
+    ld_flags = ld_flags or []
     config_name = "_{}_config".format(name)
     _gbl_clang_cc_toolchain_config(
         name = config_name,

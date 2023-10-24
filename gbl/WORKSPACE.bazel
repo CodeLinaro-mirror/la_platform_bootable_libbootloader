@@ -14,12 +14,10 @@
 
 workspace(name = "gbl")
 
-load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
-git_repository(
+http_archive(
     name = "rules_rust",
-    commit = "78760f889ea04beeb880185cdee6a0ebcc71aeb2",
-
     # The rust toolchains we need have "uefi" as the system type, which upstream
     # bazel rust rules doesn't recognize. Apply a patch to fix it.
     #
@@ -28,55 +26,21 @@ git_repository(
     # local_repository().
     patch_args = ["-p1"],
     patches = ["//bazel_patches:0001-rules_rust-add-uefi-support.patch"],
-    remote = "https://android.googlesource.com/platform/external/bazelbuild-rules_rust",
+    url = "https://android.googlesource.com/platform/external/bazelbuild-rules_rust/+archive/78760f889ea04beeb880185cdee6a0ebcc71aeb2.tar.gz",
 )
 
 load(
     "@rules_rust//rust:repositories.bzl",
     "rules_rust_dependencies",
-    "rust_register_toolchains",
-    "rust_repository_set",
 )
 
 rules_rust_dependencies()
 
-rust_register_toolchains()
-
-# We need "x86_64-unknown-uefi", "aarch64-unknown-uefi" variants of rust toolchain.
-# Fetch directly from upstream rust distribution.
-#
-# Alternatively, we can also consider requesting Android to add the variants to
-# upstream rustc prebuilts at
-# https://android.googlesource.com/platform/prebuilts/rust/+/refs/heads/main/linux-x86/1.71.0/lib/rustlib/
-# so that the toolchain can be checked out during "repo init"
-rust_repository_set(
-    name = "rust_uefi_x86_64",
-    edition = "2021",
-    exec_triple = "x86_64-unknown-linux-gnu",
-    extra_target_triples = ["x86_64-unknown-uefi"],
-    target_settings = ["@gbl//toolchain:gbl_rust_uefi_x86_64"],
-    versions = ["1.71.0"],
+load(
+    "//toolchain:gbl_workspace_util.bzl",
+    "gbl_custom_rust_sysroot",
+    "gbl_llvm_toolchain_info_repo",
 )
-
-rust_repository_set(
-    name = "rust_uefi_aarch64",
-    edition = "2021",
-    exec_triple = "x86_64-unknown-linux-gnu",
-    extra_target_triples = ["aarch64-unknown-uefi"],
-    target_settings = ["@gbl//toolchain:gbl_rust_uefi_aarch64"],
-    versions = ["1.71.0"],
-)
-
-rust_repository_set(
-    name = "rust_uefi_x86_32",
-    edition = "2021",
-    exec_triple = "x86_64-unknown-linux-gnu",
-    extra_target_triples = ["i686-unknown-uefi"],
-    target_settings = ["@gbl//toolchain:gbl_rust_uefi_x86_32"],
-    versions = ["1.71.0"],
-)
-
-load("//toolchain:gbl_workspace_util.bzl", "gbl_llvm_toolchain_info_repo")
 
 # Set up a repo to export llvm tool path and builtin include directory needed
 # by toolchain declaration.
@@ -86,7 +50,7 @@ gbl_llvm_toolchain_info_repo(name = "gbl_llvm_toolchain_info")
 register_toolchains("//toolchain:all")
 
 # The repo contains ELF definitions needed for our elf library.
-git_repository(
+http_archive(
     name = "elfutils",
     build_file_content = """
 cc_library(
@@ -95,13 +59,33 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 """,
-    commit = "c960c2539c11a01346c58f8bafde978fc413d19f",
-    remote = "https://android.googlesource.com/platform/external/elfutils",
+    url = "https://android.googlesource.com/platform/external/elfutils/+archive/refs/heads/main.tar.gz",
 )
 
 # For C/C++ unit-tests
-git_repository(
+http_archive(
     name = "googletest",
-    commit = "817e9f6edc2fc8301b92403962478d2df0024924",
-    remote = "https://android.googlesource.com/platform/external/googletest",
+    url = "https://android.googlesource.com/platform/external/googletest/+archive/refs/heads/main.tar.gz",
+)
+
+load("@gbl//android_external_rust_crates:repositories.bzl", "android_external_rust_crates_repositories")
+
+android_external_rust_crates_repositories()
+
+# Register rust bindgen toolchains
+# TODO(http://b/302569430): Switch to use Android prebuilts for bindgen toolchain.
+load("@rules_rust//bindgen:repositories.bzl", "rust_bindgen_dependencies", "rust_bindgen_register_toolchains")
+
+rust_bindgen_dependencies()
+
+rust_bindgen_register_toolchains()
+
+gbl_custom_rust_sysroot(name = "gbl_custom_rust_sysroot")
+
+# Fetch Android upstream rust prebuilts:
+# https://android.googlesource.com/platform/prebuilts/rust
+http_archive(
+    name = "rust_prebuilts",
+    build_file = "@gbl//toolchain:BUILD.android_rust_prebuilts.bazel",
+    url = "https://android.googlesource.com/platform/prebuilts/rust/+archive/72697c0b73f7df92389bdad2ba6a8a513f00269a/linux-x86/1.72.0.tar.gz",
 )
