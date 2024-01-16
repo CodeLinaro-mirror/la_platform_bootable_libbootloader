@@ -17,6 +17,7 @@ This file contains rules and logic for setting up GBL workspace dependencies in 
 u-boot-mainline branch.
 """
 
+load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "android_rust_prebuilts", "gbl_llvm_prebuilts")
 load("@kernel_toolchain_info//:dict.bzl", "CLANG_VERSION")
 
@@ -29,12 +30,14 @@ def define_gbl_workspace(name = None):
     Args:
         name (String): Placeholder for buildifier check.
     """
-    native.local_repository(
+    maybe(
+        repo_rule = native.local_repository,
         name = "rules_rust",
         path = "external/bazelbuild-rules_rust",
     )
 
-    native.local_repository(
+    maybe(
+        repo_rule = native.local_repository,
         name = "rules_license",
         path = "external/bazelbuild-rules_license",
     )
@@ -54,7 +57,14 @@ def define_gbl_workspace(name = None):
     native.new_local_repository(
         name = "linux_x86_64_sysroot",
         path = "build/kernel/build-tools",
-        build_file_content = "",
+        build_file_content = """exports_files(glob(["**/*"]))
+cc_library(
+    name = "linux_x86_64_sysroot_include",
+    hdrs = glob(["sysroot/usr/include/**/*.h"]),
+    includes = [ "sysroot/usr/include" ],
+    visibility = ["//visibility:public"],
+)
+""",
     )
 
     android_rust_prebuilts(
@@ -79,6 +89,24 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 """,
+    )
+
+    native.new_local_repository(
+        name = "mkbootimg",
+        path = "tools/mkbootimg",
+        build_file_content = """exports_files(glob(["**/*"]))""",
+    )
+
+    native.new_local_repository(
+        name = "libfdt_c",
+        path = "external/dtc/libfdt",
+        build_file = "@gbl//libfdt:BUILD.libfdt_c.bazel",
+    )
+
+    native.new_local_repository(
+        name = "arm_trusted_firmware",
+        path = "external/arm-trusted-firmware",
+        build_file = "@gbl//libboot/aarch64_cache_helper:BUILD.arm_trusted_firmware.bazel",
     )
 
     # Following are third party rust crates dependencies.

@@ -12,24 +12,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 
-#ifndef __EFI_H__
-#define __EFI_H__
+#ifndef __STDLIB_H__
+#define __STDLIB_H__
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
+int memcmp(const void* ptr1, const void* ptr2, size_t num);
+void* memmove(void* destination, const void* source, size_t num);
 
-#include "boot_service.h"
-#include "system_table.h"
-#include "types.h"
-
-#include "protocols/block_io_protocol.h"
-#include "protocols/device_path_protocol.h"
-#include "protocols/loaded_image_protocol.h"
-#include "protocols/riscv_efi_boot_protocol.h"
-#include "protocols/simple_text_output_protocol.h"
-
-#endif  // __EFI_H__
+#endif

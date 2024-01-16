@@ -12,4 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-workspace(name = "gbl")
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+package(
+    default_visibility = ["//visibility:public"],
+)
+
+rust_library(
+    name = "libc",
+    srcs = glob(["**/*.rs"]),
+    edition = "2021",
+)
+
+cc_library(
+    name = "headers",
+    hdrs = [
+        "include/stdlib.h",
+        "include/string.h",
+    ],
+    includes = ["include"],
+)

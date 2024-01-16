@@ -23,8 +23,10 @@ package(
 rust_binary(
     name = "main",
     srcs = [
+        "src/android_load.rs",
         "src/main.rs",
         "src/riscv64.rs",
+        "src/utils.rs",
     ],
     linker_script = select({
         "@gbl//toolchain:gbl_rust_elf_riscv64": "@gbl//efi/arch/riscv64:riscv64_efi.lds",
@@ -35,7 +37,11 @@ rust_binary(
         "panic=abort",
     ],
     deps = [
+        "@gbl//libboot",
+        "@gbl//libbootconfig",
+        "@gbl//libbootimg",
         "@gbl//libefi",
+        "@gbl//libfdt",
         "@gbl//libstorage",
         "@gbl//third_party/libzbi",
     ] + select({
