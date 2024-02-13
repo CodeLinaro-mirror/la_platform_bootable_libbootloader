@@ -35,6 +35,7 @@ extern crate lazy_static;
 extern crate spin;
 extern crate zbi;
 
+use avb::{HashtreeErrorMode, SlotVerifyData, SlotVerifyError, SlotVerifyFlags, SlotVerifyResult};
 use core::ffi::CStr;
 use core::fmt::Debug;
 use lazy_static::lazy_static;
@@ -50,7 +51,7 @@ pub mod ops;
 /// querying and modifying slotted boot behavior.
 pub mod slots;
 
-use slots::{BootTarget, BootToken, Cursor, OneShot};
+use slots::{BootTarget, BootToken, Cursor, OneShot, SuffixBytes, UnbootableReason};
 
 #[cfg(feature = "sw_digest")]
 pub mod sw_digest;
@@ -74,7 +75,7 @@ pub struct AvbVerificationFlags(u32); // AvbVBMetaImageFlags from
                                       // external/avb/libavb/avb_vbmeta_image.h
 /// Data structure holding verified slot data.
 #[derive(Debug)]
-pub struct VerifiedData<'a>(avb::SlotVerifyData<'a>);
+pub struct VerifiedData<'a>(SlotVerifyData<'a>);
 
 /// Structure representing partition and optional address it is required to be loaded.
 /// If no address is provided GBL will use default one.
@@ -213,33 +214,28 @@ lazy_static! {
 
 static BOOT_TOKEN: Mutex<Option<BootToken>> = Mutex::new(Some(BootToken(())));
 
+type AvbVerifySlot = for<'b> fn(
+    ops: &'b mut dyn avb::Ops,
+    requested_partitions: &[&CStr],
+    ab_suffix: Option<&CStr>,
+    flags: SlotVerifyFlags,
+    hashtree_error_mode: HashtreeErrorMode,
+) -> SlotVerifyResult<'b, SlotVerifyData<'b>>;
+
 #[derive(Debug)]
 /// GBL object that provides implementation of helpers for boot process.
+///
+/// To create this object use [GblBuilder].
 pub struct Gbl<'a, G> {
     ops: &'a mut G,
     image_verification: bool,
+    verify_slot: AvbVerifySlot,
 }
 
 impl<'a, G> Gbl<'a, G>
 where
     G: GblOps,
 {
-    /// Create new GBL object that verifies images.
-    pub fn new<'b>(ops: &'b mut G) -> Self
-    where
-        'b: 'a,
-    {
-        Gbl { ops, image_verification: true }
-    }
-
-    /// Create new GBL object that skips image verification.
-    pub fn new_no_verification<'b>(ops: &'b mut G) -> Self
-    where
-        'b: 'a,
-    {
-        Gbl { ops, image_verification: false }
-    }
-
     /// Verify + Load Image Into memory
     ///
     /// Load from disk, validate with AVB
@@ -262,6 +258,7 @@ where
         partitions_ram_map: &mut [PartitionRamMap],
         avb_verification_flags: AvbVerificationFlags,
         boot_target: Option<BootTarget>,
+        slot_cursor: &mut Cursor,
     ) -> Result<VerifiedData<'b>>
     where
         'a: 'b,
@@ -272,14 +269,18 @@ where
         let default_vendor_boot_image_buffer = VENDOR_BOOT_IMAGE.lock();
         let default_init_boot_image_buffer = INIT_BOOT_IMAGE.lock();
 
+        let bytes: SuffixBytes =
+            if let Some(tgt) = boot_target { tgt.suffix().into() } else { Default::default() };
+
         let requested_partitions = [CStr::from_bytes_with_nul(b"\0")?];
-        let avb_suffix = CStr::from_bytes_with_nul(b"\0")?;
-        let verified_data = VerifiedData(avb::slot_verify(
+        let avb_suffix = CStr::from_bytes_until_nul(&bytes)?;
+
+        let verified_data = VerifiedData((self.verify_slot)(
             avb_ops,
             &requested_partitions,
             Some(avb_suffix),
-            avb::SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_NONE,
-            avb::HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_EIO,
+            SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_NONE,
+            HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_EIO,
         )?);
 
         Ok(verified_data)
@@ -423,6 +424,12 @@ where
     /// Wrapper around the above functions for devices that don't need custom behavior between each
     /// step
     ///
+    /// Warning: If the call to load_verify_boot fails, the device MUST
+    ///          be restarted in order to make forward boot progress.
+    ///          Callers MAY log the error, enter an interactive mode,
+    ///          or take other actions before rebooting.
+    ///
+    ///
     /// # Arguments
     ///   * `avb_ops` - implementation for `avb::Ops` that would be borrowed in result to prevent
     ///   changes to partitions until it is out of scope.
@@ -466,6 +473,25 @@ where
         self.kernel_jump(kernel_image, ramdisk, dtb, token)
     }
 
+    fn is_unrecoverable_error(error: &Error) -> bool {
+        // Note: these ifs are nested instead of chained because multiple
+        //       expressions in an if-let is an unstable features
+        if let Error::AvbSlotVerifyError(ref avb_error) = error {
+            // These are the AVB errors that are not recoverable on a subsequent attempt.
+            // If necessary in the future, this helper function can be moved to the GblOps trait
+            // and customized for platform specific behavior.
+            if matches!(
+                avb_error,
+                SlotVerifyError::Verification(_)
+                    | SlotVerifyError::PublicKeyRejected
+                    | SlotVerifyError::RollbackIndex
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn lvb_inner<'b: 'c, 'c, 'd: 'b, 'e>(
         &mut self,
         avb_ops: &'b mut impl avb::Ops,
@@ -473,7 +499,7 @@ where
         kernel_load_buffer: &'e mut MutexGuard<&'static mut [u8]>,
         partitions_ram_map: &'d mut [PartitionRamMap<'b, 'c>],
         avb_verification_flags: AvbVerificationFlags,
-        slot_cursor: Cursor,
+        mut slot_cursor: Cursor,
     ) -> Result<(KernelImage<'e>, BootToken)> {
         let mut oneshot_status = slot_cursor.ctx.get_oneshot_status();
         slot_cursor.ctx.clear_oneshot_status();
@@ -488,15 +514,36 @@ where
 
         let boot_target = match oneshot_status {
             None | Some(OneShot::Bootloader) => slot_cursor.ctx.get_boot_target(),
-            Some(OneShot::Continue(target)) => target,
+            Some(OneShot::Continue(recovery)) => BootTarget::Recovery(recovery),
         };
 
-        let mut verify_data = self.load_and_verify_image(
-            avb_ops,
-            partitions_ram_map,
-            AvbVerificationFlags(0),
-            Some(boot_target),
-        )?;
+        let mut verify_data = self
+            .load_and_verify_image(
+                avb_ops,
+                partitions_ram_map,
+                AvbVerificationFlags(0),
+                Some(boot_target),
+                &mut slot_cursor,
+            )
+            .map_err(|e: Error| {
+                if let BootTarget::NormalBoot(slot) = boot_target {
+                    if Self::is_unrecoverable_error(&e) {
+                        let _ = slot_cursor.ctx.set_slot_unbootable(
+                            slot.suffix,
+                            UnbootableReason::VerificationFailure,
+                        );
+                    } else {
+                        // Note: the call to mark_boot_attempt will fail if any of the following occur:
+                        // * the target was already Unbootable before the call to load_and_verify_image
+                        // * policy, I/O, or other errors in mark_boot_attempt
+                        //
+                        // We don't really care about those circumstances.
+                        // The call here is a best effort attempt to decrement tries remaining.
+                        let _ = slot_cursor.ctx.mark_boot_attempt(boot_target);
+                    }
+                }
+                e
+            })?;
 
         let (boot_image, init_boot_image, vendor_boot_image, _) =
             get_images(&mut verify_data, partitions_ram_map);
@@ -531,7 +578,47 @@ where
 #[cfg(feature = "sw_digest")]
 impl<'a> Default for Gbl<'a, DefaultGblOps> {
     fn default() -> Self {
-        Self { ops: DefaultGblOps::new(), image_verification: true }
+        GblBuilder::new(DefaultGblOps::new()).build()
+    }
+}
+
+/// Builder for GBL object
+#[derive(Debug)]
+pub struct GblBuilder<'a, G> {
+    ops: &'a mut G,
+    image_verification: bool,
+    verify_slot: AvbVerifySlot,
+}
+
+impl<'a, G> GblBuilder<'a, G>
+where
+    G: GblOps,
+{
+    /// Start Gbl object creation, with default GblOps implementation
+    pub fn new(ops: &'a mut G) -> Self {
+        GblBuilder { ops, image_verification: true, verify_slot: avb::slot_verify }
+    }
+
+    /// Disable image verification
+    pub fn no_image_verification(mut self) -> Self {
+        self.image_verification = false;
+        self
+    }
+
+    // Override [avb::slot_verify] for testing only
+    #[cfg(test)]
+    fn verify_slot(mut self, verify_slot: AvbVerifySlot) -> Self {
+        self.verify_slot = verify_slot;
+        self
+    }
+
+    /// Finish Gbl object construction and return it as the result
+    pub fn build(self) -> Gbl<'a, G> {
+        Gbl {
+            ops: self.ops,
+            image_verification: self.image_verification,
+            verify_slot: self.verify_slot,
+        }
     }
 }
 
@@ -546,6 +633,7 @@ mod tests {
     use avb::PublicKeyForPartitionInfo;
     use avb_test::TestOps;
     use itertools::Itertools;
+    use slots::fuchsia::SlotBlock;
     use std::fs;
 
     pub fn get_end(buf: &[u8]) -> Option<*const u8> {
@@ -625,17 +713,19 @@ mod tests {
     #[cfg(feature = "sw_digest")]
     #[test]
     fn test_load_and_verify_image_avb_io_error() {
-        let mut gbl = Gbl::new(DefaultGblOps::new());
+        let mut gbl = GblBuilder::new(DefaultGblOps::new()).build();
         let mut avb_ops = AvbOpsUnimplemented {};
         let mut partitions_ram_map: [PartitionRamMap; 0] = [];
         let avb_verification_flags = AvbVerificationFlags(0);
+        let mut slot_cursor = Cursor { ctx: &mut SlotBlock::default() };
         let res = gbl.load_and_verify_image(
             &mut avb_ops,
             &mut partitions_ram_map,
             avb_verification_flags,
             None,
+            &mut slot_cursor,
         );
-        assert_eq!(res.unwrap_err(), Error::AvbSlotVerifyError(avb::SlotVerifyError::Io));
+        assert_eq!(res.unwrap_err(), Error::AvbSlotVerifyError(SlotVerifyError::Io));
     }
 
     const TEST_PARTITION_NAME: &str = "test_part";
@@ -647,8 +737,10 @@ mod tests {
     #[cfg(feature = "sw_digest")]
     #[test]
     fn test_load_and_verify_image_stub() {
-        let mut gbl = Gbl::new(DefaultGblOps::new());
+        let mut gbl = GblBuilder::new(DefaultGblOps::new()).build();
         let mut avb_ops = TestOps::default();
+        let mut slot_cursor = Cursor { ctx: &mut SlotBlock::default() };
+
         avb_ops.add_partition(TEST_PARTITION_NAME, fs::read(TEST_IMAGE_PATH).unwrap());
         avb_ops.add_partition("vbmeta", fs::read(TEST_VBMETA_PATH).unwrap());
         avb_ops.add_vbmeta_key(fs::read(TEST_PUBLIC_KEY_PATH).unwrap(), None, true);
@@ -662,7 +754,30 @@ mod tests {
             &mut partitions_ram_map,
             avb_verification_flags,
             None,
+            &mut slot_cursor,
         );
         assert!(res.is_ok());
+    }
+
+    #[cfg(feature = "sw_digest")]
+    #[test]
+    fn test_load_and_verify_image_avb_error() {
+        const TEST_ERROR: SlotVerifyError<'static> = SlotVerifyError::Verification(None);
+        let expected_error = SlotVerifyError::Verification(None);
+        let mut gbl = GblBuilder::new(DefaultGblOps::new())
+            .verify_slot(|_, _, _, _, _| Err(TEST_ERROR))
+            .build();
+        let mut avb_ops = AvbOpsUnimplemented {};
+        let mut partitions_ram_map: [PartitionRamMap; 0] = [];
+        let avb_verification_flags = AvbVerificationFlags(0);
+        let mut slot_cursor = Cursor { ctx: &mut SlotBlock::default() };
+        let res = gbl.load_and_verify_image(
+            &mut avb_ops,
+            &mut partitions_ram_map,
+            avb_verification_flags,
+            None,
+            &mut slot_cursor,
+        );
+        assert_eq!(res.unwrap_err(), Error::AvbSlotVerifyError(TEST_ERROR));
     }
 }
