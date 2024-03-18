@@ -26,16 +26,19 @@ extern crate alloc;
 use core::fmt::Write;
 
 use efi::defs::EfiSystemTable;
-use efi::initialize;
+use efi::{efi_print, initialize};
 
 #[macro_use]
 mod utils;
-use utils::{loaded_image_path, Result};
+use error::Result;
+use utils::loaded_image_path;
 
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 
 mod android_boot;
+mod avb;
+mod error;
 mod fuchsia_boot;
 
 fn main(image_handle: *mut core::ffi::c_void, systab_ptr: *mut EfiSystemTable) -> Result<()> {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,22 +15,10 @@
  *
  */
 
-#ifndef __EFI_H__
-#define __EFI_H__
+#include <libavb/avb_sysdeps.h>
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
+// Noop placeholder for avb_printf/avb_printv
 
-#include "boot_service.h"
-#include "system_table.h"
-#include "types.h"
+void avb_printf(const char* fmt, ...) {}
 
-#include "protocols/block_io_protocol.h"
-#include "protocols/device_path_protocol.h"
-#include "protocols/loaded_image_protocol.h"
-#include "protocols/riscv_efi_boot_protocol.h"
-#include "protocols/simple_network_protocol.h"
-#include "protocols/simple_text_output_protocol.h"
-
-#endif  // __EFI_H__
+void avb_printv(const char* message, ...) {}
