@@ -16,13 +16,13 @@ use alloc::vec::Vec;
 use core::ffi::CStr;
 
 use crate::error::{EfiAppError, Result};
-use efi::defs::EfiGuid;
+use efi::defs::{EfiGuid, EFI_TIMER_DELAY_TIMER_RELATIVE};
 use efi::{
     BlockIoProtocol, DeviceHandle, DevicePathProtocol, DevicePathText, DevicePathToTextProtocol,
-    EfiEntry, LoadedImageProtocol, Protocol,
+    EfiEntry, EventType, LoadedImageProtocol, Protocol, SimpleTextInputProtocol,
 };
 use fdt::FdtHeader;
-use gbl_storage::{required_scratch_size, AsBlockDevice, BlockIo};
+use gbl_storage::{required_scratch_size, AsBlockDevice, AsMultiBlockDevices, BlockIo};
 
 pub const EFI_DTB_TABLE_GUID: EfiGuid =
     EfiGuid::new(0xb1b621d5, 0xf19c, 0x41a5, [0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0]);
@@ -95,13 +95,25 @@ impl<'a> EfiGptDevice<'a> {
 }
 
 impl AsBlockDevice for EfiGptDevice<'_> {
-    fn get(&mut self) -> (&mut dyn BlockIo, &mut [u8], u64) {
-        (&mut self.io, &mut self.scratch[..], MAX_GPT_ENTRIES)
+    fn with(&mut self, f: &mut dyn FnMut(&mut dyn BlockIo, &mut [u8], u64)) {
+        f(&mut self.io, &mut self.scratch[..], MAX_GPT_ENTRIES)
+    }
+}
+
+pub struct EfiMultiBlockDevices<'a>(pub alloc::vec::Vec<EfiGptDevice<'a>>);
+
+impl AsMultiBlockDevices for EfiMultiBlockDevices<'_> {
+    fn for_each_until(&mut self, f: &mut dyn FnMut(&mut dyn AsBlockDevice, u64) -> bool) {
+        for (idx, ele) in self.0.iter_mut().enumerate() {
+            if f(ele, u64::try_from(idx).unwrap()) {
+                return;
+            }
+        }
     }
 }
 
 /// Finds and returns all block devices that have a valid GPT.
-pub fn find_gpt_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGptDevice>> {
+pub fn find_gpt_devices(efi_entry: &EfiEntry) -> Result<EfiMultiBlockDevices> {
     let bs = efi_entry.system_table().boot_services();
     let block_dev_handles = bs.locate_handle_buffer_by_protocol::<BlockIoProtocol>()?;
     let mut gpt_devices = Vec::<EfiGptDevice>::new();
@@ -114,7 +126,7 @@ pub fn find_gpt_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGptDevice>> {
             _ => {}
         };
     }
-    Ok(gpt_devices)
+    Ok(EfiMultiBlockDevices(gpt_devices))
 }
 
 /// Helper function to get the `DevicePathText` from a `DeviceHandle`.
@@ -181,4 +193,57 @@ pub fn cstr_bytes_to_str(data: &[u8]) -> Result<&str> {
         .map_err(|_| EfiAppError::InvalidString)?
         .to_str()
         .map_err(|_| EfiAppError::InvalidString)?)
+}
+
+/// Converts 1 ms to number of 100 nano seconds
+pub fn ms_to_100ns(ms: u64) -> Result<u64> {
+    Ok(ms.checked_mul(1000 * 10).ok_or(EfiAppError::ArithmeticOverflow)?)
+}
+
+/// Repetitively runs a closure until it signals completion or timeout.
+///
+/// * If `f` returns `Ok(R)`, an `Ok(Some(R))` is returned immediately.
+/// * If `f` has been repetitively called and returning `Err(false)` for `timeout_ms`,  an
+///   `Ok(None)` is returned. This is the time out case.
+/// * If `f` returns `Err(true)` the timeout is reset.
+pub fn loop_with_timeout<F, R>(efi_entry: &EfiEntry, timeout_ms: u64, mut f: F) -> Result<Option<R>>
+where
+    F: FnMut() -> core::result::Result<R, bool>,
+{
+    let bs = efi_entry.system_table().boot_services();
+    let timer = bs.create_event(EventType::Timer, None)?;
+    bs.set_timer(&timer, EFI_TIMER_DELAY_TIMER_RELATIVE, ms_to_100ns(timeout_ms)?)?;
+    while !bs.check_event(&timer)? {
+        match f() {
+            Ok(v) => {
+                return Ok(Some(v));
+            }
+            Err(true) => {
+                bs.set_timer(&timer, EFI_TIMER_DELAY_TIMER_RELATIVE, ms_to_100ns(timeout_ms)?)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Waits for a key stroke value from simple text input.
+///
+/// Returns `Ok(true)` if the expected key stroke is read, `Ok(false)` if timeout, `Err` otherwise.
+pub fn wait_key_stroke(efi_entry: &EfiEntry, expected: char, timeout_ms: u64) -> Result<bool> {
+    let input = efi_entry
+        .system_table()
+        .boot_services()
+        .find_first_and_open::<SimpleTextInputProtocol>()?;
+    loop_with_timeout(efi_entry, timeout_ms, || -> core::result::Result<Result<bool>, bool> {
+        match input.read_key_stroke() {
+            Ok(Some(key)) => match char::decode_utf16([key.unicode_char]).next().unwrap() {
+                Ok(ch) if ch == expected => Ok(Ok(true)),
+                _ => Err(false),
+            },
+            Ok(None) => Err(false),
+            Err(e) => Ok(Err(e.into())),
+        }
+    })?
+    .unwrap_or(Ok(false))
 }
