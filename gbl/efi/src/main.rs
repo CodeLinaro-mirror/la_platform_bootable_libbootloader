@@ -26,12 +26,12 @@ extern crate alloc;
 use core::fmt::Write;
 
 use efi::defs::EfiSystemTable;
-use efi::{efi_print, initialize};
+use efi::{efi_print, efi_println, initialize};
 
 #[macro_use]
 mod utils;
 use error::Result;
-use utils::loaded_image_path;
+use utils::{loaded_image_path, wait_key_stroke};
 
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
@@ -39,14 +39,27 @@ mod riscv64;
 mod android_boot;
 mod avb;
 mod error;
+mod fastboot;
 mod fuchsia_boot;
+mod net;
 
 fn main(image_handle: *mut core::ffi::c_void, systab_ptr: *mut EfiSystemTable) -> Result<()> {
     // SAFETY: Called only once here upon EFI app entry.
     let entry = unsafe { initialize(image_handle, systab_ptr)? };
 
-    efi_print!(entry, "\n\n****Rust EFI Application****\n\n");
-    efi_print!(entry, "Image path: {}\n", loaded_image_path(&entry)?);
+    efi_println!(entry, "****Rust EFI Application****");
+    if let Ok(v) = loaded_image_path(&entry) {
+        efi_println!(entry, "Image path: {}", v);
+    }
+
+    efi_println!(entry, "Press 'f' to enter fastboot.");
+    match wait_key_stroke(&entry, 'f', 2000) {
+        Ok(true) => {
+            efi_println!(entry, "'f' pressed.");
+            fastboot::run_fastboot(&entry)?;
+        }
+        _ => {}
+    }
 
     // For simplicity, we pick bootflow based on GPT layout.
     if fuchsia_boot::is_fuchsia_gpt(&entry).is_ok() {

@@ -40,6 +40,7 @@ cc_library(
         "defs/protocols/loaded_image_protocol.h",
         "defs/protocols/riscv_efi_boot_protocol.h",
         "defs/protocols/simple_network_protocol.h",
+        "defs/protocols/simple_text_input_protocol.h",
         "defs/protocols/simple_text_output_protocol.h",
         "defs/system_table.h",
         "defs/types.h",
@@ -76,7 +77,10 @@ use zerocopy::{AsBytes, FromBytes, FromZeroes};""",
     clang_flags = select({
         "@gbl//toolchain:gbl_rust_uefi_x86_32": ["-m32"],
         "//conditions:default": ["-m64"],
-    }) + ["-I{}".format(LLVM_PREBUILTS_C_INCLUDE)],
+    }) + [
+        "-I{}".format(LLVM_PREBUILTS_C_INCLUDE),
+        "-nostdinc",
+    ],
     header = "defs/efi.h",
 )
 

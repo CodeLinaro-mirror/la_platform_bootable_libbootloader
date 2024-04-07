@@ -1,4 +1,4 @@
-# Copyright (C) 2023 The Android Open Source Project
+# Copyright (C) 2024 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,34 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_rust//rust:defs.bzl", "rust_doc_test", "rust_library", "rust_test")
-
 package(
     default_visibility = ["//visibility:public"],
 )
 
-rust_library(
-    name = "libstorage",
-    srcs = [
-        "src/gpt.rs",
-        "src/lib.rs",
-        "src/multi_blocks.rs",
-    ],
-    crate_name = "gbl_storage",
-    edition = "2021",
-    deps = [
-        "@crc32fast",
-        "@zerocopy",
-    ],
-)
-
-rust_test(
-    name = "libstorage_test",
-    compile_data = ["@gbl//libstorage/test:test_data"],
-    crate = ":libstorage",
-)
-
-rust_doc_test(
-    name = "libstorage_doc_test",
-    crate = ":libstorage",
-)
+exports_files(glob(["**/*"]))

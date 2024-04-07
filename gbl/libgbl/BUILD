@@ -27,6 +27,8 @@ rust_library(
         "@bitflags",
         "@crc32fast",
         "@cstr",
+        "@gbl//libfastboot",
+        "@gbl//libstorage",
         "@gbl//third_party/libzbi",
         "@spin",
         "@zerocopy",
@@ -35,12 +37,14 @@ rust_library(
 
 rust_test(
     name = "libgbl_test",
+    compile_data = ["@gbl//libstorage/test:test_data"],
     crate = ":libgbl",
     crate_features = ["uuid"],
     data = [
         "@gbl//libgbl/testdata:test_image.img",
         "@gbl//libgbl/testdata:testkey_rsa4096.pem",
         "@gbl//libgbl/testdata:testkey_rsa4096.pub.pem",
+        "@gbl//libgbl/testdata:writeback_test_disk.bin",
     ],
     deps = [
         "@avb//:avb_test",
