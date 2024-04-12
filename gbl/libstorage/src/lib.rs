@@ -120,7 +120,7 @@ pub use multi_blocks::{with_id, AsMultiBlockDevices};
 pub type Result<T> = core::result::Result<T, StorageError>;
 
 /// Error code for this library.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum StorageError {
     ArithmeticOverflow,
     OutOfRange,
@@ -203,23 +203,57 @@ pub trait BlockIo {
     fn write_blocks(&mut self, blk_offset: u64, data: &[u8]) -> bool;
 }
 
-/// `GptEntryIterator` is returned by `AsBlockDevice::partition_iter()` and can be used to iterate
+/// `Partition` contains information about a GPT partition.
+#[derive(Debug, Copy, Clone)]
+pub struct Partition {
+    entry: GptEntry,
+    block_size: u64,
+}
+
+impl Partition {
+    /// Creates a new instance.
+    fn new(entry: GptEntry, block_size: u64) -> Self {
+        Self { entry, block_size }
+    }
+
+    /// Returns the partition size in bytes.
+    pub fn size(&self) -> Result<u64> {
+        Ok(mul(self.block_size, self.entry.blocks()?)?)
+    }
+
+    /// Returns the block size of this partition.
+    pub fn block_size(&self) -> u64 {
+        self.block_size
+    }
+
+    /// Returns the partition entry structure in the GPT header.
+    pub fn gpt_entry(&self) -> &GptEntry {
+        &self.entry
+    }
+}
+
+/// `PartitionIterator` is returned by `AsBlockDevice::partition_iter()` and can be used to iterate
 /// all GPT partition entries.
-pub struct GptEntryIterator<'a> {
+pub struct PartitionIterator<'a> {
     dev: &'a mut dyn AsBlockDevice,
     idx: usize,
 }
 
-impl Iterator for GptEntryIterator<'_> {
-    type Item = GptEntry;
+impl Iterator for PartitionIterator<'_> {
+    type Item = Partition;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let res =
-            with_partitioned_scratch(self.dev, |_, _, gpt_buffer, _| -> Result<Option<GptEntry>> {
-                Ok(Gpt::from_existing(gpt_buffer)?.entries()?.get(self.idx).map(|v| *v))
-            })
-            .ok()?
-            .ok()??;
+        let res = with_partitioned_scratch(
+            self.dev,
+            |io, _, gpt_buffer, _| -> Result<Option<Partition>> {
+                Ok(Gpt::from_existing(gpt_buffer)?
+                    .entries()?
+                    .get(self.idx)
+                    .map(|v| Partition::new(*v, io.block_size())))
+            },
+        )
+        .ok()?
+        .ok()??;
         self.idx += 1;
         Some(res)
     }
@@ -260,14 +294,19 @@ pub trait AsBlockDevice {
     ///   smaller bound on it, it is recommended to always return 128.
     fn with(&mut self, f: &mut dyn FnMut(&mut dyn BlockIo, &mut [u8], u64));
 
-    // Returns the block size of the underlying `BlockIo`
+    /// Returns the block size of the underlying `BlockIo`
     fn block_size(&mut self) -> Result<u64> {
         with_partitioned_scratch(self, |io, _, _, _| io.block_size())
     }
 
-    // Returns the number of blocks of the underlying `BlockIo`
+    /// Returns the number of blocks of the underlying `BlockIo`
     fn num_blocks(&mut self) -> Result<u64> {
         with_partitioned_scratch(self, |io, _, _, _| io.num_blocks())
+    }
+
+    /// Returns the total size in number of bytes.
+    fn total_size(&mut self) -> Result<u64> {
+        mul(self.block_size()?, self.num_blocks()?)
     }
 
     /// Read data from the block device.
@@ -339,33 +378,25 @@ pub trait AsBlockDevice {
     }
 
     /// Returns an iterator to GPT partition entries.
-    fn partition_iter(&mut self) -> GptEntryIterator
+    fn partition_iter(&mut self) -> PartitionIterator
     where
         Self: Sized,
     {
-        GptEntryIterator { dev: self, idx: 0 }
+        PartitionIterator { dev: self, idx: 0 }
     }
 
-    /// Returns the `GptEntry` for a partition.
+    /// Returns the `Partition` for a partition.
     ///
     /// # Args
     ///
     /// * `part`: Name of the partition.
-    fn find_partition(&mut self, part: &str) -> Result<GptEntry> {
-        with_partitioned_scratch(self, |_, _, gpt_buffer, _| {
-            Ok(Gpt::from_existing(gpt_buffer)?.find_partition(part).map(|v| *v)?)
+    fn find_partition(&mut self, part: &str) -> Result<Partition> {
+        with_partitioned_scratch(self, |io, _, gpt_buffer, _| {
+            Ok(Partition::new(
+                *Gpt::from_existing(gpt_buffer)?.find_partition(part)?,
+                io.block_size(),
+            ))
         })?
-    }
-
-    /// Returns the size of a partition.
-    ///
-    /// # Args
-    ///
-    /// * `part`: Name of the partition.
-    fn partition_size(&mut self, part: &str) -> Result<u64> {
-        let blk_sz = self.block_size()?;
-        let entry = self.find_partition(part)?;
-        mul(blk_sz, entry.blocks()?)
     }
 
     /// Read a GPT partition on a block device
@@ -542,13 +573,13 @@ fn div(lhs: u64, rhs: u64) -> Result<u64> {
 
 /// Check if `value` is aligned to (multiples of) `alignment`
 /// It can fail if the remainider calculation fails overflow check.
-fn is_aligned(value: u64, alignment: u64) -> Result<bool> {
+pub fn is_aligned(value: u64, alignment: u64) -> Result<bool> {
     Ok(rem(value, alignment)? == 0)
 }
 
 /// Check if `buffer` address is aligned to `alignment`
 /// It can fail if the remainider calculation fails overflow check.
-fn is_buffer_aligned(buffer: &[u8], alignment: u64) -> Result<bool> {
+pub fn is_buffer_aligned(buffer: &[u8], alignment: u64) -> Result<bool> {
     is_aligned(buffer.as_ptr() as u64, alignment)
 }
 
@@ -566,7 +597,7 @@ fn round_up(size: u64, alignment: u64) -> Result<u64> {
 }
 
 /// Check and convert u64 into usize
-fn to_usize(val: u64) -> Result<usize> {
+pub fn to_usize(val: u64) -> Result<usize> {
     val.try_into().map_err(|_| StorageError::U64toUSizeOverflow)
 }
 
@@ -682,7 +713,7 @@ fn read_aligned_buffer(
 }
 
 /// Calculates the necessary scratch buffer size for handling block and buffer misalignment.
-fn alignment_scratch_size(blk_io: &mut (impl BlockIo + ?Sized)) -> Result<usize> {
+pub fn alignment_scratch_size(blk_io: &mut (impl BlockIo + ?Sized)) -> Result<usize> {
     // block_size() + 2 * (alignment() - 1)
     // This guarantees that we can craft out two aligned scratch buffers:
     // [u8; blk_io.alignment() - 1] and [u8; blk_io.block_size())] respectively. They are
@@ -955,101 +986,11 @@ fn write_bytes_mut(
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use super::{round_up, to_usize};
     use core::mem::size_of;
-
-    /// Mocks a block device with content from buffer.
-    pub struct TestBlockIo {
-        pub block_size: u64,
-        pub alignment: u64,
-        pub storage: Vec<u8>,
-        pub num_writes: usize,
-        pub num_reads: usize,
-    }
-
-    impl BlockIo for TestBlockIo {
-        fn block_size(&mut self) -> u64 {
-            self.block_size
-        }
-
-        fn num_blocks(&mut self) -> u64 {
-            self.storage.len() as u64 / self.block_size()
-        }
-
-        fn alignment(&mut self) -> u64 {
-            self.alignment
-        }
-
-        fn read_blocks(&mut self, blk_offset: u64, out: &mut [u8]) -> bool {
-            assert!(is_buffer_aligned(out, self.alignment()).unwrap());
-            assert!(is_aligned(out.len() as u64, self.block_size()).unwrap());
-            let start = blk_offset * self.block_size();
-            let end = start + out.len() as u64;
-            out.clone_from_slice(&self.storage[to_usize(start).unwrap()..to_usize(end).unwrap()]);
-            self.num_reads += 1;
-            true
-        }
-
-        fn write_blocks(&mut self, blk_offset: u64, data: &[u8]) -> bool {
-            assert!(is_buffer_aligned(data, self.alignment()).unwrap());
-            assert!(is_aligned(data.len() as u64, self.block_size()).unwrap());
-            let start = blk_offset * self.block_size();
-            let end = start + data.len() as u64;
-            self.storage[to_usize(start).unwrap()..to_usize(end).unwrap()].clone_from_slice(&data);
-            self.num_writes += 1;
-            true
-        }
-    }
-
-    pub struct TestBlockDevice {
-        pub io: TestBlockIo,
-        pub scratch: Vec<u8>,
-        max_gpt_entries: u64,
-    }
-
-    impl TestBlockDevice {
-        /// Creates an instance with provided storage content.
-        pub fn new_with_data(
-            alignment: u64,
-            block_size: u64,
-            max_gpt_entries: u64,
-            data: &[u8],
-        ) -> Self {
-            let mut io = TestBlockIo {
-                block_size: block_size,
-                alignment: alignment,
-                storage: Vec::from(data),
-                num_writes: 0,
-                num_reads: 0,
-            };
-            let scratch_size = required_scratch_size(&mut io, max_gpt_entries).unwrap();
-            Self { io: io, scratch: vec![0u8; scratch_size], max_gpt_entries: max_gpt_entries }
-        }
-
-        /// Creates an instance with default storage content.
-        pub fn new(
-            alignment: u64,
-            block_size: u64,
-            max_gpt_entries: u64,
-            storage_size: u64,
-        ) -> Self {
-            // Initialize default storage content.
-            let storage: Vec<u8> = (0..storage_size).map(|x| x as u8).collect();
-            Self::new_with_data(alignment, block_size, max_gpt_entries, &storage)
-        }
-
-        /// Extract the internal Gpt structure for examination by test.
-        pub fn gpt(&mut self) -> Gpt {
-            let (_, gpt) = self.scratch.split_at_mut(alignment_scratch_size(&mut self.io).unwrap());
-            Gpt::from_existing(gpt).unwrap()
-        }
-    }
-
-    impl AsBlockDevice for TestBlockDevice {
-        fn with(&mut self, f: &mut dyn FnMut(&mut dyn BlockIo, &mut [u8], u64)) {
-            f(&mut self.io, &mut self.scratch[..], self.max_gpt_entries)
-        }
-    }
+    use gbl_storage_testlib::{
+        required_scratch_size, AsBlockDevice, TestBlockDevice, TestBlockDeviceBuilder,
+    };
 
     #[derive(Debug)]
     struct TestCase {
@@ -1108,7 +1049,11 @@ mod test {
     const READ_WRITE_BLOCKS_UPPER_BOUND: usize = 6;
 
     fn read_test_helper(case: &TestCase) {
-        let mut blk = TestBlockDevice::new(case.alignment, case.block_size, 0, case.storage_size);
+        let mut blk = TestBlockDeviceBuilder::new()
+            .set_alignment(case.alignment)
+            .set_block_size(case.block_size)
+            .set_size(case.storage_size as usize)
+            .build();
         // Make an aligned buffer. A misaligned version is created by taking a sub slice that
         // starts at an unaligned offset. Because of this we need to allocate
         // `case.misalignment` more to accommodate it.
@@ -1129,7 +1074,11 @@ mod test {
     }
 
     fn write_test_helper(case: &TestCase, write_func: fn(&mut TestBlockDevice, u64, &mut [u8])) {
-        let mut blk = TestBlockDevice::new(case.alignment, case.block_size, 0, case.storage_size);
+        let mut blk = TestBlockDeviceBuilder::new()
+            .set_alignment(case.alignment)
+            .set_block_size(case.block_size)
+            .set_size(case.storage_size as usize)
+            .build();
         // Write a reverse version of the current data.
         let mut expected = blk.io.storage
             [to_usize(case.rw_offset).unwrap()..to_usize(case.rw_offset + case.rw_size).unwrap()]
@@ -1445,35 +1394,59 @@ mod test {
 
     #[test]
     fn test_no_alignment_require_zero_size_scratch() {
-        let mut blk = TestBlockDevice::new(1, 1, 0, 1);
+        let mut blk = TestBlockDeviceBuilder::new()
+            .set_alignment(1)
+            .set_block_size(1)
+            .set_max_gpt_entries(0)
+            .set_size(1)
+            .build();
         assert_eq!(required_scratch_size(&mut blk.io, 0).unwrap(), 0);
     }
 
     #[test]
     fn test_scratch_too_small() {
-        let block_size: u64 = 512;
-        let alignment: u64 = 64;
-        let mut blk = TestBlockDevice::new(alignment, block_size, 0, block_size * 3);
-        blk.scratch = vec![0u8; blk.scratch.len() - 1];
+        let storage_size = (TestBlockDeviceBuilder::DEFAULT_BLOCK_SIZE * 3) as usize;
+        let scratch_size =
+            TestBlockDeviceBuilder::new().set_size(storage_size).build().scratch.len() - 1;
+        let mut blk = TestBlockDeviceBuilder::new()
+            .set_size(storage_size)
+            .set_scratch_size(scratch_size)
+            .build();
+        let block_size = TestBlockDeviceBuilder::DEFAULT_BLOCK_SIZE;
         assert!(blk.read(0, &mut vec![0u8; to_usize(block_size).unwrap()]).is_err());
     }
 
     #[test]
     fn test_read_overflow() {
-        let mut blk = TestBlockDevice::new(1, 1, 0, 512);
+        let mut blk = TestBlockDeviceBuilder::new()
+            .set_alignment(1)
+            .set_block_size(1)
+            .set_max_gpt_entries(0)
+            .set_size(512)
+            .build();
         assert!(blk.read(512, &mut vec![0u8; 1]).is_err());
         assert!(blk.read(0, &mut vec![0u8; 513]).is_err());
     }
 
     #[test]
     fn test_read_arithmetic_overflow() {
-        let mut blk = TestBlockDevice::new(1, 1, 0, 512);
+        let mut blk = TestBlockDeviceBuilder::new()
+            .set_alignment(1)
+            .set_block_size(1)
+            .set_max_gpt_entries(0)
+            .set_size(512)
+            .build();
         assert!(blk.read(u64::MAX, &mut vec![0u8; 1]).is_err());
     }
 
     #[test]
     fn test_write_overflow() {
-        let mut blk = TestBlockDevice::new(1, 1, 0, 512);
+        let mut blk = TestBlockDeviceBuilder::new()
+            .set_alignment(1)
+            .set_block_size(1)
+            .set_max_gpt_entries(0)
+            .set_size(512)
+            .build();
         assert!(blk.write_mut(512, vec![0u8; 1].as_mut_slice()).is_err());
         assert!(blk.write_mut(0, vec![0u8; 513].as_mut_slice()).is_err());
 
@@ -1483,7 +1456,12 @@ mod test {
 
     #[test]
     fn test_write_arithmetic_overflow() {
-        let mut blk = TestBlockDevice::new(1, 1, 0, 512);
+        let mut blk = TestBlockDeviceBuilder::new()
+            .set_alignment(1)
+            .set_block_size(1)
+            .set_max_gpt_entries(0)
+            .set_size(512)
+            .build();
         assert!(blk.write_mut(u64::MAX, vec![0u8; 1].as_mut_slice()).is_err());
         assert!(blk.write(u64::MAX, &vec![0u8; 1]).is_err());
     }
