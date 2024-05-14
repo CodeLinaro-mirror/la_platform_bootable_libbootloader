@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 pub use gbl_storage::{
-    alignment_scratch_size, is_aligned, is_buffer_aligned, required_scratch_size, to_usize,
-    AsBlockDevice, AsMultiBlockDevices, BlockIo,
+    alignment_scratch_size, is_aligned, is_buffer_aligned, required_scratch_size, AsBlockDevice,
+    AsMultiBlockDevices, BlockIo,
 };
+
+use safemath::SafeNum;
 
 /// Helper `gbl_storage::BlockIo` struct for TestBlockDevice.
 pub struct TestBlockIo {
@@ -31,9 +33,19 @@ pub struct TestBlockIo {
 }
 
 impl TestBlockIo {
+    pub fn new<T: AsRef<[u8]>>(block_size: u64, alignment: u64, data: T) -> Self {
+        Self {
+            block_size: block_size,
+            alignment: alignment,
+            storage: Vec::from(data.as_ref()),
+            num_writes: 0,
+            num_reads: 0,
+        }
+    }
+
     fn check_alignment(&mut self, buffer: &[u8]) -> bool {
         matches!(is_buffer_aligned(buffer, self.alignment()), Ok(true))
-            && matches!(is_aligned(buffer.len() as u64, self.block_size()), Ok(true))
+            && matches!(is_aligned(buffer.len().into(), self.block_size().into()), Ok(true))
     }
 }
 
@@ -55,9 +67,9 @@ impl BlockIo for TestBlockIo {
             return false;
         }
 
-        let start = blk_offset * self.block_size();
-        let end = start + out.len() as u64;
-        out.clone_from_slice(&self.storage[to_usize(start).unwrap()..to_usize(end).unwrap()]);
+        let start = SafeNum::from(blk_offset) * self.block_size();
+        let end = start + out.len();
+        out.clone_from_slice(&self.storage[start.try_into().unwrap()..end.try_into().unwrap()]);
         self.num_reads += 1;
         true
     }
@@ -67,9 +79,9 @@ impl BlockIo for TestBlockIo {
             return false;
         }
 
-        let start = blk_offset * self.block_size();
-        let end = start + data.len() as u64;
-        self.storage[to_usize(start).unwrap()..to_usize(end).unwrap()].clone_from_slice(&data);
+        let start = SafeNum::from(blk_offset) * self.block_size();
+        let end = start + data.len();
+        self.storage[start.try_into().unwrap()..end.try_into().unwrap()].clone_from_slice(&data);
         self.num_writes += 1;
         true
     }
@@ -217,13 +229,7 @@ impl<'a> TestBlockDeviceBuilder<'a> {
             BackingStore::Size(size) => vec![0u8; size],
         };
         assert!(storage.len() % (self.block_size as usize) == 0);
-        let mut io = TestBlockIo {
-            block_size: self.block_size,
-            alignment: self.alignment,
-            storage,
-            num_reads: 0,
-            num_writes: 0,
-        };
+        let mut io = TestBlockIo::new(self.block_size, self.alignment, storage);
         let scratch_size = match self.scratch_size {
             Some(s) => s,
             None => required_scratch_size(&mut io, self.max_gpt_entries).unwrap(),
@@ -240,11 +246,15 @@ impl<'a> TestBlockDeviceBuilder<'a> {
 pub struct TestMultiBlockDevices(pub Vec<TestBlockDevice>);
 
 impl AsMultiBlockDevices for TestMultiBlockDevices {
-    fn for_each_until(&mut self, f: &mut dyn FnMut(&mut dyn AsBlockDevice, u64) -> bool) {
+    fn for_each(
+        &mut self,
+        f: &mut dyn FnMut(&mut dyn AsBlockDevice, u64),
+    ) -> core::result::Result<(), Option<&'static str>> {
         let _ = self
             .0
             .iter_mut()
             .enumerate()
-            .find_map(|(idx, ele)| f(ele, u64::try_from(idx).unwrap()).then_some(()));
+            .for_each(|(idx, ele)| f(ele, u64::try_from(idx).unwrap()));
+        Ok(())
     }
 }
