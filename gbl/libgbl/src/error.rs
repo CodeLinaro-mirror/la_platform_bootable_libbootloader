@@ -23,7 +23,7 @@ use gbl_storage::StorageError;
 /// Helper type GBL functions will return.
 pub type Result<T> = core::result::Result<T, IntegrationError>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 /// Errors originating from GBL native logic.
 pub enum Error {
     ArithmeticOverflow,
@@ -42,6 +42,8 @@ pub enum Error {
     /// AvbOps were already borrowed. This would happen on second `load_and_verify_image()` call
     /// unless `reuse()` is called before.
     AvbOpsBusy,
+    /// Buffers overlap and can cause undefined behavior and data corruption.
+    BufferOverlap,
 }
 
 impl Display for Error {
@@ -55,6 +57,7 @@ impl Display for Error {
             Error::OperationProhibited => write!(f, "Operation is prohibited"),
             Error::Internal => write!(f, "Internal error"),
             Error::AvbOpsBusy => write!(f, "AvbOps were already borrowed"),
+            Error::BufferOverlap => write!(f, "Buffers overlap"),
         }
     }
 }
@@ -133,7 +136,7 @@ macro_rules! composite_enum {
 
 composite_enum! {
     /// Top level error type that integrates errors from various dependency libraries.
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq, Eq)]
     pub enum IntegrationError {
         /// Failed to get descriptor from AvbMeta
         AvbDescriptorError(DescriptorError),
