@@ -12,29 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load(":readme.bzl", "readme_test")
+load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
-readme_test(
-    name = "readme_test",
-    readme = "docs/efi_protocols.md",
-    # Note: can't read files in subpackages, not sure how to add a dependency on all,
-    # globbed, subpackages and all the rust_lib targets they contain.
+package(
+    default_visibility = ["//visibility:public"],
+)
+
+rust_library(
+    name = "aarch64",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "gbl_efi_aarch64",
+    rustc_flags = ANDROID_RUST_LINTS,
     deps = [
-        "@gbl//efi:app",
-        "@gbl//efi:libgbl_efi",
-        "@gbl//libavb:sysdeps",
-        "@gbl//libboot",
-        "@gbl//libbootconfig",
-        "@gbl//libbootimg",
-        "@gbl//libc",
         "@gbl//libefi",
-        "@gbl//libefi_types",
         "@gbl//liberror",
-        "@gbl//libfastboot",
-        "@gbl//libfdt",
-        "@gbl//libgbl",
-        "@gbl//libmisc",
-        "@gbl//libsafemath",
-        "@gbl//libstorage",
+        "@zune_inflate",
     ],
+)
+
+rust_test(
+    name = "test",
+    crate = ":aarch64",
+    rustc_flags = ANDROID_RUST_LINTS,
 )
