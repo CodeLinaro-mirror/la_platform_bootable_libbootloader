@@ -23,24 +23,13 @@ use efi::{
     utils::Timeout,
     DeviceHandle, EfiEntry,
 };
-use efi_types::EfiGuid;
+use efi_types::{EfiGuid, EfiInputKey};
 use fdt::FdtHeader;
 use liberror::Error;
 use libgbl::Result;
-use safemath::SafeNum;
 
 pub const EFI_DTB_TABLE_GUID: EfiGuid =
     EfiGuid::new(0xb1b621d5, 0xf19c, 0x41a5, [0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0]);
-
-/// Gets a subslice of the given slice with aligned address according to `alignment`
-pub fn aligned_subslice(
-    bytes: &mut [u8],
-    alignment: usize,
-) -> core::result::Result<&mut [u8], Error> {
-    let addr = bytes.as_ptr() as usize;
-    let aligned_start = SafeNum::from(addr).round_up(alignment) - addr;
-    Ok(&mut bytes[aligned_start.try_into()?..])
-}
 
 /// Helper function to get the `DevicePathText` from a `DeviceHandle`.
 pub fn get_device_path<'a>(
@@ -129,19 +118,20 @@ where
 /// Waits for a key stroke value from simple text input.
 ///
 /// Returns `Ok(true)` if the expected key stroke is read, `Ok(false)` if timeout, `Err` otherwise.
-pub fn wait_key_stroke(efi_entry: &EfiEntry, expected: char, timeout_ms: u64) -> Result<bool> {
+pub fn wait_key_stroke(
+    efi_entry: &EfiEntry,
+    pred: impl Fn(EfiInputKey) -> bool,
+    timeout_ms: u64,
+) -> Result<bool> {
     let input = efi_entry
         .system_table()
         .boot_services()
         .find_first_and_open::<SimpleTextInputProtocol>()?;
     loop_with_timeout(efi_entry, timeout_ms, || -> core::result::Result<Result<bool>, bool> {
         match input.read_key_stroke() {
-            Ok(Some(key)) => match char::decode_utf16([key.unicode_char]).next().unwrap() {
-                Ok(ch) if ch == expected => Ok(Ok(true)),
-                _ => Err(false),
-            },
-            Ok(None) => Err(false),
+            Ok(Some(key)) if pred(key) => Ok(Ok(true)),
             Err(e) => Ok(Err(e.into())),
+            _ => Err(false),
         }
     })?
     .unwrap_or(Ok(false))
