@@ -16,7 +16,10 @@
 
 use crate::{
     device_tree::{DeviceTreeComponentSource, DeviceTreeComponentsRegistry, FDT_ALIGNMENT},
-    gbl_avb::{ops::GblAvbOps, state::BootStateColor},
+    gbl_avb::{
+        ops::GblAvbOps,
+        state::{BootStateColor, KeyValidationStatus},
+    },
     gbl_print, gbl_println, GblOps, IntegrationError, Result,
 };
 use arrayvec::ArrayVec;
@@ -61,8 +64,8 @@ fn cstr_bytes_to_str(data: &[u8]) -> core::result::Result<&str, Error> {
 ///
 /// # Returns
 /// `()` on success, error if the images fail to verify or we fail to update the bootconfig.
-fn avb_verify_slot<'a>(
-    ops: &mut impl GblOps<'a>,
+fn avb_verify_slot<'a, 'b>(
+    ops: &mut impl GblOps<'a, 'b>,
     kernel: &[u8],
     vendor_boot: &[u8],
     init_boot: &[u8],
@@ -100,8 +103,10 @@ fn avb_verify_slot<'a>(
     .map_err(|e| IntegrationError::from(e.without_verify_data()))?;
 
     // TODO(b/337846185): Handle RED and RED_EIO (AVB_HASHTREE_ERROR_MODE_EIO).
-    // TODO(b/337846185): Handle YELLOW code using validate_vbmeta_public_key.
     let color = match avb_ops.read_is_device_unlocked()? {
+        false if avb_ops.key_validation_status()? == KeyValidationStatus::ValidCustomKey => {
+            BootStateColor::Yellow
+        }
         false => BootStateColor::Green,
         true => BootStateColor::Orange,
     };
@@ -212,8 +217,8 @@ fn vendor_header_elements<B: ByteSlice + PartialEq>(
 /// # Returns
 /// Returns a tuple of 4 slices corresponding to:
 ///   (ramdisk load buffer, FDT load buffer, kernel load buffer, unused buffer).
-pub fn load_android_simple<'a, 'b>(
-    ops: &mut impl GblOps<'b>,
+pub fn load_android_simple<'a, 'b, 'c>(
+    ops: &mut impl GblOps<'b, 'c>,
     load: &'a mut [u8],
 ) -> Result<(&'a mut [u8], &'a mut [u8], &'a mut [u8], &'a mut [u8])> {
     const PAGE_SIZE: usize = 4096; // V3/V4 image has fixed page size 4096;
