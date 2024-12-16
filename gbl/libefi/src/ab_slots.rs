@@ -180,7 +180,9 @@ mod test {
     };
     use gbl_storage::{BlockIo, BlockIoNull, Disk, Gpt};
     use libgbl::{
-        device_tree::DeviceTreeComponentsRegistry, gbl_avb::state::BootStateColor, ops::ImageBuffer,
+        device_tree::DeviceTreeComponentsRegistry,
+        gbl_avb::state::{BootStateColor, KeyValidationStatus},
+        ops::ImageBuffer,
     };
     // TODO(b/350526796): use ptr.is_aligned() when Rust 1.79 is in Android
     use core::ops::DerefMut;
@@ -248,7 +250,7 @@ mod test {
         }
     }
 
-    impl<'a> GblOps<'a> for TestGblOps<'_> {
+    impl<'a, 'd> GblOps<'a, 'd> for TestGblOps<'_> {
         fn console_out(&mut self) -> Option<&mut dyn Write> {
             unimplemented!();
         }
@@ -307,6 +309,14 @@ mod test {
             unimplemented!();
         }
 
+        fn avb_validate_vbmeta_public_key(
+            &self,
+            _public_key: &[u8],
+            _public_key_metadata: Option<&[u8]>,
+        ) -> AvbIoResult<KeyValidationStatus> {
+            unimplemented!();
+        }
+
         fn avb_cert_read_permanent_attributes(
             &mut self,
             _attributes: &mut CertPermanentAttributes,
@@ -333,11 +343,11 @@ mod test {
             unimplemented!();
         }
 
-        fn get_image_buffer<'c>(
+        fn get_image_buffer(
             &mut self,
             _image_name: &str,
             _size: NonZeroUsize,
-        ) -> GblResult<ImageBuffer<'c>> {
+        ) -> GblResult<ImageBuffer<'d>> {
             unimplemented!();
         }
 
