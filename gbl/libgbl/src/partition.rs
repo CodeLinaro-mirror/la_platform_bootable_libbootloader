@@ -21,9 +21,10 @@ use core::{
     mem::swap,
     ops::{Deref, DerefMut},
 };
-use fastboot::CommandError;
-use gbl_async::yield_now;
-use gbl_storage::{BlockInfo, BlockIo, Disk, Gpt, GptSyncResult, Partition as GptPartition};
+use gbl_storage::{
+    BlockInfo, BlockIo, Disk, Gpt, GptBuilder, GptSyncResult, Partition as GptPartition,
+    SliceMaybeUninit,
+};
 use liberror::Error;
 use safemath::SafeNum;
 
@@ -96,7 +97,7 @@ pub enum BlockStatus {
     /// An IO in progress.
     Pending,
     /// Error.
-    Error,
+    Error(Error),
 }
 
 impl BlockStatus {
@@ -105,7 +106,15 @@ impl BlockStatus {
         match self {
             BlockStatus::Idle => "idle",
             BlockStatus::Pending => "IO pending",
-            BlockStatus::Error => "error",
+            BlockStatus::Error(_) => "error",
+        }
+    }
+
+    /// Converts to result.
+    pub fn result(&self) -> Result<(), Error> {
+        match self {
+            Self::Error(e) => Err(*e),
+            _ => Ok(()),
         }
     }
 }
@@ -160,9 +169,17 @@ where
     pub fn status(&self) -> BlockStatus {
         match self.disk.try_borrow_mut().ok() {
             None => BlockStatus::Pending,
-            Some(v) if v.1.is_err() => BlockStatus::Error,
+            Some(v) if v.1.is_err() => BlockStatus::Error(v.1.unwrap_err()),
             _ => BlockStatus::Idle,
         }
+    }
+
+    /// Borrows disk and last_err separately
+    fn get_disk_and_last_err(
+        &self,
+    ) -> Result<(RefMut<'_, Disk<B, S>>, RefMut<'_, Result<(), Error>>), Error> {
+        let res = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
+        Ok(RefMut::map_split(res, |v| (&mut v.0, &mut v.1)))
     }
 
     /// Gets an instance of `PartitionIo` for a partition.
@@ -170,22 +187,8 @@ where
     /// If `part` is `None`, an IO for the whole block device is returned.
     pub fn partition_io(&self, part: Option<&str>) -> Result<PartitionIo<'_, B>, Error> {
         let (part_start, part_end) = self.find_partition(part)?.absolute_range()?;
-        let (disk, last_err) =
-            RefMut::map_split(self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?, |v| {
-                (&mut v.0, &mut v.1)
-            });
+        let (disk, last_err) = self.get_disk_and_last_err()?;
         Ok(PartitionIo { disk: Disk::from_ref_mut(disk), last_err, part_start, part_end })
-    }
-
-    /// Same as `partition_io` except that the method will spin wait asynchronously if the IO is not
-    /// ready.
-    pub async fn wait_partition_io(&self, part: Option<&str>) -> Result<PartitionIo<'_, B>, Error> {
-        loop {
-            match self.partition_io(part) {
-                Err(Error::NotReady) => yield_now().await,
-                v => return v,
-            }
-        }
     }
 
     /// Finds a partition.
@@ -246,8 +249,8 @@ where
     /// # Args
     ///
     /// * `mbr_primary`: A buffer containing the MBR block, primary GPT header and entries.
-    /// * `resize`: If set to true, the method updates the value of last usable block in the header
-    ///   and the extends last partition to cover the rest of the storage.
+    /// * `resize`: If set to true, the method updates the last partition to cover the rest of the
+    ///    storage.
     ///
     /// # Returns
     ///
@@ -260,6 +263,41 @@ where
             PartitionTable::Gpt(ref mut gpt) => {
                 let mut blk = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
                 blk.0.update_gpt(mbr_primary, resize, gpt).await
+            }
+        }
+    }
+
+    /// Erases GPT on the disk.
+    ///
+    /// # Returns
+    ///
+    /// * Return `Err(Error::NotReady)` if device is busy.
+    /// * Return `Err(Error::Unsupported)` if partition type is not GPT.
+    pub async fn erase_gpt(&self) -> Result<(), Error> {
+        match self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?.deref_mut() {
+            PartitionTable::Raw(_, _) => Err(Error::Unsupported),
+            PartitionTable::Gpt(ref mut gpt) => {
+                let mut disk = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
+                disk.0.erase_gpt(gpt).await
+            }
+        }
+    }
+
+    /// Creates an instance of GptBuilder.
+    pub fn gpt_builder(
+        &self,
+    ) -> Result<GptBuilder<RefMut<'_, Disk<B, S>>, RefMut<'_, Gpt<T>>>, Error> {
+        let mut parts = self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?;
+        match parts.deref_mut() {
+            PartitionTable::Raw(_, _) => Err(Error::Unsupported),
+            PartitionTable::Gpt(_) => {
+                let gpt = RefMut::map(parts, |v| match v {
+                    PartitionTable::Gpt(v) => v,
+                    _ => unreachable!(),
+                });
+                let (disk, err) = self.get_disk_and_last_err()?;
+                (*err)?;
+                Ok(GptBuilder::new(disk, gpt)?.0)
             }
         }
     }
@@ -294,47 +332,41 @@ impl<'a, B: BlockIo> PartitionIo<'a, B> {
         Ok((SafeNum::from(self.part_start) + off).try_into()?)
     }
 
-    /// A helper to do write for simplifying error handling.
-    async fn do_write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
-        self.check_rw_range(off, data.len()).map(|v| self.disk.write(v, data))?.await
-    }
-
     /// Writes to the partition.
     pub async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
-        let res = self.do_write(off, data).await;
+        let res =
+            async { self.disk.write(self.check_rw_range(off, data.len())?, data).await }.await;
         *self.last_err = res.and(*self.last_err);
         res
-    }
-
-    /// A helper to do read for simplifying error handling.
-    async fn do_read(&mut self, off: u64, out: &mut [u8]) -> Result<(), Error> {
-        self.check_rw_range(off, out.len()).map(|v| self.disk.read(v, out))?.await
     }
 
     /// Reads from the partition.
-    pub async fn read(&mut self, off: u64, out: &mut [u8]) -> Result<(), Error> {
-        let res = self.do_read(off, out).await;
+    pub async fn read(
+        &mut self,
+        off: u64,
+        out: &mut (impl SliceMaybeUninit + ?Sized),
+    ) -> Result<(), Error> {
+        let res = async { self.disk.read(self.check_rw_range(off, out.len())?, out).await }.await;
         *self.last_err = res.and(*self.last_err);
         res
     }
 
-    /// A helper to do sparse write for simplifying error handling.
-    async fn do_write_sparse(&mut self, off: u64, img: &mut [u8]) -> Result<(), Error> {
-        let off = self.check_rw_range(
-            off,
-            is_sparse_image(img).map_err(|_| Error::InvalidInput)?.data_size(),
-        )?;
-        write_sparse_image(img, &mut (off, &mut self.disk))
-            .await
-            .map_err(|_| "Sparse write failed")?;
-        Ok(())
+    /// Writes zeroes to the partition.
+    pub async fn zeroize(&mut self, scratch: &mut [u8]) -> Result<(), Error> {
+        let res = async { self.disk.fill(self.part_start, self.size(), 0, scratch).await }.await;
+        *self.last_err = res.and(*self.last_err);
+        *self.last_err
     }
 
     /// Writes sparse image to the partition.
     pub async fn write_sparse(&mut self, off: u64, img: &mut [u8]) -> Result<(), Error> {
-        let res = self.do_write_sparse(off, img).await;
-        *self.last_err = res.and(*self.last_err);
-        res
+        let res = async {
+            let sz = is_sparse_image(img).map_err(|_| Error::InvalidInput)?.data_size();
+            write_sparse_image(img, &mut (self.check_rw_range(off, sz)?, &mut self.disk)).await
+        }
+        .await;
+        *self.last_err = res.map(|_| ()).and(*self.last_err);
+        *self.last_err
     }
 
     /// Turns this IO into one for a subrange in the partition.
@@ -365,7 +397,7 @@ where
     B: BlockIo,
     S: DerefMut<Target = [u8]>,
 {
-    async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), CommandError> {
+    async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
         Ok(self.1.write((SafeNum::from(off) + self.0).try_into()?, data).await?)
     }
 }
@@ -399,7 +431,7 @@ pub async fn read_unique_partition(
     >],
     part: &str,
     off: u64,
-    out: &mut [u8],
+    out: &mut (impl SliceMaybeUninit + ?Sized),
 ) -> Result<(), Error> {
     devs[check_part_unique(devs, part)?.0].partition_io(Some(part))?.read(off, out).await
 }
@@ -519,13 +551,13 @@ pub(crate) mod test {
         sz: u64,
     ) {
         let mut out = vec![0u8; to_usize(sz)];
-        block_on(blk.partition_io(part).unwrap().read(off, &mut out)).unwrap();
+        block_on(blk.partition_io(part).unwrap().read(off, &mut out[..])).unwrap();
         assert_eq!(out, part_content[to_usize(off)..][..out.len()].to_vec());
 
         // Reads using the `sub()` and then read approach.
         let mut out = vec![0u8; to_usize(sz)];
         let mut io = blk.partition_io(part).unwrap().sub(off, sz).unwrap();
-        block_on(io.read(0, &mut out)).unwrap();
+        block_on(io.read(0, &mut out[..])).unwrap();
         assert_eq!(out, part_content[to_usize(off)..][..out.len()].to_vec());
     }
 
@@ -555,7 +587,7 @@ pub(crate) mod test {
     fn test_part_write(blk: &TestGblDisk, part: Option<&str>, off: u64, sz: u64) {
         // Reads the current partition content
         let mut part_content = vec![0u8; to_usize(blk.partition_io(part).unwrap().size())];
-        block_on(blk.partition_io(part).unwrap().read(0, &mut part_content)).unwrap();
+        block_on(blk.partition_io(part).unwrap().read(0, &mut part_content[..])).unwrap();
 
         // Flips all the bits in the target range and writes back.
         let seg = &mut part_content[to_usize(off)..][..to_usize(sz)];
@@ -594,21 +626,21 @@ pub(crate) mod test {
         assert_eq!(block_on(gpt.sync_gpt()).unwrap(), Some(GptSyncResult::BothValid));
 
         let mut part_io = gpt.partition_io(Some("boot_a")).unwrap();
-        assert!(block_on(part_io.read(BOOT_A_END, &mut vec![0u8; 1])).is_err());
-        assert!(
-            block_on(part_io.read(BOOT_A_OFF, &mut vec![0u8; to_usize(BOOT_A_SZ) + 1])).is_err()
-        );
-        assert!(block_on(part_io.write(BOOT_A_END, &mut vec![0u8; 1])).is_err());
-        assert!(
-            block_on(part_io.write(BOOT_A_OFF, &mut vec![0u8; to_usize(BOOT_A_SZ) + 1])).is_err()
-        );
+        assert!(block_on(part_io.read(BOOT_A_END, &mut vec![0u8; 1][..])).is_err());
+        assert!(block_on(part_io.read(BOOT_A_OFF, &mut vec![0u8; to_usize(BOOT_A_SZ) + 1][..]))
+            .is_err());
+        assert!(block_on(part_io.write(BOOT_A_END, &mut vec![0u8; 1][..])).is_err());
+        assert!(block_on(part_io.write(BOOT_A_OFF, &mut vec![0u8; to_usize(BOOT_A_SZ) + 1][..]))
+            .is_err());
 
         let raw = raw_disk(c"raw", &disk);
         let mut part_io = raw.partition_io(Some("raw")).unwrap();
-        assert!(block_on(part_io.read(GPT_DISK_1_SZ, &mut vec![0u8; 1])).is_err());
-        assert!(block_on(part_io.read(0, &mut vec![0u8; to_usize(GPT_DISK_1_SZ) + 1])).is_err());
-        assert!(block_on(part_io.write(GPT_DISK_1_SZ, &mut vec![0u8; 1])).is_err());
-        assert!(block_on(part_io.write(0, &mut vec![0u8; to_usize(GPT_DISK_1_SZ) + 1])).is_err());
+        assert!(block_on(part_io.read(GPT_DISK_1_SZ, &mut vec![0u8; 1][..])).is_err());
+        assert!(block_on(part_io.read(0, &mut vec![0u8; to_usize(GPT_DISK_1_SZ) + 1][..])).is_err());
+        assert!(block_on(part_io.write(GPT_DISK_1_SZ, &mut vec![0u8; 1][..])).is_err());
+        assert!(
+            block_on(part_io.write(0, &mut vec![0u8; to_usize(GPT_DISK_1_SZ) + 1][..])).is_err()
+        );
     }
 
     #[test]
@@ -671,7 +703,7 @@ pub(crate) mod test {
         let raw = raw_disk(c"raw", vec![0u8; 1024]);
         let mut part_io = raw.partition_io(Some("raw")).unwrap();
         // Causes some error by read
-        assert!(block_on(part_io.read(1024, &mut [0])).is_err());
+        assert!(block_on(part_io.read(1024, &mut [0][..])).is_err());
         assert!(part_io.last_err().is_err());
     }
 
@@ -688,14 +720,14 @@ pub(crate) mod test {
     fn test_partiton_last_err_persist_through_operation() {
         let raw = raw_disk(c"raw", vec![0u8; 1024]);
         // Causes some error by read
-        assert!(block_on(raw.partition_io(Some("raw")).unwrap().read(1024, &mut [0])).is_err());
+        assert!(block_on(raw.partition_io(Some("raw")).unwrap().read(1024, &mut [0][..])).is_err());
         // Tracked error should persist regardless of how many times we get partition io.
         assert!(raw.partition_io(Some("raw")).unwrap().last_err().is_err());
         assert!(raw.partition_io(None).unwrap().last_err().is_err());
         // Should persist even after successful operations.
-        block_on(raw.partition_io(Some("raw")).unwrap().read(1023, &mut [0])).unwrap();
+        block_on(raw.partition_io(Some("raw")).unwrap().read(1023, &mut [0][..])).unwrap();
         assert!(raw.partition_io(Some("raw")).unwrap().last_err().is_err());
-        block_on(raw.partition_io(Some("raw")).unwrap().write(1023, &mut [0])).unwrap();
+        block_on(raw.partition_io(Some("raw")).unwrap().write(1023, &mut [0][..])).unwrap();
         assert!(raw.partition_io(Some("raw")).unwrap().last_err().is_err());
         assert!(raw.partition_io(None).unwrap().last_err().is_err());
         // Taking error should reset it.
@@ -730,7 +762,7 @@ pub(crate) mod test {
         sz: u64,
     ) {
         let mut out = vec![0u8; to_usize(sz)];
-        block_on(read_unique_partition(devs, part, off, &mut out)).unwrap();
+        block_on(read_unique_partition(devs, part, off, &mut out[..])).unwrap();
         assert_eq!(out, part_content[to_usize(off)..][..out.len()]);
     }
 
@@ -765,7 +797,7 @@ pub(crate) mod test {
         // Reads the current partition content
         let (_, p) = check_part_unique(devs, part).unwrap();
         let mut part_content = vec![0u8; to_usize(p.size().unwrap())];
-        block_on(read_unique_partition(devs, part, 0, &mut part_content)).unwrap();
+        block_on(read_unique_partition(devs, part, 0, &mut part_content[..])).unwrap();
 
         // Flips all the bits in the target range and writes back.
         let seg = &mut part_content[to_usize(off)..][..to_usize(sz)];
@@ -801,9 +833,9 @@ pub(crate) mod test {
         devs.add_raw_device(c"raw", [0xaau8; 4 * 1024]);
         devs.add_raw_device(c"raw", [0x55u8; 4 * 1024]);
 
-        assert!(block_on(read_unique_partition(&devs, "boot_a", 0, &mut [],)).is_err());
+        assert!(block_on(read_unique_partition(&devs, "boot_a", 0, &mut [] as &mut [u8],)).is_err());
         assert!(block_on(write_unique_partition(&devs, "boot_a", 0, &mut [],)).is_err());
-        assert!(block_on(read_unique_partition(&devs, "raw", 0, &mut [],)).is_err());
+        assert!(block_on(read_unique_partition(&devs, "raw", 0, &mut [] as &mut [u8],)).is_err());
         assert!(block_on(write_unique_partition(&devs, "raw", 0, &mut [],)).is_err());
     }
 }

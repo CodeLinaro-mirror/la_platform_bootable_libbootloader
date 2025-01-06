@@ -33,13 +33,24 @@ typedef enum GBL_EFI_AVB_BOOT_STATE_COLOR {
   RED,
 } GblEfiAvbBootStateColor;
 
+// Vbmeta key validation status.
+//
+// https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
+typedef enum GBL_EFI_AVB_KEY_VALIDATION_STATUS {
+  VALID,
+  VALID_CUSTOM_KEY,
+  INVALID,
+} GblEfiAvbKeyValidationStatus;
+
 typedef struct {
   // GblEfiAvbBootStateColor
   uint32_t color;
 
-  // TODO(b/337846185): Add result vbmeta digest.
+  // Pointer to nul-terminated ASCII hex digest calculated by libavb. May be
+  // null in case of verification failed (RED boot state color).
+  const char8_t* digest;
 
-  // Pointers to zero terminated os versions and security_patches for different
+  // Pointers to nul-terminated os versions and security_patches for different
   // boot components. NULL is provided in case value isn't presented in the boot
   // artifacts or fatal AVB failure.
   // https://source.android.com/docs/core/architecture/bootloader/version-info-avb
@@ -53,6 +64,31 @@ typedef struct {
 
 typedef struct GblEfiAvbProtocol {
   uint64_t revision;
+
+  EfiStatus (*validate_vbmeta_public_key)(
+      struct GblEfiAvbProtocol* self, const uint8_t* public_key_data,
+      size_t public_key_length, const uint8_t* public_key_metadata,
+      size_t public_key_metadata_length,
+      /* GblEfiAvbKeyValidationStatus */ uint32_t* validation_status);
+
+  EfiStatus (*read_is_device_unlocked)(struct GblEfiAvbProtocol* self,
+                                       bool* is_unlocked);
+
+  EfiStatus (*read_rollback_index)(struct GblEfiAvbProtocol* self,
+                                   size_t index_location,
+                                   uint64_t* rollback_index);
+
+  EfiStatus (*write_rollback_index)(struct GblEfiAvbProtocol* self,
+                                    size_t index_location,
+                                    uint64_t rollback_index);
+
+  EfiStatus (*read_persistent_value)(struct GblEfiAvbProtocol* self,
+                                     const char* name, uint8_t* value,
+                                     size_t* value_size);
+
+  EfiStatus (*write_persistent_value)(struct GblEfiAvbProtocol* self,
+                                      const char* name, const uint8_t* value,
+                                      size_t value_size);
 
   EfiStatus (*handle_verification_result)(
       struct GblEfiAvbProtocol* self,
