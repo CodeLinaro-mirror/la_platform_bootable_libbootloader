@@ -17,7 +17,7 @@
 use crate::{
     device_tree::{DeviceTreeComponentSource, DeviceTreeComponentsRegistry, FDT_ALIGNMENT},
     gbl_avb::{
-        ops::GblAvbOps,
+        ops::{GblAvbOps, AVB_DIGEST_KEY},
         state::{BootStateColor, KeyValidationStatus},
     },
     gbl_print, gbl_println, GblOps, IntegrationError, Result,
@@ -25,7 +25,9 @@ use crate::{
 use arrayvec::ArrayVec;
 use avb::{slot_verify, HashtreeErrorMode, Ops as _, SlotVerifyFlags};
 use bootimg::{BootImage, VendorImageHeader};
-use bootparams::{bootconfig::BootConfigBuilder, commandline::CommandlineBuilder};
+use bootparams::{
+    bootconfig::BootConfigBuilder, commandline::CommandlineBuilder, entry::CommandlineParser,
+};
 use core::{ffi::CStr, fmt::Write};
 use dttable::DtTableImage;
 use fdt::Fdt;
@@ -33,7 +35,7 @@ use liberror::Error;
 use libutils::aligned_subslice;
 use misc::{AndroidBootMode, BootloaderMessage};
 use safemath::SafeNum;
-use zerocopy::{AsBytes, ByteSlice};
+use zerocopy::{ByteSlice, IntoBytes, Ref};
 
 #[cfg(target_arch = "aarch64")]
 use crate::decompress::decompress_kernel;
@@ -110,12 +112,17 @@ fn avb_verify_slot<'a, 'b>(
         false => BootStateColor::Green,
         true => BootStateColor::Orange,
     };
-    avb_ops.handle_verification_result(&res, color)?;
 
-    // Append avb generated bootconfig.
-    for cmdline_arg in res.cmdline().to_str().unwrap().split(' ') {
-        write!(bootconfig_builder, "{}\n", cmdline_arg).or(Err(Error::BufferTooSmall(None)))?;
+    let mut digest = None;
+    for entry in CommandlineParser::new(res.cmdline().to_str().unwrap()) {
+        let entry = entry?;
+        if entry.key == AVB_DIGEST_KEY {
+            digest = entry.value;
+        }
+        write!(bootconfig_builder, "{}\n", entry).or(Err(Error::BufferTooSmall(None)))?;
     }
+
+    avb_ops.handle_verification_result(&res, color, digest)?;
 
     // Append "androidboot.verifiedbootstate="
     write!(bootconfig_builder, "androidboot.verifiedbootstate={}\n", color)
@@ -176,7 +183,7 @@ fn vendor_header_elements<B: ByteSlice + PartialEq>(
     Ok(match hdr {
         VendorImageHeader::V3(ref hdr) => (
             hdr.vendor_ramdisk_size as usize,
-            SafeNum::from(hdr.bytes().len())
+            SafeNum::from(Ref::bytes(hdr).len())
                 .round_up(hdr.page_size)
                 .try_into()
                 .map_err(Error::from)?,
@@ -188,7 +195,7 @@ fn vendor_header_elements<B: ByteSlice + PartialEq>(
         ),
         VendorImageHeader::V4(ref hdr) => (
             hdr._base.vendor_ramdisk_size as usize,
-            SafeNum::from(hdr.bytes().len())
+            SafeNum::from(Ref::bytes(hdr).len())
                 .round_up(hdr._base.page_size)
                 .try_into()
                 .map_err(Error::from)?,
