@@ -145,6 +145,7 @@ rust_bindgen(
         "--default-enum-style=rust",
         "--with-derive-default",
         "--with-derive-custom=Avb.*Descriptor=FromBytes,Immutable,KnownLayout",
+        "--with-derive-custom=AvbVBMetaImageHeader=FromBytes,Immutable,KnownLayout",
         "--with-derive-custom=AvbCertPermanentAttributes=FromBytes,IntoBytes",
         "--with-derive-custom=AvbCertCertificate.*=FromBytes,IntoBytes",
         "--with-derive-custom=AvbCertUnlock.*=FromBytes,IntoBytes",
