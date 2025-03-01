@@ -20,7 +20,7 @@ u-boot-mainline branch.
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "android_rust_prebuilts", "gbl_llvm_prebuilts")
 
-_CLANG_VERSION = "r530567"
+_CLANG_VERSION = "r547379"
 
 def rust_crate_build_file(
         name,
@@ -84,6 +84,12 @@ def define_gbl_workspace(name = None):
         repo_rule = native.local_repository,
         name = "rules_rust",
         path = "external/bazelbuild-rules_rust",
+    )
+
+    maybe(
+        repo_rule = native.local_repository,
+        name = "rules_shell",
+        path = "external/bazelbuild-rules_shell",
     )
 
     maybe(
