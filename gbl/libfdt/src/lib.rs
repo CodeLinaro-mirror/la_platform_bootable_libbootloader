@@ -375,8 +375,6 @@ impl<T: AsRef<[u8]>> AsRef<[u8]> for Fdt<T> {
 
 #[cfg(test)]
 mod test {
-    extern crate libc_deps_posix;
-
     use super::*;
 
     // Fdt is required to be 8 bytes aligned. Buffer to test alignment-related logic.
