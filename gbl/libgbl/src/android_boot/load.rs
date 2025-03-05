@@ -32,6 +32,7 @@ use core::{
     ops::{Deref, Range},
 };
 use liberror::Error;
+use libutils::aligned_subslice;
 use safemath::SafeNum;
 use zerocopy::{IntoBytes, Ref};
 
@@ -241,6 +242,8 @@ pub struct LoadedImages<'a> {
     pub vendor_cmdline: &'a str,
     /// DTB.
     pub dtb: &'a mut [u8],
+    /// DTB from partition.
+    pub dtb_part: &'a mut [u8],
     /// Kernel image.
     pub kernel: &'a mut [u8],
     /// Ramdisk image.
@@ -256,6 +259,7 @@ impl<'a> Default for LoadedImages<'a> {
             boot_cmdline: "",
             vendor_cmdline: "",
             dtb: &mut [][..],
+            dtb_part: &mut [][..],
             kernel: &mut [][..],
             ramdisk: &mut [][..],
             unused: &mut [][..],
@@ -267,26 +271,34 @@ impl<'a> Default for LoadedImages<'a> {
 pub fn android_load_verify<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
     slot: u8,
+    is_recovery: bool,
     load: &'c mut [u8],
 ) -> Result<LoadedImages<'c>, IntegrationError> {
     let mut res = LoadedImages::default();
 
     let slot_suffix = SlotSuffix::new(slot)?;
+    // Additional partitions loaded before loading standard boot images.
+    let mut partitions = PartitionsToVerify::default();
+
     // Loads dtbo.
     let dtbo_part = slotted_part("dtbo", slot)?;
     let (dtbo, remains) = load_entire_part(ops, &dtbo_part, &mut load[..])?;
-
-    // TODO(b/384964561): Checks existence of DTB partitions.
-
-    // Additional partitions loaded before loading standard boot images.
-    let mut partitions = PartitionsToVerify::default();
     if dtbo.len() > 0 {
         partitions.try_push_preloaded(c"dtbo", &dtbo[..])?;
     }
 
+    // Loads dtb.
+    let remains = aligned_subslice(remains, FDT_ALIGNMENT)?;
+    let dtb_part = slotted_part("dtb", slot)?;
+    let (dtb, remains) = load_entire_part(ops, &dtb_part, &mut remains[..])?;
+    if dtb.len() > 0 {
+        partitions.try_push_preloaded(c"dtb", &dtb[..])?;
+    }
+
     let add = |v: &mut BootConfigBuilder| {
-        // TODO(b/384964561): Support reocvery mode.
-        v.add("androidboot.force_normal_boot=1\n")?;
+        if !is_recovery {
+            v.add("androidboot.force_normal_boot=1\n")?;
+        }
         Ok(write!(v, "androidboot.slot_suffix={}\n", &slot_suffix as &str)?)
     };
 
@@ -301,6 +313,7 @@ pub fn android_load_verify<'a, 'b, 'c>(
 
     drop(partitions);
     res.dtbo = dtbo;
+    res.dtb_part = dtb;
     Ok(res)
 }
 
@@ -750,6 +763,19 @@ pub(crate) mod tests {
         s.split("\\n").collect::<Vec<_>>().join("\n")
     }
 
+    /// A helper for assert checking ramdisk binary and bootconfig separately.
+    pub(crate) fn check_ramdisk(ramdisk: &[u8], expected_bin: &[u8], expected_bootconfig: &[u8]) {
+        let (ramdisk, bootconfig) = ramdisk.split_at(expected_bin.len());
+        assert_eq!(ramdisk, expected_bin);
+        assert_eq!(
+            bootconfig,
+            expected_bootconfig,
+            "\nexpect: \n{}\nactual: \n{}\n",
+            dump_bootconfig(expected_bootconfig),
+            dump_bootconfig(bootconfig),
+        );
+    }
+
     /// Helper for testing load/verify and assert verfiication success.
     fn test_android_load_verify_success(
         slot: u8,
@@ -783,7 +809,7 @@ pub(crate) mod tests {
         };
         ops.avb_handle_verification_result = Some(&mut handler);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
-        let loaded = android_load_verify(&mut ops, slot, &mut load_buffer).unwrap();
+        let loaded = android_load_verify(&mut ops, slot, false, &mut load_buffer).unwrap();
 
         assert_eq!(loaded.dtb, expected_dtb);
         assert_eq!(out_color, Some(BootStateColor::Green));
@@ -791,15 +817,7 @@ pub(crate) mod tests {
         assert_eq!(loaded.vendor_cmdline, expected_vendor_cmdline);
         assert_eq!(loaded.kernel, expected_kernel);
         assert_eq!(loaded.dtbo, expected_dtbo);
-        let (ramdisk, bootconfig) = loaded.ramdisk.split_at_mut(expected_ramdisk.len());
-        assert_eq!(ramdisk, expected_ramdisk);
-        assert_eq!(
-            bootconfig,
-            expected_bootconfig,
-            "\nexpect: \n{}\nactual: \n{}\n",
-            dump_bootconfig(expected_bootconfig),
-            dump_bootconfig(bootconfig),
-        );
+        check_ramdisk(loaded.ramdisk, expected_ramdisk, expected_bootconfig);
     }
 
     /// A helper for generating avb bootconfig with the given parameters.
