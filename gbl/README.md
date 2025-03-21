@@ -6,6 +6,8 @@ can be loaded directly from the firmware.
 
 ## Get source tree and build
 
+The GBL build currently only supports Linux x86_64 host machines.
+
 To successfully get and build the tree your machine must have the following dependencies installed:
 
 ```

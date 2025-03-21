@@ -48,7 +48,7 @@ build_and_run = rule(
     attrs = {
         "executable": attr.label(
             executable = True,
-            cfg = "exec",
+            cfg = "target",
             allow_files = True,
             mandatory = True,
         ),

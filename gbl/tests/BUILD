@@ -25,6 +25,8 @@ test_suite(
     ],
 )
 
+# Note: this rule does not work with `test_suite` targets, we must add each test
+# individually.
 build_and_run_tests(
     name = "build_and_run_tests",
     # We need to re-specify the runtime data needed by tests.
@@ -32,6 +34,7 @@ build_and_run_tests(
     tests = [
         "@gbl//:readme_test",
         "@gbl//efi:test",
+        "@gbl//efi:test_dev",
         "@gbl//libabr:libabr_test",
         "@gbl//libasync:cyclic_executor_test",
         "@gbl//libasync:libasync_test",

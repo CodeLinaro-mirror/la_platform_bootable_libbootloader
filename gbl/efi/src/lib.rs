@@ -95,6 +95,7 @@ fn get_target_os(entry: &EfiEntry, disks: &[EfiGblDisk]) -> TargetOs {
 #[cfg(not(test))]
 pub fn app_main(entry: EfiEntry) -> Result<()> {
     efi_println!(entry, "****Generic Bootloader Application****");
+    efi_println!(entry, "Board type: {}", BOARD_TYPE_STR);
     if let Ok(v) = loaded_image_path(&entry) {
         efi_println!(entry, "Image path: {}", v);
     }
@@ -116,4 +117,26 @@ pub fn app_main(entry: EfiEntry) -> Result<()> {
     }
 
     Ok(())
+}
+
+const BOARD_TYPE_STR: &'static str = match cfg!(feature = "gbl_dev") {
+    true => "dev",
+    false => "prod",
+};
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[cfg(feature = "gbl_dev")]
+    #[test]
+    fn board_type_str_dev() {
+        assert_eq!(BOARD_TYPE_STR, "dev");
+    }
+
+    #[cfg(not(feature = "gbl_dev"))]
+    #[test]
+    fn board_type_str_prod() {
+        assert_eq!(BOARD_TYPE_STR, "prod");
+    }
 }

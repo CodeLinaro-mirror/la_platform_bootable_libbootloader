@@ -406,10 +406,13 @@ pub(crate) mod tests {
         ops::test::{slot, FakeGblOps, FakeGblOpsStorage},
         tests::AlignedBuffer,
     };
-    use load::tests::{
-        check_ramdisk, make_expected_bootconfig, read_test_data, read_test_data_as_str,
-        AvbResultBootconfigBuilder, MakeExpectedBootconfigInclude, TEST_DEFAULT_BUILD_ID,
-        TEST_PUBLIC_KEY_DIGEST, TEST_VENDOR_BOOTCONFIG,
+    use load::{
+        get_build_id,
+        tests::{
+            check_ramdisk, make_expected_bootconfig, read_test_data, read_test_data_as_str,
+            AvbResultBootconfigBuilder, MakeExpectedBootconfigInclude, TEST_PUBLIC_KEY_DIGEST,
+            TEST_VENDOR_BOOTCONFIG,
+        },
     };
     use std::{collections::HashMap, ffi::CString};
 
@@ -1034,7 +1037,7 @@ pub(crate) mod tests {
             .extra("androidboot.force_normal_boot=1\n")
             .extra(format!("androidboot.slot_suffix=_a\n"))
             .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={TEST_DEFAULT_BUILD_ID}\n"))
+            .extra(format!("androidboot.gbl.build_number={}\n", get_build_id()))
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
@@ -1053,7 +1056,7 @@ pub(crate) mod tests {
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .extra(format!("androidboot.slot_suffix=_a\n"))
             .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={TEST_DEFAULT_BUILD_ID}\n"))
+            .extra(format!("androidboot.gbl.build_number={}\n", get_build_id()))
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
@@ -1141,7 +1144,7 @@ pub(crate) mod tests {
             .extra("androidboot.force_normal_boot=1\n")
             .extra(format!("androidboot.slot_suffix=_b\n"))
             .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={TEST_DEFAULT_BUILD_ID}\n"))
+            .extra(format!("androidboot.gbl.build_number={}\n", get_build_id()))
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_b.img"), &expected_bootconfig);

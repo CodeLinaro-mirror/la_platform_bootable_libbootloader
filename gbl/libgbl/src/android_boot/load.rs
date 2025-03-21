@@ -304,11 +304,7 @@ pub fn android_load_verify<'a, 'b, 'c>(
         // TODO(yochiang): Generate useful value like version, build_incremental in the bootconfig.
         v.add("androidboot.gbl.version=0\n")?;
 
-        let build_number = match option_env!("BUILD_NUMBER") {
-            None | Some("") => DEFAULT_BUILD_ID,
-            Some(build_number) => build_number,
-        };
-        write!(v, "androidboot.gbl.build_number={}\n", build_number)?;
+        write!(v, "androidboot.gbl.build_number={}\n", get_build_id())?;
         Ok(())
     };
 
@@ -325,6 +321,14 @@ pub fn android_load_verify<'a, 'b, 'c>(
     res.dtbo = dtbo;
     res.dtb_part = dtb;
     Ok(res)
+}
+
+/// Returns the current build ID, or a generic default if one wasn't set.
+pub(crate) fn get_build_id() -> &'static str {
+    match option_env!("BUILD_NUMBER") {
+        None | Some("") => DEFAULT_BUILD_ID,
+        Some(build_number) => build_number,
+    }
 }
 
 /// Loads and verifies android boot images of version 0, 1 and 2.
@@ -733,9 +737,6 @@ pub(crate) mod tests {
         string::String,
     };
 
-    /// Export DEFAULT_BUILD_ID for other test modules.
-    pub const TEST_DEFAULT_BUILD_ID: &str = DEFAULT_BUILD_ID;
-
     // See libgbl/testdata/gen_test_data.py for test data generation.
     const TEST_ROLLBACK_INDEX_LOCATION: usize = 1;
 
@@ -1025,7 +1026,7 @@ androidboot.veritymode=enforcing
             .extra("androidboot.force_normal_boot=1\n")
             .extra(format!("androidboot.slot_suffix=_{slot}\n"))
             .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={TEST_DEFAULT_BUILD_ID}\n"))
+            .extra(format!("androidboot.gbl.build_number={}\n", get_build_id()))
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .extra(vendor_config);
 

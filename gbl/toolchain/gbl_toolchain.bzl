@@ -26,6 +26,9 @@ load(
 )
 load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_C_INCLUDE", "gbl_llvm_tool_path")
 load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES", "ALL_CPP_COMPILE_ACTION_NAMES")
+load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
 
 def _flag_set(flags):
     """Convert a list of compile/link flags to a flag_set type."""
@@ -165,7 +168,7 @@ def gbl_clang_cc_toolchain(
     native.filegroup(name = empty_filegroup)
     empty_filegroup_target = ":{}".format(empty_filegroup)
 
-    native.cc_toolchain(
+    cc_toolchain(
         name = name,
         toolchain_identifier = name,
         toolchain_config = ":{}".format(config_name),
@@ -209,17 +212,22 @@ _no_sysroot_transition = transition(
     outputs = ["@gbl//toolchain:rust_no_sysroot"],
 )
 
+# Creates a symlink wrapper to `file` in the given `ctx`.
+# Returns the symlink file object.
+def _create_symlink_wrapper(ctx, file):
+    # Append the label name to the file name but keep the same extension. i.e.
+    # "<file>.<extension>" -> "<file>_<label>.<extension>"
+    stem = file.basename.removesuffix(".{}".format(file.extension))
+    out = ctx.actions.declare_file("{}_{}.{}".format(stem, ctx.label.name, file.extension))
+    ctx.actions.symlink(output = out, target_file = file)
+    return out
+
 # A rule implementation that simply forwards dependencies from attribute `deps` and generates
 # symlinks to their output files.
 def _forward_and_symlink(ctx):
     outs = []
     for file in ctx.files.deps:
-        # Append the label name to the file name but keep the same extension. i.e.
-        # "<file>.<extension>" -> "<file>_<label>.<extension>"
-        stem = file.basename.removesuffix(".{}".format(file.extension))
-        out = ctx.actions.declare_file("{}_{}.{}".format(stem, ctx.label.name, file.extension))
-        ctx.actions.symlink(output = out, target_file = file)
-        outs.append(out)
+        outs.append(_create_symlink_wrapper(ctx, file))
     return [DefaultInfo(files = depset(outs))]
 
 # A rule for building rust targets with the `@gbl//toolchain:rust_no_sysroot_true` setting.
@@ -256,6 +264,38 @@ build_with_platform = rule(
         "platform": attr.string(mandatory = True),
         "deps": attr.label_list(allow_files = True, mandatory = True),
     },
+)
+
+# Unconditionally transitions to the host dev platform.
+def _dev_transition_impl(_settings, _attr):
+    return {"//command_line_option:platforms": "@gbl//toolchain:host_x86_64_dev"}
+
+_dev_transition = transition(
+    inputs = [],
+    outputs = ["//command_line_option:platforms"],
+    implementation = _dev_transition_impl,
+)
+
+# Wrapper to build the dev version of a host test target.
+# In our current setup, the default build is always the prod configuration
+# so we need to wrap tests with this to also run the dev tests.
+def _dev_test_impl(ctx):
+    # Our rule implementation is required to create the executable it runs.
+    # Since we're just wrapping a target that has already built the test under
+    # the dev platform transition, we just symlink to it.
+    file = ctx.files.target[0]
+    return DefaultInfo(
+        files = depset(ctx.files.target),
+        executable = _create_symlink_wrapper(ctx, file),
+    )
+
+dev_test = rule(
+    cfg = _dev_transition,
+    attrs = {
+        "target": attr.label(),
+    },
+    implementation = _dev_test_impl,
+    test = True,
 )
 
 # This rule creates symlink for a static library in both Linux/GNU and MSVC naming styles so that
