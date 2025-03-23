@@ -73,8 +73,11 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
                 // TODO(b/384964561, b/374336105): Investigate if we can avoid additional copy.
                 true => {
                     gbl_println!(ops, "Handling overlays from dtbo");
-                    components
-                        .append_from_dtbo(&DtTableImage::from_bytes(images.dtbo)?, fdt_load)?
+                    components.append_from_dttable(
+                        DeviceTreeComponentSource::Dtbo,
+                        &DtTableImage::from_bytes(images.dtbo)?,
+                        fdt_load,
+                    )?
                 }
                 _ => fdt_load,
             };
@@ -88,7 +91,11 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
             if images.dtb_part.len() > 0 {
                 gbl_println!(ops, "Handling device trees from dtb");
                 let dttable = DtTableImage::from_bytes(images.dtb_part)?;
-                remains = components.append_from_dttable(true, &dttable, remains)?;
+                remains = components.append_from_dttable(
+                    DeviceTreeComponentSource::Dtb,
+                    &dttable,
+                    remains,
+                )?;
             }
 
             gbl_println!(ops, "Selecting device tree components");
@@ -223,7 +230,7 @@ where
     ///   specific channels i.e. UX.
     /// * `usb`: An implementation of `GblUsbTransport` that represents USB channel.
     /// * `tcp`: An implementation of `GblTcpStream` that represents TCP channel.
-    pub fn run<'b: 'c, 'c>(
+    pub async fn run<'b: 'c, 'c>(
         self,
         buffer_pool: &'b Shared<impl BufferPool>,
         tasks: impl PinFutContainer<'c> + 'c,
@@ -235,7 +242,7 @@ where
         'd: 'c,
     {
         *self.result =
-            block_on(run_gbl_fastboot(self.ops, buffer_pool, tasks, local, usb, tcp, self.load));
+            run_gbl_fastboot(self.ops, buffer_pool, tasks, local, usb, tcp, self.load).await;
     }
 
     /// Runs fastboot with N pre-allocated async worker tasks.
@@ -307,6 +314,15 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
         .inspect_err(|e| gbl_println!(ops, "Failed to parse BCB boot mode {e}. Ignored"))
         .unwrap_or(AndroidBootMode::Normal);
     gbl_println!(ops, "Boot mode from BCB: {}", boot_mode);
+
+    if matches!(boot_mode, AndroidBootMode::BootloaderBootOnce) {
+        let mut zeroed_command = [0u8; misc::COMMAND_FIELD_SIZE];
+        ops.write_to_partition_sync(
+            "misc",
+            misc::COMMAND_FIELD_OFFSET.try_into().unwrap(),
+            &mut zeroed_command,
+        )?;
+    }
 
     // Checks platform reboot reason.
     let reboot_reason = ops
@@ -1177,6 +1193,26 @@ pub(crate) mod tests {
         );
 
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+    }
+
+    #[test]
+    fn test_android_main_bootonce_bootloader_bcb_command_is_cleared() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.write_to_partition_sync("misc", 0, &mut b"bootonce-bootloader".to_vec()).unwrap();
+        test_fastboot_is_triggered(&mut ops);
+
+        let mut bcb_buffer = [0u8; BootloaderMessage::SIZE_BYTES];
+        ops.read_from_partition_sync("misc", 0, &mut bcb_buffer[..]).unwrap();
+        let bcb = BootloaderMessage::from_bytes_ref(&bcb_buffer).unwrap();
+        assert_eq!(
+            bcb.boot_mode().unwrap(),
+            AndroidBootMode::Normal,
+            "BCB mode is expected to be cleared after bootonce-bootloader is handled"
+        );
     }
 
     #[test]
