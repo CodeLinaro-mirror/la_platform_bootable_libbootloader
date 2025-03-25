@@ -219,6 +219,18 @@ A pointer to the data buffer to receive the USB packet.
 
 `FastbootUsbReceive()` should poll and, if available, receive the next USB
 packet from the Fastboot USB interface into the provided buffer.
+The buffer MUST NOT be retained by the callee between invocations.
+The callee MUST NOT block.
+
+Example usage:
+```c
+UNIT8 buf[USB_PKT_SIZE];
+UINTN buf_sz = sizeof(buf);
+EFI_STATUS res;
+do {
+    res = gbl_fb_usb_proto->FastbootUsbReceive(gbl_fb_usb_proto, &buf_sz, (void*)buf);
+} while(res == EFI_NOT_READY);
+```
 
 ### Status Codes Returned
 
@@ -270,6 +282,19 @@ A pointer to the data buffer to be sent.
 owned by the protocol driver and initiate the send. The interface is
 non-blocking and should return immediately. It should not accept any new packet
 if the previous one hasn't complete.
+The buffer MUST NOT be retained by the callee between invocations.
+The callee MUST NOT block.
+On completion, the implementation must signal `WaitForSendCompletion`.
+
+Example usage:
+```c
+UINT8 buf[USB_PKT_SIZE];
+UINTN buf_sz = fill_buf(&buf);
+EFI_STATUS res = gbl_fb_usb_proto->FastbootUsbSend(gbl_fb_usb_proto, &buf_sz, (void*)buf);
+do {
+    res = boot_services->CheckEvent(gbl_fb_usb_proto->WaitForSendCompletion);
+} while(res == EFI_NOT_READY);
+```
 
 ### Status Codes Returned
 
