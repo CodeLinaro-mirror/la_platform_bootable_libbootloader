@@ -38,6 +38,8 @@ where
     const VERSION_BOOTLOADER: &'static str = "version-bootloader";
     const VERSION_BOOTLOADER_VAL: &'static str = "1.0";
 
+    const SLOT_COUNT: &'static str = "slot-count";
+
     const MAX_FETCH_SIZE: &'static str = "max-fetch-size";
     const MAX_FETCH_SIZE_VAL: &'static str = "0xffffffffffffffff";
 
@@ -54,6 +56,7 @@ where
         let args_str = args_str.map(|v| v.unwrap());
         Ok(match name.to_str()? {
             Self::VERSION_BOOTLOADER => snprintf!(out, "{}", Self::VERSION_BOOTLOADER_VAL),
+            Self::SLOT_COUNT => self.get_var_slot_count(out)?,
             Self::MAX_FETCH_SIZE => snprintf!(out, "{}", Self::MAX_FETCH_SIZE_VAL),
             Self::PARTITION_SIZE => self.get_var_partition_size(args_str, out)?,
             Self::PARTITION_TYPE => self.get_var_partition_type(args_str, out)?,
@@ -71,10 +74,11 @@ where
         &mut self,
         send: &mut impl VarInfoSender,
     ) -> CommandResult<()> {
+        let mut buf = [0u8; 32];
         send.send_var_info(Self::VERSION_BOOTLOADER, [], Self::VERSION_BOOTLOADER_VAL).await?;
+        send.send_var_info(Self::SLOT_COUNT, [], self.get_var_slot_count(&mut buf)?).await?;
         send.send_var_info(Self::MAX_FETCH_SIZE, [], Self::MAX_FETCH_SIZE_VAL).await?;
         self.get_all_block_device(send).await?;
-        let mut buf = [0u8; 32];
         send.send_var_info(Self::DEFAULT_BLOCK, [], self.get_var_default_block(&mut buf)?).await?;
         self.get_all_partition_size_type(send).await?;
 
@@ -222,5 +226,10 @@ where
             Some(v) => snprintf!(out, "{:#x}", v),
             None => snprintf!(out, "None"),
         })
+    }
+
+    /// "fastboot getvar slot-count"
+    fn get_var_slot_count<'s>(&mut self, out: &'s mut [u8]) -> CommandResult<&'s str> {
+        Ok(snprintf!(out, "{}", self.gbl_ops.slot_count()?))
     }
 }
