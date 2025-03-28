@@ -15,7 +15,7 @@
 use super::{avb_verify_slot, cstr_bytes_to_str};
 use crate::{
     android_boot::PartitionsToVerify,
-    constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT},
+    constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE},
     decompress::{decompress_kernel, is_compressed},
     gbl_print, gbl_println,
     ops::GblOps,
@@ -32,11 +32,9 @@ use core::{
     ops::{Deref, Range},
 };
 use liberror::Error;
+use libutils::aligned_subslice;
 use safemath::SafeNum;
 use zerocopy::{IntoBytes, Ref};
-
-// Value of page size for v3/v4 header.
-const PAGE_SIZE: usize = 4096;
 
 // Represents a slot suffix.
 struct SlotSuffix([u8; 3]);
@@ -241,6 +239,8 @@ pub struct LoadedImages<'a> {
     pub vendor_cmdline: &'a str,
     /// DTB.
     pub dtb: &'a mut [u8],
+    /// DTB from partition.
+    pub dtb_part: &'a mut [u8],
     /// Kernel image.
     pub kernel: &'a mut [u8],
     /// Ramdisk image.
@@ -256,6 +256,7 @@ impl<'a> Default for LoadedImages<'a> {
             boot_cmdline: "",
             vendor_cmdline: "",
             dtb: &mut [][..],
+            dtb_part: &mut [][..],
             kernel: &mut [][..],
             ramdisk: &mut [][..],
             unused: &mut [][..],
@@ -273,16 +274,22 @@ pub fn android_load_verify<'a, 'b, 'c>(
     let mut res = LoadedImages::default();
 
     let slot_suffix = SlotSuffix::new(slot)?;
+    // Additional partitions loaded before loading standard boot images.
+    let mut partitions = PartitionsToVerify::default();
+
     // Loads dtbo.
     let dtbo_part = slotted_part("dtbo", slot)?;
     let (dtbo, remains) = load_entire_part(ops, &dtbo_part, &mut load[..])?;
-
-    // TODO(b/384964561): Checks existence of DTB partitions.
-
-    // Additional partitions loaded before loading standard boot images.
-    let mut partitions = PartitionsToVerify::default();
     if dtbo.len() > 0 {
         partitions.try_push_preloaded(c"dtbo", &dtbo[..])?;
+    }
+
+    // Loads dtb.
+    let remains = aligned_subslice(remains, FDT_ALIGNMENT)?;
+    let dtb_part = slotted_part("dtb", slot)?;
+    let (dtb, remains) = load_entire_part(ops, &dtb_part, &mut remains[..])?;
+    if dtb.len() > 0 {
+        partitions.try_push_preloaded(c"dtb", &dtb[..])?;
     }
 
     let add = |v: &mut BootConfigBuilder| {
@@ -303,6 +310,7 @@ pub fn android_load_verify<'a, 'b, 'c>(
 
     drop(partitions);
     res.dtbo = dtbo;
+    res.dtb_part = dtb;
     Ok(res)
 }
 
@@ -723,21 +731,19 @@ pub(crate) mod tests {
     pub(crate) const TEST_PUBLIC_KEY_DIGEST: &str =
         "7ec02ee1be696366f3fa91240a8ec68125c4145d698f597aa2b3464b59ca7fc3";
 
+    // Test data path
+    const TEST_DATA_PATH: &str = "external/gbl/libgbl/testdata/android";
+
     /// Reads a data file under libgbl/testdata/
     pub(crate) fn read_test_data(file: impl AsRef<str>) -> Vec<u8> {
         println!("reading file: {}", file.as_ref());
-        fs::read(Path::new(
-            format!("external/gbl/libgbl/testdata/android/{}", file.as_ref()).as_str(),
-        ))
-        .unwrap()
+        fs::read(Path::new(format!("{TEST_DATA_PATH}/{}", file.as_ref()).as_str())).unwrap()
     }
 
     /// Reads a data file as string under libgbl/testdata/
     pub(crate) fn read_test_data_as_str(file: impl AsRef<str>) -> String {
-        fs::read_to_string(Path::new(
-            format!("external/gbl/libgbl/testdata/android/{}", file.as_ref()).as_str(),
-        ))
-        .unwrap()
+        fs::read_to_string(Path::new(format!("{TEST_DATA_PATH}/{}", file.as_ref()).as_str()))
+            .unwrap()
     }
 
     // Returns the test dtb
@@ -813,6 +819,11 @@ pub(crate) mod tests {
     pub(crate) struct AvbResultBootconfigBuilder {
         vbmeta_size: usize,
         digest: String,
+        boot_digest: Option<String>,
+        init_boot_digest: Option<String>,
+        dtb_digest: Option<String>,
+        dtbo_digest: Option<String>,
+        vendor_boot_digest: Option<String>,
         public_key_digest: String,
         color: BootStateColor,
         unlocked: bool,
@@ -824,6 +835,11 @@ pub(crate) mod tests {
             Self {
                 vbmeta_size: 0,
                 digest: String::new(),
+                boot_digest: None,
+                init_boot_digest: None,
+                dtb_digest: None,
+                dtbo_digest: None,
+                vendor_boot_digest: None,
                 public_key_digest: String::new(),
                 color: BootStateColor::Green,
                 unlocked: false,
@@ -838,6 +854,19 @@ pub(crate) mod tests {
 
         pub(crate) fn digest(mut self, digest: impl Into<String>) -> Self {
             self.digest = digest.into();
+            self
+        }
+
+        pub(crate) fn partition_digest(mut self, name: &str, digest: impl Into<String>) -> Self {
+            let digest = Some(digest.into());
+            match name {
+                "boot" => self.boot_digest = digest,
+                "init_boot" => self.init_boot_digest = digest,
+                "vendor_boot" => self.vendor_boot_digest = digest,
+                "dtb" => self.dtb_digest = digest,
+                "dtbo" => self.dtbo_digest = digest,
+                _ => panic!("unknown digest name requested"),
+            };
             self
         }
 
@@ -867,6 +896,23 @@ pub(crate) mod tests {
                 false => "locked",
             };
 
+            let mut boot_digests = String::new();
+            for (name, maybe_digest) in [
+                ("boot", &self.boot_digest),
+                ("dtb", &self.dtb_digest),
+                ("dtbo", &self.dtbo_digest),
+                ("init_boot", &self.init_boot_digest),
+                ("vendor_boot", &self.vendor_boot_digest),
+            ] {
+                if let Some(digest) = maybe_digest {
+                    boot_digests += format!(
+                        "androidboot.vbmeta.{name}.hash_alg=sha256
+androidboot.vbmeta.{name}.digest={digest}\n"
+                    )
+                    .as_str()
+                }
+            }
+
             format!(
                 "androidboot.vbmeta.device=PARTUUID=00000000-0000-0000-0000-000000000000
 androidboot.vbmeta.public_key_digest={}
@@ -877,12 +923,13 @@ androidboot.vbmeta.size={}
 androidboot.vbmeta.digest={}
 androidboot.vbmeta.invalidate_on_error=yes
 androidboot.veritymode=enforcing
-androidboot.verifiedbootstate={}
+{}androidboot.verifiedbootstate={}
 {}",
                 self.public_key_digest,
                 device_state,
                 self.vbmeta_size,
                 self.digest,
+                boot_digests.as_str(),
                 self.color,
                 self.extra
             )
@@ -906,24 +953,73 @@ androidboot.verifiedbootstate={}
         res.config_bytes().to_vec()
     }
 
+    pub(crate) struct MakeExpectedBootconfigInclude {
+        pub boot: bool,
+        pub init_boot: bool,
+        pub vendor_boot: bool,
+        pub dtb: bool,
+        pub dtbo: bool,
+    }
+
+    impl MakeExpectedBootconfigInclude {
+        fn is_include_str(&self, name: &str) -> bool {
+            match name {
+                "boot" => self.boot,
+                "init_boot" => self.init_boot,
+                "vendor_boot" => self.vendor_boot,
+                "dtb" => self.dtb,
+                "dtbo" => self.dtbo,
+                _ => false,
+            }
+        }
+    }
+
+    impl Default for MakeExpectedBootconfigInclude {
+        fn default() -> MakeExpectedBootconfigInclude {
+            MakeExpectedBootconfigInclude {
+                boot: true,
+                init_boot: true,
+                vendor_boot: true,
+                dtb: true,
+                dtbo: true,
+            }
+        }
+    }
+
     /// Helper for generating expected bootconfig after load and verification.
     pub(crate) fn make_expected_bootconfig(
         vbmeta_file: &str,
         slot: char,
         vendor_config: &str,
+        include: MakeExpectedBootconfigInclude,
     ) -> Vec<u8> {
         let vbmeta_file = Path::new(vbmeta_file);
         let vbmeta_digest = vbmeta_file.with_extension("digest.txt");
         let vbmeta_digest = vbmeta_digest.to_str().unwrap();
-        AvbResultBootconfigBuilder::new()
+        let mut builder = AvbResultBootconfigBuilder::new()
             .vbmeta_size(read_test_data(vbmeta_file.to_str().unwrap()).len())
             .digest(read_test_data_as_str(vbmeta_digest).strip_suffix("\n").unwrap())
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .extra("androidboot.force_normal_boot=1\n")
             .extra(format!("androidboot.slot_suffix=_{slot}\n"))
-            .extra(vendor_config)
-            .build()
+            .extra(vendor_config);
+
+        for name in ["boot", "vendor_boot", "init_boot", "dtbo", "dtb"].iter() {
+            let file = vbmeta_file.with_extension(format!("{name}.digest.txt"));
+            println!("{file:?}");
+            if include.is_include_str(name)
+                && Path::new(format!("{TEST_DATA_PATH}/{}", file.to_str().unwrap()).as_str())
+                    .exists()
+            {
+                builder = builder.partition_digest(
+                    name,
+                    read_test_data_as_str(file.to_str().unwrap()).strip_suffix("\n").unwrap(),
+                );
+            }
+        }
+
+        builder.build()
     }
 
     /// Helper for testing load/verify for a/b slot v0,1,2 image with dtbo partition.
@@ -943,9 +1039,12 @@ androidboot.verifiedbootstate={}
         expected_dtb: &[u8],
         expected_dtbo: &[u8],
     ) {
+        let dtbo =
+            additional_part.iter().any(|(name, _)| name.to_str().unwrap().starts_with("dtbo_"));
         let vbmeta = format!("vbmeta_v{ver}_{slot}.img");
+        let boot = format!("boot_v{ver}_{slot}.img");
         let mut parts: Vec<(CString, String)> = vec![
-            (CString::new(format!("boot_{slot}")).unwrap(), format!("boot_v{ver}_{slot}.img")),
+            (CString::new(format!("boot_{slot}")).unwrap(), boot.clone()),
             (CString::new(format!("vbmeta_{slot}")).unwrap(), vbmeta.clone()),
         ];
         parts.extend_from_slice(additional_part);
@@ -955,7 +1054,12 @@ androidboot.verifiedbootstate={}
             &parts,
             &read_test_data(format!("kernel_{slot}.img")),
             &read_test_data(format!("generic_ramdisk_{slot}.img")),
-            &make_expected_bootconfig(&vbmeta, slot, ""),
+            &make_expected_bootconfig(
+                &vbmeta,
+                slot,
+                "",
+                MakeExpectedBootconfigInclude { dtbo, dtb: false, ..Default::default() },
+            ),
             expected_dtb,
             expected_dtbo,
             "",
@@ -1048,6 +1152,7 @@ androidboot.verifiedbootstate={}
         expected_vendor_bootconfig: &str,
         expected_dtbo: &[u8],
     ) {
+        let dtbo = partitions.iter().any(|(name, _)| name.to_str().unwrap().starts_with("dtbo_"));
         test_android_load_verify_success(
             (u64::from(slot) - ('a' as u64)).try_into().unwrap(),
             partitions,
@@ -1057,7 +1162,12 @@ androidboot.verifiedbootstate={}
                 read_test_data(format!("generic_ramdisk_{slot}.img")),
             ]
             .concat(),
-            &make_expected_bootconfig(&vbmeta, slot, expected_vendor_bootconfig),
+            &make_expected_bootconfig(
+                &vbmeta,
+                slot,
+                expected_vendor_bootconfig,
+                MakeExpectedBootconfigInclude { dtbo, dtb: false, ..Default::default() },
+            ),
             &test_dtb(),
             expected_dtbo,
             TEST_VENDOR_CMDLINE,
