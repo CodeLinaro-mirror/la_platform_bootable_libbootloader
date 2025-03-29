@@ -12,15 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::utils::efi_to_zbi_mem_range_type;
-#[allow(unused_imports)]
 use crate::{
-    efi_blocks::{find_block_devices, EfiGblDisk},
-    fastboot::fastboot,
+    efi_blocks::EfiGblDisk,
     ops::Ops,
-    utils::get_efi_mem_attr,
+    utils::{efi_gbl_fastboot_entry, efi_to_zbi_mem_range_type, take_os_load_buffer},
 };
-use efi::{EfiEntry, EfiMemoryAttributesTable, EfiMemoryMap};
+use core::fmt::Write;
+use efi::{efi_print, efi_println, EfiEntry, EfiMemoryAttributesTable, EfiMemoryMap};
 use efi_types::{
     EfiMemoryAttributesTableHeader, EfiMemoryDescriptor, EFI_MEMORY_ATTRIBUTE_EMA_RUNTIME,
 };
@@ -28,9 +26,8 @@ use liberror::Error;
 use liberror::Error::BufferTooSmall;
 use libgbl::{
     constants::PAGE_SIZE as PAGE_SIZE_USIZE,
-    fuchsia_boot::{zircon_check_enter_fastboot, zircon_load_verify_abr, zircon_part_name},
+    fuchsia_boot::{zircon_main, LoadedVerifiedZircon},
     gbl_print, gbl_println,
-    ops::ImageBuffer,
     partition::check_part_unique,
     GblOps,
     IntegrationError::UnificationError,
@@ -65,56 +62,60 @@ pub fn is_fuchsia_gpt(disks: &[EfiGblDisk]) -> Result<()> {
 
 /// Loads and verifies Fuchsia according to A/B/R.
 ///
-/// On success, returns the kernel and zbi_item buffer.
-pub fn efi_fuchsia_load(ops: &mut Ops) -> Result<(ImageBuffer<'static>, ImageBuffer<'static>)> {
+/// On success, returns a `LoadedVerifiedZircon`
+pub fn efi_fuchsia_load(ops: &mut Ops) -> Result<LoadedVerifiedZircon<'static>> {
+    let entry = ops.efi_entry;
     gbl_println!(ops, "Try booting as Fuchsia/Zircon");
-    // Checks whether to enter fastboot mode.
-    if zircon_check_enter_fastboot(ops) {
-        fastboot(ops, &mut [])?;
-    }
-    let (zbi_items_buffer, kernel_buffer, slot) = zircon_load_verify_abr(ops)?;
-    gbl_println!(ops, "Booting from slot: {}", zircon_part_name(Some(slot)));
-    Ok((kernel_buffer, zbi_items_buffer))
+
+    // Prepares the OS load buffer.
+    let load_buffer = take_os_load_buffer(entry, 128 * 1024 * 1024);
+
+    let mut fastboot_buffer_info = None;
+    Ok(zircon_main(ops, load_buffer.as_mut(), |fb| {
+        efi_gbl_fastboot_entry(entry, fb, &mut fastboot_buffer_info)
+    })?)
 }
 
 /// Exits boot services and boots loaded fuchsia images.
-pub fn efi_fuchsia_boot(
-    _efi_entry: EfiEntry,
-    mut _kernel_buffer: ImageBuffer,
-    mut _zbi_items: ImageBuffer,
-) -> Result<()> {
-    let _zbi_items = _zbi_items.used_mut();
+pub fn efi_fuchsia_boot(efi_entry: EfiEntry, images: LoadedVerifiedZircon<'static>) -> Result<()> {
+    let LoadedVerifiedZircon { zbi_items, kernel, .. } = images;
+    efi_println!(
+        efi_entry,
+        "Booting Fuchsia kernel @{:#x}, ZBI items @{:#x}",
+        kernel.as_ptr() as usize,
+        zbi_items.as_ptr() as usize
+    );
     #[cfg(target_arch = "aarch64")]
     {
         // Uses the unused buffer for `exit_boot_services` to store output memory map.
         // The map is not used for now. We currently rely on UEFI firmware to pass memory map via
         // an raw zbi blob in device tree. Long term we want to support adding from EFI memory maps
         // if none is provided.
-        let item_size = zbi::ZbiContainer::parse(&mut _zbi_items[..])?.container_size()?;
-        let (_, remains) = _zbi_items.split_at_mut(item_size);
-        let _ = efi::exit_boot_services(_efi_entry, remains).unwrap();
+        let item_size = zbi::ZbiContainer::parse(&mut zbi_items[..])?.container_size()?;
+        let (_, remains) = zbi_items.split_at_mut(item_size);
+        let _ = efi::exit_boot_services(efi_entry, remains).unwrap();
         // SAFETY: The kernel has passed libavb verification or device is unlocked, in which case we
         // assume the caller has addressed all safety and security concerns.
-        unsafe { boot::aarch64::jump_zircon_el2_or_lower(_kernel_buffer.used_mut(), _zbi_items) };
+        unsafe { boot::aarch64::jump_zircon_el2_or_lower(kernel, zbi_items) };
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
     {
         const BUFFER_SIZE: usize = 32 * 1024 / 2;
         let mut mem_map_buf = [0u8; BUFFER_SIZE];
-        let mut zbi_items = zbi::ZbiContainer::parse(&mut _zbi_items[..])?;
+        let mut items = zbi::ZbiContainer::parse(&mut zbi_items[..])?;
         let efi_memory_attribute_table =
-            get_efi_mem_attr(&_efi_entry).ok_or(Error::InvalidInput)?;
+            crate::utils::get_efi_mem_attr(&efi_entry).ok_or(Error::InvalidInput)?;
 
         // `exit_boot_service` returnes EFI memory map that is used to derive and append MEM_CONFIG
         // items.
-        let efi_memory_map = efi::exit_boot_services(_efi_entry, &mut mem_map_buf).unwrap();
+        let efi_memory_map = efi::exit_boot_services(efi_entry, &mut mem_map_buf).unwrap();
 
-        add_memory_items(&efi_memory_map, &efi_memory_attribute_table, &mut zbi_items)?;
+        add_memory_items(&efi_memory_map, &efi_memory_attribute_table, &mut items)?;
 
         // SAFETY: The kernel has passed libavb verification or device is unlocked, in which case we
         // assume the caller has addressed all safety and security concerns.
-        unsafe { boot::x86::zbi_boot(_kernel_buffer.used_mut(), _zbi_items) };
+        unsafe { boot::x86::zbi_boot(kernel, zbi_items) };
     }
 
     #[cfg(target_arch = "riscv64")]

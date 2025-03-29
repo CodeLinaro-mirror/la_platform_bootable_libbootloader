@@ -467,7 +467,7 @@ macro_rules! gbl_println {
 /// bootimg_buffer, avb_write_rollback_index(), slot operation etc
 pub(crate) struct RambootOps<'a, T> {
     pub(crate) ops: &'a mut T,
-    pub(crate) preloaded_partitions: &'a [(&'a str, &'a [u8])],
+    pub(crate) ram_partitions: &'a [(&'a str, &'a [u8])],
 }
 
 impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
@@ -592,13 +592,13 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.select_device_trees(components_registry)
     }
 
-    fn read_from_partition_sync(
+    async fn read_from_partition(
         &mut self,
         part: &str,
         off: u64,
         out: &mut (impl SliceMaybeUninit + ?Sized),
     ) -> Result<(), Error> {
-        match self.preloaded_partitions.iter().find(|(name, _)| *name == part) {
+        match self.ram_partitions.iter().find(|(name, _)| *name == part) {
             Some((_, data)) => {
                 let buf = data
                     .get(off.try_into()?..)
@@ -606,7 +606,19 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
                     .ok_or(Error::OutOfRange)?;
                 Ok(out.clone_from_slice(buf))
             }
-            _ => self.ops.read_from_partition_sync(part, off, out),
+            _ => self.ops.read_from_partition(part, off, out).await,
+        }
+    }
+
+    /// Writes data to a partition.
+    async fn write_to_partition(&mut self, _: &str, _: u64, _: &mut [u8]) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn partition_size(&mut self, part: &str) -> Result<Option<u64>, Error> {
+        match self.ram_partitions.iter().find(|(name, _)| *name == part) {
+            Some((_, data)) => Ok(Some(data.len().try_into().unwrap())),
+            _ => self.ops.partition_size(part),
         }
     }
 
@@ -881,6 +893,14 @@ pub(crate) mod test {
                 vec![0u8; self.partition_size(name).unwrap().unwrap().try_into().unwrap()];
             assert!(self.read_from_partition_sync(name, 0, &mut contents[..]).is_ok());
             contents
+        }
+
+        /// Flips a range of bytes on the given partition.
+        pub fn flip_partition_bytes(&mut self, name: &str, off: u64, sz: usize) {
+            let mut contents = vec![0u8; sz];
+            self.read_from_partition_sync(name, off, &mut contents[..]).unwrap();
+            contents.iter_mut().for_each(|v| *v = !*v);
+            self.write_to_partition_sync(name, off, &mut contents[..]).unwrap();
         }
     }
 

@@ -17,10 +17,7 @@
 // `android_boot:android_boot_demo()` and `fuchsia_boot:fuchsia_boot_demo()` for
 // supported/unsupported features at the moment.
 
-use crate::{
-    net::{EfiGblNetwork, EfiTcpSocket},
-    ops::Ops,
-};
+use crate::net::{EfiGblNetwork, EfiTcpSocket};
 use alloc::{boxed::Box, vec::Vec};
 use core::{
     cmp::min, fmt::Write, future::Future, mem::take, pin::Pin, sync::atomic::AtomicU64,
@@ -33,11 +30,9 @@ use efi::{
     EfiEntry,
 };
 use fastboot::{TcpStream, Transport};
-use gbl_async::{block_on, YieldCounter};
+use gbl_async::YieldCounter;
 use liberror::{Error, Result};
-use libgbl::fastboot::{
-    run_gbl_fastboot, GblFastbootResult, GblTcpStream, GblUsbTransport, PinFutContainer,
-};
+use libgbl::fastboot::{GblTcpStream, GblUsbTransport, PinFutContainer};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const FASTBOOT_TCP_PORT: u16 = 5554;
@@ -236,27 +231,4 @@ pub(crate) fn with_fastboot_channels(
     let tcp = tcp.as_mut().map(|v| EfiFastbootTcpTransport::new(v));
 
     f(local_session, usb, tcp)
-}
-
-pub fn fastboot(efi_gbl_ops: &mut Ops, bootimg_buf: &mut [u8]) -> Result<GblFastbootResult> {
-    let efi_entry = efi_gbl_ops.efi_entry;
-    efi_println!(efi_entry, "Entering fastboot mode...");
-
-    let mut res = Default::default();
-    with_fastboot_channels(efi_entry, |local, usb, tcp| {
-        let download_buffers = vec![vec![0u8; 512 * 1024 * 1024]; 2].into();
-        res = block_on(run_gbl_fastboot(
-            efi_gbl_ops,
-            &download_buffers,
-            VecPinFut::default(),
-            local,
-            usb,
-            tcp,
-            bootimg_buf,
-        ));
-    });
-
-    efi_println!(efi_entry, "Leaving fastboot mode...");
-
-    Ok(res)
 }

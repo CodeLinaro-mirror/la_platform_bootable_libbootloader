@@ -174,3 +174,16 @@ be rejected and the host should reboot the device.
 `fastboot oem gbl-sync-blocks` can be used to wait until all currently pending
 flash are completed. The command returns error if any previous or current flash
 encounters errors.
+
+## Fastboot Boot for Fuchsia
+
+In Fuchsia mode, the image format for "fastboot boot" is ZBI followed by vbmeta
+image concatenated together, i.e.:
+
+```sh
+$ cat zircon_a.zbi vbmeta_a > zircon_fastboot.img
+$ fastboot boot zircon_fastboot.img
+```
+
+Note: In unlocked mode, it's possible to omit the vbmeta image. Verification
+will fail as expected, but boot will proceed since it is unlocked.

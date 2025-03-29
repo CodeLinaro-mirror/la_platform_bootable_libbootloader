@@ -25,7 +25,9 @@ extern crate alloc;
 
 mod efi_blocks;
 mod error;
+#[cfg(not(test))]
 mod ops;
+#[cfg(not(test))]
 #[macro_use]
 mod utils;
 
@@ -46,8 +48,6 @@ mod net;
 // and automatically pick up the correct one.
 #[cfg(not(test))]
 pub(crate) use efi;
-#[cfg(test)]
-pub(crate) use efi_mocks as efi;
 
 #[cfg(not(test))]
 use {
@@ -104,9 +104,9 @@ pub fn app_main(entry: EfiEntry) -> Result<()> {
     match get_target_os(&entry, &disks) {
         TargetOs::Fuchsia => {
             let mut ops = Ops::new(&entry, &disks[..], Some(Os::Fuchsia));
-            let (kernel, zbi_items) = fuchsia_boot::efi_fuchsia_load(&mut ops)?;
+            let images = fuchsia_boot::efi_fuchsia_load(&mut ops)?;
             drop(disks);
-            fuchsia_boot::efi_fuchsia_boot(entry, kernel, zbi_items)?;
+            fuchsia_boot::efi_fuchsia_boot(entry, images)?;
         }
         TargetOs::Android => {
             let mut ops = Ops::new(&entry, &disks[..], Some(Os::Android));
