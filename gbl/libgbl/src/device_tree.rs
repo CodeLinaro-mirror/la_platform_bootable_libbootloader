@@ -37,9 +37,9 @@ pub enum DeviceTreeComponentSource {
     /// Loaded from Vendor Boot partition.
     VendorBoot,
     /// Loaded from DTB partition.
-    Dtb(DtTableMetadata),
+    Dtb,
     /// Loaded from DTBO partition.
-    Dtbo(DtTableMetadata),
+    Dtbo,
 }
 
 impl core::fmt::Display for DeviceTreeComponentSource {
@@ -47,8 +47,8 @@ impl core::fmt::Display for DeviceTreeComponentSource {
         match self {
             DeviceTreeComponentSource::Boot => write!(f, "Boot"),
             DeviceTreeComponentSource::VendorBoot => write!(f, "VendorBoot"),
-            DeviceTreeComponentSource::Dtb(_) => write!(f, "Dtb"),
-            DeviceTreeComponentSource::Dtbo(_) => write!(f, "Dtbo"),
+            DeviceTreeComponentSource::Dtb => write!(f, "Dtb"),
+            DeviceTreeComponentSource::Dtbo => write!(f, "Dtbo"),
         }
     }
 }
@@ -58,6 +58,8 @@ impl core::fmt::Display for DeviceTreeComponentSource {
 pub struct DeviceTreeComponent<'a> {
     /// Source the component is loaded from.
     pub source: DeviceTreeComponentSource,
+    /// Metadata for entries loaded from dt_table structure.
+    pub metadata: Option<DtTableMetadata>,
     /// Device tree component payload. Must be 8 bytes aligned.
     pub dt: &'a [u8],
     /// Device tree component is selected.
@@ -80,8 +82,25 @@ impl<'a> DeviceTreeComponent<'a> {
             self.source,
             DeviceTreeComponentSource::Boot
                 | DeviceTreeComponentSource::VendorBoot
-                | DeviceTreeComponentSource::Dtb(_)
+                | DeviceTreeComponentSource::Dtb
         )
+    }
+}
+
+fn try_dt_totalsize_from_unaligned_bytes_ref(header: &[u8], buffer: &mut [u8]) -> Result<usize> {
+    let aligned_buffer = aligned_subslice(buffer, FDT_ALIGNMENT)?;
+    let header_slice = aligned_buffer
+        .get_mut(..FDT_HEADER_SIZE)
+        .ok_or(Error::BufferTooSmall(Some(FDT_HEADER_SIZE)))?;
+
+    // Fdt header must be aligned, so copy to an aligned buffer.
+    header_slice.copy_from_slice(
+        &header.get(..FDT_HEADER_SIZE).ok_or(Error::BufferTooSmall(Some(FDT_HEADER_SIZE)))?,
+    );
+
+    match FdtHeader::from_bytes_ref(&header_slice) {
+        Ok(header) => Ok(header.totalsize()),
+        Err(e) => Err(e),
     }
 }
 
@@ -98,7 +117,7 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
     /// aligned by using provided buffer to cut from. Returns remain buffer.
     pub fn append_from_dttable<'b>(
         &mut self,
-        is_dtb: bool,
+        source: DeviceTreeComponentSource,
         dttable: &DtTableImage<'b>,
         buffer: &'a mut [u8],
     ) -> Result<&'a mut [u8]> {
@@ -117,11 +136,8 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
             aligned_buffer.copy_from_slice(entry.dtb);
 
             self.components.push(DeviceTreeComponent {
-                source: if is_dtb {
-                    DeviceTreeComponentSource::Dtb(entry.metadata)
-                } else {
-                    DeviceTreeComponentSource::Dtbo(entry.metadata)
-                },
+                source: source,
+                metadata: Some(entry.metadata),
                 dt: aligned_buffer,
                 selected: false,
             });
@@ -130,16 +146,6 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
         }
 
         Ok(remains)
-    }
-
-    /// Load device tree components from a dtbo image. Ensure components are 8 bytes
-    /// aligned by using provided `buffer` to cut from. Returns remain buffer.
-    pub fn append_from_dtbo<'b>(
-        &mut self,
-        dttable: &DtTableImage<'b>,
-        buffer: &'a mut [u8],
-    ) -> Result<&'a mut [u8]> {
-        self.append_from_dttable(false, dttable, buffer)
     }
 
     /// Append additional device trees from the buffer, where they are stored sequentially.
@@ -156,16 +162,10 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
         let mut components_added = 0;
         let mut data_remains = data;
         let mut buffer_remains = buffer;
-        while data_remains.len() >= FDT_HEADER_SIZE {
-            let aligned_buffer = aligned_subslice(buffer_remains, FDT_ALIGNMENT)?;
 
-            let header_slice = aligned_buffer.get_mut(..FDT_HEADER_SIZE).ok_or(Error::Other(
-                Some("Provided buffer is too small to ensure multidt entry is aligned"),
-            ))?;
-            // Fdt header must be aligned, so copy to an aligned buffer.
-            header_slice.copy_from_slice(&data_remains[..FDT_HEADER_SIZE]);
-            let next_fdt_size = FdtHeader::from_bytes_ref(header_slice)?.totalsize();
-
+        while let Ok(next_fdt_size) =
+            try_dt_totalsize_from_unaligned_bytes_ref(data_remains, buffer_remains)
+        {
             if self.components.is_full() {
                 return Err(Error::Other(Some(MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG)));
             }
@@ -175,6 +175,7 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
                 data_remains.split_at_checked(next_fdt_size).ok_or(Error::Other(Some(
                     "Multidt structure has a valid header but doesn't have a device tree payload",
                 )))?;
+            let aligned_buffer = aligned_subslice(buffer_remains, FDT_ALIGNMENT)?;
             let (aligned_buffer, aligned_buffer_remains) =
                 aligned_buffer.split_at_mut_checked(next_fdt_size).ok_or(Error::Other(Some(
                     "Provided buffer is too small to ensure multidt entry is aligned",
@@ -184,6 +185,7 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
             Fdt::new(&aligned_buffer)?;
             self.components.push(DeviceTreeComponent {
                 source: source,
+                metadata: None,
                 dt: &aligned_buffer[..],
                 selected: false,
             });
@@ -227,6 +229,7 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
         let (fdt_buffer, fdt_remains) = fdt.split_at(header.totalsize());
         self.components.push(DeviceTreeComponent {
             source: source,
+            metadata: None,
             dt: fdt_buffer,
             selected: false,
         });
@@ -328,6 +331,35 @@ pub(crate) mod test {
             component,
             &DeviceTreeComponent {
                 source: DeviceTreeComponentSource::Boot,
+                metadata: None,
+                dt: &dt[..],
+                selected: false,
+            }
+        );
+        assert!(component.is_base_device_tree());
+    }
+
+    #[test]
+    fn test_components_registry_append_component_with_tail() {
+        let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
+        let dt_with_tail = [dt.clone(), vec![0; 100]].concat();
+        let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
+        let mut gbl_ops = FakeGblOps::new(&[]);
+        let mut registry = DeviceTreeComponentsRegistry::new();
+
+        registry
+            .append(&mut gbl_ops, DeviceTreeComponentSource::Boot, &dt_with_tail[..], &mut buffer)
+            .unwrap();
+
+        assert_eq!(registry.components().count(), 1);
+
+        let component = registry.components().next().unwrap();
+
+        assert_eq!(
+            component,
+            &DeviceTreeComponent {
+                source: DeviceTreeComponentSource::Boot,
+                metadata: None,
                 dt: &dt[..],
                 selected: false,
             }
@@ -357,20 +389,23 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_components_append_from_dtbo() {
+    fn test_components_append_from_dttable() {
         let dttable = include_bytes!("../../libdttable/test/data/dttable.img").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         let table = DtTableImage::from_bytes(&dttable[..]).unwrap();
-        registry.append_from_dtbo(&table, &mut buffer[..]).unwrap();
+        registry
+            .append_from_dttable(DeviceTreeComponentSource::Dtbo, &table, &mut buffer[..])
+            .unwrap();
 
         // Check data is loaded
         let components: Vec<_> = registry.components().cloned().collect();
         let expected_components: Vec<DeviceTreeComponent> = table
             .entries()
             .map(|e| DeviceTreeComponent {
-                source: DeviceTreeComponentSource::Dtbo(e.metadata),
+                source: DeviceTreeComponentSource::Dtbo,
+                metadata: Some(e.metadata),
                 dt: e.dtb,
                 selected: false,
             })
@@ -391,9 +426,9 @@ pub(crate) mod test {
         let sources = [
             DeviceTreeComponentSource::VendorBoot,
             DeviceTreeComponentSource::Boot,
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
         ];
         let mut current_buffer = &mut buffer[..];
         for source in sources.iter() {
@@ -425,9 +460,9 @@ pub(crate) mod test {
         let sources = [
             DeviceTreeComponentSource::VendorBoot,
             DeviceTreeComponentSource::Boot,
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
         ];
         let mut current_buffer = &mut buffer[..];
         for source in sources.iter() {
@@ -453,9 +488,9 @@ pub(crate) mod test {
         let sources = [
             DeviceTreeComponentSource::VendorBoot,
             DeviceTreeComponentSource::Boot,
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
         ];
         let mut current_buffer = &mut buffer[..];
         for source in sources.iter() {
@@ -480,9 +515,9 @@ pub(crate) mod test {
         let sources = [
             DeviceTreeComponentSource::VendorBoot,
             DeviceTreeComponentSource::Boot,
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
         ];
         let mut current_buffer = &mut buffer[..];
         for source in sources.iter() {
@@ -506,9 +541,9 @@ pub(crate) mod test {
 
         let sources = [
             DeviceTreeComponentSource::VendorBoot,
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
-            DeviceTreeComponentSource::Dtbo(Default::default()),
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
+            DeviceTreeComponentSource::Dtbo,
         ];
         let mut current_buffer = &mut buffer[..];
         for source in sources.iter() {
@@ -568,12 +603,7 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         registry
-            .append(
-                &mut gbl_ops,
-                DeviceTreeComponentSource::Dtbo(Default::default()),
-                &dt[..],
-                &mut buffer,
-            )
+            .append(&mut gbl_ops, DeviceTreeComponentSource::Dtbo, &dt[..], &mut buffer)
             .unwrap();
 
         assert!(registry.autoselect().is_err());
@@ -583,6 +613,21 @@ pub(crate) mod test {
     fn test_components_append_from_multifd() {
         let half = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let dt = [half.clone(), half].concat();
+        let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
+        let mut gbl_ops = FakeGblOps::new(&[]);
+        let mut registry = DeviceTreeComponentsRegistry::new();
+
+        registry
+            .append(&mut gbl_ops, DeviceTreeComponentSource::VendorBoot, &dt[..], &mut buffer)
+            .unwrap();
+
+        assert_eq!(registry.components().count(), 2);
+    }
+
+    #[test]
+    fn test_components_append_from_multifd_with_tail() {
+        let half = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
+        let dt = [half.clone(), half, vec![0; 100]].concat();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
         let mut registry = DeviceTreeComponentsRegistry::new();
