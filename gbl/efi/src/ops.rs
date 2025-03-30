@@ -31,8 +31,11 @@ use core::{
 use efi::{
     efi_print, efi_println,
     protocol::{
-        dt_fixup::DtFixupProtocol, gbl_efi_ab_slot::GblSlotProtocol, gbl_efi_avb::GblAvbProtocol,
-        gbl_efi_fastboot::GblFastbootProtocol, gbl_efi_image_loading::GblImageLoadingProtocol,
+        dt_fixup::DtFixupProtocol,
+        gbl_efi_ab_slot::GblSlotProtocol,
+        gbl_efi_avb::GblAvbProtocol,
+        gbl_efi_fastboot::GblFastbootProtocol,
+        gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
     },
     EfiEntry,
@@ -87,10 +90,7 @@ fn avb_color_to_efi_color(color: BootStateColor) -> u32 {
 }
 
 fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDeviceTree {
-    let metadata = match component.source {
-        DeviceTreeComponentSource::Dtb(m) | DeviceTreeComponentSource::Dtbo(m) => m,
-        _ => Default::default(),
-    };
+    let metadata = component.metadata.unwrap_or_default();
 
     GblEfiVerifiedDeviceTree {
         metadata: GblEfiDeviceTreeMetadata {
@@ -99,8 +99,8 @@ fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDevi
                 DeviceTreeComponentSource::VendorBoot => {
                     efi_types::GBL_EFI_DEVICE_TREE_SOURCE_VENDOR_BOOT
                 }
-                DeviceTreeComponentSource::Dtb(_) => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTB,
-                DeviceTreeComponentSource::Dtbo(_) => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTBO,
+                DeviceTreeComponentSource::Dtb => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTB,
+                DeviceTreeComponentSource::Dtbo => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTBO,
             },
             id: metadata.id,
             rev: metadata.rev,
@@ -132,6 +132,23 @@ fn efi_error_to_avb_error(error: Error) -> AvbIoError {
         Error::Unsupported => AvbIoError::NotImplemented,
         _ => AvbIoError::NotImplemented,
     }
+}
+
+/// Helper for getting platform reserved buffer from EFI image loading prototol.
+pub(crate) fn get_buffer_from_protocol(
+    efi_entry: &EfiEntry,
+    image_name: &str,
+    size: usize,
+) -> Result<EfiImageBufferInfo> {
+    let mut image_type = [0u16; PARTITION_NAME_LEN_U16];
+    image_type.iter_mut().zip(image_name.encode_utf16()).for_each(|(dst, src)| {
+        *dst = src;
+    });
+    Ok(efi_entry
+        .system_table()
+        .boot_services()
+        .find_first_and_open::<GblImageLoadingProtocol>()?
+        .get_buffer(&GblEfiImageInfo { ImageType: image_type, SizeBytes: size })?)
 }
 
 pub struct Ops<'a, 'b> {
@@ -167,27 +184,18 @@ impl<'a, 'b> Ops<'a, 'b> {
     /// # Return
     /// * Ok(ImageBuffer) - Return buffer for partition loading and verification.
     /// * Err(_) - on error
-    fn get_buffer_image_loading(
+    pub(crate) fn get_buffer_image_loading(
         &mut self,
         image_name: &str,
         size: NonZeroUsize,
     ) -> GblResult<ImageBuffer<'static>> {
-        let mut image_type = [0u16; PARTITION_NAME_LEN_U16];
-        image_type.iter_mut().zip(image_name.encode_utf16()).for_each(|(dst, src)| {
-            *dst = src;
-        });
-        let image_info = GblEfiImageInfo { ImageType: image_type, SizeBytes: size.get() };
-        let efi_image_buffer = self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblImageLoadingProtocol>()?
-            .get_buffer(&image_info)?;
-
         // EfiImageBuffer -> ImageBuffer
         // Make sure not to drop efi_image_buffer since we transferred ownership to ImageBuffer
-        let buffer = efi_image_buffer.take();
-        Ok(ImageBuffer::new(buffer))
+        Ok(ImageBuffer::new(
+            get_buffer_from_protocol(self.efi_entry, image_name, size.get())?
+                .take()
+                .ok_or(Error::InvalidState)?,
+        ))
     }
 
     /// Get buffer for partition loading and verification.
@@ -1502,20 +1510,10 @@ mod test {
             .append(&mut ops, DeviceTreeComponentSource::VendorBoot, &base, current_buffer)
             .unwrap();
         current_buffer = registry
-            .append(
-                &mut ops,
-                DeviceTreeComponentSource::Dtbo(Default::default()),
-                &overlay,
-                current_buffer,
-            )
+            .append(&mut ops, DeviceTreeComponentSource::Dtbo, &overlay, current_buffer)
             .unwrap();
         registry
-            .append(
-                &mut ops,
-                DeviceTreeComponentSource::Dtbo(Default::default()),
-                &overlay2,
-                current_buffer,
-            )
+            .append(&mut ops, DeviceTreeComponentSource::Dtbo, &overlay2, current_buffer)
             .unwrap();
 
         assert_eq!(ops.select_device_trees(&mut registry), Ok(()));
