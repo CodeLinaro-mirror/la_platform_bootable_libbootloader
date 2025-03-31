@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //! Fastboot backend for libgbl.
-
 use crate::{
     android_boot::{android_load_verify_fixup, get_boot_slot, get_kernel},
     fuchsia_boot::{
@@ -26,7 +25,6 @@ use crate::{
     GblOps,
 };
 pub use abr::{mark_slot_active, set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
-
 use core::{
     array::from_fn, cmp::min, ffi::CStr, fmt::Write, future::Future, marker::PhantomData,
     mem::take, ops::DerefMut, ops::Range, pin::Pin, str::from_utf8,
@@ -327,8 +325,6 @@ where
         // The fastboot command loop task for interacting with the remote host.
         let cmd_loop_end = Shared::from(false);
 
-        // The cmd_loop_task future is big enough
-        // to overflow the stack if it is not boxed.
         let cmd_loop_task = async {
             loop {
                 if let Some(ref mut l) = local {
@@ -859,6 +855,11 @@ where
                 self.add_staged_bootloader_file(file_name).await?;
                 Ok(b"")
             }
+            #[cfg(feature = "gbl_dev")]
+            "stack-smash-demo" => {
+                smash::stack_smash_demo(self.gbl_ops);
+                Err("Stack smash demo failed to restart system".into())
+            }
             _ => Err("Unknown oem command".into()),
         }
     }
@@ -869,6 +870,45 @@ where
             true => self.boot_fuchsia(&img[..sz], resp).await,
             _ => self.boot_android(&img[..sz], resp).await,
         }
+    }
+}
+
+#[cfg(feature = "gbl_dev")]
+mod smash {
+    use super::*;
+    use libutils::get_sp;
+
+    #[inline(never)]
+    fn smash<'a, 'b>(ops: &mut impl GblOps<'a, 'b>, caller_sp: usize) {
+        let sp = get_sp();
+        let stack_size_bytes = caller_sp - sp;
+        let terminus = (stack_size_bytes) / core::mem::size_of::<usize>();
+
+        for i in 0..=terminus {
+            // SAFETY: this is NOT SAFE.
+            // It is a demo used to show stack smashing protection.
+            // It DELIBERATELY violates stack integrity!
+            //
+            // This module requires the "gbl_dev" feature which precludes
+            // use on production devices.
+            unsafe {
+                let ptr = (sp as *mut usize).add(i);
+                gbl_println!(ops, "old val for stack @ sp + {} = 0x{:x}", i, *ptr);
+                // Hack to keep RISC-V from crashing in the wrong way
+                // for the wrong reason :P
+                if i > 4 {
+                    *ptr += 1;
+                }
+            }
+        }
+        gbl_println!(ops, "Finished smashing stack");
+    }
+
+    #[inline(never)]
+    pub(super) fn stack_smash_demo<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) {
+        gbl_println!(ops, "Stack smashing demo");
+        let base_stack = get_sp();
+        smash(ops, base_stack);
     }
 }
 

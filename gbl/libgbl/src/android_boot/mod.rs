@@ -335,12 +335,12 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
         .ok_or(Error::BufferTooSmall(Some(BootloaderMessage::SIZE_BYTES)))
         .inspect_err(|e| gbl_println!(ops, "Buffer too small for reading misc. {e}"))?;
     ops.read_from_partition_sync("misc", 0, bcb_buffer)
-        .inspect_err(|e| gbl_println!(ops, "Failed to read misc partition {e}"))?;
+        .inspect_err(|e| gbl_println!(ops, "Failed to read misc partition: {e}"))?;
     let bcb = BootloaderMessage::from_bytes_ref(bcb_buffer)
-        .inspect_err(|e| gbl_println!(ops, "Failed to parse bootloader messgae {e}"))?;
+        .inspect_err(|e| gbl_println!(ops, "Failed to parse bootloader messgae: {e}"))?;
     let boot_mode = bcb
         .boot_mode()
-        .inspect_err(|e| gbl_println!(ops, "Failed to parse BCB boot mode {e}. Ignored"))
+        .inspect_err(|e| gbl_println!(ops, "Failed to parse BCB boot mode ({e}). Ignored"))
         .unwrap_or(AndroidBootMode::Normal);
     gbl_println!(ops, "Boot mode from BCB: {}", boot_mode);
 

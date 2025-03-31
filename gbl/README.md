@@ -119,7 +119,7 @@ configurations:
    ```
    mkdir -p /tmp/esp/EFI/BOOT && \
    cp <path to EFI image> /tmp/esp/EFI/BOOT/bootx64.efi && \
-   qemu-system-x86_64 -nographic \
+   qemu-system-x86_64 -nographic -m 1G \
        -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
        -drive format=raw,file=fat:rw:/tmp/esp
    ```
@@ -137,10 +137,9 @@ configurations:
    ```
    mkdir -p /tmp/esp/EFI/BOOT && \
    cp <path to EFI image> /tmp/esp/EFI/BOOT/bootriscv64.efi && \
-   qemu-system-riscv64 -nographic -machine virt -m 256M \
+   qemu-system-riscv64 -nographic -machine virt -m 1G \
        -bios /usr/lib/u-boot/qemu-riscv64/u-boot.bin \
-       -drive format=raw,file=fat:rw:/tmp/esp,id=blk0 \
-       -device virtio-blk-device,drive=blk0
+       -drive format=raw,file=fat:rw:/tmp/esp
    ```
 
 ### Boot Fuchsia on emulator

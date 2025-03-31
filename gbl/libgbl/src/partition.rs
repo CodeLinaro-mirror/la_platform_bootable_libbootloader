@@ -172,7 +172,7 @@ where
     /// Finds a partition.
     ///
     /// * If `part` is none, the method returns an unnamed `Partition` that represents the whole
-    //    raw storage.
+    ///   raw storage.
     pub fn find_partition(&self, part: Option<&str>) -> Result<Partition, Error> {
         let Some(part) = part else {
             return Ok(Partition::Raw(RawName::new(c"").unwrap(), self.info_cache.total_size()?));

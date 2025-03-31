@@ -96,9 +96,11 @@ rust_binary(
     deps = [
         ":libgbl_efi",
         "@avb//:avb_crypto_ops_sha_impl_staticlib",
+        "@cfg_if",
         "@gbl//libavb:sysdeps",
         "@gbl//libefi",
         "@gbl//libefi_types",
+        "@gbl//libstack",
     ] + select(
         {
             "@gbl//toolchain:gbl_rust_elf_riscv64": [

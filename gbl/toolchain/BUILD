@@ -393,6 +393,18 @@ uefi_rustc_flags = [
     # Disable default sysroot. We'll pass sysroot explicitly via the `rust_std` field.
     "--sysroot",
     "/dev/null",
+    # The bootloader does not persist for long and does not directly
+    # do any heavy computation.
+    # Trade some performance for additional security checks.
+    "-C",
+    "overflow-checks=true",
+    # Stack protector must be one of {none,all}
+    # Note: because the UEFI toolchain does not link against a libc
+    # we need to define the required symbols manually.
+    # All required functions must be implemented in C to prevent
+    # infinite recursion.
+    "-Z",
+    "stack-protector=all",
 ]
 
 # x86_64 UEFI toolchain
@@ -403,7 +415,10 @@ rust_toolchain(
     default_edition = "2021",
     dylib_ext = ".so",
     exec_triple = "x86_64-unknown-linux-gnu",
-    extra_rustc_flags = common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select),
+    extra_rustc_flags = [
+        "-Z",
+        "cf-protection=full",
+    ] + common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select),
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
     rust_std = "@rust_prebuilts//:x86_64-unknown-uefi_prebuilt_stdlibs",
@@ -432,14 +447,7 @@ rust_toolchain(
     extra_rustc_flags = common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select),
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
-    # Need to use our own sysroot because we have a custom patch that needs to be applied for std
-    # in order to enable compiler builtin for chkstk(), alloca(). Once the fix is upstreamed, we
-    # can use the prebuilt.
-    rust_std = select({
-        ":rust_no_sysroot_true": ":rust_stdlib_empty",
-        "//conditions:default": ":rust_std_source_build",
-    }),
-    #rust_std = "@rust_prebuilts//:i686-unknown-uefi_prebuilt_stdlibs",
+    rust_std = "@rust_prebuilts//:i686-unknown-uefi_prebuilt_stdlibs",
     rustc = "@rust_prebuilts//:bin/rustc",
     staticlib_ext = ".a",
     stdlib_linkflags = [],
@@ -462,7 +470,10 @@ rust_toolchain(
     default_edition = "2021",
     dylib_ext = ".so",
     exec_triple = "x86_64-unknown-linux-gnu",
-    extra_rustc_flags = common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select),
+    extra_rustc_flags = [
+        "-Z",
+        "branch-protection=bti,pac-ret,leaf",
+    ] + common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select),
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
     rust_std = "@rust_prebuilts//:aarch64-unknown-uefi_prebuilt_stdlibs",
