@@ -187,7 +187,7 @@ be used without modification.
 
 ### GblSlotProtocol
 
-* TODO(b/359946695): link documentation
+* [`GBL_EFI_AB_SLOT_PROTOCOL`](./gbl_efi_ab_slot_protocol.md)
 * optional: enables A/B slotted booting
 
 Used to read and write A/B slot metadata. If not provided, GBL will
@@ -205,7 +205,7 @@ still allowing GBL to implement the boot flow logic.
 
 ### GblImageLoadingProtocol
 
-* TODO(b/359946775): link documentation
+* [`GBL_EFI_IMAGE_LOADING_PROTOCOL`](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md)
 * optional: enables loading images to predefined memory locations
 
 Used to provide buffers to load the images for verification and boot process.
@@ -216,10 +216,18 @@ standard boot partitions.
 
 ### GblAvbProtocol
 
-* [`GBL_EFI_AVB_PROTOCOL`](./gbl_avb_protocol.md)
+* [`GBL_EFI_AVB_PROTOCOL`](./gbl_efi_avb_protocol.md)
 * required for production devices: enables AVB-related firmware callbacks.
 
 This protocol delegates some of AVB-related logic to the firmware, including
 tasks such as verifying public keys, handling verification results, and
 managing the device’s secure state (e.g., ROT, lock state, rollback indexes,
 etc.).
+
+### GblAvfProtocol
+
+* [`GBL_EFI_AVF_PROTOCOL`](./gbl_efi_avf_protocol.md)
+* optional: enables AVF-related firmware callbacks.
+
+This protocol delegates AVF-related logic to the firmware to ensure the
+integrity of pVMs running under the Android Virtualization Framework.
