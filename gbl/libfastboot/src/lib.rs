@@ -886,13 +886,14 @@ async fn reboot(
 async fn boot(
     transport: &mut impl Transport,
     fb_impl: &mut impl FastbootImplementation,
-) -> Result<()> {
+) -> Result<bool> {
     let mut resp = Responder::new(transport);
     let boot_res = async { fb_impl.boot(&mut resp).await }.await;
     match boot_res {
-        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(ref e) => reply_fail!(resp, "{}", e.to_str()),
         _ => reply_okay!(resp, "boot_command"),
-    }
+    }?;
+    Ok(boot_res.is_ok())
 }
 
 // Handles `fastboot continue`
@@ -967,10 +968,7 @@ pub async fn process_next_command(
         return transport.send_packet(fastboot_fail!(packet, "No command")).await.map(|_| false);
     };
     match cmd {
-        "boot" => {
-            boot(transport, fb_impl).await?;
-            return Ok(true);
-        }
+        "boot" => return boot(transport, fb_impl).await,
         "continue" => {
             r#continue(transport, fb_impl).await?;
             return Ok(true);
@@ -1076,6 +1074,7 @@ mod test {
         downloaded_size: usize,
         reboot_mode: Option<RebootMode>,
         active_slot: Option<String>,
+        boot_result: Option<CommandResult<()>>,
     }
 
     impl FastbootImplementation for FastbootTest {
@@ -1149,8 +1148,8 @@ mod test {
                 .await?)
         }
 
-        async fn boot(&mut self, mut responder: impl InfoSender + OkaySender) -> CommandResult<()> {
-            Ok(responder.send_info("Boot to boot.img...").await?)
+        async fn boot(&mut self, _: impl InfoSender + OkaySender) -> CommandResult<()> {
+            self.boot_result.take().unwrap_or(Ok(()))
         }
 
         async fn reboot(
@@ -1261,12 +1260,21 @@ mod test {
         let mut transport = TestTransport::new();
         transport.add_input(b"boot");
         let _ = block_on(run(&mut transport, &mut fastboot_impl));
+        assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAYboot_command".into()]));
+    }
+
+    #[test]
+    fn test_boot_not_exit_if_failed() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        fastboot_impl.download_buffer = vec![0u8; 1024];
+        fastboot_impl.boot_result = Some(Err("Test".into()));
+        let mut transport = TestTransport::new();
+        transport.add_input(b"boot");
+        transport.add_input(b"getvar:max-download-size");
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
         assert_eq!(
             transport.out_queue,
-            VecDeque::<Vec<u8>>::from([
-                b"INFOBoot to boot.img...".into(),
-                b"OKAYboot_command".into()
-            ])
+            VecDeque::<Vec<u8>>::from([b"FAILTest".into(), b"OKAY0x400".into(),])
         );
     }
 
