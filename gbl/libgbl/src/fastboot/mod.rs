@@ -963,6 +963,7 @@ pub(crate) mod test {
         constants::KiB,
         constants::KERNEL_ALIGNMENT,
         ops::test::{slot, FakeGblOps, FakeGblOpsStorage},
+        slots::SlotsMetadata,
         tests::AlignedBuffer,
         Os,
     };
@@ -1139,6 +1140,7 @@ pub(crate) mod test {
             logger.0,
             [
                 "version-bootloader:: 1.0",
+                "slot-count:: 0",
                 "max-fetch-size:: 0xffffffffffffffff",
                 "block-device:0:total-blocks: 0x80",
                 "block-device:0:block-size: 0x200",
@@ -1995,7 +1997,7 @@ pub(crate) mod test {
         let mut gbl_ops = FakeGblOps::new(&storage);
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
-        let mut local = TestLocalSession::from(["getvar:all"].as_slice());
+        let mut local = TestLocalSession::from(["getvar:max-fetch-size"].as_slice());
 
         // New scope to release reference on local
         {
@@ -2048,25 +2050,7 @@ pub(crate) mod test {
 
         assert_eq!(
             local.outgoing_packets,
-            VecDeque::from(vec![
-                Vec::from(b"INFOmax-download-size: 0x20000"),
-                Vec::from(b"INFOversion-bootloader: 1.0"),
-                Vec::from(b"INFOmax-fetch-size: 0xffffffffffffffff"),
-                Vec::from(b"INFOblock-device:0:total-blocks: 0x1000"),
-                Vec::from(b"INFOblock-device:0:block-size: 0x1"),
-                Vec::from(b"INFOblock-device:0:status: idle"),
-                Vec::from(b"INFOblock-device:1:total-blocks: 0x2000"),
-                Vec::from(b"INFOblock-device:1:block-size: 0x1"),
-                Vec::from(b"INFOblock-device:1:status: idle"),
-                Vec::from(b"INFOgbl-default-block: None"),
-                Vec::from(b"INFOpartition-size:raw_0/0: 0x1000"),
-                Vec::from(b"INFOpartition-type:raw_0/0: raw"),
-                Vec::from(b"INFOpartition-size:raw_1/1: 0x2000"),
-                Vec::from(b"INFOpartition-type:raw_1/1: raw"),
-                Vec::from(b"INFOgbl-test-var:1: gbl-test-var-val:1"),
-                Vec::from(b"INFOgbl-test-var:2: gbl-test-var-val:2"),
-                Vec::from(b"OKAY"),
-            ])
+            VecDeque::from(vec![Vec::from(b"OKAY0xffffffffffffffff"),])
         );
 
         // Verifies flashed image on raw_0.
@@ -2259,6 +2243,7 @@ pub(crate) mod test {
                 b"FAILNotFound",
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
+                b"INFOslot-count: 0",
                 b"INFOmax-fetch-size: 0xffffffffffffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
@@ -2284,6 +2269,7 @@ pub(crate) mod test {
                 b"OKAY0x3000",
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
+                b"INFOslot-count: 0",
                 b"INFOmax-fetch-size: 0xffffffffffffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
@@ -2768,6 +2754,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
+        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -2806,6 +2793,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
+        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -2991,5 +2979,61 @@ pub(crate) mod test {
             None::<&SharedTestListener>,
             &mut [],
         ));
+    }
+
+    #[test]
+    fn test_fastboot_getvar_slot_count() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(128)]; 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.slot_metadata_result = Some(Ok(SlotsMetadata { slot_count: 123 }));
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"getvar:slot-count");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        // The out-of-range errors should be caught before async task is launched.
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[b"OKAY123", b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_fastboot_getvar_slot_count_fuchsia_abr_default() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(128)]; 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.os = Some(Os::Fuchsia);
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"getvar:slot-count");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        // The out-of-range errors should be caught before async task is launched.
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[b"OKAY2", b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
     }
 }

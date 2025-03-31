@@ -97,24 +97,28 @@ pub trait GblOps<'a, 'd> {
     ///
     /// On success, returns a closure that performs the reboot.
     fn reboot_recovery(&mut self) -> Result<impl FnOnce() + '_, Error> {
-        if self.expected_os_is_fuchsia()? {
-            // TODO(b/363075013): Checks and prioritizes platform specific `set_boot_reason()`.
-            set_one_shot_recovery(&mut GblAbrOps(self), true)?;
-            return Ok(|| self.reboot());
+        match self.set_reboot_reason(RebootReason::Recovery) {
+            Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => {
+                set_one_shot_recovery(&mut GblAbrOps(self), true)?;
+            }
+            Err(e) => return Err(e),
+            _ => {}
         }
-        Err(Error::Unsupported)
+        Ok(|| self.reboot())
     }
 
     /// Reboots into bootloader fastboot mode
     ///
     /// On success, returns a closure that performs the reboot.
     fn reboot_bootloader(&mut self) -> Result<impl FnOnce() + '_, Error> {
-        if self.expected_os_is_fuchsia()? {
-            // TODO(b/363075013): Checks and prioritizes platform specific `set_boot_reason()`.
-            set_one_shot_bootloader(&mut GblAbrOps(self), true)?;
-            return Ok(|| self.reboot());
+        match self.set_reboot_reason(RebootReason::Bootloader) {
+            Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => {
+                set_one_shot_bootloader(&mut GblAbrOps(self), true)?;
+            }
+            Err(e) => return Err(e),
+            _ => {}
         }
-        Err(Error::Unsupported)
+        Ok(|| self.reboot())
     }
 
     /// Returns the list of disk devices on this platform.
@@ -390,6 +394,16 @@ pub trait GblOps<'a, 'd> {
 
     /// Returns a [SlotsMetadata] for the platform.
     fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error>;
+
+    /// Returns the slot count
+    fn slot_count(&mut self) -> Result<usize, Error> {
+        Ok(match self.slots_metadata() {
+            Ok(v) => v.slot_count,
+            Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => 2,
+            Err(Error::Unsupported) => 0,
+            Err(e) => return Err(e.into()),
+        })
+    }
 
     /// Gets the currently booted bootloader slot.
     ///
@@ -813,6 +827,12 @@ pub(crate) mod test {
 
         /// For returned by `get_reboot_reason()`
         pub reboot_reason: Option<Result<RebootReason, Error>>,
+
+        /// For returned by `set_reboot_reason`
+        pub set_reboot_reason_result: Option<Result<(), Error>>,
+
+        /// For returned by `slot_metadata`
+        pub slot_metadata_result: Option<Result<SlotsMetadata, Error>>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1082,7 +1102,7 @@ pub(crate) mod test {
         }
 
         fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {
-            unimplemented!();
+            self.slot_metadata_result.unwrap_or(Err(Error::Unsupported))
         }
 
         fn get_current_slot(&mut self) -> Result<Slot, Error> {
@@ -1099,8 +1119,9 @@ pub(crate) mod test {
             Ok(())
         }
 
-        fn set_reboot_reason(&mut self, _: RebootReason) -> Result<(), Error> {
-            unimplemented!()
+        fn set_reboot_reason(&mut self, reason: RebootReason) -> Result<(), Error> {
+            self.reboot_reason = Some(Ok(reason));
+            self.set_reboot_reason_result.unwrap()
         }
 
         fn get_reboot_reason(&mut self) -> Result<RebootReason, Error> {
@@ -1109,32 +1130,47 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_fuchsia_reboot_bootloader() {
+    fn test_fuchsia_reboot_bootloader_abr() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
+        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
         (gbl_ops.reboot_bootloader().unwrap())();
         assert!(gbl_ops.rebooted);
         assert_eq!(get_and_clear_one_shot_bootloader(&mut GblAbrOps(&mut gbl_ops)), Ok(true));
     }
 
     #[test]
-    fn test_non_fuchsia_reboot_bootloader() {
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.os = Some(Os::Android);
-        assert!(gbl_ops.reboot_bootloader().is_err_and(|e| e == Error::Unsupported));
-        assert_eq!(get_and_clear_one_shot_bootloader(&mut GblAbrOps(&mut gbl_ops)), Ok(false));
-    }
-
-    #[test]
-    fn test_fuchsia_reboot_recovery() {
+    fn test_fuchsia_reboot_bootloader_via_set_reboot_reason() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
+        gbl_ops.set_reboot_reason_result = Some(Ok(()));
+        (gbl_ops.reboot_bootloader().unwrap())();
+        assert!(gbl_ops.rebooted);
+        assert_eq!(gbl_ops.reboot_reason, Some(Ok(RebootReason::Bootloader)));
+        assert_eq!(get_and_clear_one_shot_bootloader(&mut GblAbrOps(&mut gbl_ops)), Ok(false));
+    }
+
+    #[test]
+    fn test_non_fuchsia_reboot_bootloader() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.set_reboot_reason_result = Some(Ok(()));
+        (gbl_ops.reboot_bootloader().unwrap())();
+        assert!(gbl_ops.rebooted);
+        assert_eq!(gbl_ops.reboot_reason, Some(Ok(RebootReason::Bootloader)));
+    }
+
+    #[test]
+    fn test_fuchsia_reboot_recovery_abr() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.os = Some(Os::Fuchsia);
+        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
         (gbl_ops.reboot_recovery().unwrap())();
         assert!(gbl_ops.rebooted);
         // One shot recovery is set.
@@ -1143,14 +1179,27 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_non_fuchsia_reboot_recovery() {
+    fn test_fuchsia_reboot_recovery_via_set_reboot_reason() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.os = Some(Os::Android);
-        assert!(gbl_ops.reboot_recovery().is_err_and(|e| e == Error::Unsupported));
-        // One shot recovery is not set.
+        gbl_ops.os = Some(Os::Fuchsia);
+        gbl_ops.set_reboot_reason_result = Some(Ok(()));
+        (gbl_ops.reboot_recovery().unwrap())();
+        assert!(gbl_ops.rebooted);
+        assert_eq!(gbl_ops.reboot_reason, Some(Ok(RebootReason::Recovery)));
+        // One shot recovery not set.
         assert_eq!(get_boot_slot(&mut GblAbrOps(&mut gbl_ops), true), (SlotIndex::A, false));
+    }
+
+    #[test]
+    fn test_non_fuchsia_reboot_recovery() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.set_reboot_reason_result = Some(Ok(()));
+        (gbl_ops.reboot_recovery().unwrap())();
+        assert!(gbl_ops.rebooted);
+        assert_eq!(gbl_ops.reboot_reason, Some(Ok(RebootReason::Recovery)));
     }
 
     /// Helper for creating a slot object.
