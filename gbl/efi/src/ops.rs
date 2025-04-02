@@ -28,11 +28,12 @@ use core::{
     ffi::CStr, fmt::Write, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut, ptr::null,
     slice::from_raw_parts_mut, time::Duration,
 };
+#[cfg(any(test, feature = "gbl_efi_enable_slot"))]
+use efi::protocol::gbl_efi_ab_slot::GblSlotProtocol;
 use efi::{
     efi_print, efi_println,
     protocol::{
         dt_fixup::DtFixupProtocol,
-        gbl_efi_ab_slot::GblSlotProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
@@ -602,20 +603,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
-    fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
-        Ok(SlotsMetadata {
-            slot_count: self
-                .efi_entry
-                .system_table()
-                .boot_services()
-                .find_first_and_open::<GblSlotProtocol>()?
-                .load_boot_data()?
-                .slot_count
-                .try_into()
-                .unwrap(),
-        })
-    }
-
     // TODO(b/383620444): GBL EFI slot protocol is currently implemented on a few platforms such
     // as Cuttlefish but is out of sync. Wait until protocol is more stable and all platforms
     // pick up the latest before enabling.
@@ -647,6 +634,12 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
     #[cfg(all(not(test), not(feature = "gbl_efi_enable_slot")))]
     fn get_reboot_reason(&mut self) -> Result<RebootReason> {
+        // TODO(b/383620444): See `get_current_slot()`.
+        Err(Error::Unsupported)
+    }
+
+    #[cfg(all(not(test), not(feature = "gbl_efi_enable_slot")))]
+    fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
         // TODO(b/383620444): See `get_current_slot()`.
         Err(Error::Unsupported)
     }
@@ -700,6 +693,21 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .find_first_and_open::<GblSlotProtocol>()?
             .get_boot_reason(&mut subreason[..])
             .map(|(v, _)| efi_to_gbl_boot_reason(v))
+    }
+
+    #[cfg(any(test, feature = "gbl_efi_enable_slot"))]
+    fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
+        Ok(SlotsMetadata {
+            slot_count: self
+                .efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<GblSlotProtocol>()?
+                .load_boot_data()?
+                .slot_count
+                .try_into()
+                .unwrap(),
+        })
     }
 }
 
