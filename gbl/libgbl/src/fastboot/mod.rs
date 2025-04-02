@@ -23,6 +23,9 @@ use crate::{
     GblOps,
 };
 pub use abr::{mark_slot_active, set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
+
+extern crate alloc;
+use alloc::boxed::Box;
 use core::{
     array::from_fn, cmp::min, ffi::CStr, fmt::Write, future::Future, marker::PhantomData,
     mem::take, ops::DerefMut, ops::Range, pin::Pin, str::from_utf8,
@@ -297,7 +300,10 @@ where
         let tasks = self.tasks();
         // The fastboot command loop task for interacting with the remote host.
         let cmd_loop_end = Shared::from(false);
-        let cmd_loop_task = async {
+
+        // The cmd_loop_task future is big enough
+        // to overflow the stack if it is not boxed.
+        let cmd_loop_task = Box::pin(async {
             loop {
                 if let Some(ref mut l) = local {
                     let res = match process_next_command(l, self).await {
@@ -336,7 +342,7 @@ where
                 yield_now().await;
             }
             *cmd_loop_end.borrow_mut() = true;
-        };
+        });
 
         // Schedules [Task] spawned by GBL fastboot.
         let gbl_fb_tasks = async {
