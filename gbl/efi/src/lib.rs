@@ -24,7 +24,6 @@
 extern crate alloc;
 
 mod efi_blocks;
-mod error;
 #[cfg(not(test))]
 mod ops;
 #[cfg(not(test))]

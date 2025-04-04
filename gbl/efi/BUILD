@@ -40,12 +40,14 @@ rust_library(
         "@gbl//libgbl",
         "@gbl//libsafemath",
         "@gbl//libstorage",
-        "@smoltcp",
         "@spin",
         "@uuid",
         "@zbi",
         "@zerocopy",
-    ],
+    ] + select({
+        "@gbl//toolchain:dev": ["@smoltcp"],
+        "@gbl//toolchain:prod": [],
+    }),
 )
 
 rust_test(

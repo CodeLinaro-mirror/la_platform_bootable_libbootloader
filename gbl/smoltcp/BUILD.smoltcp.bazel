@@ -121,6 +121,9 @@ rust_library(
         "-A",
         "unused_variables",
     ],
+    # TCP in the bootloader can be a significant attack vector, only allow
+    # it for dev boards.
+    target_compatible_with = ["@gbl//toolchain:dev"],
     deps = [
         ":heapless",
         "@bitflags",

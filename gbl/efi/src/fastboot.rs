@@ -17,14 +17,10 @@
 // `android_boot:android_boot_demo()` and `fuchsia_boot:fuchsia_boot_demo()` for
 // supported/unsupported features at the moment.
 
-use crate::{
-    net::{EfiGblNetwork, EfiTcpSocket},
-    utils::{get_platform_buffer_info, BufferInfo, SZ_MB},
-};
+use crate::utils::{get_platform_buffer_info, BufferInfo, SZ_MB};
 use alloc::{boxed::Box, vec::Vec};
 use core::{
-    cmp::min, fmt::Write, future::Future, mem::take, pin::Pin, str::from_utf8,
-    sync::atomic::AtomicU64, time::Duration,
+    cmp::min, fmt::Write, future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration,
 };
 use efi::{
     efi_print, efi_println,
@@ -33,67 +29,115 @@ use efi::{
     EfiEntry,
 };
 use efi_types::GBL_IMAGE_TYPE_FASTBOOT;
-use fastboot::{TcpStream, Transport};
+use fastboot::Transport;
 use gbl_async::{poll, YieldCounter};
 use liberror::{Error, Result};
 use libgbl::{
-    fastboot::{GblTcpStream, GblUsbTransport, PinFutContainer},
+    fastboot::{GblTcpStream, GblUsbTransport, PinFutContainer, TcpStream},
     {android_boot::GblFastbootEntry, GblOps},
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
-const FASTBOOT_TCP_PORT: u16 = 5554;
 
-struct EfiFastbootTcpTransport<'a, 'b, 'c> {
-    socket: &'c mut EfiTcpSocket<'a, 'b>,
-}
+// Network fastboot is only allowed on dev boards.
+#[cfg(feature = "gbl_dev")]
+mod network_fastboot {
+    use super::*;
+    pub(super) use crate::net::{EfiGblNetwork, EfiTcpSocket};
+    pub(super) use core::sync::atomic::AtomicU64;
 
-impl<'a, 'b, 'c> EfiFastbootTcpTransport<'a, 'b, 'c> {
-    fn new(socket: &'c mut EfiTcpSocket<'a, 'b>) -> Self {
-        Self { socket: socket }
-    }
-}
+    const FASTBOOT_TCP_PORT: u16 = 5554;
 
-impl TcpStream for EfiFastbootTcpTransport<'_, '_, '_> {
-    /// Reads to `out` for exactly `out.len()` number bytes from the TCP connection.
-    async fn read_exact(&mut self, out: &mut [u8]) -> Result<()> {
-        self.socket.receive_exact(out, DEFAULT_TIMEOUT).await
+    pub(super) struct EfiFastbootTcpTransport<'a, 'b, 'c> {
+        socket: &'c mut EfiTcpSocket<'a, 'b>,
     }
 
-    /// Sends exactly `data.len()` number bytes from `data` to the TCP connection.
-    async fn write_exact(&mut self, data: &[u8]) -> Result<()> {
-        self.socket.send_exact(data, DEFAULT_TIMEOUT).await
-    }
-}
-
-impl GblTcpStream for EfiFastbootTcpTransport<'_, '_, '_> {
-    fn accept_new(&mut self) -> bool {
-        let efi_entry = self.socket.efi_entry;
-        self.socket.poll();
-        // If not listenining, start listening.
-        // If not connected but it's been `DEFAULT_TIMEOUT`, restart listening in case the remote
-        // client disconnects in the middle of TCP handshake and leaves the socket in a half open
-        // state.
-        if !self.socket.is_listening_or_handshaking()
-            || (!self.socket.check_active()
-                && self.socket.time_since_last_listen() > DEFAULT_TIMEOUT)
-        {
-            let _ = self
-                .socket
-                .listen(FASTBOOT_TCP_PORT)
-                .inspect_err(|e| efi_println!(efi_entry, "TCP listen error: {:?}", e));
-
-            // TODO(b/368647237): Enable only in Fuchsia context.
-            self.socket.broadcast_fuchsia_fastboot_mdns();
-        } else if self.socket.check_active() {
-            self.socket.set_io_yield_threshold(1024 * 1024); // 1MB
-            let remote = self.socket.get_socket().remote_endpoint().unwrap();
-            efi_println!(efi_entry, "TCP connection from {}", remote);
-            return true;
+    impl<'a, 'b, 'c> EfiFastbootTcpTransport<'a, 'b, 'c> {
+        pub(super) fn new(socket: &'c mut EfiTcpSocket<'a, 'b>) -> Self {
+            Self { socket: socket }
         }
-        false
+    }
+
+    impl TcpStream for EfiFastbootTcpTransport<'_, '_, '_> {
+        /// Reads to `out` for exactly `out.len()` number bytes from the TCP connection.
+        async fn read_exact(&mut self, out: &mut [u8]) -> Result<()> {
+            self.socket.receive_exact(out, DEFAULT_TIMEOUT).await
+        }
+
+        /// Sends exactly `data.len()` number bytes from `data` to the TCP connection.
+        async fn write_exact(&mut self, data: &[u8]) -> Result<()> {
+            self.socket.send_exact(data, DEFAULT_TIMEOUT).await
+        }
+    }
+
+    impl GblTcpStream for EfiFastbootTcpTransport<'_, '_, '_> {
+        fn accept_new(&mut self) -> bool {
+            let efi_entry = self.socket.efi_entry;
+            self.socket.poll();
+            // If not listenining, start listening.
+            // If not connected but it's been `DEFAULT_TIMEOUT`, restart listening in case the
+            // remote client disconnects in the middle of TCP handshake and leaves the socket in a
+            // half open state.
+            if !self.socket.is_listening_or_handshaking()
+                || (!self.socket.check_active()
+                    && self.socket.time_since_last_listen() > DEFAULT_TIMEOUT)
+            {
+                let _ = self
+                    .socket
+                    .listen(FASTBOOT_TCP_PORT)
+                    .inspect_err(|e| efi_println!(efi_entry, "TCP listen error: {:?}", e));
+
+                // TODO(b/368647237): Enable only in Fuchsia context.
+                self.socket.broadcast_fuchsia_fastboot_mdns();
+            } else if self.socket.check_active() {
+                self.socket.set_io_yield_threshold(1024 * 1024); // 1MB
+                let remote = self.socket.get_socket().remote_endpoint().unwrap();
+                efi_println!(efi_entry, "TCP connection from {}", remote);
+                return true;
+            }
+            false
+        }
     }
 }
+
+/// No-op network fastboot types for prod builds.
+///
+/// [GblFastbootEntry::run] takes an `Option<impl GblTcpStream>` argument, and
+/// unfortunately the Rust compiler does seem to require a real [GblTcpStream]
+/// implementation even if we're just passing `None` (since it needs to know how
+/// much stack space to reserve when instantiating the function).
+///
+/// Creating some no-op types that will never actually be used is the simplest
+/// solution; we could modify the fastboot library to omit TCP support entirely
+/// in prod builds but it would be a much larger refactor, and more conditional
+/// compilation generally means less readable code.
+///
+/// Once never-type is stable, we might be able to delete this workaround and
+/// use `None::<!>` instead to represent a TCP connection in prod builds.
+#[cfg(not(feature = "gbl_dev"))]
+mod network_fastboot {
+    use super::*;
+
+    pub(super) struct NoOpTcp {}
+
+    impl TcpStream for NoOpTcp {
+        async fn read_exact(&mut self, _out: &mut [u8]) -> Result<()> {
+            unimplemented!();
+        }
+
+        async fn write_exact(&mut self, _data: &[u8]) -> Result<()> {
+            unimplemented!();
+        }
+    }
+
+    impl GblTcpStream for NoOpTcp {
+        fn accept_new(&mut self) -> bool {
+            unimplemented!();
+        }
+    }
+}
+
+use network_fastboot::*;
 
 /// `UsbTransport` implements the `fastboot::Transport` trait using USB interfaces from
 /// GBL_EFI_FASTBOOT_USB_PROTOCOL.
@@ -207,39 +251,6 @@ impl<'a> PinFutContainer<'a> for VecPinFut<'a> {
     }
 }
 
-/// Initializes GBL EFI fastboot channels and runs a caller provided closure with them.
-fn with_fastboot_channels(
-    efi_entry: &EfiEntry,
-    f: impl FnOnce(Option<LocalFastbootSession>, Option<UsbTransport>, Option<EfiFastbootTcpTransport>),
-) {
-    let local_session = LocalFastbootSession::start(efi_entry, Duration::from_millis(1))
-        .inspect(|_| efi_println!(efi_entry, "Starting local bootmenu."))
-        .inspect_err(|e| efi_println!(efi_entry, "Failed to start local bootmenu: {:?}", e))
-        .ok();
-
-    let usb = init_usb(efi_entry)
-        .inspect(|_| efi_println!(efi_entry, "Started Fastboot over USB."))
-        .inspect_err(|e| efi_println!(efi_entry, "Failed to start Fastboot over USB. {:?}.", e))
-        .ok();
-
-    let ts = AtomicU64::new(0);
-    let mut net: EfiGblNetwork = Default::default();
-    let mut tcp = net
-        .init(efi_entry, &ts)
-        .inspect(|v| {
-            efi_println!(efi_entry, "Started Fastboot over TCP");
-            efi_println!(efi_entry, "IP address:");
-            v.interface().ip_addrs().iter().for_each(|v| {
-                efi_println!(efi_entry, "\t{}", v.address());
-            });
-        })
-        .inspect_err(|e| efi_println!(efi_entry, "Failed to start EFI network. {:?}.", e))
-        .ok();
-    let tcp = tcp.as_mut().map(|v| EfiFastbootTcpTransport::new(v));
-
-    f(local_session, usb, tcp)
-}
-
 /// Helper for handling fastboot mode.
 pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
     entry: &EfiEntry,
@@ -260,14 +271,47 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
             &mut alloc
         }
     };
-    // TODO(b/383620444): Investigate letting GblOps return fastboot channels.
-    with_fastboot_channels(&entry, |local, usb, tcp| {
-        // We currently only consider 1 parallell flash + 1 parallel download.
-        // This can be made configurable if necessary.
-        const GBL_FB_N: usize = 2;
-        let mut bufs = Vec::from_iter(buffer.chunks_exact_mut(buffer.len() / GBL_FB_N));
-        let bufs = &(&mut bufs[..]).into();
-        let mut fut = Box::pin(fb.run(bufs, VecPinFut::default(), local, usb, tcp));
-        while poll(&mut fut).is_none() {}
-    })
+
+    let local = LocalFastbootSession::start(entry, Duration::from_millis(1))
+        .inspect(|_| efi_println!(entry, "Starting local bootmenu."))
+        .inspect_err(|e| efi_println!(entry, "Failed to start local bootmenu: {:?}", e))
+        .ok();
+
+    let usb = init_usb(entry)
+        .inspect(|_| efi_println!(entry, "Started Fastboot over USB."))
+        .inspect_err(|e| efi_println!(entry, "Failed to start Fastboot over USB. {:?}.", e))
+        .ok();
+
+    #[cfg(not(feature = "gbl_dev"))]
+    let tcp: Option<NoOpTcp> = None;
+
+    // This is super ugly, but the lifetimes require these objects to remain
+    // on the stack so we can't put it all in a single scope gated behind the
+    // "gbl_dev" feature. Instead each statement has to be individually gated.
+    #[cfg(feature = "gbl_dev")]
+    let ts = AtomicU64::new(0);
+    #[cfg(feature = "gbl_dev")]
+    let mut net: EfiGblNetwork = Default::default();
+    #[cfg(feature = "gbl_dev")]
+    let mut tcp = net
+        .init(entry, &ts)
+        .inspect(|v| {
+            efi_println!(entry, "Started Fastboot over TCP");
+            efi_println!(entry, "IP address:");
+            v.interface().ip_addrs().iter().for_each(|v| {
+                efi_println!(entry, "\t{}", v.address());
+            });
+        })
+        .inspect_err(|e| efi_println!(entry, "Failed to start EFI network. {:?}.", e))
+        .ok();
+    #[cfg(feature = "gbl_dev")]
+    let tcp = tcp.as_mut().map(|v| EfiFastbootTcpTransport::new(v));
+
+    // We currently only consider 1 parallel flash + 1 parallel download.
+    // This can be made configurable if necessary.
+    const GBL_FB_N: usize = 2;
+    let mut bufs = Vec::from_iter(buffer.chunks_exact_mut(buffer.len() / GBL_FB_N));
+    let bufs = &(&mut bufs[..]).into();
+    let mut fut = Box::pin(fb.run(bufs, VecPinFut::default(), local, usb, tcp));
+    while poll(&mut fut).is_none() {}
 }

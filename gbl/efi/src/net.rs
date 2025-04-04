@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    error::{listen_to_unified, recv_to_unified, send_to_unified},
-    utils::{get_device_path, loop_with_timeout},
-};
+// Network is only allowed on dev boards.
+#![cfg(feature = "gbl_dev")]
+
+use crate::utils::{get_device_path, loop_with_timeout};
 use alloc::{boxed::Box, vec::Vec};
 use core::{
     fmt::Write,
@@ -37,7 +37,7 @@ use smoltcp::{
     phy,
     phy::{Device, DeviceCapabilities, Medium},
     socket::{
-        tcp::{Socket as TcpSocket, SocketBuffer, State},
+        tcp::{ListenError, RecvError, SendError, Socket as TcpSocket, SocketBuffer, State},
         udp::{PacketBuffer, Socket as UdpSocket, UdpMetadata},
     },
     storage::PacketMetadata,
@@ -51,6 +51,29 @@ const ETHERNET_FRAME_SIZE: usize = 1536;
 const NETWORK_TIMESTAMP_UPDATE_PERIOD: Duration = Duration::from_millis(50);
 // Size of the socket tx/rx application data buffer.
 const SOCKET_TX_RX_BUFFER: usize = 256 * 1024;
+
+/// Converts smoltcp [RecvError] to unified [Error].
+fn recv_to_unified(err: RecvError) -> Error {
+    match err {
+        RecvError::InvalidState => Error::InvalidState,
+        RecvError::Finished => Error::Finished,
+    }
+}
+
+/// Converts smoltcp [SendError] to unified [Error].
+fn send_to_unified(err: SendError) -> Error {
+    match err {
+        SendError::InvalidState => Error::InvalidState,
+    }
+}
+
+/// Converts smoltcp [ListenError] to unified [Error].
+fn listen_to_unified(err: ListenError) -> Error {
+    match err {
+        ListenError::InvalidState => Error::InvalidState,
+        ListenError::Unaddressable => Error::Unaddressable,
+    }
+}
 
 /// Performs a shutdown and restart of the simple network protocol.
 fn reset_simple_network<'a>(snp: &Protocol<'a, SimpleNetworkProtocol>) -> Result<()> {
