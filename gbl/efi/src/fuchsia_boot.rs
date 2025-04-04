@@ -14,8 +14,9 @@
 
 use crate::{
     efi_blocks::EfiGblDisk,
+    fastboot::efi_gbl_fastboot_entry,
     ops::Ops,
-    utils::{efi_gbl_fastboot_entry, efi_to_zbi_mem_range_type, take_os_load_buffer},
+    utils::{efi_to_zbi_mem_range_type, take_os_load_buffer},
 };
 use core::fmt::Write;
 use efi::{efi_print, efi_println, EfiEntry, EfiMemoryAttributesTable, EfiMemoryMap};

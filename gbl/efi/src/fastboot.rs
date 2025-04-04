@@ -17,11 +17,14 @@
 // `android_boot:android_boot_demo()` and `fuchsia_boot:fuchsia_boot_demo()` for
 // supported/unsupported features at the moment.
 
-use crate::net::{EfiGblNetwork, EfiTcpSocket};
+use crate::{
+    net::{EfiGblNetwork, EfiTcpSocket},
+    utils::{get_platform_buffer_info, BufferInfo, SZ_MB},
+};
 use alloc::{boxed::Box, vec::Vec};
 use core::{
-    cmp::min, fmt::Write, future::Future, mem::take, pin::Pin, sync::atomic::AtomicU64,
-    time::Duration,
+    cmp::min, fmt::Write, future::Future, mem::take, pin::Pin, str::from_utf8,
+    sync::atomic::AtomicU64, time::Duration,
 };
 use efi::{
     efi_print, efi_println,
@@ -29,15 +32,19 @@ use efi::{
     protocol::{gbl_efi_fastboot_usb::GblFastbootUsbProtocol, Protocol},
     EfiEntry,
 };
+use efi_types::GBL_IMAGE_TYPE_FASTBOOT;
 use fastboot::{TcpStream, Transport};
-use gbl_async::YieldCounter;
+use gbl_async::{poll, YieldCounter};
 use liberror::{Error, Result};
-use libgbl::fastboot::{GblTcpStream, GblUsbTransport, PinFutContainer};
+use libgbl::{
+    fastboot::{GblTcpStream, GblUsbTransport, PinFutContainer},
+    {android_boot::GblFastbootEntry, GblOps},
+};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const FASTBOOT_TCP_PORT: u16 = 5554;
 
-pub(crate) struct EfiFastbootTcpTransport<'a, 'b, 'c> {
+struct EfiFastbootTcpTransport<'a, 'b, 'c> {
     socket: &'c mut EfiTcpSocket<'a, 'b>,
 }
 
@@ -90,7 +97,7 @@ impl GblTcpStream for EfiFastbootTcpTransport<'_, '_, '_> {
 
 /// `UsbTransport` implements the `fastboot::Transport` trait using USB interfaces from
 /// GBL_EFI_FASTBOOT_USB_PROTOCOL.
-pub struct UsbTransport<'a> {
+struct UsbTransport<'a> {
     max_packet_size: usize,
     protocol: Protocol<'a, GblFastbootUsbProtocol>,
     io_yield_counter: YieldCounter,
@@ -183,7 +190,7 @@ fn init_usb(efi_entry: &EfiEntry) -> Result<UsbTransport> {
 
 // Wrapper of vector of pinned futures.
 #[derive(Default)]
-pub(crate) struct VecPinFut<'a>(Vec<Pin<Box<dyn Future<Output = ()> + 'a>>>);
+struct VecPinFut<'a>(Vec<Pin<Box<dyn Future<Output = ()> + 'a>>>);
 
 impl<'a> PinFutContainer<'a> for VecPinFut<'a> {
     fn add_with<F: Future<Output = ()> + 'a>(&mut self, f: impl FnOnce() -> F) {
@@ -201,7 +208,7 @@ impl<'a> PinFutContainer<'a> for VecPinFut<'a> {
 }
 
 /// Initializes GBL EFI fastboot channels and runs a caller provided closure with them.
-pub(crate) fn with_fastboot_channels(
+fn with_fastboot_channels(
     efi_entry: &EfiEntry,
     f: impl FnOnce(Option<LocalFastbootSession>, Option<UsbTransport>, Option<EfiFastbootTcpTransport>),
 ) {
@@ -231,4 +238,36 @@ pub(crate) fn with_fastboot_channels(
     let tcp = tcp.as_mut().map(|v| EfiFastbootTcpTransport::new(v));
 
     f(local_session, usb, tcp)
+}
+
+/// Helper for handling fastboot mode.
+pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
+    entry: &EfiEntry,
+    fb: GblFastbootEntry<'_, G>,
+    fastboot_buffer_info: &mut Option<BufferInfo>,
+) {
+    let img_type_fastboot = from_utf8(GBL_IMAGE_TYPE_FASTBOOT).unwrap();
+    // Checks if we have a reserved buffer for fastboot
+    // Note: `get_or_insert_with` lazily evaluates closure (only when insert is necessary).
+    let buffer = fastboot_buffer_info
+        .get_or_insert_with(|| get_platform_buffer_info(&entry, img_type_fastboot, 512 * SZ_MB));
+    let mut alloc;
+    let buffer = match buffer {
+        BufferInfo::Static(v) => &mut v[..],
+        BufferInfo::Alloc(sz) => {
+            alloc = vec![0u8; *sz];
+            efi_println!(entry, "Allocated {:#x} bytes for fastboot buffer.", alloc.len());
+            &mut alloc
+        }
+    };
+    // TODO(b/383620444): Investigate letting GblOps return fastboot channels.
+    with_fastboot_channels(&entry, |local, usb, tcp| {
+        // We currently only consider 1 parallell flash + 1 parallel download.
+        // This can be made configurable if necessary.
+        const GBL_FB_N: usize = 2;
+        let mut bufs = Vec::from_iter(buffer.chunks_exact_mut(buffer.len() / GBL_FB_N));
+        let bufs = &(&mut bufs[..]).into();
+        let mut fut = Box::pin(fb.run(bufs, VecPinFut::default(), local, usb, tcp));
+        while poll(&mut fut).is_none() {}
+    })
 }
