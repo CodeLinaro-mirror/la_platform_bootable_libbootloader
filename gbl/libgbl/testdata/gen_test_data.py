@@ -78,8 +78,10 @@ def unpack_boot(boot, into):
     subprocess.run(
         [
             UNPACKBOOTIMG_TOOL,
-            "--boot_img", boot,
-            "--out", into,
+            "--boot_img",
+            boot,
+            "--out",
+            into,
         ],
         stderr=subprocess.STDOUT,
         check=True,
@@ -91,7 +93,8 @@ def uncompress_lz4(archive, into):
         [
             LZ4_TOOL,
             "-f",  # always override
-            "-d", archive,
+            "-d",
+            archive,
             into,
         ],
         stderr=subprocess.STDOUT,
@@ -111,18 +114,24 @@ def unpack_gkis():
 
         if shutil.which(LZ4_TOOL) is not None:
             unpack_boot(GKI_BOOT_LZ4, temp_dir)
-            shutil.copyfile(temp_dir / "kernel",
-                            ANDROID_OUT / "gki_boot_lz4_kernel")
-            uncompress_lz4(ANDROID_OUT / "gki_boot_lz4_kernel",
-                           ANDROID_OUT / "gki_boot_lz4_kernel_uncompressed")
+            shutil.copyfile(
+                temp_dir / "kernel", ANDROID_OUT / "gki_boot_lz4_kernel"
+            )
+            uncompress_lz4(
+                ANDROID_OUT / "gki_boot_lz4_kernel",
+                ANDROID_OUT / "gki_boot_lz4_kernel_uncompressed",
+            )
         else:
-            print("Warning: lz4 tool isn't presented, skipping unpack lz4 gki boot")
+            print(
+                "Warning: lz4 tool isn't presented, skipping unpack lz4 gki boot"
+            )
 
         unpack_boot(GKI_BOOT_GZ, temp_dir)
-        shutil.copyfile(temp_dir / "kernel",
-                        ANDROID_OUT / "gki_boot_gz_kernel")
-        uncompress_gz(ANDROID_OUT / "gki_boot_gz_kernel",
-                      ANDROID_OUT / "gki_boot_gz_kernel_uncompressed")
+        shutil.copyfile(temp_dir / "kernel", ANDROID_OUT / "gki_boot_gz_kernel")
+        uncompress_gz(
+            ANDROID_OUT / "gki_boot_gz_kernel",
+            ANDROID_OUT / "gki_boot_gz_kernel_uncompressed",
+        )
 
 
 # Generates sparse image for flashing test
@@ -307,8 +316,6 @@ def gen_android_test_vbmeta(partition_file_pairs, out_vbmeta):
                 "--hash_algorithm",
                 "sha512",
             ],
-
-
             check=True,
             text=True,
             capture_output=True,
@@ -321,27 +328,25 @@ def gen_android_test_vbmeta(partition_file_pairs, out_vbmeta):
 # Extract digests from vbmeta data
 def extract_vbmeta_digests(vbmeta):
     # Get vbmeta digests
-    digests = (
-        re.split(
-            "\n|: ",
-            subprocess.run(
-                [
-                    AVB_TOOL,
-                    "print_partition_digests",
-                    "--image",
-                    vbmeta,
-                ],
-
-
-                check=True,
-                text=True,
-                capture_output=True,
-            )
-            .stdout
-        )
+    digests = re.split(
+        "\n|: ",
+        subprocess.run(
+            [
+                AVB_TOOL,
+                "print_partition_digests",
+                "--image",
+                vbmeta,
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout,
     )
-    digests = {digests[i]: digests[i+1] for i in range(0, len(digests), 2) if digests[i] in [
-        "boot", "vendor_boot", "init_boot", "dtbo", "dtb"]}
+    digests = {
+        digests[i]: digests[i + 1]
+        for i in range(0, len(digests), 2)
+        if digests[i] in ["boot", "vendor_boot", "init_boot", "dtbo", "dtb"]
+    }
 
     for key, value in digests.items():
         out_digest = vbmeta.with_suffix(".{}.digest.txt".format(key))
@@ -411,7 +416,7 @@ androidboot.config_2=val_2
 
             # Generate v4 boot images for gzip and lz4 kernel compression.
             if slot == "a":
-                for compression in ['gz', 'lz4']:
+                for compression in ["gz", "lz4"]:
                     out = out_dir / f"boot_v4_{compression}_{slot}.img"
                     # Replace kernel
                     common[2] = out_dir / f"gki_boot_{compression}_kernel"
@@ -542,13 +547,13 @@ androidboot.config_2=val_2
                         gen_android_test_vbmeta(parts, out_dir / vbmeta_out)
 
             # Generate v4 vbmeta image for vendor_boot with dttable structure
-            vbmeta_out = out_dir / \
-                f"vbmeta_v4_dttable_{slot}.img"
+            vbmeta_out = out_dir / f"vbmeta_v4_dttable_{slot}.img"
             parts = [
-                (f"boot", out_dir /
-                    f"boot_v4_{slot}.img"),
-                (f"vendor_boot", out_dir /
-                    f"vendor_boot_v4_dttable_{slot}.img"),
+                (f"boot", out_dir / f"boot_v4_{slot}.img"),
+                (
+                    f"vendor_boot",
+                    out_dir / f"vendor_boot_v4_dttable_{slot}.img",
+                ),
                 ("dtbo", out_dir / f"dtbo_{slot}.img"),
                 ("dtb", out_dir / f"dtb_{slot}.img"),
             ]
@@ -557,13 +562,16 @@ androidboot.config_2=val_2
             # Generate v4 vbmeta images for both gzip and lz4 kernel compression.
             if slot == "a":
                 for compression in ["gz", "lz4"]:
-                    vbmeta_out = out_dir / \
-                        f"vbmeta_v4_{compression}_{slot}.img"
+                    vbmeta_out = out_dir / f"vbmeta_v4_{compression}_{slot}.img"
                     parts = [
-                        (f"boot", out_dir /
-                         f"boot_v4_{compression}_{slot}.img"),
-                        (f"vendor_boot", out_dir /
-                         f"vendor_boot_v4_{slot}.img"),
+                        (
+                            f"boot",
+                            out_dir / f"boot_v4_{compression}_{slot}.img",
+                        ),
+                        (
+                            f"vendor_boot",
+                            out_dir / f"vendor_boot_v4_{slot}.img",
+                        ),
                         ("dtbo", out_dir / f"dtbo_{slot}.img"),
                         ("dtb", out_dir / f"dtb_{slot}.img"),
                     ]
@@ -669,6 +677,30 @@ def gen_zircon_test_images(zbi_tool):
                 ]
                 + vbmeta_prop_args
             )
+
+
+def gen_fuchsia_fastboot_boot_image():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = pathlib.Path(temp_dir)
+        # Generates a fuchsia fastboot boot image
+        kernel = (SCRIPT_DIR / "zircon_slotless.zbi").read_bytes() + (
+            SCRIPT_DIR / "vbmeta_slotless.bin"
+        ).read_bytes()
+        temp = temp_dir / "zircon_fastboot_boot.bin"
+        temp.write_bytes(kernel)
+        subprocess.run(
+            [
+                MKBOOTIMG_TOOL,
+                "-o",
+                SCRIPT_DIR / "zircon_fastboot_bootimg",
+                "--kernel",
+                temp,
+                "--pagesize",
+                "4096"
+            ],
+            check=True,
+            stderr=subprocess.STDOUT,
+        )
 
 
 # Generates test data for A/B slot Manager writeback test
@@ -817,5 +849,6 @@ if __name__ == "__main__":
     gen_writeback_test_bin()
     gen_sparse_test_file()
     gen_zircon_test_images(args.zbi_tool)
+    gen_fuchsia_fastboot_boot_image()
     gen_vbmeta()
     gen_android_test_images()

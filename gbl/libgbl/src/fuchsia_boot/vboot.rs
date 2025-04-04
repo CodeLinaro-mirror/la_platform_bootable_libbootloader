@@ -13,12 +13,12 @@
 // limitations under the License.
 
 use crate::{
-    fuchsia_boot::{zbi_split_unused_buffer, zircon_part_name, SlotIndex},
+    fuchsia_boot::{zbi_split_unused_buffer_mut, zircon_part_name, SlotIndex},
     gbl_avb::ops::GblAvbOps,
     gbl_print, GblOps, Result as GblResult,
 };
 use avb::{slot_verify, Descriptor, HashtreeErrorMode, Ops as _, SlotVerifyFlags};
-use zbi::ZbiContainer;
+use zbi::{merge_within, ZbiContainer};
 use zerocopy::SplitByteSliceMut;
 
 /// Verifies a loaded ZBI kernel.
@@ -42,8 +42,49 @@ pub(crate) fn zircon_verify_kernel<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>
     // TODO(b/379778252) It is not as efficient as moving kernel since ZBI items would contain file
     // system and be bigger than kernel.
     copy_items_after_kernel(zbi_kernel, zbi_items)?;
+    let (kernel, _) = zbi_split_unused_buffer_mut(&mut zbi_kernel[..])?;
+    zircon_verify_kernel_internal(gbl_ops, slot, slot_booted_successfully, kernel, zbi_items)
+}
 
-    let (kernel, _) = zbi_split_unused_buffer(&mut zbi_kernel[..])?;
+/// Copy ZBI items following kernel to separate container.
+pub fn copy_items_after_kernel<'a, B: SplitByteSliceMut + PartialEq>(
+    zbi_kernel: &'a mut [u8],
+    zbi_items: &mut ZbiContainer<B>,
+) -> GblResult<()> {
+    let zbi_container = ZbiContainer::parse(&mut zbi_kernel[..])?;
+    let mut items_iter = zbi_container.iter();
+    items_iter.next(); // Skip first kernel item
+    zbi_items.extend_items(items_iter)?;
+    Ok(())
+}
+
+/// Performs AVB verification of a ZBI kernel from the given buffer and fixes up AVB ZBI items into
+/// the same ZBI container. `load_buffer` should reserve extra space for in-coming AVB items.
+pub(crate) fn zircon_verify_kernel_in_place<'a, 'b>(
+    gbl_ops: &mut impl GblOps<'a, 'b>,
+    slot: Option<SlotIndex>,
+    slot_booted_successfully: bool,
+    load_buffer: &mut [u8],
+) -> GblResult<()> {
+    let (kernel, desc_buf) = zbi_split_unused_buffer_mut(&mut load_buffer[..])?;
+    let desc_zbi_off = kernel.len();
+    // Collects ZBI items from vbmetadata and appends to the `desc_buf` buffer.
+    let mut avb_desc = ZbiContainer::new(&mut desc_buf[..])?;
+    zircon_verify_kernel_internal(gbl_ops, slot, slot_booted_successfully, kernel, &mut avb_desc)?;
+    // Merges the vbmeta descriptor ZBI container into the ZBI kernel container.
+    merge_within(load_buffer, desc_zbi_off)?;
+    Ok(())
+}
+
+/// Internal helper for AVB verification for zircon.
+fn zircon_verify_kernel_internal<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>(
+    gbl_ops: &mut impl GblOps<'b, 'c>,
+    slot: Option<SlotIndex>,
+    slot_booted_successfully: bool,
+    zbi_kernel: &'a mut [u8],
+    zbi_items: &mut ZbiContainer<B>,
+) -> GblResult<()> {
+    let (kernel, _) = zbi_split_unused_buffer_mut(&mut zbi_kernel[..])?;
 
     // Verifies the kernel.
     let part = zircon_part_name(slot);
@@ -96,7 +137,7 @@ pub(crate) fn zircon_verify_kernel<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>
     }
 
     // Increases rollback indices if the slot has successfully booted.
-    if verified_success && slot_booted_successfully {
+    if verified_success && slot_booted_successfully && !unlocked {
         for (loc, val) in verify_data.rollback_indexes().iter().enumerate() {
             if *val > 0 && avb_ops.read_rollback_index(loc)? != *val {
                 avb_ops.write_rollback_index(loc, *val)?;
@@ -114,18 +155,6 @@ pub(crate) fn zircon_verify_kernel<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>
         }
     }
 
-    Ok(())
-}
-
-/// Copy ZBI items following kernel to separate container.
-pub fn copy_items_after_kernel<'a, B: SplitByteSliceMut + PartialEq>(
-    zbi_kernel: &'a mut [u8],
-    zbi_items: &mut ZbiContainer<B>,
-) -> GblResult<()> {
-    let zbi_container = ZbiContainer::parse(&mut zbi_kernel[..])?;
-    let mut items_iter = zbi_container.iter();
-    items_iter.next(); // Skip first kernel item
-    zbi_items.extend_items(items_iter)?;
     Ok(())
 }
 

@@ -41,7 +41,7 @@ use vboot::{avb_verify_slot, PartitionsToVerify};
 
 pub(crate) mod load;
 use load::split_chunks;
-pub use load::{android_load_verify, LoadedImages};
+pub use load::{android_load_verify, get_kernel};
 
 /// Device tree bootargs property to store kernel command line.
 pub const BOOTARGS_PROP: &CStr = c"bootargs";
@@ -226,9 +226,9 @@ pub(crate) fn get_boot_slot<'a, 'b, 'c>(
 
 /// Provides methods to run GBL fastboot.
 pub struct GblFastbootEntry<'d, G> {
-    ops: &'d mut G,
-    load: &'d mut [u8],
-    result: &'d mut GblFastbootResult,
+    pub(crate) ops: &'d mut G,
+    pub(crate) load: &'d mut [u8],
+    pub(crate) result: &'d mut GblFastbootResult,
 }
 
 impl<'a, 'd, 'e, G> GblFastbootEntry<'d, G>
@@ -1337,7 +1337,12 @@ pub(crate) mod tests {
 
         assert_eq!(
             listener.usb_out_queue(),
-            make_expected_usb_out(&[b"DATA00004000", b"OKAY", b"OKAYboot_command",]),
+            make_expected_usb_out(&[
+                b"DATA00004000",
+                b"OKAY",
+                b"INFOBoot image as Android slot a",
+                b"OKAY",
+            ]),
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         );

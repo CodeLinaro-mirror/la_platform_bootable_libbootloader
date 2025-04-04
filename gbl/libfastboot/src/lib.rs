@@ -891,7 +891,7 @@ async fn boot(
     let boot_res = async { fb_impl.boot(&mut resp).await }.await;
     match boot_res {
         Err(ref e) => reply_fail!(resp, "{}", e.to_str()),
-        _ => reply_okay!(resp, "boot_command"),
+        _ => reply_okay!(resp, ""),
     }?;
     Ok(boot_res.is_ok())
 }
@@ -1260,7 +1260,7 @@ mod test {
         let mut transport = TestTransport::new();
         transport.add_input(b"boot");
         let _ = block_on(run(&mut transport, &mut fastboot_impl));
-        assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAYboot_command".into()]));
+        assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAY".into()]));
     }
 
     #[test]

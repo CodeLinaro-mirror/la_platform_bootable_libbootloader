@@ -13,18 +13,12 @@
 // limitations under the License.
 
 use crate::{
-    fastboot::{with_fastboot_channels, VecPinFut},
     ops::Ops,
-    utils::{get_platform_buffer_info, BufferInfo},
+    utils::{efi_gbl_fastboot_entry, take_os_load_buffer},
 };
-use alloc::{boxed::Box, vec::Vec};
-use core::{fmt::Write, str::from_utf8};
+use core::fmt::Write;
 use efi::{efi_print, efi_println, exit_boot_services, EfiEntry};
-use efi_types::{GBL_IMAGE_TYPE_FASTBOOT, GBL_IMAGE_TYPE_OS_LOAD};
-use gbl_async::poll;
 use libgbl::{android_boot::android_main, gbl_print, gbl_println, GblOps, Result};
-
-const SZ_MB: usize = 1024 * 1024;
 
 /// Android bootloader main entry (before booting).
 ///
@@ -34,46 +28,12 @@ pub fn efi_android_load(
 ) -> Result<(&'static mut [u8], &'static mut [u8], &'static mut [u8], &'static mut [u8])> {
     let entry = ops.efi_entry;
     // Prepares the OS load buffer.
-    let img_type_os_load = from_utf8(GBL_IMAGE_TYPE_OS_LOAD).unwrap();
-    let load_buffer = match get_platform_buffer_info(&entry, img_type_os_load, 256 * SZ_MB) {
-        BufferInfo::Static(v) => v,
-        BufferInfo::Alloc(sz) => {
-            let alloc = vec![0u8; sz];
-            gbl_println!(ops, "Allocated {:#x} bytes for OS load buffer.", alloc.len());
-            alloc.leak()
-        }
-    };
+    let load_buffer = take_os_load_buffer(entry, 256 * 1024 * 1024);
 
-    // Checks if we have a reserved buffer for fastboot
-    let img_type_fastboot = from_utf8(GBL_IMAGE_TYPE_FASTBOOT).unwrap();
     let mut fastboot_buffer_info = None;
-
     gbl_println!(ops, "Try booting as Android");
-
     Ok(android_main(ops, load_buffer.as_mut(), |fb| {
-        // Note: `get_or_insert_with` lazily evaluates closure (only when insert is necessary).
-        let buffer = fastboot_buffer_info.get_or_insert_with(|| {
-            get_platform_buffer_info(&entry, img_type_fastboot, 512 * SZ_MB)
-        });
-        let mut alloc;
-        let buffer = match buffer {
-            BufferInfo::Static(v) => &mut v[..],
-            BufferInfo::Alloc(sz) => {
-                alloc = vec![0u8; *sz];
-                efi_println!(entry, "Allocated {:#x} bytes for fastboot buffer.", alloc.len());
-                &mut alloc
-            }
-        };
-        // TODO(b/383620444): Investigate letting GblOps return fastboot channels.
-        with_fastboot_channels(&entry, |local, usb, tcp| {
-            // We currently only consider 1 parallell flash + 1 parallel download.
-            // This can be made configurable if necessary.
-            const GBL_FB_N: usize = 2;
-            let mut bufs = Vec::from_iter(buffer.chunks_exact_mut(buffer.len() / GBL_FB_N));
-            let bufs = &(&mut bufs[..]).into();
-            let mut fut = Box::pin(fb.run(bufs, VecPinFut::default(), local, usb, tcp));
-            while poll(&mut fut).is_none() {}
-        })
+        efi_gbl_fastboot_entry(entry, fb, &mut fastboot_buffer_info)
     })?)
 }
 

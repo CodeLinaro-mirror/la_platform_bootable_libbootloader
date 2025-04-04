@@ -15,8 +15,11 @@
 //! Fastboot backend for libgbl.
 
 use crate::{
-    android_boot::{android_load_verify_fixup, get_boot_slot},
-    fuchsia_boot::GblAbrOps,
+    android_boot::{android_load_verify_fixup, get_boot_slot, get_kernel},
+    fuchsia_boot::{
+        zbi_split_unused_buffer_ref, zircon_load_verify_abr_with_buffer, GblAbrOps,
+        LoadedVerifiedZircon,
+    },
     gbl_print, gbl_println,
     ops::RambootOps,
     partition::{check_part_unique, GblDisk, PartitionIo},
@@ -145,6 +148,15 @@ pub enum LoadedImageInfo {
         /// Offset and length of kernel in `GblFastboot::load_buffer`.
         kernel: Range<usize>,
     },
+    /// Fuchsia loaded images.
+    Fuchsia {
+        /// Offset and length of ZBI items in `GblFastboot::load_buffer`.
+        zbi_items: Range<usize>,
+        /// Offset and length of kernel in `GblFastboot::load_buffer`.
+        kernel: Range<usize>,
+        /// Selected slot,
+        slot: SlotIndex,
+    },
 }
 
 /// Contains result data returned by GBL Fastboot.
@@ -159,7 +171,7 @@ pub struct GblFastbootResult {
 impl GblFastbootResult {
     /// Splits the given buffer into `(ramdisk, fdt, kernel, unused)` according to layout info in
     ///  `Self::loaded_image_info` if it is a `Some(LoadedImageInfo::Android)`.
-    pub fn split_loaded_android<'a>(
+    pub(crate) fn split_loaded_android<'a>(
         &self,
         load: &'a mut [u8],
     ) -> Option<(&'a mut [u8], &'a mut [u8], &'a mut [u8], &'a mut [u8])> {
@@ -171,6 +183,22 @@ impl GblFastbootResult {
         let (fdt_buf, rem) = rem[fdt.start - ramdisk.end..].split_at_mut(fdt.len());
         let (kernel_buf, rem) = rem[kernel.start - fdt.end..].split_at_mut(kernel.len());
         Some((ramdisk_buf, fdt_buf, kernel_buf, rem))
+    }
+
+    /// Splits the given buffer into `(zbi_items, kernel)` according to layout info in
+    /// `Self::loaded_image_info` if it is a `Some(LoadedImageInfo::Fuchsia)`. `load` should be the
+    /// same buffer passed to GblFastboot.
+    pub(crate) fn split_loaded_fuchsia<'a>(
+        &self,
+        load: &'a mut [u8],
+    ) -> Option<(&'a mut [u8], &'a mut [u8])> {
+        let Some(LoadedImageInfo::Fuchsia { zbi_items, kernel, .. }) = &self.loaded_image_info
+        else {
+            return None;
+        };
+        let (zbi_items_buf, rem) = load[zbi_items.start..].split_at_mut(zbi_items.len());
+        let (kernel_buf, _) = rem[kernel.start - zbi_items.end..].split_at_mut(kernel.len());
+        Some((zbi_items_buf, kernel_buf))
     }
 }
 
@@ -598,6 +626,60 @@ where
                 .set_active_slot(u8::try_from(slot.chars().next().unwrap())? - b'a')?),
         }
     }
+
+    /// Helper for "fastboot boot" in Android image.
+    async fn boot_android(&mut self, img: &[u8], mut resp: impl InfoSender) -> CommandResult<()> {
+        let load_buffer_addr = self.load_buffer.as_ptr() as usize;
+        let slot_suffix = get_boot_slot(self.gbl_ops, false)?;
+        let mut boot_part = [0u8; 16];
+        let boot_part = snprintf!(boot_part, "boot_{slot_suffix}");
+        // We still need to specify slot because other components such as vendor_boot, dtb, dtbo and
+        // vbmeta still come from the disk.
+        let slot_idx = (u64::from(slot_suffix) - u64::from('a')).try_into().unwrap();
+        let mut ramboot_ops = RambootOps { ops: self.gbl_ops, ram_partitions: &[(boot_part, img)] };
+        let (ramdisk, fdt, kernel, _) =
+            android_load_verify_fixup(&mut ramboot_ops, slot_idx, false, self.load_buffer)?;
+        self.result.loaded_image_info = Some(LoadedImageInfo::Android {
+            ramdisk: to_range(ramdisk.as_ptr() as usize - load_buffer_addr, ramdisk.len()),
+            fdt: to_range(fdt.as_ptr() as usize - load_buffer_addr, fdt.len()),
+            kernel: to_range(kernel.as_ptr() as usize - load_buffer_addr, kernel.len()),
+        });
+        resp.send_formatted_info(|f| {
+            write!(f, "Boot image as Android slot {slot_suffix}").unwrap()
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Helper for "fastboot boot" Fuchsia image.
+    async fn boot_fuchsia(&mut self, img: &[u8], mut resp: impl InfoSender) -> CommandResult<()> {
+        let load_buffer_addr = self.load_buffer.as_ptr() as usize;
+        // Format is ZBI + Vbmeta.
+        let (zbi, vbmeta) = zbi_split_unused_buffer_ref(get_kernel(img)?)?;
+        let mut ramboot_ops = RambootOps {
+            ops: self.gbl_ops,
+            ram_partitions: &[
+                ("zircon_a", zbi),
+                ("vbmeta_a", vbmeta),
+                ("zircon_b", zbi),
+                ("vbmeta_b", vbmeta),
+                ("zircon_r", zbi),
+                ("vbmeta_r", vbmeta),
+            ],
+        };
+        let LoadedVerifiedZircon { zbi_items, kernel, slot } =
+            zircon_load_verify_abr_with_buffer(&mut ramboot_ops, self.load_buffer)?;
+        self.result.loaded_image_info = Some(LoadedImageInfo::Fuchsia {
+            zbi_items: to_range(zbi_items.as_ptr() as usize - load_buffer_addr, zbi_items.len()),
+            kernel: to_range(kernel.as_ptr() as usize - load_buffer_addr, kernel.len()),
+            slot,
+        });
+        resp.send_formatted_info(|f| {
+            write!(f, "Boot image as Fuchsia slot {}", char::from(slot)).unwrap()
+        })
+        .await?;
+        Ok(())
+    }
 }
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
@@ -783,26 +865,12 @@ where
         }
     }
 
-    async fn boot(&mut self, _: impl InfoSender + OkaySender) -> CommandResult<()> {
-        let (mut data, sz) = self.take_download().ok_or("No boot image staged")?;
-        let bootimg_buffer = &mut data[..sz];
-        let load_buffer_addr = self.load_buffer.as_ptr() as usize;
-        let slot_suffix = get_boot_slot(self.gbl_ops, false)?;
-        let mut boot_part = [0u8; 16];
-        let boot_part = snprintf!(boot_part, "boot_{slot_suffix}");
-        // We still need to specify slot because other components such as vendor_boot, dtb, dtbo and
-        // vbmeta still come from the disk.
-        let slot_idx = (u64::from(slot_suffix) - u64::from('a')).try_into().unwrap();
-        let mut ramboot_ops =
-            RambootOps { ops: self.gbl_ops, preloaded_partitions: &[(boot_part, bootimg_buffer)] };
-        let (ramdisk, fdt, kernel, _) =
-            android_load_verify_fixup(&mut ramboot_ops, slot_idx, false, self.load_buffer)?;
-        self.result.loaded_image_info = Some(LoadedImageInfo::Android {
-            ramdisk: to_range(ramdisk.as_ptr() as usize - load_buffer_addr, ramdisk.len()),
-            fdt: to_range(fdt.as_ptr() as usize - load_buffer_addr, fdt.len()),
-            kernel: to_range(kernel.as_ptr() as usize - load_buffer_addr, kernel.len()),
-        });
-        Ok(())
+    async fn boot(&mut self, resp: impl InfoSender + OkaySender) -> CommandResult<()> {
+        let (img, sz) = self.take_download().ok_or("No boot image staged")?;
+        match is_fuchsia_fastboot_boot_image(&img[..sz]) {
+            true => self.boot_fuchsia(&img[..sz], resp).await,
+            _ => self.boot_android(&img[..sz], resp).await,
+        }
     }
 }
 
@@ -953,6 +1021,11 @@ pub fn fuchsia_fastboot_mdns_packet(node_name: &str, ipv6_addr: &[u8]) -> Result
     }
     packet[IP6_ADDR_OFFSET..][..ipv6_addr.len()].clone_from_slice(ipv6_addr);
     Ok(packet)
+}
+
+/// Checks if a fastboot boot image is a fuchsia image.
+fn is_fuchsia_fastboot_boot_image(img: &[u8]) -> bool {
+    get_kernel(img).and_then(|v| ZbiContainer::parse(v).map_err(|_| Error::Other(None))).is_ok()
 }
 
 #[cfg(test)]
@@ -2949,7 +3022,12 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.usb_out_queue(),
-            make_expected_usb_out(&[b"DATA00004000", b"OKAY", b"OKAYboot_command",]),
+            make_expected_usb_out(&[
+                b"DATA00004000",
+                b"OKAY",
+                format!("INFOBoot image as Android slot {suffix}").as_bytes(),
+                b"OKAY",
+            ]),
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         );

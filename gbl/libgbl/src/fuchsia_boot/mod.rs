@@ -18,13 +18,15 @@ use crate::{gbl_print, gbl_println, image_buffer::ImageBuffer, GblOps, Result as
 pub use abr::{get_and_clear_one_shot_bootloader, get_boot_slot, Ops as AbrOps, SlotIndex};
 use core::{fmt::Write, mem::MaybeUninit, num::NonZeroUsize};
 use liberror::{Error, Result};
-use libutils::aligned_subslice;
 use safemath::SafeNum;
 use zbi::{ZbiContainer, ZbiFlags, ZbiHeader, ZbiType};
 use zerocopy::IntoBytes;
 
 mod vboot;
 use vboot::zircon_verify_kernel;
+
+mod load;
+pub use load::{zircon_load_verify_abr_with_buffer, zircon_main, LoadedVerifiedZircon};
 
 /// Kernel load address alignment. Value taken from
 /// https://fuchsia.googlesource.com/fuchsia/+/4f204d8a0243e84a86af4c527a8edcc1ace1615f/zircon/kernel/target/arm64/boot-shim/BUILD.gn#38
@@ -67,54 +69,13 @@ impl<'b, 'c, T: GblOps<'b, 'c> + ?Sized> AbrOps for GblAbrOps<'_, T> {
 /// A helper for splitting the trailing unused portion of a ZBI container buffer.
 ///
 /// Returns a tuple of used subslice and unused subslice
-fn zbi_split_unused_buffer(zbi: &mut [u8]) -> GblResult<(&mut [u8], &mut [u8])> {
+pub(crate) fn zbi_split_unused_buffer_mut(zbi: &mut [u8]) -> GblResult<(&mut [u8], &mut [u8])> {
     Ok(zbi.split_at_mut(ZbiContainer::parse(&zbi[..])?.container_size()?))
 }
 
-/// Relocates a ZBI kernel to a different buffer.
-///
-/// * `dest` must be aligned to `ZIRCON_KERNEL_ALIGN`.
-/// * `dest` will be a ZBI container containing only the kernel item.
-pub fn relocate_kernel(kernel: &[u8], dest: &mut [u8]) -> GblResult<()> {
-    if (dest.as_ptr() as usize % ZIRCON_KERNEL_ALIGN) != 0 {
-        return Err(Error::InvalidAlignment.into());
-    }
-
-    let kernel = ZbiContainer::parse(&kernel[..])?;
-    let kernel_item = kernel.get_bootable_kernel_item()?;
-    let hdr = kernel_item.header;
-    // Creates a new ZBI kernel item at the destination.
-    let mut relocated = ZbiContainer::new(&mut dest[..])?;
-    let zbi_type = ZbiType::try_from(hdr.type_)?;
-    relocated.create_entry_with_payload(
-        zbi_type,
-        hdr.extra,
-        hdr.get_flags() & !ZbiFlags::CRC32,
-        kernel_item.payload.as_bytes(),
-    )?;
-    let (_, reserved_memory_size) = relocated.get_kernel_entry_and_reserved_memory_size()?;
-    let buf_len = u64::try_from(zbi_split_unused_buffer(dest)?.1.len()).map_err(Error::from)?;
-    match reserved_memory_size > buf_len {
-        true => Err(Error::BufferTooSmall(None).into()),
-        _ => Ok(()),
-    }
-}
-
-/// Relocate a ZBI kernel to the trailing unused buffer.
-///
-/// Returns the original kernel subslice and relocated kernel subslice.
-pub fn relocate_to_tail(kernel: &mut [u8]) -> GblResult<(&mut [u8], &mut [u8])> {
-    let reloc_size = ZbiContainer::parse(&kernel[..])?.get_buffer_size_for_kernel_relocation()?;
-    let (original, relocated) = zbi_split_unused_buffer(kernel)?;
-    let relocated = aligned_subslice(relocated, ZIRCON_KERNEL_ALIGN)?;
-    let off = (SafeNum::from(relocated.len()) - reloc_size)
-        .round_down(ZIRCON_KERNEL_ALIGN)
-        .try_into()
-        .map_err(Error::from)?;
-    let relocated = &mut relocated[off..];
-    relocate_kernel(original, relocated)?;
-    let reloc_addr = relocated.as_ptr() as usize;
-    Ok(kernel.split_at_mut(reloc_addr.checked_sub(kernel.as_ptr() as usize).unwrap()))
+/// Same as zbi_split_unused_buffer_mut but on immutable slice.
+pub(crate) fn zbi_split_unused_buffer_ref(zbi: &[u8]) -> GblResult<(&[u8], &[u8])> {
+    Ok(zbi.split_at(ZbiContainer::parse(&zbi[..])?.container_size()?))
 }
 
 /// Gets the list of aliases for slotted/slotless zircon partition name.
@@ -139,6 +100,53 @@ fn slot_cmd_line(slot: SlotIndex) -> &'static str {
         SlotIndex::B => "zvb.current_slot=b",
         SlotIndex::R => "zvb.current_slot=r",
     }
+}
+
+/// Helper for reading zircon image from disk.
+pub(crate) fn read_zircon_image<'a, 'b>(
+    ops: &mut impl GblOps<'a, 'b>,
+    slot: Option<SlotIndex>,
+    out: &mut (impl gbl_storage::SliceMaybeUninit + ?Sized),
+) -> GblResult<usize> {
+    let zircon_part = find_part_aliases(ops, zircon_part_name_aliases(slot))?;
+    // Reads ZBI header to computes the total size of kernel.
+    let mut zbi_header: ZbiHeader = Default::default();
+    ops.read_from_partition_sync(zircon_part, 0, zbi_header.as_bytes_mut())?;
+    let image_length =
+        usize::try_from(SafeNum::from(zbi_header.as_bytes_mut().len()) + zbi_header.length)
+            .map_err(Error::from)?;
+    // Reads the entire kernel
+    let buf = out.get_mut(..image_length)?;
+    ops.read_from_partition_sync(zircon_part, 0, buf)?;
+    Ok(image_length)
+}
+
+/// Helper for fixing up ZBI items.
+pub(crate) fn fixup_zbi_items<'a, 'b>(
+    ops: &mut impl GblOps<'a, 'b>,
+    slot: Option<SlotIndex>,
+    zbi_items: &mut ZbiContainer<&mut [u8]>,
+) -> GblResult<()> {
+    // Appends current slot item.
+    if let Some(slot) = slot {
+        zbi_items.create_entry_with_payload(
+            ZbiType::CmdLine,
+            0,
+            ZbiFlags::default(),
+            slot_cmd_line(slot).as_bytes(),
+        )?;
+    }
+
+    // Appends device specific ZBI items.
+    ops.zircon_add_device_zbi_items(zbi_items)?;
+
+    // Appends staged bootloader file if present.
+    if let Some(Ok(v)) =
+        ops.get_zbi_bootloader_files_buffer_aligned().map(|v| ZbiContainer::parse(v))
+    {
+        zbi_items.extend(&v)?;
+    }
+    Ok(())
 }
 
 /// Loads and verifies a kernel of the given slot or slotless.
@@ -173,26 +181,13 @@ pub fn zircon_load_verify<'a, 'd>(
     }
     let mut zbi_items = ZbiContainer::new(zbi_items_img.used_mut())?;
 
-    let zircon_part = find_part_aliases(ops, zircon_part_name_aliases(slot))?;
-
-    // Reads ZBI header to computes the total size of kernel.
-    let mut zbi_header: ZbiHeader = Default::default();
-    ops.read_from_partition_sync(zircon_part, 0, zbi_header.as_bytes_mut())?;
-    let image_length = (SafeNum::from(zbi_header.as_bytes_mut().len()) + zbi_header.length)
-        .try_into()
-        .map_err(Error::from)?;
-
     // Reads the entire kernel
     // TODO(b/379778252): as part of an attempt to use single container for kernel and arguments,
     // it would be necessary to read kernel header first to figure out how much space needed
     // (kernel size + scratch space)
     let mut kernel_img =
         ops.get_image_buffer("zbi_zircon", NonZeroUsize::new(128 * 1024 * 1024).unwrap()).unwrap();
-    let kernel_uninit = kernel_img
-        .as_mut()
-        .get_mut(..image_length)
-        .ok_or(Error::BufferTooSmall(Some(image_length)))?;
-    ops.read_from_partition_sync(zircon_part, 0, kernel_uninit)?;
+    let image_length = read_zircon_image(ops, slot, kernel_img.as_mut())?;
     // SAFETY: buffer was successfully filled from partition
     unsafe {
         kernel_img.advance_used(image_length).unwrap();
@@ -202,30 +197,8 @@ pub fn zircon_load_verify<'a, 'd>(
     // Performs AVB verification.
     // TODO(b/379789161) verify that kernel buffer is big enough for the image and scratch buffer.
     zircon_verify_kernel(ops, slot, slot_booted_successfully, load, &mut zbi_items)?;
-
-    // Append additional ZBI items.
-    match slot {
-        Some(slot) => {
-            // Appends current slot item.
-            zbi_items.create_entry_with_payload(
-                ZbiType::CmdLine,
-                0,
-                ZbiFlags::default(),
-                slot_cmd_line(slot).as_bytes(),
-            )?;
-        }
-        _ => {}
-    }
-
-    // Appends device specific ZBI items.
-    ops.zircon_add_device_zbi_items(&mut zbi_items)?;
-
-    // Appends staged bootloader file if present.
-    match ops.get_zbi_bootloader_files_buffer_aligned().map(|v| ZbiContainer::parse(v)) {
-        Some(Ok(v)) => zbi_items.extend(&v)?,
-        _ => {}
-    }
-
+    // Fixup ZBI items.
+    fixup_zbi_items(ops, slot, &mut zbi_items)?;
     Ok((zbi_items_img, kernel_img))
 }
 
@@ -282,12 +255,12 @@ pub fn zircon_check_enter_fastboot<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) -> boo
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use super::*;
     use crate::{
         ops::{
             test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
-            CertPermanentAttributes,
+            CertPermanentAttributes, RebootReason,
         },
         tests::AlignedBuffer,
     };
@@ -305,8 +278,8 @@ mod test {
     use zerocopy::FromBytes;
 
     // The cert test keys were both generated with rollback version 42.
-    const TEST_CERT_PIK_VERSION: u64 = 42;
-    const TEST_CERT_PSK_VERSION: u64 = 42;
+    pub(crate) const TEST_CERT_PIK_VERSION: u64 = 42;
+    pub(crate) const TEST_CERT_PSK_VERSION: u64 = 42;
 
     // The `reserve_memory_size` value in the test ZBI kernel.
     // See `gen_zircon_test_images()` in libgbl/testdata/gen_test_data.py.
@@ -314,8 +287,8 @@ mod test {
 
     // The rollback index value and location in the generated test vbmetadata.
     // See `gen_zircon_test_images()` in libgbl/testdata/gen_test_data.py.
-    const TEST_ROLLBACK_INDEX_LOCATION: usize = 1;
-    const TEST_ROLLBACK_INDEX_VALUE: u64 = 2;
+    pub(crate) const TEST_ROLLBACK_INDEX_LOCATION: usize = 1;
+    pub(crate) const TEST_ROLLBACK_INDEX_VALUE: u64 = 2;
 
     pub(crate) const ZIRCON_A_ZBI_FILE: &str = "zircon_a.zbi";
     pub(crate) const ZIRCON_B_ZBI_FILE: &str = "zircon_b.zbi";
@@ -384,6 +357,7 @@ mod test {
         );
         ops.avb_ops.cert_permanent_attributes_hash =
             Some(read_test_data("cert_permanent_attributes.hash").try_into().unwrap());
+        ops.reboot_reason = Some(Ok(RebootReason::Normal));
         ops
     }
 

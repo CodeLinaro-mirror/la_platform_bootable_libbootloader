@@ -723,6 +723,15 @@ fn offset_range(lhs: Range<usize>, off: usize) -> Range<usize> {
     lhs.start.checked_add(off).unwrap()..lhs.end.checked_add(off).unwrap()
 }
 
+/// Parses and returns the kernel image from a boot image.
+pub fn get_kernel(boot: &[u8]) -> Result<&[u8], Error> {
+    match BootImage::parse(&boot[..]).map_err(Error::from)? {
+        BootImage::V3(_) | BootImage::V4(_) => boot.get(BootImageV3Info::new(boot)?.kernel_range),
+        _ => boot.get(BootImageV2Info::new(boot)?.kernel_range),
+    }
+    .ok_or(Error::InvalidInput)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
