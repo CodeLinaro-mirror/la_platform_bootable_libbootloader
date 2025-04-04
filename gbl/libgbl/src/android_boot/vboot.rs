@@ -17,7 +17,7 @@ use crate::{
         ops::{GblAvbOps, AVB_DIGEST_KEY},
         state::{BootStateColor, KeyValidationStatus},
     },
-    gbl_print, gbl_println, GblOps, Result,
+    gbl_println, GblOps, Result,
 };
 use abr::SlotIndex;
 use arrayvec::ArrayVec;

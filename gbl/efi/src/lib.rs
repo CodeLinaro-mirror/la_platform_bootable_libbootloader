@@ -93,6 +93,7 @@ fn get_target_os(entry: &EfiEntry, disks: &[EfiGblDisk]) -> TargetOs {
 /// GBL EFI application logic entry point.
 #[cfg(not(test))]
 pub fn app_main(entry: EfiEntry) -> Result<()> {
+    use libutils::get_sp;
     efi_println!(entry, "****Generic Bootloader Application****");
     efi_println!(entry, "Board type: {}", BOARD_TYPE_STR);
     if let Ok(v) = loaded_image_path(&entry) {
@@ -102,13 +103,13 @@ pub fn app_main(entry: EfiEntry) -> Result<()> {
     let disks = find_block_devices(&entry)?;
     match get_target_os(&entry, &disks) {
         TargetOs::Fuchsia => {
-            let mut ops = Ops::new(&entry, &disks[..], Some(Os::Fuchsia));
+            let mut ops = Ops::new(&entry, &disks[..], Some(Os::Fuchsia), get_sp());
             let images = fuchsia_boot::efi_fuchsia_load(&mut ops)?;
             drop(disks);
             fuchsia_boot::efi_fuchsia_boot(entry, images)?;
         }
         TargetOs::Android => {
-            let mut ops = Ops::new(&entry, &disks[..], Some(Os::Android));
+            let mut ops = Ops::new(&entry, &disks[..], Some(Os::Android), get_sp());
             let (ramdisk, fdt, kernel, remains) = android_boot::efi_android_load(&mut ops)?;
             drop(disks);
             android_boot::efi_android_boot(entry, kernel, ramdisk, fdt, remains)?;

@@ -28,7 +28,7 @@ use liberror::Error::BufferTooSmall;
 use libgbl::{
     constants::PAGE_SIZE as PAGE_SIZE_USIZE,
     fuchsia_boot::{zircon_main, LoadedVerifiedZircon},
-    gbl_print, gbl_println,
+    gbl_println,
     partition::check_part_unique,
     GblOps,
     IntegrationError::UnificationError,

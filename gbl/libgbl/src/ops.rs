@@ -19,6 +19,7 @@ use crate::{
     error::Result as GblResult,
     fuchsia_boot::GblAbrOps,
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
+    gbl_println,
     partition::{check_part_unique, read_unique_partition, write_unique_partition, GblDisk},
 };
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
@@ -436,6 +437,44 @@ pub trait GblOps<'a, 'd> {
 
     /// Gets the reboot reason for this boot.
     fn get_reboot_reason(&mut self) -> Result<RebootReason, Error>;
+
+    /// Returns the base stack pointer if available
+    fn get_base_sp(&mut self) -> Option<usize>;
+
+    /// Calculates the current stack usage given the stack pointer.
+    ///
+    /// # Returns None if Self::get_base_sp() returns None.
+    /// # Returns Some(usize::MAX) if current stack address is higher than get_base_sp();
+    #[inline(never)]
+    fn calculate_stack_usage(&mut self, sp: usize) -> Option<usize> {
+        Some(self.get_base_sp()?.checked_sub(sp).unwrap_or(usize::MAX))
+    }
+
+    /// Displays stack usage with the given stack pointer and location info.
+    ///
+    /// it is recommended to use macro `gbl_log_stack_usage` if displaying for the callsite.
+    #[inline(never)]
+    fn log_stack_usage_with_location(&mut self, sp: usize, file: &str, line: u32) {
+        let buffer = &mut [0u8; 256][..];
+        let s = match self.calculate_stack_usage(sp) {
+            Some(v) => libutils::snprintf!(buffer, "{file}:{line}, stack usage: {}", v),
+            _ => "base sp not set",
+        };
+        gbl_println!(self, "{s}");
+    }
+}
+
+/// Prints the stack usage at the callsite.
+#[macro_export]
+macro_rules! gbl_log_stack_usage {
+    ($ops:expr) => {
+        $crate::GblOps::log_stack_usage_with_location(
+            $ops,
+            libutils::get_sp(),
+            core::file!(),
+            core::line!(),
+        )
+    };
 }
 
 /// Prints with `GblOps::console_out()`.
@@ -457,8 +496,8 @@ macro_rules! gbl_println {
     ( $ops:expr, $( $x:expr ),* $(,)? ) => {
         {
             let newline = $ops.console_newline();
-            gbl_print!($ops, $($x,)*);
-            gbl_print!($ops, "{}", newline);
+            $crate::gbl_print!($ops, $($x,)*);
+            $crate::gbl_print!($ops, "{}", newline);
         }
     };
 }
@@ -684,6 +723,10 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         Ok(RebootReason::Normal)
     }
 
+    fn get_base_sp(&mut self) -> Option<usize> {
+        self.ops.get_base_sp()
+    }
+
     fn fastboot_variable<'arg>(
         &mut self,
         _: &CStr,
@@ -845,6 +888,9 @@ pub(crate) mod test {
 
         /// For returned by `slot_metadata`
         pub slot_metadata_result: Option<Result<SlotsMetadata, Error>>,
+
+        /// For returned by `get_base_sp`.
+        pub base_sp: Option<usize>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1147,6 +1193,10 @@ pub(crate) mod test {
         fn get_reboot_reason(&mut self) -> Result<RebootReason, Error> {
             self.reboot_reason.unwrap()
         }
+
+        fn get_base_sp(&mut self) -> Option<usize> {
+            self.base_sp
+        }
     }
 
     #[test]
@@ -1225,5 +1275,28 @@ pub(crate) mod test {
     /// Helper for creating a slot object.
     pub(crate) fn slot(suffix: char) -> Slot {
         Slot { suffix: suffix.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn calculate_stack_usage() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.base_sp = Some(3);
+        assert_eq!(gbl_ops.calculate_stack_usage(1), Some(2));
+    }
+
+    #[test]
+    fn calculate_stack_usage_returns_none_if_base_sp_not_set() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        assert_eq!(gbl_ops.calculate_stack_usage(0), None);
+    }
+
+    #[test]
+    fn calculate_stack_usage_returns_max_if_overflow() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.base_sp = Some(1);
+        assert_eq!(gbl_ops.calculate_stack_usage(2), Some(usize::MAX));
     }
 }

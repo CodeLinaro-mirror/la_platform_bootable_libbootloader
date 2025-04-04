@@ -17,7 +17,7 @@
 // gzip [DeflateDecoder] requires heap allocation.
 extern crate alloc;
 
-use crate::{gbl_print, gbl_println, GblOps};
+use crate::{gbl_println, GblOps};
 use liberror::{Error, Result};
 use lz4_flex::decompress_into;
 use zune_inflate::DeflateDecoder;

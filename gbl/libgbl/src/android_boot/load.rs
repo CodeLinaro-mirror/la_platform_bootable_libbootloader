@@ -17,7 +17,7 @@ use crate::{
     android_boot::PartitionsToVerify,
     constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE},
     decompress::decompress_kernel,
-    gbl_print, gbl_println,
+    gbl_println,
     ops::GblOps,
     partition::RAW_PARTITION_NAME_LEN,
     IntegrationError,

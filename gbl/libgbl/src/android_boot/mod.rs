@@ -21,7 +21,7 @@ use crate::{
         run_gbl_fastboot, run_gbl_fastboot_stack, BufferPool, GblFastbootResult, GblTcpStream,
         GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
     },
-    gbl_print, gbl_println,
+    gbl_println,
     ops::RebootReason,
     GblOps, Result,
 };

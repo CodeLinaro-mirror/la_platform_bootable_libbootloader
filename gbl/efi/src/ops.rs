@@ -157,12 +157,18 @@ pub struct Ops<'a, 'b> {
     pub disks: &'b [EfiGblDisk<'a>],
     pub zbi_bootloader_files_buffer: Vec<u8>,
     pub os: Option<Os>,
+    pub base_sp: usize,
 }
 
 impl<'a, 'b> Ops<'a, 'b> {
     /// Creates a new instance of [Ops]
-    pub fn new(efi_entry: &'a EfiEntry, disks: &'b [EfiGblDisk<'a>], os: Option<Os>) -> Self {
-        Self { efi_entry, disks, zbi_bootloader_files_buffer: Default::default(), os }
+    pub fn new(
+        efi_entry: &'a EfiEntry,
+        disks: &'b [EfiGblDisk<'a>],
+        os: Option<Os>,
+        base_sp: usize,
+    ) -> Self {
+        Self { efi_entry, disks, zbi_bootloader_files_buffer: Default::default(), os, base_sp }
     }
 
     /// Gets the property of an FDT node from EFI FDT.
@@ -708,6 +714,10 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
                 .try_into()
                 .unwrap(),
         })
+    }
+
+    fn get_base_sp(&mut self) -> Option<usize> {
+        Some(self.base_sp)
     }
 }
 

@@ -435,6 +435,10 @@ mod test {
         fn get_reboot_reason(&mut self) -> Result<RebootReason> {
             unimplemented!()
         }
+
+        fn get_base_sp(&mut self) -> Option<usize> {
+            None
+        }
     }
 
     #[test]

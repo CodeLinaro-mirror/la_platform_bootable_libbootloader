@@ -14,7 +14,7 @@
 
 //! This file provides APIs for loading, verifying and booting Fuchsia/Zircon.
 
-use crate::{gbl_print, gbl_println, image_buffer::ImageBuffer, GblOps, Result as GblResult};
+use crate::{gbl_println, image_buffer::ImageBuffer, GblOps, Result as GblResult};
 pub use abr::{get_and_clear_one_shot_bootloader, get_boot_slot, Ops as AbrOps, SlotIndex};
 use core::{fmt::Write, mem::MaybeUninit, num::NonZeroUsize};
 use liberror::{Error, Result};

@@ -16,7 +16,7 @@
 
 use crate::{
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
-    gbl_print, gbl_println, GblOps,
+    gbl_println, GblOps,
 };
 use abr::SlotIndex;
 use arrayvec::ArrayString;

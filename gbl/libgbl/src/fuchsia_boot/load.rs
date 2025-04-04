@@ -21,7 +21,7 @@ use crate::{
         zbi_split_unused_buffer_mut, zircon_check_enter_fastboot, zircon_part_name, GblAbrOps,
         ZIRCON_KERNEL_ALIGN,
     },
-    gbl_print, gbl_println,
+    gbl_println,
     ops::RebootReason,
     GblOps, Result as GblResult,
 };

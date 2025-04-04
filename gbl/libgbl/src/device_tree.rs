@@ -14,7 +14,7 @@
 
 //! GblOps trait that defines device tree components helpers.
 
-use crate::{constants::FDT_ALIGNMENT, gbl_print, gbl_println, GblOps};
+use crate::{constants::FDT_ALIGNMENT, gbl_println, GblOps};
 use arrayvec::ArrayVec;
 use dttable::{DtTableImage, DtTableMetadata};
 use fdt::{Fdt, FdtHeader, FDT_HEADER_SIZE};

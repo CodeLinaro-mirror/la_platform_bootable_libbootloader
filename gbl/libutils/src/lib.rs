@@ -16,7 +16,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
-use core::{cmp::min, str::from_utf8};
+use core::{arch::asm, cmp::min, str::from_utf8};
 use liberror::{Error, Result};
 use safemath::SafeNum;
 
@@ -120,6 +120,24 @@ macro_rules! snprintf {
             core::str::from_utf8(&$arr[..size]).unwrap()
         }
     };
+}
+
+/// Returns the stack pointer register
+pub fn get_sp() -> usize {
+    let sp: usize;
+    // SAFETY: The asm! macro is used to read the stack pointer register. This is safe because the
+    // stack pointer register is always a valid register to read from.
+    unsafe {
+        #[cfg(target_arch = "aarch64")]
+        asm!("mov {}, sp", out(reg) sp);
+        #[cfg(target_arch = "riscv64")]
+        asm!("mv {}, sp", out(reg) sp);
+        #[cfg(target_arch = "x86_64")]
+        asm!("mov {}, rsp", out(reg) sp);
+        #[cfg(target_arch = "x86")]
+        asm!("mov {}, esp", out(reg) sp);
+    }
+    sp
 }
 
 #[cfg(test)]
