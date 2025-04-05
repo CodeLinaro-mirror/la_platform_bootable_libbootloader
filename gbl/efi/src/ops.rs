@@ -25,14 +25,17 @@ use alloc::{
 };
 use arrayvec::ArrayVec;
 use core::{
-    cmp::min, ffi::CStr, fmt::Write, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut, ptr::null,
+    ffi::CStr, fmt::Write, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut, ptr::null,
     slice::from_raw_parts_mut, time::Duration,
 };
 use efi::{
     efi_print, efi_println,
     protocol::{
-        dt_fixup::DtFixupProtocol, gbl_efi_ab_slot::GblSlotProtocol, gbl_efi_avb::GblAvbProtocol,
-        gbl_efi_fastboot::GblFastbootProtocol, gbl_efi_image_loading::GblImageLoadingProtocol,
+        dt_fixup::DtFixupProtocol,
+        gbl_efi_ab_slot::GblSlotProtocol,
+        gbl_efi_avb::GblAvbProtocol,
+        gbl_efi_fastboot::GblFastbootProtocol,
+        gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
     },
     EfiEntry,
@@ -44,7 +47,7 @@ use efi_types::{
     GBL_EFI_BOOT_REASON_RECOVERY, PARTITION_NAME_LEN_U16,
 };
 use fdt::Fdt;
-use gbl_storage::{BlockIo, Disk, Gpt, SliceMaybeUninit};
+use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::{Error, Result};
 use libgbl::{
     constants::{ImageName, BOOTCMD_SIZE},
@@ -87,10 +90,7 @@ fn avb_color_to_efi_color(color: BootStateColor) -> u32 {
 }
 
 fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDeviceTree {
-    let metadata = match component.source {
-        DeviceTreeComponentSource::Dtb(m) | DeviceTreeComponentSource::Dtbo(m) => m,
-        _ => Default::default(),
-    };
+    let metadata = component.metadata.unwrap_or_default();
 
     GblEfiVerifiedDeviceTree {
         metadata: GblEfiDeviceTreeMetadata {
@@ -99,8 +99,8 @@ fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDevi
                 DeviceTreeComponentSource::VendorBoot => {
                     efi_types::GBL_EFI_DEVICE_TREE_SOURCE_VENDOR_BOOT
                 }
-                DeviceTreeComponentSource::Dtb(_) => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTB,
-                DeviceTreeComponentSource::Dtbo(_) => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTBO,
+                DeviceTreeComponentSource::Dtb => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTB,
+                DeviceTreeComponentSource::Dtbo => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTBO,
             },
             id: metadata.id,
             rev: metadata.rev,
@@ -132,6 +132,23 @@ fn efi_error_to_avb_error(error: Error) -> AvbIoError {
         Error::Unsupported => AvbIoError::NotImplemented,
         _ => AvbIoError::NotImplemented,
     }
+}
+
+/// Helper for getting platform reserved buffer from EFI image loading prototol.
+pub(crate) fn get_buffer_from_protocol(
+    efi_entry: &EfiEntry,
+    image_name: &str,
+    size: usize,
+) -> Result<EfiImageBufferInfo> {
+    let mut image_type = [0u16; PARTITION_NAME_LEN_U16];
+    image_type.iter_mut().zip(image_name.encode_utf16()).for_each(|(dst, src)| {
+        *dst = src;
+    });
+    Ok(efi_entry
+        .system_table()
+        .boot_services()
+        .find_first_and_open::<GblImageLoadingProtocol>()?
+        .get_buffer(&GblEfiImageInfo { ImageType: image_type, SizeBytes: size })?)
 }
 
 pub struct Ops<'a, 'b> {
@@ -167,27 +184,18 @@ impl<'a, 'b> Ops<'a, 'b> {
     /// # Return
     /// * Ok(ImageBuffer) - Return buffer for partition loading and verification.
     /// * Err(_) - on error
-    fn get_buffer_image_loading(
+    pub(crate) fn get_buffer_image_loading(
         &mut self,
         image_name: &str,
         size: NonZeroUsize,
     ) -> GblResult<ImageBuffer<'static>> {
-        let mut image_type = [0u16; PARTITION_NAME_LEN_U16];
-        image_type.iter_mut().zip(image_name.encode_utf16()).for_each(|(dst, src)| {
-            *dst = src;
-        });
-        let image_info = GblEfiImageInfo { ImageType: image_type, SizeBytes: size.get() };
-        let efi_image_buffer = self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblImageLoadingProtocol>()?
-            .get_buffer(&image_info)?;
-
         // EfiImageBuffer -> ImageBuffer
         // Make sure not to drop efi_image_buffer since we transferred ownership to ImageBuffer
-        let buffer = efi_image_buffer.take();
-        Ok(ImageBuffer::new(buffer))
+        Ok(ImageBuffer::new(
+            get_buffer_from_protocol(self.efi_entry, image_name, size.get())?
+                .take()
+                .ok_or(Error::InvalidState)?,
+        ))
     }
 
     /// Get buffer for partition loading and verification.
@@ -608,6 +616,39 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         })
     }
 
+    #[cfg(not(test))]
+    fn get_current_slot(&mut self) -> Result<Slot> {
+        // TODO(b/383620444): GBL EFI slot protocol is currently implemented on a few platforms such
+        // as Cuttlefish but is out of sync. Wait until protocol is more stable and all platforms
+        // pick up the latest before enabling.
+        Err(Error::Unsupported)
+    }
+
+    #[cfg(not(test))]
+    fn get_next_slot(&mut self, _: bool) -> Result<Slot> {
+        // TODO(b/383620444): See `get_current_slot()`.
+        Err(Error::Unsupported)
+    }
+
+    #[cfg(not(test))]
+    fn set_active_slot(&mut self, _: u8) -> Result<()> {
+        // TODO(b/383620444): See `get_current_slot()`.
+        Err(Error::Unsupported)
+    }
+
+    #[cfg(not(test))]
+    fn set_reboot_reason(&mut self, _: RebootReason) -> Result<()> {
+        // TODO(b/383620444): See `get_current_slot()`.
+        Err(Error::Unsupported)
+    }
+
+    #[cfg(not(test))]
+    fn get_reboot_reason(&mut self) -> Result<RebootReason> {
+        // TODO(b/383620444): See `get_current_slot()`.
+        Err(Error::Unsupported)
+    }
+
+    #[cfg(test)]
     fn get_current_slot(&mut self) -> Result<Slot> {
         // TODO(b/363075013): Refactors the opening of slot protocol into a common helper once
         // `MockBootServices::find_first_and_open` is updated to return Protocol<'_, T>.
@@ -619,6 +660,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .try_into()
     }
 
+    #[cfg(test)]
     fn get_next_slot(&mut self, mark_boot_attempt: bool) -> Result<Slot> {
         self.efi_entry
             .system_table()
@@ -628,6 +670,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .try_into()
     }
 
+    #[cfg(test)]
     fn set_active_slot(&mut self, slot: u8) -> Result<()> {
         self.efi_entry
             .system_table()
@@ -636,6 +679,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .set_active_slot(slot)
     }
 
+    #[cfg(test)]
     fn set_reboot_reason(&mut self, reason: RebootReason) -> Result<()> {
         self.efi_entry
             .system_table()
@@ -644,6 +688,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .set_boot_reason(gbl_to_efi_boot_reason(reason), b"")
     }
 
+    #[cfg(test)]
     fn get_reboot_reason(&mut self) -> Result<RebootReason> {
         let mut subreason = [0u8; 128];
         self.efi_entry
@@ -656,6 +701,8 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 }
 
 /// Converts a [GblEfiBootReason] to [RebootReason].
+// TODO(b/383620444): Remove the attribute once all boards picks up the stable Slot protocol.
+#[allow(dead_code)]
 fn efi_to_gbl_boot_reason(reason: GblEfiBootReason) -> RebootReason {
     match reason {
         GBL_EFI_BOOT_REASON_RECOVERY => RebootReason::Recovery,
@@ -666,234 +713,14 @@ fn efi_to_gbl_boot_reason(reason: GblEfiBootReason) -> RebootReason {
 }
 
 /// Converts a [RebootReason] to [GblEfiBootReason].
+// TODO(b/383620444): Remove the attribute once all boards picks up the stable Slot protocol.
+#[allow(dead_code)]
 fn gbl_to_efi_boot_reason(reason: RebootReason) -> GblEfiBootReason {
     match reason {
         RebootReason::Recovery => GBL_EFI_BOOT_REASON_RECOVERY,
         RebootReason::Bootloader => GBL_EFI_BOOT_REASON_BOOTLOADER,
         RebootReason::FastbootD => GBL_EFI_BOOT_REASON_FASTBOOTD,
         RebootReason::Normal => GBL_EFI_BOOT_REASON_COLD,
-    }
-}
-
-/// Inherits everything from `ops` but override a few such as read boot_a from
-/// bootimg_buffer, avb_write_rollback_index(), slot operation etc
-pub struct RambootOps<'b, T> {
-    pub ops: &'b mut T,
-    pub bootimg_buffer: &'b mut [u8],
-}
-
-impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
-    fn console_out(&mut self) -> Option<&mut dyn Write> {
-        self.ops.console_out()
-    }
-
-    fn should_stop_in_fastboot(&mut self) -> Result<bool> {
-        self.ops.should_stop_in_fastboot()
-    }
-
-    fn reboot(&mut self) {
-        self.ops.reboot()
-    }
-
-    fn disks(
-        &self,
-    ) -> &'a [GblDisk<
-        Disk<impl BlockIo + 'a, impl DerefMut<Target = [u8]> + 'a>,
-        Gpt<impl DerefMut<Target = [u8]> + 'a>,
-    >] {
-        self.ops.disks()
-    }
-
-    fn expected_os(&mut self) -> Result<Option<Os>> {
-        self.ops.expected_os()
-    }
-
-    fn zircon_add_device_zbi_items(
-        &mut self,
-        container: &mut ZbiContainer<&mut [u8]>,
-    ) -> Result<()> {
-        self.ops.zircon_add_device_zbi_items(container)
-    }
-
-    fn get_zbi_bootloader_files_buffer(&mut self) -> Option<&mut [u8]> {
-        self.ops.get_zbi_bootloader_files_buffer()
-    }
-
-    fn load_slot_interface<'c>(
-        &'c mut self,
-        _fnmut: &'c mut dyn FnMut(&mut [u8]) -> Result<()>,
-        _boot_token: BootToken,
-    ) -> GblResult<Cursor<'c>> {
-        self.ops.load_slot_interface(_fnmut, _boot_token)
-    }
-
-    fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
-        self.ops.avb_read_is_device_unlocked()
-    }
-
-    fn avb_read_rollback_index(&mut self, _rollback_index_location: usize) -> AvbIoResult<u64> {
-        self.ops.avb_read_rollback_index(_rollback_index_location)
-    }
-
-    fn avb_write_rollback_index(&mut self, _: usize, _: u64) -> AvbIoResult<()> {
-        // We don't want to persist AVB related data such as updating antirollback indices.
-        Ok(())
-    }
-
-    fn avb_read_persistent_value(&mut self, name: &CStr, value: &mut [u8]) -> AvbIoResult<usize> {
-        self.ops.avb_read_persistent_value(name, value)
-    }
-
-    fn avb_write_persistent_value(&mut self, _: &CStr, _: &[u8]) -> AvbIoResult<()> {
-        // We don't want to persist AVB related data such as updating current VBH.
-        Ok(())
-    }
-
-    fn avb_erase_persistent_value(&mut self, _: &CStr) -> AvbIoResult<()> {
-        // We don't want to persist AVB related data such as updating current VBH.
-        Ok(())
-    }
-
-    fn avb_cert_read_permanent_attributes(
-        &mut self,
-        attributes: &mut CertPermanentAttributes,
-    ) -> AvbIoResult<()> {
-        self.ops.avb_cert_read_permanent_attributes(attributes)
-    }
-
-    fn avb_cert_read_permanent_attributes_hash(&mut self) -> AvbIoResult<[u8; SHA256_DIGEST_SIZE]> {
-        self.ops.avb_cert_read_permanent_attributes_hash()
-    }
-
-    fn get_image_buffer(
-        &mut self,
-        image_name: &str,
-        size: NonZeroUsize,
-    ) -> GblResult<ImageBuffer<'d>> {
-        self.ops.get_image_buffer(image_name, size)
-    }
-
-    fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
-        self.ops.get_custom_device_tree()
-    }
-
-    fn fixup_os_commandline<'c>(
-        &mut self,
-        commandline: &CStr,
-        fixup_buffer: &'c mut [u8],
-    ) -> Result<Option<&'c str>> {
-        self.ops.fixup_os_commandline(commandline, fixup_buffer)
-    }
-
-    fn fixup_bootconfig<'c>(
-        &mut self,
-        bootconfig: &[u8],
-        fixup_buffer: &'c mut [u8],
-    ) -> Result<Option<&'c [u8]>> {
-        self.ops.fixup_bootconfig(bootconfig, fixup_buffer)
-    }
-
-    fn fixup_device_tree(&mut self, device_tree: &mut [u8]) -> Result<()> {
-        self.ops.fixup_device_tree(device_tree)
-    }
-
-    fn select_device_trees(
-        &mut self,
-        components_registry: &mut DeviceTreeComponentsRegistry,
-    ) -> Result<()> {
-        self.ops.select_device_trees(components_registry)
-    }
-
-    fn read_from_partition_sync(
-        &mut self,
-        part: &str,
-        off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
-    ) -> Result<()> {
-        if part == "boot_a" {
-            let len = min(self.bootimg_buffer.len() - off as usize, out.len());
-            out.clone_from_slice(&self.bootimg_buffer[off as usize..off as usize + len]);
-            Ok(())
-        } else {
-            self.ops.read_from_partition_sync(part, off, out)
-        }
-    }
-
-    fn avb_handle_verification_result(
-        &mut self,
-        color: BootStateColor,
-        digest: Option<&CStr>,
-        boot_os_version: Option<&[u8]>,
-        boot_security_patch: Option<&[u8]>,
-        system_os_version: Option<&[u8]>,
-        system_security_patch: Option<&[u8]>,
-        vendor_os_version: Option<&[u8]>,
-        vendor_security_patch: Option<&[u8]>,
-    ) -> AvbIoResult<()> {
-        self.ops.avb_handle_verification_result(
-            color,
-            digest,
-            boot_os_version,
-            boot_security_patch,
-            system_os_version,
-            system_security_patch,
-            vendor_os_version,
-            vendor_security_patch,
-        )
-    }
-
-    fn avb_validate_vbmeta_public_key(
-        &self,
-        public_key: &[u8],
-        public_key_metadata: Option<&[u8]>,
-    ) -> AvbIoResult<KeyValidationStatus> {
-        self.ops.avb_validate_vbmeta_public_key(public_key, public_key_metadata)
-    }
-
-    fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
-        // Ramboot is not suppose to call this interface.
-        unreachable!()
-    }
-
-    fn get_current_slot(&mut self) -> Result<Slot> {
-        // Ramboot is slotless
-        Err(Error::Unsupported)
-    }
-
-    fn get_next_slot(&mut self, _: bool) -> Result<Slot> {
-        // Ramboot is not suppose to call this interface.
-        unreachable!()
-    }
-
-    fn set_active_slot(&mut self, _: u8) -> Result<()> {
-        // Ramboot is not suppose to call this interface.
-        unreachable!()
-    }
-
-    fn set_reboot_reason(&mut self, _: RebootReason) -> Result<()> {
-        // Ramboot is not suppose to call this interface.
-        unreachable!()
-    }
-
-    fn get_reboot_reason(&mut self) -> Result<RebootReason> {
-        // Assumes that ramboot use normal boot mode. But we might consider supporting recovery
-        // if there is a usecase.
-        Ok(RebootReason::Normal)
-    }
-
-    fn fastboot_variable<'arg>(
-        &mut self,
-        _: &CStr,
-        _: impl Iterator<Item = &'arg CStr> + Clone,
-        _: &mut [u8],
-    ) -> Result<usize> {
-        // Ramboot should not need this.
-        unreachable!();
-    }
-
-    fn fastboot_visit_all_variables(&mut self, _: impl FnMut(&[&CStr], &CStr)) -> Result<()> {
-        // Ramboot should not need this.
-        unreachable!();
     }
 }
 
@@ -1683,20 +1510,10 @@ mod test {
             .append(&mut ops, DeviceTreeComponentSource::VendorBoot, &base, current_buffer)
             .unwrap();
         current_buffer = registry
-            .append(
-                &mut ops,
-                DeviceTreeComponentSource::Dtbo(Default::default()),
-                &overlay,
-                current_buffer,
-            )
+            .append(&mut ops, DeviceTreeComponentSource::Dtbo, &overlay, current_buffer)
             .unwrap();
         registry
-            .append(
-                &mut ops,
-                DeviceTreeComponentSource::Dtbo(Default::default()),
-                &overlay2,
-                current_buffer,
-            )
+            .append(&mut ops, DeviceTreeComponentSource::Dtbo, &overlay2, current_buffer)
             .unwrap();
 
         assert_eq!(ops.select_device_trees(&mut registry), Ok(()));

@@ -5,6 +5,7 @@
 
     chosen {
         bootargs = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2";
+        builtin = [01];
         fixup = <0x0>;
     };
 };

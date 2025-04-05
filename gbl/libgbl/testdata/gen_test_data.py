@@ -16,9 +16,11 @@
 """Generate test data files for libgbl tests"""
 
 import argparse
+import gzip
 import os
 import pathlib
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,10 +28,12 @@ import tempfile
 SCRIPT_DIR = pathlib.Path(os.path.dirname(os.path.realpath(__file__)))
 AOSP_ROOT = SCRIPT_DIR.parents[4]
 GBL_ROOT = SCRIPT_DIR.parents[1]
+ANDROID_OUT = SCRIPT_DIR / "android"
 GPT_TOOL = GBL_ROOT / "tools" / "gen_gpt_disk.py"
 AVB_DIR = AOSP_ROOT / "external" / "avb"
 AVB_TOOL = AVB_DIR / "avbtool.py"
 MKBOOTIMG_TOOL = AOSP_ROOT / "tools" / "mkbootimg" / "mkbootimg.py"
+UNPACKBOOTIMG_TOOL = AOSP_ROOT / "tools" / "mkbootimg" / "unpack_bootimg.py"
 AVB_TEST_DATA_DIR = AVB_DIR / "test" / "data"
 DTC_TOOL = (
     AOSP_ROOT / "prebuilts" / "kernel-build-tools" / "linux-x86" / "bin" / "dtc"
@@ -42,7 +46,13 @@ MKDTBOIMG_TOOL = (
     / "bin"
     / "mkdtboimg"
 )
+LZ4_TOOL = "lz4"
 SZ_KB = 1024
+
+# Manually downloaded from Android CI:
+# https://android-build.corp.google.com/build_explorer/branch/aosp_kernel-common-android-mainline
+GKI_BOOT_GZ = ANDROID_OUT / "gki_boot_gz.img"
+GKI_BOOT_LZ4 = ANDROID_OUT / "gki_boot_lz4.img"
 
 # RNG seed values. Keep the same seed value for a given file to ensure
 # reproducibility as much as possible; this will prevent adding a bunch of
@@ -61,6 +71,58 @@ TEST_ROLLBACK_INDEX = 2
 def write_file(file, offset, data):
     file.seek(offset, 0)
     file.write(data)
+
+
+# Unpack kernel from boot image
+def unpack_boot(boot, into):
+    subprocess.run(
+        [
+            UNPACKBOOTIMG_TOOL,
+            "--boot_img", boot,
+            "--out", into,
+        ],
+        stderr=subprocess.STDOUT,
+        check=True,
+    )
+
+
+def uncompress_lz4(archive, into):
+    subprocess.run(
+        [
+            LZ4_TOOL,
+            "-f",  # always override
+            "-d", archive,
+            into,
+        ],
+        stderr=subprocess.STDOUT,
+        check=True,
+    )
+
+
+def uncompress_gz(archive, into):
+    with gzip.open(archive, "rb") as input, open(into, "wb") as output:
+        shutil.copyfileobj(input, output)
+
+
+# Unpack and uncompress GKI boot images
+def unpack_gkis():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = pathlib.Path(temp_dir)
+
+        if shutil.which(LZ4_TOOL) is not None:
+            unpack_boot(GKI_BOOT_LZ4, temp_dir)
+            shutil.copyfile(temp_dir / "kernel",
+                            ANDROID_OUT / "gki_boot_lz4_kernel")
+            uncompress_lz4(ANDROID_OUT / "gki_boot_lz4_kernel",
+                           ANDROID_OUT / "gki_boot_lz4_kernel_uncompressed")
+        else:
+            print("Warning: lz4 tool isn't presented, skipping unpack lz4 gki boot")
+
+        unpack_boot(GKI_BOOT_GZ, temp_dir)
+        shutil.copyfile(temp_dir / "kernel",
+                        ANDROID_OUT / "gki_boot_gz_kernel")
+        uncompress_gz(ANDROID_OUT / "gki_boot_gz_kernel",
+                      ANDROID_OUT / "gki_boot_gz_kernel_uncompressed")
 
 
 # Generates sparse image for flashing test
@@ -108,9 +170,53 @@ def gen_dtb(input_dts, output_dtb):
 
 
 def gen_android_test_dtb():
-    out_dir = SCRIPT_DIR / "android"
+    out_dir = ANDROID_OUT
     # Generates base test device tree.
     gen_dtb(out_dir / "device_tree.dts", out_dir / "device_tree.dtb")
+    gen_dtb(
+        out_dir / "device_tree_custom.dts", out_dir / "device_tree_custom.dtb"
+    )
+    # Generates dtb to be used inside boot/vendor_boot
+    subprocess.run(
+        [
+            MKDTBOIMG_TOOL,
+            "create",
+            out_dir / "dtb.img",
+            "--id=0x1",
+            "--rev=0x0",
+            out_dir / "device_tree.dtb",
+        ],
+        stderr=subprocess.STDOUT,
+        check=True,
+    )
+
+    # Generates dtb_a/dtb_b
+    gen_dtb(out_dir / "device_tree_a.dts", out_dir / "device_tree_a.dtb")
+    gen_dtb(out_dir / "device_tree_b.dts", out_dir / "device_tree_b.dtb")
+    subprocess.run(
+        [
+            MKDTBOIMG_TOOL,
+            "create",
+            out_dir / "dtb_a.img",
+            "--id=0x1",
+            "--rev=0x0",
+            out_dir / "device_tree_a.dtb",
+        ],
+        stderr=subprocess.STDOUT,
+        check=True,
+    )
+    subprocess.run(
+        [
+            MKDTBOIMG_TOOL,
+            "create",
+            out_dir / "dtb_b.img",
+            "--id=0x1",
+            "--rev=0x0",
+            out_dir / "device_tree_b.dtb",
+        ],
+        stderr=subprocess.STDOUT,
+        check=True,
+    )
 
     # Generates overlay
     gen_dtb(out_dir / "overlay_a.dts", out_dir / "overlay_a.dtb")
@@ -190,7 +296,7 @@ def gen_android_test_vbmeta(partition_file_pairs, out_vbmeta):
             check=True,
         )
 
-        # Generates digest file
+        # Generates vbmeta digest file
         out_digest = out_vbmeta.with_suffix(".digest.txt")
         digest = subprocess.run(
             [
@@ -201,19 +307,54 @@ def gen_android_test_vbmeta(partition_file_pairs, out_vbmeta):
                 "--hash_algorithm",
                 "sha512",
             ],
+
+
             check=True,
             text=True,
             capture_output=True,
         )
         out_digest.write_text(digest.stdout)
 
+        extract_vbmeta_digests(out_vbmeta)
+
+
+# Extract digests from vbmeta data
+def extract_vbmeta_digests(vbmeta):
+    # Get vbmeta digests
+    digests = (
+        re.split(
+            "\n|: ",
+            subprocess.run(
+                [
+                    AVB_TOOL,
+                    "print_partition_digests",
+                    "--image",
+                    vbmeta,
+                ],
+
+
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            .stdout
+        )
+    )
+    digests = {digests[i]: digests[i+1] for i in range(0, len(digests), 2) if digests[i] in [
+        "boot", "vendor_boot", "init_boot", "dtbo", "dtb"]}
+
+    for key, value in digests.items():
+        out_digest = vbmeta.with_suffix(".{}.digest.txt".format(key))
+        out_digest.write_text(value + "\n")
+
 
 def gen_android_test_images():
+    unpack_gkis()
     gen_android_test_dtb()
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = pathlib.Path(temp_dir)
-        out_dir = SCRIPT_DIR / "android"
+        out_dir = ANDROID_OUT
         out_dir.mkdir(parents=True, exist_ok=True)
         for slot in ["a", "b"]:
             random.seed(RNG_SEED_ANDROID[slot])
@@ -268,6 +409,19 @@ androidboot.config_2=val_2
                     stderr=subprocess.STDOUT,
                 )
 
+            # Generate v4 boot images for gzip and lz4 kernel compression.
+            if slot == "a":
+                for compression in ['gz', 'lz4']:
+                    out = out_dir / f"boot_v4_{compression}_{slot}.img"
+                    # Replace kernel
+                    common[2] = out_dir / f"gki_boot_{compression}_kernel"
+
+                    subprocess.run(
+                        common + ["--header_version", "4", "-o", out],
+                        check=True,
+                        stderr=subprocess.STDOUT,
+                    )
+
             # Generates init_boot
             subprocess.run(
                 [
@@ -298,6 +452,8 @@ androidboot.config_2=val_2
             subprocess.run(
                 common
                 + [
+                    "--dtb",
+                    out_dir / "device_tree.dtb",
                     "--vendor_boot",
                     out_dir / f"vendor_boot_v3_{slot}.img",
                     "--header_version",
@@ -310,8 +466,26 @@ androidboot.config_2=val_2
             subprocess.run(
                 common
                 + [
+                    "--dtb",
+                    out_dir / "device_tree.dtb",
                     "--vendor_boot",
                     out_dir / f"vendor_boot_v4_{slot}.img",
+                    "--vendor_bootconfig",
+                    vendor_bootconfig,
+                    "--header_version",
+                    "4",
+                ],
+                stderr=subprocess.STDOUT,
+                check=True,
+            )
+            # Generates vendor_boot v4 with dttable structure
+            subprocess.run(
+                common
+                + [
+                    "--dtb",
+                    out_dir / "dtb.img",
+                    "--vendor_boot",
+                    out_dir / f"vendor_boot_v4_dttable_{slot}.img",
                     "--vendor_bootconfig",
                     vendor_bootconfig,
                     "--header_version",
@@ -326,6 +500,7 @@ androidboot.config_2=val_2
                 parts = [
                     (f"boot", out_dir / f"boot_v{i}_{slot}.img"),
                     ("dtbo", out_dir / f"dtbo_{slot}.img"),
+                    ("dtb", out_dir / f"dtb_{slot}.img"),
                 ]
                 gen_android_test_vbmeta(
                     parts, out_dir / f"vbmeta_v{i}_{slot}.img"
@@ -350,6 +525,7 @@ androidboot.config_2=val_2
                             (f"boot", boot),
                             (f"vendor_boot", vendor_boot),
                             ("dtbo", out_dir / f"dtbo_{slot}.img"),
+                            ("dtb", out_dir / f"dtb_{slot}.img"),
                         ]
                         prefix = f"vbmeta_v{boot_ver}_v{vendor_ver}"
                         if use_init_boot:
@@ -364,6 +540,34 @@ androidboot.config_2=val_2
                             vbmeta_out = prefix + f"_{slot}.img"
 
                         gen_android_test_vbmeta(parts, out_dir / vbmeta_out)
+
+            # Generate v4 vbmeta image for vendor_boot with dttable structure
+            vbmeta_out = out_dir / \
+                f"vbmeta_v4_dttable_{slot}.img"
+            parts = [
+                (f"boot", out_dir /
+                    f"boot_v4_{slot}.img"),
+                (f"vendor_boot", out_dir /
+                    f"vendor_boot_v4_dttable_{slot}.img"),
+                ("dtbo", out_dir / f"dtbo_{slot}.img"),
+                ("dtb", out_dir / f"dtb_{slot}.img"),
+            ]
+            gen_android_test_vbmeta(parts, vbmeta_out)
+
+            # Generate v4 vbmeta images for both gzip and lz4 kernel compression.
+            if slot == "a":
+                for compression in ["gz", "lz4"]:
+                    vbmeta_out = out_dir / \
+                        f"vbmeta_v4_{compression}_{slot}.img"
+                    parts = [
+                        (f"boot", out_dir /
+                         f"boot_v4_{compression}_{slot}.img"),
+                        (f"vendor_boot", out_dir /
+                         f"vendor_boot_v4_{slot}.img"),
+                        ("dtbo", out_dir / f"dtbo_{slot}.img"),
+                        ("dtb", out_dir / f"dtb_{slot}.img"),
+                    ]
+                    gen_android_test_vbmeta(parts, vbmeta_out)
 
 
 def gen_zircon_test_images(zbi_tool):
