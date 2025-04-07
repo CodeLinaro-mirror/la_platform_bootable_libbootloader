@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@gbl//toolchain:gbl_toolchain.bzl", "dev_test")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
@@ -82,4 +83,9 @@ rust_test(
         "@static_assertions",
         "@uuid",
     ],
+)
+
+dev_test(
+    name = "libgbl_test_dev",
+    target = ":libgbl_test",
 )

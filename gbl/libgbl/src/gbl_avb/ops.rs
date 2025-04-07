@@ -16,7 +16,7 @@
 
 use crate::{
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
-    gbl_println, GblOps,
+    GblOps,
 };
 use abr::SlotIndex;
 use arrayvec::ArrayString;
@@ -33,6 +33,11 @@ use core::{
 use liberror::Error;
 use safemath::SafeNum;
 use uuid::Uuid;
+
+#[cfg(feature = "gbl_dev")]
+use crate::gbl_println;
+#[cfg(feature = "gbl_dev")]
+use core::fmt::Debug;
 
 /// The digest key in commandline provided by libavb.
 pub const AVB_DIGEST_KEY: &str = "androidboot.vbmeta.digest";
@@ -177,6 +182,38 @@ impl<'a, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, T> {
     pub fn key_validation_status(&self) -> IoResult<KeyValidationStatus> {
         self.key_validation_status.ok_or(IoError::NotImplemented)
     }
+
+    /// For dev builds only, transforms unimplemented ops into default behavior.
+    ///
+    /// # Args
+    /// * `result`: the result provided by the real [GblOps].
+    /// * `fallback`: the result to fall back to if the op is unimplemented.
+    /// * `log_name`: if the fallback value is used, some logs will be printed
+    ///               containing this name and the fallback value.
+    ///
+    /// # Returns
+    /// If `result` is `Err(IoError::NotImplemented)`, returns `fallback`.
+    /// Otherwise returns `result` unchanged.
+    #[cfg(feature = "gbl_dev")]
+    fn with_dev_fallback<R: Debug>(
+        &mut self,
+        result: IoResult<R>,
+        fallback: IoResult<R>,
+        log_name: &str,
+    ) -> IoResult<R> {
+        match result {
+            Err(IoError::NotImplemented) => {
+                gbl_println!(
+                    self.gbl_ops,
+                    "AVB {} unimplemented, defaulting to {:?}",
+                    log_name,
+                    fallback
+                );
+                fallback
+            }
+            _ => result,
+        }
+    }
 }
 
 /// A helper function for converting `CStr` to `str`
@@ -262,23 +299,26 @@ impl<'a, 'b, 'c, T: GblOps<'b, 'c>> AvbOps<'a> for GblAvbOps<'a, T> {
         public_key_metadata: Option<&[u8]>,
     ) -> IoResult<bool> {
         let status = if self.use_cert {
+            // TODO(b/408283572): provide dev-board fallback for cert ops.
             match cert_validate_vbmeta_public_key(self, public_key, public_key_metadata)? {
                 true => KeyValidationStatus::Valid,
                 false => KeyValidationStatus::Invalid,
             }
         } else {
-            self.gbl_ops.avb_validate_vbmeta_public_key(public_key, public_key_metadata).or_else(
-                |err| {
-                    // TODO(b/337846185): Remove fallback once AVB protocol implementation is
-                    // forced.
-                    fallback_not_implemented(
-                        self.gbl_ops,
-                        err,
-                        "validate_vbmeta_public_key",
-                        KeyValidationStatus::ValidCustomKey,
-                    )
-                },
-            )?
+            let result =
+                self.gbl_ops.avb_validate_vbmeta_public_key(public_key, public_key_metadata);
+
+            // On dev boards fall back to `Invalid`, which indicates that the
+            // boot image was not signed but will still allow booting on
+            // unlocked boards.
+            #[cfg(feature = "gbl_dev")]
+            let result = self.with_dev_fallback(
+                result,
+                Ok(KeyValidationStatus::Invalid),
+                "validate vbmeta key",
+            );
+
+            result?
         };
 
         self.key_validation_status = Some(status);
@@ -287,27 +327,33 @@ impl<'a, 'b, 'c, T: GblOps<'b, 'c>> AvbOps<'a> for GblAvbOps<'a, T> {
     }
 
     fn read_rollback_index(&mut self, rollback_index_location: usize) -> IoResult<u64> {
-        self.gbl_ops.avb_read_rollback_index(rollback_index_location).or_else(|err| {
-            // TODO(b/337846185): Remove fallback once AVB protocol implementation is
-            // forced.
-            fallback_not_implemented(self.gbl_ops, err, "read_rollback_index", 0)
-        })
+        let result = self.gbl_ops.avb_read_rollback_index(rollback_index_location);
+
+        // On dev boards always read 0, which allows any version to boot.
+        #[cfg(feature = "gbl_dev")]
+        let result = self.with_dev_fallback(result, Ok(0), "read rollback index");
+
+        result
     }
 
     fn write_rollback_index(&mut self, rollback_index_location: usize, index: u64) -> IoResult<()> {
-        self.gbl_ops.avb_write_rollback_index(rollback_index_location, index).or_else(|err| {
-            // TODO(b/337846185): Remove fallback once AVB protocol implementation is
-            // forced.
-            fallback_not_implemented(self.gbl_ops, err, "write_rollback_index", ())
-        })
+        let result = self.gbl_ops.avb_write_rollback_index(rollback_index_location, index);
+
+        // On dev boards writing rollback is a no-op, always return success.
+        #[cfg(feature = "gbl_dev")]
+        let result = self.with_dev_fallback(result, Ok(()), "write rollback index");
+
+        result
     }
 
     fn read_is_device_unlocked(&mut self) -> IoResult<bool> {
-        self.gbl_ops.avb_read_is_device_unlocked().or_else(|err| {
-            // TODO(b/337846185): Remove fallback once AVB protocol implementation is
-            // forced.
-            fallback_not_implemented(self.gbl_ops, err, "read_is_device_unlocked", true)
-        })
+        let result = self.gbl_ops.avb_read_is_device_unlocked();
+
+        // On dev boards default to unlocked, which allows boot to succeed.
+        #[cfg(feature = "gbl_dev")]
+        let result = self.with_dev_fallback(result, Ok(true), "read device unlocked");
+
+        result
     }
 
     fn get_unique_guid_for_partition(&mut self, partition: &CStr) -> IoResult<Uuid> {
@@ -327,27 +373,39 @@ impl<'a, 'b, 'c, T: GblOps<'b, 'c>> AvbOps<'a> for GblAvbOps<'a, T> {
     }
 
     fn read_persistent_value(&mut self, name: &CStr, value: &mut [u8]) -> IoResult<usize> {
-        self.gbl_ops.avb_read_persistent_value(name, value).or_else(|err| {
-            // TODO(b/337846185): Remove fallback once AVB protocol implementation is
-            // forced.
-            fallback_not_implemented(self.gbl_ops, err, "read_persistent_value", 0)
-        })
+        let result = self.gbl_ops.avb_read_persistent_value(name, value);
+
+        // On dev boards default to no persistent values. libavb will handle
+        // this as a verification error and still allow booting when unlocked.
+        #[cfg(feature = "gbl_dev")]
+        let result =
+            self.with_dev_fallback(result, Err(IoError::NoSuchValue), "read persistent value");
+
+        result
     }
 
     fn write_persistent_value(&mut self, name: &CStr, value: &[u8]) -> IoResult<()> {
-        self.gbl_ops.avb_write_persistent_value(name, value).or_else(|err| {
-            // TODO(b/337846185): Remove fallback once AVB protocol implementation is
-            // forced.
-            fallback_not_implemented(self.gbl_ops, err, "write_persistent_value", ())
-        })
+        let result = self.gbl_ops.avb_write_persistent_value(name, value);
+
+        // On dev boards default to no persistent values. libavb will handle
+        // this as a verification error and still allow booting when unlocked.
+        #[cfg(feature = "gbl_dev")]
+        let result =
+            self.with_dev_fallback(result, Err(IoError::NoSuchValue), "write persistent value");
+
+        result
     }
 
     fn erase_persistent_value(&mut self, name: &CStr) -> IoResult<()> {
-        self.gbl_ops.avb_erase_persistent_value(name).or_else(|err| {
-            // TODO(b/337846185): Remove fallback once AVB protocol implementation is
-            // forced.
-            fallback_not_implemented(self.gbl_ops, err, "erase_persistent_value", ())
-        })
+        let result = self.gbl_ops.avb_erase_persistent_value(name);
+
+        // On dev boards default to no persistent values. libavb will handle
+        // this as a verification error and still allow booting when unlocked.
+        #[cfg(feature = "gbl_dev")]
+        let result =
+            self.with_dev_fallback(result, Err(IoError::NoSuchValue), "erase persistent value");
+
+        result
     }
 
     fn validate_public_key_for_partition(
@@ -404,26 +462,6 @@ impl<'a, 'b, T: GblOps<'a, 'b>> CertOps for GblAvbOps<'_, T> {
     fn get_random(&mut self, _: &mut [u8]) -> IoResult<()> {
         // Not needed yet; eventually we will plumb this through [GblOps].
         unimplemented!()
-    }
-}
-
-fn fallback_not_implemented<'a, 'b, T>(
-    ops: &mut impl GblOps<'a, 'b>,
-    error: IoError,
-    method_name: &str,
-    value: T,
-) -> IoResult<T> {
-    match error {
-        IoError::NotImplemented => {
-            gbl_println!(
-                ops,
-                "WARNING: UEFI GblEfiAvbProtocol.{} implementation is missing. This will not be \
-                permitted in the future.",
-                method_name,
-            );
-            Ok(value)
-        }
-        err => Err(err),
     }
 }
 
@@ -657,6 +695,14 @@ mod test {
         avb_ops.set_key_version(40, 100);
     }
 
+    /// Returns `value` in a dev build, [IoError::NotImplemented] in a prod build.
+    fn dev_only<T>(value: IoResult<T>) -> IoResult<T> {
+        match cfg!(feature = "gbl_dev") {
+            true => value,
+            false => Err(IoError::NotImplemented),
+        }
+    }
+
     #[test]
     fn validate_vbmeta_public_key_valid() {
         let mut gbl_ops = FakeGblOps::new(&[]);
@@ -697,7 +743,6 @@ mod test {
         assert!(avb_ops.key_validation_status().is_err());
     }
 
-    // TODO(b/337846185): Remove test once AVB protocol implementation is forced.
     #[test]
     fn validate_vbmeta_public_key_not_implemented() {
         let mut gbl_ops = FakeGblOps::new(&[]);
@@ -705,8 +750,9 @@ mod test {
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
 
-        assert_eq!(avb_ops.validate_vbmeta_public_key(&[], None), Ok(true));
-        assert_eq!(avb_ops.key_validation_status(), Ok(KeyValidationStatus::ValidCustomKey));
+        // Dev should succeed but report invalid key, prod should fail.
+        assert_eq!(avb_ops.validate_vbmeta_public_key(&[], None), dev_only(Ok(false)));
+        assert_eq!(avb_ops.key_validation_status(), dev_only(Ok(KeyValidationStatus::Invalid)));
     }
 
     #[test]
@@ -729,14 +775,15 @@ mod test {
         assert_eq!(avb_ops.read_rollback_index(0), Err(IoError::Io));
     }
 
-    // TODO(b/337846185): Remove test once AVB protocol implementation is forced.
     #[test]
     fn read_rollback_index_not_implemented() {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.rollbacks.insert(0, Err(IoError::NotImplemented));
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
-        assert_eq!(avb_ops.read_rollback_index(0), Ok(0));
+
+        // Dev should always return 0, prod should fail.
+        assert_eq!(avb_ops.read_rollback_index(0), dev_only(Ok(0)));
     }
 
     #[test]
@@ -763,14 +810,14 @@ mod test {
         assert_eq!(avb_ops.write_rollback_index(0, 0), Err(IoError::Io));
     }
 
-    // TODO(b/337846185): Remove test once AVB protocol implementation is forced.
     #[test]
     fn write_rollback_index_not_implemented() {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.rollbacks.insert(0, Err(IoError::NotImplemented));
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
-        assert_eq!(avb_ops.write_rollback_index(0, 0), Ok(()));
+        // Dev should always succeed, prod should fail.
+        assert_eq!(avb_ops.write_rollback_index(0, 0), dev_only(Ok(())));
     }
 
     #[test]
@@ -792,14 +839,14 @@ mod test {
         assert_eq!(avb_ops.read_is_device_unlocked(), Err(IoError::Io));
     }
 
-    // TODO(b/337846185): Remove test once AVB protocol implementation is forced.
     #[test]
     fn read_is_device_unlocked_not_implemented() {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.unlock_state = Err(IoError::NotImplemented);
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
-        assert_eq!(avb_ops.read_is_device_unlocked(), Ok(true));
+        // Dev should report unlocked, prod should fail.
+        assert_eq!(avb_ops.read_is_device_unlocked(), dev_only(Ok(true)));
     }
 
     #[test]
@@ -831,7 +878,6 @@ mod test {
         assert_eq!(avb_ops.read_persistent_value(EXPECTED_NAME, &mut buffer), Err(IoError::Io));
     }
 
-    // TODO(b/337846185): Remove test once AVB protocol implementation is forced.
     #[test]
     fn read_persistent_value_not_implemented() {
         const EXPECTED_NAME: &CStr = c"test";
@@ -843,7 +889,11 @@ mod test {
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
         let mut buffer = [0u8; 0];
-        assert_eq!(avb_ops.read_persistent_value(EXPECTED_NAME, &mut buffer), Ok(0));
+        // Dev should report no such value, prod should fail.
+        assert_eq!(
+            avb_ops.read_persistent_value(EXPECTED_NAME, &mut buffer),
+            dev_only(Err(IoError::NoSuchValue))
+        );
     }
 
     #[test]
@@ -874,7 +924,6 @@ mod test {
         assert_eq!(avb_ops.write_persistent_value(EXPECTED_NAME, EXPECTED_VALUE), Err(IoError::Io));
     }
 
-    // TODO(b/337846185): Remove test once AVB protocol implementation is forced.
     #[test]
     fn write_persistent_value_not_implemented() {
         const EXPECTED_NAME: &CStr = c"test";
@@ -886,7 +935,11 @@ mod test {
             .add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Err(IoError::NotImplemented));
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
-        assert_eq!(avb_ops.write_persistent_value(EXPECTED_NAME, EXPECTED_VALUE), Ok(()));
+        // Dev should report no such value, prod should fail.
+        assert_eq!(
+            avb_ops.write_persistent_value(EXPECTED_NAME, EXPECTED_VALUE),
+            dev_only(Err(IoError::NoSuchValue))
+        );
     }
 
     #[test]
@@ -913,7 +966,6 @@ mod test {
         assert_eq!(avb_ops.erase_persistent_value(EXPECTED_NAME), Err(IoError::Io));
     }
 
-    // TODO(b/337846185): Remove test once AVB protocol implementation is forced.
     #[test]
     fn erase_persistent_value_not_implemented() {
         const EXPECTED_NAME: &CStr = c"test";
@@ -924,6 +976,10 @@ mod test {
             .add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Err(IoError::NotImplemented));
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
-        assert_eq!(avb_ops.erase_persistent_value(EXPECTED_NAME), Ok(()));
+        // Dev should report no such value, prod should fail.
+        assert_eq!(
+            avb_ops.erase_persistent_value(EXPECTED_NAME),
+            dev_only(Err(IoError::NoSuchValue))
+        );
     }
 }
