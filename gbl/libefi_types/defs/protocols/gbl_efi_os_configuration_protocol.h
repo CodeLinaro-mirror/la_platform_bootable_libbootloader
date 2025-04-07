@@ -23,23 +23,35 @@
 
 #include "types.h"
 
+typedef enum GBL_EFI_DEVICE_TREE_TYPE {
+  // HLOS device tree.
+  DEVICE_TREE,
+  // HLOS device tree overlay.
+  OVERLAY,
+  // pVM device assignment overlay.
+  PVM_DA_OVERLAY,
+} GblEfiDeviceTreeType;
+
 typedef enum GBL_EFI_DEVICE_TREE_SOURCE {
+  // Device tree loaded from boot partition.
   BOOT,
+  // Device tree loaded from vendor_boot partition.
   VENDOR_BOOT,
+  // Device tree loaded from dtbo partition.
   DTBO,
-  DTB
+  // Device tree loaded from dtb partition.
+  DTB,
 } GblEfiDeviceTreeSource;
 
 typedef struct {
   // GblDeviceTreeSource
   uint32_t source;
+  // GblDeviceTreeType
+  uint32_t type;
   // Values are zeroed and must not be used in case of BOOT / VENDOR_BOOT source
   uint32_t id;
   uint32_t rev;
   uint32_t custom[4];
-  // Make sure GblDeviceTreeMetadata size is 8-bytes aligned. Also reserved for
-  // the future cases
-  uint32_t reserved;
 } GblEfiDeviceTreeMetadata;
 
 typedef struct {

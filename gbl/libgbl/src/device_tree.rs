@@ -42,6 +42,17 @@ pub enum DeviceTreeComponentSource {
     Dtbo,
 }
 
+/// The device tree component type.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum DeviceTreeComponentType {
+    /// HLOS base device tree.
+    DeviceTree,
+    /// HLOS device tree overlay.
+    Overlay,
+    /// Device assignment overlay to be applied to pVM
+    PvmDeviceAssignmentOverlay,
+}
+
 impl core::fmt::Display for DeviceTreeComponentSource {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -53,11 +64,23 @@ impl core::fmt::Display for DeviceTreeComponentSource {
     }
 }
 
+impl core::fmt::Display for DeviceTreeComponentType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DeviceTreeComponentType::DeviceTree => write!(f, "DTB"),
+            DeviceTreeComponentType::Overlay => write!(f, "DTBO"),
+            DeviceTreeComponentType::PvmDeviceAssignmentOverlay => write!(f, "PVM_DA_OVERLAY"),
+        }
+    }
+}
+
 /// Device tree component (device tree or overlay) to build the final one.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct DeviceTreeComponent<'a> {
     /// Source the component is loaded from.
-    pub source: DeviceTreeComponentSource,
+    pub component_source: DeviceTreeComponentSource,
+    /// Device tree component type.
+    pub component_type: DeviceTreeComponentType,
     /// Metadata for entries loaded from dt_table structure.
     pub metadata: Option<DtTableMetadata>,
     /// Device tree component payload. Must be 8 bytes aligned.
@@ -73,18 +96,6 @@ pub struct DeviceTreeComponentsRegistry<'a> {
     /// slice. It must only be used within the `selected()` method and must not be assumed
     /// valid elsewhere.
     selected_overlays: ArrayVec<&'a [u8], MAXIMUM_DEVICE_TREE_COMPONENTS>,
-}
-
-impl<'a> DeviceTreeComponent<'a> {
-    /// Whether device tree component is base device tree or overlay.
-    pub fn is_base_device_tree(&self) -> bool {
-        matches!(
-            self.source,
-            DeviceTreeComponentSource::Boot
-                | DeviceTreeComponentSource::VendorBoot
-                | DeviceTreeComponentSource::Dtb
-        )
-    }
 }
 
 fn try_dt_totalsize_from_unaligned_bytes_ref(header: &[u8], buffer: &mut [u8]) -> Result<usize> {
@@ -117,7 +128,8 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
     /// aligned by using provided buffer to cut from. Returns remain buffer.
     pub fn append_from_dttable<'b>(
         &mut self,
-        source: DeviceTreeComponentSource,
+        component_source: DeviceTreeComponentSource,
+        component_type: DeviceTreeComponentType,
         dttable: &DtTableImage<'b>,
         buffer: &'a mut [u8],
     ) -> Result<&'a mut [u8]> {
@@ -136,7 +148,8 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
             aligned_buffer.copy_from_slice(entry.dtb);
 
             self.components.push(DeviceTreeComponent {
-                source: source,
+                component_source: component_source,
+                component_type: component_type,
                 metadata: Some(entry.metadata),
                 dt: aligned_buffer,
                 selected: false,
@@ -155,7 +168,8 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
     fn append_from_multifdt_buffer<'b, 'c>(
         &mut self,
         ops: &mut impl GblOps<'b, 'c>,
-        source: DeviceTreeComponentSource,
+        component_source: DeviceTreeComponentSource,
+        component_type: DeviceTreeComponentType,
         data: &'a [u8],
         buffer: &'a mut [u8],
     ) -> Result<&'a mut [u8]> {
@@ -184,7 +198,8 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
 
             Fdt::new(&aligned_buffer)?;
             self.components.push(DeviceTreeComponent {
-                source: source,
+                component_source: component_source,
+                component_type: component_type,
                 metadata: None,
                 dt: &aligned_buffer[..],
                 selected: false,
@@ -202,7 +217,7 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
                 supported in GBL. Please migrate to the DTB partition to provide multiple device \
                 trees for selection.",
                 components_added,
-                source,
+                component_source,
             );
         }
 
@@ -217,7 +232,8 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
     pub fn append<'b, 'c>(
         &mut self,
         ops: &mut impl GblOps<'b, 'c>,
-        source: DeviceTreeComponentSource,
+        component_source: DeviceTreeComponentSource,
+        component_type: DeviceTreeComponentType,
         fdt: &'a [u8],
         buffer: &'a mut [u8],
     ) -> Result<&'a mut [u8]> {
@@ -228,22 +244,26 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
         let header = FdtHeader::from_bytes_ref(fdt)?;
         let (fdt_buffer, fdt_remains) = fdt.split_at(header.totalsize());
         self.components.push(DeviceTreeComponent {
-            source: source,
+            component_source: component_source,
+            component_type: component_type,
             metadata: None,
             dt: fdt_buffer,
             selected: false,
         });
 
-        // TODO(b/363244924): Remove after partners migrated to DTB.
-        self.append_from_multifdt_buffer(ops, source, fdt_remains, buffer)
+        // TODO(b/363244924): Remove after partners migrated to dttable.
+        self.append_from_multifdt_buffer(ops, component_source, component_type, fdt_remains, buffer)
     }
 
     /// Default implementation of selected logic in case external one isn't provided.
     /// Only base device tree is supported to choose from. Otherwise fail. No overlays will be
     /// selected.
     pub fn autoselect(&mut self) -> Result<()> {
-        let base_device_tree_count =
-            self.components.iter().filter(|component| component.is_base_device_tree()).count();
+        let base_device_tree_count = self
+            .components
+            .iter()
+            .filter(|component| component.component_type == DeviceTreeComponentType::DeviceTree)
+            .count();
         if base_device_tree_count > 1 {
             return Err(Error::Other(Some(
                 "Base device tree autoselection isn't supported if multiple device trees are \
@@ -254,7 +274,7 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
         let base = self
             .components
             .iter_mut()
-            .find(|component| component.is_base_device_tree())
+            .find(|component| component.component_type == DeviceTreeComponentType::DeviceTree)
             .ok_or(Error::Other(Some("0 base device trees to autoselect from")))?;
         base.selected = true;
 
@@ -267,7 +287,10 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
         let base_device_tree_count = self
             .components
             .iter()
-            .filter(|component| component.is_base_device_tree() && component.selected)
+            .filter(|component| {
+                component.selected
+                    && component.component_type == DeviceTreeComponentType::DeviceTree
+            })
             .count();
         if base_device_tree_count > 1 {
             return Err(Error::Other(Some("More than 1 base device tree is selected")));
@@ -276,13 +299,18 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
         let base = self
             .components
             .iter()
-            .find(|component| component.is_base_device_tree() && component.selected)
+            .find(|component| {
+                component.selected
+                    && component.component_type == DeviceTreeComponentType::DeviceTree
+            })
             .ok_or(Error::Other(Some("0 base device trees are selected")))?;
 
         self.selected_overlays = self
             .components
             .iter()
-            .filter(|component| !component.is_base_device_tree() && component.selected)
+            .filter(|component| {
+                component.selected && component.component_type == DeviceTreeComponentType::Overlay
+            })
             .map(|component| component.dt)
             .collect();
 
@@ -320,7 +348,13 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         registry
-            .append(&mut gbl_ops, DeviceTreeComponentSource::Boot, &dt[..], &mut buffer)
+            .append(
+                &mut gbl_ops,
+                DeviceTreeComponentSource::Boot,
+                DeviceTreeComponentType::DeviceTree,
+                &dt[..],
+                &mut buffer,
+            )
             .unwrap();
 
         assert_eq!(registry.components().count(), 1);
@@ -330,13 +364,14 @@ pub(crate) mod test {
         assert_eq!(
             component,
             &DeviceTreeComponent {
-                source: DeviceTreeComponentSource::Boot,
+                component_source: DeviceTreeComponentSource::Boot,
+                component_type: DeviceTreeComponentType::DeviceTree,
                 metadata: None,
                 dt: &dt[..],
                 selected: false,
             }
         );
-        assert!(component.is_base_device_tree());
+        assert!(component.component_type == DeviceTreeComponentType::DeviceTree);
     }
 
     #[test]
@@ -348,7 +383,13 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         registry
-            .append(&mut gbl_ops, DeviceTreeComponentSource::Boot, &dt_with_tail[..], &mut buffer)
+            .append(
+                &mut gbl_ops,
+                DeviceTreeComponentSource::Boot,
+                DeviceTreeComponentType::DeviceTree,
+                &dt_with_tail[..],
+                &mut buffer,
+            )
             .unwrap();
 
         assert_eq!(registry.components().count(), 1);
@@ -358,13 +399,14 @@ pub(crate) mod test {
         assert_eq!(
             component,
             &DeviceTreeComponent {
-                source: DeviceTreeComponentSource::Boot,
+                component_source: DeviceTreeComponentSource::Boot,
+                component_type: DeviceTreeComponentType::DeviceTree,
                 metadata: None,
                 dt: &dt[..],
                 selected: false,
             }
         );
-        assert!(component.is_base_device_tree());
+        assert!(component.component_type == DeviceTreeComponentType::DeviceTree);
     }
 
     #[test]
@@ -378,12 +420,24 @@ pub(crate) mod test {
         // Fill the whole reserved space
         for _ in 0..MAXIMUM_DEVICE_TREE_COMPONENTS {
             current_buffer = registry
-                .append(&mut gbl_ops, DeviceTreeComponentSource::Boot, &dt[..], current_buffer)
+                .append(
+                    &mut gbl_ops,
+                    DeviceTreeComponentSource::Boot,
+                    DeviceTreeComponentType::DeviceTree,
+                    &dt[..],
+                    current_buffer,
+                )
                 .unwrap();
         }
 
         assert_eq!(
-            registry.append(&mut gbl_ops, DeviceTreeComponentSource::Boot, &dt[..], current_buffer),
+            registry.append(
+                &mut gbl_ops,
+                DeviceTreeComponentSource::Boot,
+                DeviceTreeComponentType::DeviceTree,
+                &dt[..],
+                current_buffer
+            ),
             Err(Error::Other(Some(MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG)))
         );
     }
@@ -396,7 +450,12 @@ pub(crate) mod test {
 
         let table = DtTableImage::from_bytes(&dttable[..]).unwrap();
         registry
-            .append_from_dttable(DeviceTreeComponentSource::Dtbo, &table, &mut buffer[..])
+            .append_from_dttable(
+                DeviceTreeComponentSource::Dtbo,
+                DeviceTreeComponentType::Overlay,
+                &table,
+                &mut buffer[..],
+            )
             .unwrap();
 
         // Check data is loaded
@@ -404,7 +463,8 @@ pub(crate) mod test {
         let expected_components: Vec<DeviceTreeComponent> = table
             .entries()
             .map(|e| DeviceTreeComponent {
-                source: DeviceTreeComponentSource::Dtbo,
+                component_source: DeviceTreeComponentSource::Dtbo,
+                component_type: DeviceTreeComponentType::Overlay,
                 metadata: Some(e.metadata),
                 dt: e.dtb,
                 selected: false,
@@ -424,15 +484,17 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         let sources = [
-            DeviceTreeComponentSource::VendorBoot,
-            DeviceTreeComponentSource::Boot,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
+            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
+            (DeviceTreeComponentSource::Boot, DeviceTreeComponentType::DeviceTree),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
-        for source in sources.iter() {
-            current_buffer = registry.append(&mut gbl_ops, *source, &dt, current_buffer).unwrap();
+        for (source, component_type) in sources.iter() {
+            current_buffer = registry
+                .append(&mut gbl_ops, *source, *component_type, &dt, current_buffer)
+                .unwrap();
         }
 
         // Select base device tree
@@ -458,15 +520,17 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         let sources = [
-            DeviceTreeComponentSource::VendorBoot,
-            DeviceTreeComponentSource::Boot,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
+            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
+            (DeviceTreeComponentSource::Boot, DeviceTreeComponentType::DeviceTree),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
-        for source in sources.iter() {
-            current_buffer = registry.append(&mut gbl_ops, *source, &dt, current_buffer).unwrap();
+        for (source, component_type) in sources.iter() {
+            current_buffer = registry
+                .append(&mut gbl_ops, *source, *component_type, &dt, current_buffer)
+                .unwrap();
         }
 
         // Select base device tree
@@ -486,15 +550,17 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         let sources = [
-            DeviceTreeComponentSource::VendorBoot,
-            DeviceTreeComponentSource::Boot,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
+            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
+            (DeviceTreeComponentSource::Boot, DeviceTreeComponentType::DeviceTree),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
-        for source in sources.iter() {
-            current_buffer = registry.append(&mut gbl_ops, *source, &dt, current_buffer).unwrap();
+        for (source, component_type) in sources.iter() {
+            current_buffer = registry
+                .append(&mut gbl_ops, *source, *component_type, &dt, current_buffer)
+                .unwrap();
         }
 
         // Select first overlay
@@ -513,15 +579,17 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         let sources = [
-            DeviceTreeComponentSource::VendorBoot,
-            DeviceTreeComponentSource::Boot,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
+            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
+            (DeviceTreeComponentSource::Boot, DeviceTreeComponentType::DeviceTree),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
-        for source in sources.iter() {
-            current_buffer = registry.append(&mut gbl_ops, *source, &dt, current_buffer).unwrap();
+        for (source, component_type) in sources.iter() {
+            current_buffer = registry
+                .append(&mut gbl_ops, *source, *component_type, &dt, current_buffer)
+                .unwrap();
         }
 
         // Select first base device tree
@@ -540,14 +608,16 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         let sources = [
-            DeviceTreeComponentSource::VendorBoot,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
-            DeviceTreeComponentSource::Dtbo,
+            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
-        for source in sources.iter() {
-            current_buffer = registry.append(&mut gbl_ops, *source, &dt, current_buffer).unwrap();
+        for (source, component_type) in sources.iter() {
+            current_buffer = registry
+                .append(&mut gbl_ops, *source, *component_type, &dt, current_buffer)
+                .unwrap();
         }
 
         assert!(registry.autoselect().is_ok());
@@ -566,7 +636,13 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         registry
-            .append(&mut gbl_ops, DeviceTreeComponentSource::VendorBoot, &dt[..], &mut buffer)
+            .append(
+                &mut gbl_ops,
+                DeviceTreeComponentSource::VendorBoot,
+                DeviceTreeComponentType::DeviceTree,
+                &dt[..],
+                &mut buffer,
+            )
             .unwrap();
 
         assert!(registry.autoselect().is_ok());
@@ -586,10 +662,22 @@ pub(crate) mod test {
 
         let mut current_buffer = &mut buffer[..];
         current_buffer = registry
-            .append(&mut gbl_ops, DeviceTreeComponentSource::VendorBoot, &dt[..], current_buffer)
+            .append(
+                &mut gbl_ops,
+                DeviceTreeComponentSource::VendorBoot,
+                DeviceTreeComponentType::DeviceTree,
+                &dt[..],
+                current_buffer,
+            )
             .unwrap();
         registry
-            .append(&mut gbl_ops, DeviceTreeComponentSource::Boot, &dt[..], current_buffer)
+            .append(
+                &mut gbl_ops,
+                DeviceTreeComponentSource::Boot,
+                DeviceTreeComponentType::DeviceTree,
+                &dt[..],
+                current_buffer,
+            )
             .unwrap();
 
         assert!(registry.autoselect().is_err());
@@ -603,7 +691,13 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         registry
-            .append(&mut gbl_ops, DeviceTreeComponentSource::Dtbo, &dt[..], &mut buffer)
+            .append(
+                &mut gbl_ops,
+                DeviceTreeComponentSource::Dtbo,
+                DeviceTreeComponentType::Overlay,
+                &dt[..],
+                &mut buffer,
+            )
             .unwrap();
 
         assert!(registry.autoselect().is_err());
@@ -618,7 +712,13 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         registry
-            .append(&mut gbl_ops, DeviceTreeComponentSource::VendorBoot, &dt[..], &mut buffer)
+            .append(
+                &mut gbl_ops,
+                DeviceTreeComponentSource::VendorBoot,
+                DeviceTreeComponentType::DeviceTree,
+                &dt[..],
+                &mut buffer,
+            )
             .unwrap();
 
         assert_eq!(registry.components().count(), 2);
@@ -633,7 +733,13 @@ pub(crate) mod test {
         let mut registry = DeviceTreeComponentsRegistry::new();
 
         registry
-            .append(&mut gbl_ops, DeviceTreeComponentSource::VendorBoot, &dt[..], &mut buffer)
+            .append(
+                &mut gbl_ops,
+                DeviceTreeComponentSource::VendorBoot,
+                DeviceTreeComponentType::DeviceTree,
+                &dt[..],
+                &mut buffer,
+            )
             .unwrap();
 
         assert_eq!(registry.components().count(), 2);

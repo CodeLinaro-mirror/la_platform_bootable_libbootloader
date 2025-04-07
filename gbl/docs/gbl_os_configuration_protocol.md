@@ -246,19 +246,24 @@ typedef enum {
   BOOT,
   VENDOR_BOOT,
   DTBO,
-  DTB
+  DTB,
 } GBL_EFI_DEVICE_TREE_SOURCE;
+
+typedef enum {
+  DEVICE_TREE,
+  OVERLAY,
+  PVM_DA_OVERLAY,
+} GBL_EFI_DEVICE_TREE_TYPE;
 
 typedef struct {
   // GBL_EFI_DEVICE_TREE_SOURCE
   UINT32 Source;
+  // GBL_EFI_DEVICE_TREE_TYPE
+  UINT32 Type;
   // values are zeroed and must not be used in case of BOOT / VENDOR_BOOT source
   UINT32 Id;
   UINT32 Rev;
   UINT32 Custom[4];
-  // make sure GblDeviceTreeMetadata size is 8-bytes aligned. Also reserved for
-  // the future cases
-  UINT32 Reserved;
 } GBL_EFI_DEVICE_TREE_METADATA;
 
 typedef struct {
@@ -288,27 +293,51 @@ A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
 
 #### DeviceTrees [in, out]
 
-Pointer to an array of base device trees and overlays for selection. Base device trees and
-overlays are differentiated by the `GBL_EFI_DEVICE_TREE_METADATA.Source` field (`BOOT`,
-`VENDOR_BOOT`, `DTB` for base device trees, and `DTBO` for overlays).
-
-Selection is made by setting `GBL_EFI_VERIFIED_DEVICE_TREE.Selected` to `TRUE`. Selecting
-multiple or zero base device trees will cause GBL to fail to boot. Selecting multiple or
-zero overlays are supported.
+Pointer to an array containing loaded device tree components along with associated
+metadata to distinguish device tree component types (`GBL_EFI_DEVICE_TREE_METADATA.Type`)
+and identify source it's loaded from (`GBL_EFI_DEVICE_TREE_METADATA.Source`).
 
 #### NumDeviceTrees [in]
 
-The number of base device trees and overlays in the `DeviceTrees` array.
+The number of device tree components in the provided `DeviceTrees` array.
 
 ### Description
 
-Android build artifacts provide multiple base device trees and overlays from the `boot`,
-`vendor_boot`, `dtb`, and `dtbo` partitions. These artifacts are reused across multiple SoCs,
-so the firmware typically selects a base device tree and overlays to construct the final tree.
-This method enables selection based on the loaded content.
+A single set of Android build artifacts may include multiple device tree components
+distributed across Android boot partitions such as `boot`, `vendor_boot`, `dtb`,
+`dtbo`, etc. It is common practice to leverage this capability to support multiple
+SoCs using the same set of artifacts, with the appropriate device tree selected
+dynamically at the bootloader stage.
 
-Only one base device tree and multiple overlays (no overlays is also allowed) can be selected.
-If more than one or no base device trees are selected, GBL will fail to boot.
+To support this use case, GBL loads all available device tree components and
+provides them to the firmware along with associated metadata, enabling selection
+via this UEFI call.
+
+Firmware can use the `GBL_EFI_DEVICE_TREE_METADATA.Type` metadata field to
+distinguish between different types of device tree components:
+
+1. Device trees (`DEVICE_TREE`) — Base device tree.
+2. Device tree overlays (`OVERLAY`) — Overlays to be applied to a base device tree.
+3. Device assignment overlays (`PVM_DA_OVERLAY`) — Overlays to be applied to pVMs
+   managed by [AVF][avf]. Device assignment overlay is distingueshed from the regular
+   host overlay by 31st bit of `dttable` `entry.id`:
+   ```
+   bool entry_is_vm = (entry.id >> 31) & 0x1;
+   ```
+   It also affects the exposed `GBL_EFI_DEVICE_TREE_METADATA.Id` value since it's
+   a pure copy of coresponding `entry.id`.
+
+The `GBL_EFI_DEVICE_TREE_METADATA.Source` field identifies the origin partition
+of each loaded device tree component (`BOOT`, `VENDOR_BOOT`, `DTBO`, `DTB`, `FIT`).
+
+Selection is performed by setting `GBL_EFI_VERIFIED_DEVICE_TREE.Selected` to
+`TRUE` on the firmware side, following these rules:
+
+1. Exactly one device tree must be selected. GBL will refuse to boot if none or
+   multiple base device trees are selected.
+2. Any number of overlays may be selected, including none.
+3. At most one pVM device assignment overlay can be selected. If multiple such
+   overlays are selected, GBL will refuse to boot.
 
 ### Status Codes Returned
 
@@ -320,3 +349,5 @@ If more than one or no base device trees are selected, GBL will fail to boot.
 ## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupZbi() {#FixupZbi}
 
 TODO(b/353272981)
+
+[avf]:https://source.android.com/docs/core/virtualization
