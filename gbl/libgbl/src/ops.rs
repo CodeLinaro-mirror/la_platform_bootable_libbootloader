@@ -749,6 +749,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
+    use crate::device_tree::DeviceTreeComponentType;
     use crate::error::IntegrationError;
     use crate::partition::GblDisk;
     use abr::{get_and_clear_one_shot_bootloader, get_boot_slot};
@@ -1131,7 +1132,10 @@ pub(crate) mod test {
             device_tree: &mut device_tree::DeviceTreeComponentsRegistry,
         ) -> Result<(), Error> {
             // Select the first dtbo.
-            match device_tree.components_mut().find(|v| !v.is_base_device_tree()) {
+            match device_tree
+                .components_mut()
+                .find(|v| v.component_type == DeviceTreeComponentType::Overlay)
+            {
                 Some(v) => v.selected = true,
                 _ => {}
             }

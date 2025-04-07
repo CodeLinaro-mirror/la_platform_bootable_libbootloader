@@ -16,7 +16,9 @@
 
 use crate::{
     constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT},
-    device_tree::{DeviceTreeComponentSource, DeviceTreeComponentsRegistry},
+    device_tree::{
+        DeviceTreeComponentSource, DeviceTreeComponentType, DeviceTreeComponentsRegistry,
+    },
     fastboot::{
         run_gbl_fastboot, run_gbl_fastboot_stack, BufferPool, GblFastbootResult, GblTcpStream,
         GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
@@ -75,6 +77,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
                     gbl_println!(ops, "Handling overlays from dtbo");
                     components.append_from_dttable(
                         DeviceTreeComponentSource::Dtbo,
+                        DeviceTreeComponentType::Overlay,
                         &DtTableImage::from_bytes(images.dtbo)?,
                         fdt_load,
                     )?
@@ -86,7 +89,13 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
                 gbl_println!(ops, "Handling device tree from boot/vendor_boot");
                 remains = if FdtHeader::from_bytes_ref(images.dtb).is_ok() {
                     gbl_println!(ops, "Device tree found in boot/vendor_boot");
-                    components.append(ops, DeviceTreeComponentSource::Boot, images.dtb, remains)?
+                    components.append(
+                        ops,
+                        DeviceTreeComponentSource::Boot,
+                        DeviceTreeComponentType::DeviceTree,
+                        images.dtb,
+                        remains,
+                    )?
                 } else if let Ok(table) = DtTableImage::from_bytes(images.dtb) {
                     gbl_println!(
                         ops,
@@ -95,6 +104,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
                     );
                     components.append_from_dttable(
                         DeviceTreeComponentSource::Boot,
+                        DeviceTreeComponentType::DeviceTree,
                         &table,
                         remains,
                     )?
@@ -111,6 +121,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
                 let dttable = DtTableImage::from_bytes(images.dtb_part)?;
                 remains = components.append_from_dttable(
                     DeviceTreeComponentSource::Dtb,
+                    DeviceTreeComponentType::DeviceTree,
                     &dttable,
                     remains,
                 )?;
