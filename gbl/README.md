@@ -79,14 +79,14 @@ If you have a main AOSP checkout and is setup to run
 run the EFI image directly with:
 
 ```
-cvd start --android_efi_loader=<path to the EFI image> ...
+cvd create --android_efi_loader=<path to the EFI image> ...
 ```
 
-The above uses the same setting as a normal `cvd start` run, except that
+The above uses the same setting as a normal `cvd create` run, except that
 instead of booting Android directly, the emulator first hands off to the EFI
 application, which will take over booting android.
 
-Note: For x86 platform, use the EFI image built for `x86_32`.
+Note: For x86 platform, use the EFI image built for `x86_64`.
 
 ### Boot Fuchsia on Vim3
 
