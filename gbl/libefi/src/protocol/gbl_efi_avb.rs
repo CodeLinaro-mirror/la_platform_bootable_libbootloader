@@ -206,7 +206,7 @@ mod test {
             efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY;
 
         // C callback implementation that returns an error
-        unsafe extern "C" fn c_return_error(
+        unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
             public_key_ptr: *const u8,
             public_key_len: usize,
@@ -246,7 +246,7 @@ mod test {
     #[test]
     fn validate_vbmeta_public_key_error_handled() {
         // C callback implementation that returns an error
-        unsafe extern "C" fn c_return_error(
+        unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
             _public_key_ptr: *const u8,
             _public_key_len: usize,
@@ -272,7 +272,7 @@ mod test {
         const COLOR: u32 = efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_RED;
 
         // C callback implementation that returns success.
-        unsafe extern "C" fn c_return_success(
+        unsafe extern "efiapi" fn c_return_success(
             _: *mut GblEfiAvbProtocol,
             result: *const GblEfiAvbVerificationResult,
         ) -> EfiStatus {
@@ -298,7 +298,7 @@ mod test {
     #[test]
     fn handle_verification_result_error() {
         // C callback implementation that returns an error.
-        unsafe extern "C" fn c_return_error(
+        unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
             _: *const GblEfiAvbVerificationResult,
         ) -> EfiStatus {
@@ -324,7 +324,7 @@ mod test {
         /// # Safety:
         /// Caller must guaranteed that `is_unlocked_ptr` points to a valid bool variable available
         /// for write.
-        unsafe extern "C" fn c_return_true(
+        unsafe extern "efiapi" fn c_return_true(
             _: *mut GblEfiAvbProtocol,
             is_unlocked_ptr: *mut bool,
         ) -> EfiStatus {
@@ -350,7 +350,7 @@ mod test {
         /// # Safety:
         /// Caller must guaranteed that `is_unlocked_ptr` points to a valid bool variable available
         /// for write.
-        unsafe extern "C" fn c_return_false(
+        unsafe extern "efiapi" fn c_return_false(
             _: *mut GblEfiAvbProtocol,
             is_unlocked_ptr: *mut bool,
         ) -> EfiStatus {
@@ -372,7 +372,10 @@ mod test {
     #[test]
     fn read_is_device_unlocked_error_handled() {
         /// C callback implementation that returns an error.
-        unsafe extern "C" fn c_return_error(_: *mut GblEfiAvbProtocol, _: *mut bool) -> EfiStatus {
+        unsafe extern "efiapi" fn c_return_error(
+            _: *mut GblEfiAvbProtocol,
+            _: *mut bool,
+        ) -> EfiStatus {
             EFI_STATUS_INVALID_PARAMETER
         }
 
@@ -396,7 +399,7 @@ mod test {
         /// # Safety:
         /// Caller must guaranteed that `rollback_index_ptr` points to a valid u64 variable
         /// available for write.
-        unsafe extern "C" fn c_return_value(
+        unsafe extern "efiapi" fn c_return_value(
             _: *mut GblEfiAvbProtocol,
             index_location: usize,
             rollback_index_ptr: *mut u64,
@@ -423,7 +426,7 @@ mod test {
     #[test]
     fn read_rollback_index_error_handled() {
         /// C callback implementation that returns an error.
-        unsafe extern "C" fn c_return_error(
+        unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
             _: usize,
             _: *mut u64,
@@ -445,7 +448,7 @@ mod test {
         const EXPECTED_ROLLBACK_INDEX: u64 = 42;
 
         /// C callback implementation that checks the passed parameters and returns success.
-        unsafe extern "C" fn c_return_success(
+        unsafe extern "efiapi" fn c_return_success(
             _: *mut GblEfiAvbProtocol,
             index_location: usize,
             rollback_index: u64,
@@ -470,7 +473,7 @@ mod test {
     #[test]
     fn write_rollback_index_error_handled() {
         /// C callback implementation that returns an error.
-        unsafe extern "C" fn c_return_error(
+        unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
             _: usize,
             _: u64,
@@ -499,7 +502,7 @@ mod test {
         ///   buffer.
         /// * Caller must guaranteed that `value_size` points to a valid usize available to write
         ///   value buffer.
-        unsafe extern "C" fn c_read_persistent_value_success(
+        unsafe extern "efiapi" fn c_read_persistent_value_success(
             _: *mut GblEfiAvbProtocol,
             name: *const c_char,
             value: *mut u8,
@@ -551,7 +554,7 @@ mod test {
         /// # Safety:
         /// * Caller must guaranteed that `value_size` points to a valid usize available to write
         ///   value buffer.
-        unsafe extern "C" fn c_read_persistent_value_buffer_too_small(
+        unsafe extern "efiapi" fn c_read_persistent_value_buffer_too_small(
             _: *mut GblEfiAvbProtocol,
             _: *const c_char,
             _: *mut u8,
@@ -589,7 +592,7 @@ mod test {
         /// # Safety:
         /// * Caller must guarantee that `name` points to a valid null-terminated string.
         /// * Caller must guarantee that `value` points to a valid `value_size` sized bytes buffer.
-        unsafe extern "C" fn c_write_persistent_value_success(
+        unsafe extern "efiapi" fn c_write_persistent_value_success(
             _: *mut GblEfiAvbProtocol,
             name: *const c_char,
             value: *const u8,
@@ -632,7 +635,7 @@ mod test {
         ///
         /// # Safety:
         /// * Caller must guarantee that `name` points to a valid null-terminated string.
-        unsafe extern "C" fn c_write_persistent_value_delete(
+        unsafe extern "efiapi" fn c_write_persistent_value_delete(
             _: *mut GblEfiAvbProtocol,
             name: *const c_char,
             value: *const u8,
@@ -669,7 +672,7 @@ mod test {
         ///
         /// # Safety:
         /// * Caller must guarantee that `name` points to a valid null-terminated string.
-        unsafe extern "C" fn c_write_persistent_value_error(
+        unsafe extern "efiapi" fn c_write_persistent_value_error(
             _: *mut GblEfiAvbProtocol,
             name: *const c_char,
             _: *const u8,

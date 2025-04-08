@@ -63,25 +63,6 @@ rust_library(
     ],
 )
 
-COMPILER_BUILTIN_X86_SRC = "src/stdlibs/vendor/compiler_builtins/src/x86.rs"
-
-COMPILER_BUILTIN_X86_PATCH = "@gbl//patches:rust-libcompiler-builtins-enable-chkstk-on-uefi.patch"
-
-# Apply patches to x86 to enable the compiler built-in for chkstk(), alloca() function.
-# TODO(b/337114254): Remove this patch once upstream is fixed.
-genrule(
-    name = "x86_uefi_chkstk_patch",
-    srcs = [
-        COMPILER_BUILTIN_X86_SRC,
-        COMPILER_BUILTIN_X86_PATCH,
-    ],
-    # Bazel does not let us override the same x86.rs. But module name needs to be the same. Thus we
-    # output as "x86/mod.rs" instead.
-    outs = ["src/stdlibs/vendor/compiler_builtins/src/x86/mod.rs"],
-    cmd = " cp $(location {}) $(OUTS) && patch -u -f $(OUTS) $(location {})"
-        .format(COMPILER_BUILTIN_X86_SRC, COMPILER_BUILTIN_X86_PATCH),
-)
-
 rust_library(
     name = "libcompiler_builtins",
     srcs = glob(

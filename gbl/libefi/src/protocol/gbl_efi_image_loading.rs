@@ -318,7 +318,7 @@ mod test {
     #[test]
     fn test_proto_get_partitions_count() {
         const EXPECTED_PARTITIONS_NUM: usize = 2;
-        unsafe extern "C" fn get_verify_partitions(
+        unsafe extern "efiapi" fn get_verify_partitions(
             _: *mut GblEfiImageLoadingProtocol,
             number_of_partitions: *mut usize,
             _: *mut GblEfiPartitionName,
@@ -351,7 +351,7 @@ mod test {
 
     #[test]
     fn test_proto_get_partitions_count_error() {
-        unsafe extern "C" fn get_verify_partitions(
+        unsafe extern "efiapi" fn get_verify_partitions(
             _: *mut GblEfiImageLoadingProtocol,
             _: *mut usize,
             _: *mut GblEfiPartitionName,
@@ -379,7 +379,7 @@ mod test {
     #[test]
     fn test_proto_get_partitions_len_and_value() {
         const EXPECTED_PARTITIONS_NUM: usize = 1;
-        unsafe extern "C" fn get_verify_partitions(
+        unsafe extern "efiapi" fn get_verify_partitions(
             _: *mut GblEfiImageLoadingProtocol,
             number_of_partitions: *mut usize,
             partitions: *mut GblEfiPartitionName,
@@ -430,7 +430,7 @@ mod test {
     #[test]
     fn test_proto_get_partitions_zero_len() {
         const EXPECTED_PARTITIONS_NUM: usize = 1;
-        unsafe extern "C" fn get_verify_partitions(
+        unsafe extern "efiapi" fn get_verify_partitions(
             _: *mut GblEfiImageLoadingProtocol,
             number_of_partitions: *mut usize,
             _: *mut GblEfiPartitionName,
@@ -464,7 +464,7 @@ mod test {
     #[test]
     fn test_proto_get_partitions_less_than_buffer() {
         const EXPECTED_PARTITIONS_NUM: usize = 1;
-        unsafe extern "C" fn get_verify_partitions(
+        unsafe extern "efiapi" fn get_verify_partitions(
             _: *mut GblEfiImageLoadingProtocol,
             number_of_partitions: *mut usize,
             partitions: *mut GblEfiPartitionName,
@@ -504,7 +504,7 @@ mod test {
 
     #[test]
     fn test_proto_get_partitions_name_max() {
-        unsafe extern "C" fn get_verify_partitions(
+        unsafe extern "efiapi" fn get_verify_partitions(
             _: *mut GblEfiImageLoadingProtocol,
             number_of_partitions: *mut usize,
             partitions: *mut GblEfiPartitionName,
@@ -568,7 +568,7 @@ mod test {
     #[test]
     fn test_proto_get_partitions() {
         const EXPECTED_PARTITIONS_NUM: usize = 2;
-        unsafe extern "C" fn get_verify_partitions(
+        unsafe extern "efiapi" fn get_verify_partitions(
             _: *mut GblEfiImageLoadingProtocol,
             number_of_partitions: *mut usize,
             partitions: *mut GblEfiPartitionName,
@@ -616,7 +616,7 @@ mod test {
     #[test]
     fn test_proto_get_partitions_empty() {
         const EXPECTED_PARTITIONS_NUM: usize = 0;
-        unsafe extern "C" fn get_verify_partitions(
+        unsafe extern "efiapi" fn get_verify_partitions(
             _: *mut GblEfiImageLoadingProtocol,
             number_of_partitions: *mut usize,
             partitions: *mut GblEfiPartitionName,
@@ -646,7 +646,7 @@ mod test {
 
     #[test]
     fn test_proto_get_partitions_error() {
-        unsafe extern "C" fn get_verify_partitions(
+        unsafe extern "efiapi" fn get_verify_partitions(
             _: *mut GblEfiImageLoadingProtocol,
             _: *mut usize,
             _: *mut GblEfiPartitionName,
@@ -792,7 +792,7 @@ mod test {
 
     #[test]
     fn test_proto_get_buffer_error() {
-        unsafe extern "C" fn get_buffer(
+        unsafe extern "efiapi" fn get_buffer(
             _: *mut GblEfiImageLoadingProtocol,
             _: *const GblEfiImageInfo,
             _: *mut GblEfiImageBuffer,
@@ -817,7 +817,7 @@ mod test {
     fn test_proto_get_buffer_return_alloc_size() {
         // SAFETY:
         // * Caler must guarantee that `buffer` points to a valid instance of `GblEfiImageBuffer`.
-        unsafe extern "C" fn get_buffer(
+        unsafe extern "efiapi" fn get_buffer(
             _: *mut GblEfiImageLoadingProtocol,
             _: *const GblEfiImageInfo,
             buffer: *mut GblEfiImageBuffer,
@@ -849,7 +849,7 @@ mod test {
 
     #[test]
     fn test_proto_get_buffer_zero_size() {
-        unsafe extern "C" fn get_buffer(
+        unsafe extern "efiapi" fn get_buffer(
             _: *mut GblEfiImageLoadingProtocol,
             image_info: *const GblEfiImageInfo,
             buffer: *mut GblEfiImageBuffer,
@@ -888,7 +888,7 @@ mod test {
 
     #[test]
     fn test_proto_get_buffer_small() {
-        unsafe extern "C" fn get_buffer(
+        unsafe extern "efiapi" fn get_buffer(
             _: *mut GblEfiImageLoadingProtocol,
             image_info: *const GblEfiImageInfo,
             buffer: *mut GblEfiImageBuffer,
@@ -931,7 +931,7 @@ mod test {
 
     #[test]
     fn test_proto_get_buffer() {
-        unsafe extern "C" fn get_buffer(
+        unsafe extern "efiapi" fn get_buffer(
             _: *mut GblEfiImageLoadingProtocol,
             image_info: *const GblEfiImageInfo,
             buffer: *mut GblEfiImageBuffer,
@@ -973,7 +973,7 @@ mod test {
     #[test]
     fn test_proto_get_buffer_image_type() {
         const IMAGE_TYPE_STR: &'static str = "test";
-        unsafe extern "C" fn get_buffer(
+        unsafe extern "efiapi" fn get_buffer(
             _: *mut GblEfiImageLoadingProtocol,
             image_info: *const GblEfiImageInfo,
             buffer: *mut GblEfiImageBuffer,
@@ -1023,7 +1023,7 @@ mod test {
 
     #[test]
     fn test_proto_get_buffer_double_call() {
-        unsafe extern "C" fn get_buffer(
+        unsafe extern "efiapi" fn get_buffer(
             _: *mut GblEfiImageLoadingProtocol,
             image_info: *const GblEfiImageInfo,
             buffer: *mut GblEfiImageBuffer,
@@ -1063,7 +1063,7 @@ mod test {
 
     #[test]
     fn test_proto_get_buffer_double_call_after_drop() {
-        unsafe extern "C" fn get_buffer(
+        unsafe extern "efiapi" fn get_buffer(
             _: *mut GblEfiImageLoadingProtocol,
             image_info: *const GblEfiImageInfo,
             buffer: *mut GblEfiImageBuffer,
@@ -1104,7 +1104,7 @@ mod test {
     #[test]
     #[should_panic]
     fn test_proto_get_buffer_too_many_times() {
-        unsafe extern "C" fn get_buffer(
+        unsafe extern "efiapi" fn get_buffer(
             _: *mut GblEfiImageLoadingProtocol,
             image_info: *const GblEfiImageInfo,
             buffer: *mut GblEfiImageBuffer,

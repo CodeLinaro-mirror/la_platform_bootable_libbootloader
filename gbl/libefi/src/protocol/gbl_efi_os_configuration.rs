@@ -121,7 +121,7 @@ mod test {
     #[test]
     fn fixup_kernel_commandline_no_op() {
         // No-op C callback implementation.
-        unsafe extern "C" fn c_return_success(
+        unsafe extern "efiapi" fn c_return_success(
             _: *mut GblEfiOsConfigurationProtocol,
             _: *const u8,
             _: *mut u8,
@@ -156,7 +156,7 @@ mod test {
         const EXPECTED_FIXUP_STR: &str = "hello=world";
 
         // C callback implementation to add "hello=world" to the given command line.
-        unsafe extern "C" fn c_add_hello_world(
+        unsafe extern "efiapi" fn c_add_hello_world(
             _: *mut GblEfiOsConfigurationProtocol,
             command_line: *const u8,
             fixup: *mut u8,
@@ -198,7 +198,7 @@ mod test {
     #[test]
     fn fixup_kernel_commandline_error() {
         // C callback implementation to return an error.
-        unsafe extern "C" fn c_error(
+        unsafe extern "efiapi" fn c_error(
             _: *mut GblEfiOsConfigurationProtocol,
             _: *const u8,
             _: *mut u8,
@@ -227,7 +227,7 @@ mod test {
     fn fixup_kernel_commandline_buffer_too_small() {
         const EXPECTED_REQUESTED_FIXUP_SIZE: usize = 256;
         // C callback implementation to return an error.
-        unsafe extern "C" fn c_error(
+        unsafe extern "efiapi" fn c_error(
             _: *mut GblEfiOsConfigurationProtocol,
             _: *const u8,
             _: *mut u8,
@@ -260,7 +260,7 @@ mod test {
     #[test]
     fn fixup_bootconfig_no_op() {
         // No-op C callback implementation.
-        unsafe extern "C" fn c_return_success(
+        unsafe extern "efiapi" fn c_return_success(
             _: *mut GblEfiOsConfigurationProtocol,
             _: *const u8,
             _: usize,
@@ -299,7 +299,7 @@ mod test {
         const EXPECTED_FIXUP: &[u8] = b"e=f\n";
 
         // C callback implementation to add "e=f" to the given bootconfig.
-        unsafe extern "C" fn c_add_ef(
+        unsafe extern "efiapi" fn c_add_ef(
             _: *mut GblEfiOsConfigurationProtocol,
             bootconfig: *const u8,
             bootconfig_size: usize,
@@ -343,7 +343,7 @@ mod test {
     #[test]
     fn fixup_bootconfig_error() {
         // C callback implementation to return an error.
-        unsafe extern "C" fn c_error(
+        unsafe extern "efiapi" fn c_error(
             _: *mut GblEfiOsConfigurationProtocol,
             _: *const u8,
             _: usize,
@@ -371,7 +371,7 @@ mod test {
     fn fixup_bootconfig_fixup_buffer_too_small() {
         const EXPECTED_REQUESTED_FIXUP_SIZE: usize = 256;
         // C callback implementation to return an error.
-        unsafe extern "C" fn c_error(
+        unsafe extern "efiapi" fn c_error(
             _: *mut GblEfiOsConfigurationProtocol,
             _: *const u8,
             _: usize,
@@ -403,7 +403,7 @@ mod test {
     #[test]
     fn select_device_trees_selected() {
         // C callback implementation to select first component.
-        unsafe extern "C" fn c_select_first(
+        unsafe extern "efiapi" fn c_select_first(
             _: *mut GblEfiOsConfigurationProtocol,
             device_trees: *mut GblEfiVerifiedDeviceTree,
             num: usize,

@@ -38,13 +38,6 @@ cc_library(
     includes = ["defs"],
 )
 
-# Side note: function pointers for UEFI interfaces need to specify the "efiapi" ABI. i.e.
-# "unsafe extern "efiapi" fn(...)". bindgen uses "extern "C"" by default. We are currently fine
-# because for x86_64/x86_32/aarch64, we use dedicated rust UEFI compiler which uses EFIAPI ABI by
-# default. For riscv64 which we use ELF compiler, the efiapi calling convention is the same as C
-# calling convention according to the UEFI spec at the time of writing. If we do eventually run
-# into problems, we need to use a newer version of bindgen 0.65.0 or above, which offers
-# "--override-abi" with "efiapi" option.
 rust_bindgen(
     name = "efi_defs_bindgen",
     bindgen_flags = [
@@ -55,6 +48,8 @@ rust_bindgen(
         "--with-derive-default",
         "--with-derive-custom-struct=EfiMemoryDescriptor=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--with-derive-custom-struct=EfiMemoryAttributesTableHeader=Immutable,IntoBytes,FromBytes,KnownLayout",
+        "--override-abi",
+        ".*=efiapi",
         "--allowlist-type",
         "(Efi.*)|(GblEfi.*)|(GBL_EFI_.*)",
         "--allowlist-var",
@@ -64,6 +59,7 @@ rust_bindgen(
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(missing_docs)]
+
 use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout};""",
     ],
     cc_lib = ":efi_c_headers",
