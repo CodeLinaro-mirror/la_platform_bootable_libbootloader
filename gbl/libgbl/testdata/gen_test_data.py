@@ -35,16 +35,9 @@ AVB_TOOL = AVB_DIR / "avbtool.py"
 MKBOOTIMG_TOOL = AOSP_ROOT / "tools" / "mkbootimg" / "mkbootimg.py"
 UNPACKBOOTIMG_TOOL = AOSP_ROOT / "tools" / "mkbootimg" / "unpack_bootimg.py"
 AVB_TEST_DATA_DIR = AVB_DIR / "test" / "data"
-DTC_TOOL = (
-    AOSP_ROOT / "prebuilts" / "kernel-build-tools" / "linux-x86" / "bin" / "dtc"
-)
+DTC_TOOL = AOSP_ROOT / "prebuilts" / "kernel-build-tools" / "linux-x86" / "bin" / "dtc"
 MKDTBOIMG_TOOL = (
-    AOSP_ROOT
-    / "prebuilts"
-    / "kernel-build-tools"
-    / "linux-x86"
-    / "bin"
-    / "mkdtboimg"
+    AOSP_ROOT / "prebuilts" / "kernel-build-tools" / "linux-x86" / "bin" / "mkdtboimg"
 )
 LZ4_TOOL = "lz4"
 SZ_KB = 1024
@@ -114,17 +107,13 @@ def unpack_gkis():
 
         if shutil.which(LZ4_TOOL) is not None:
             unpack_boot(GKI_BOOT_LZ4, temp_dir)
-            shutil.copyfile(
-                temp_dir / "kernel", ANDROID_OUT / "gki_boot_lz4_kernel"
-            )
+            shutil.copyfile(temp_dir / "kernel", ANDROID_OUT / "gki_boot_lz4_kernel")
             uncompress_lz4(
                 ANDROID_OUT / "gki_boot_lz4_kernel",
                 ANDROID_OUT / "gki_boot_lz4_kernel_uncompressed",
             )
         else:
-            print(
-                "Warning: lz4 tool isn't presented, skipping unpack lz4 gki boot"
-            )
+            print("Warning: lz4 tool isn't presented, skipping unpack lz4 gki boot")
 
         unpack_boot(GKI_BOOT_GZ, temp_dir)
         shutil.copyfile(temp_dir / "kernel", ANDROID_OUT / "gki_boot_gz_kernel")
@@ -156,9 +145,7 @@ def gen_sparse_test_file():
     # For now this requires that img2simg exists on $PATH.
     # It can be built from an Android checkout via `m img2simg`; the resulting
     # binary will be at out/host/linux-x86/bin/img2simg.
-    subprocess.run(
-        ["img2simg", "-s", out_file_raw, SCRIPT_DIR / "sparse_test.bin"]
-    )
+    subprocess.run(["img2simg", "-s", out_file_raw, SCRIPT_DIR / "sparse_test.bin"])
     subprocess.run(
         [
             "img2simg",
@@ -182,9 +169,7 @@ def gen_android_test_dtb():
     out_dir = ANDROID_OUT
     # Generates base test device tree.
     gen_dtb(out_dir / "device_tree.dts", out_dir / "device_tree.dtb")
-    gen_dtb(
-        out_dir / "device_tree_custom.dts", out_dir / "device_tree_custom.dtb"
-    )
+    gen_dtb(out_dir / "device_tree_custom.dts", out_dir / "device_tree_custom.dtb")
     # Generates dtb to be used inside boot/vendor_boot
     subprocess.run(
         [
@@ -381,7 +366,9 @@ androidboot.config_2=val_2
             )
 
             boot_cmdline = "cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2"
-            vendor_cmdline = "cmd_vendor_key_1=cmd_vendor_val_1,cmd_vendor_key_2=cmd_vendor_val_2"
+            vendor_cmdline = (
+                "cmd_vendor_key_1=cmd_vendor_val_1,cmd_vendor_key_2=cmd_vendor_val_2"
+            )
 
             # Generate v3, v4 boot image without ramdisk (usecase for init_boot)
             common = [
@@ -507,24 +494,18 @@ androidboot.config_2=val_2
                     ("dtbo", out_dir / f"dtbo_{slot}.img"),
                     ("dtb", out_dir / f"dtb_{slot}.img"),
                 ]
-                gen_android_test_vbmeta(
-                    parts, out_dir / f"vbmeta_v{i}_{slot}.img"
-                )
+                gen_android_test_vbmeta(parts, out_dir / f"vbmeta_v{i}_{slot}.img")
 
             # Generates different combinations of v3/v4 boot/vendor_boot/init_boot setup.
             for use_init_boot in [True, False]:
                 for boot_ver in [3, 4]:
                     if use_init_boot:
-                        boot = (
-                            out_dir / f"boot_no_ramdisk_v{boot_ver}_{slot}.img"
-                        )
+                        boot = out_dir / f"boot_no_ramdisk_v{boot_ver}_{slot}.img"
                     else:
                         boot = out_dir / f"boot_v{boot_ver}_{slot}.img"
 
                     for vendor_ver in [3, 4]:
-                        vendor_boot = (
-                            out_dir / f"vendor_boot_v{vendor_ver}_{slot}.img"
-                        )
+                        vendor_boot = out_dir / f"vendor_boot_v{vendor_ver}_{slot}.img"
 
                         parts = [
                             (f"boot", boot),
@@ -580,10 +561,7 @@ androidboot.config_2=val_2
 
 def gen_zircon_test_images(zbi_tool):
     if not zbi_tool:
-        print(
-            "Warning: ZBI tool not provided. Skip regenerating zircon test"
-            " images"
-        )
+        print("Warning: ZBI tool not provided. Skip regenerating zircon test images")
         return
 
     ATX_METADATA = AVB_TEST_DATA_DIR / "cert_metadata.bin"
@@ -696,7 +674,7 @@ def gen_fuchsia_fastboot_boot_image():
                 "--kernel",
                 temp,
                 "--pagesize",
-                "4096"
+                "4096",
             ],
             check=True,
             stderr=subprocess.STDOUT,
@@ -750,26 +728,25 @@ def gen_vbmeta():
     # Also creates a corrupted version of the permanent attributes to test failure.
     # This is a little bit of a pain but we don't have an easy way to do a SHA256 in Rust
     # at the moment so we can't generate it on the fly.
-    bad_attrs = bytearray(
-        (SCRIPT_DIR / "cert_permanent_attributes.bin").read_bytes()
-    )
+    bad_attrs = bytearray((SCRIPT_DIR / "cert_permanent_attributes.bin").read_bytes())
     bad_attrs[4] ^= 0x01  # Bytes 0-3 = version, byte 4 starts the public key.
     (SCRIPT_DIR / "cert_permanent_attributes.bad.bin").write_bytes(bad_attrs)
     hash_bytes = sha256_hash(SCRIPT_DIR / "cert_permanent_attributes.bad.bin")
     (SCRIPT_DIR / "cert_permanent_attributes.bad.hash").write_bytes(hash_bytes)
 
-    # Convert the public key to raw bytes for use in verification.
-    subprocess.run(
-        [
-            AVB_TOOL,
-            "extract_public_key",
-            "--key",
-            SCRIPT_DIR / "testkey_rsa4096_pub.pem",
-            "--output",
-            SCRIPT_DIR / "testkey_rsa4096_pub.bin",
-        ],
-        check=True,
-    )
+    # Convert the public keys to raw bytes for use in verification.
+    for name in ["testkey_rsa4096_pub", "testkey_cert_psk"]:
+        subprocess.run(
+            [
+                AVB_TOOL,
+                "extract_public_key",
+                "--key",
+                SCRIPT_DIR / f"{name}.pem",
+                "--output",
+                SCRIPT_DIR / f"{name}.bin",
+            ],
+            check=True,
+        )
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = pathlib.Path(temp_dir)
@@ -837,9 +814,7 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    parser.add_argument(
-        "--zbi_tool", default="", help="Path to the Fuchsia ZBI tool"
-    )
+    parser.add_argument("--zbi_tool", default="", help="Path to the Fuchsia ZBI tool")
 
     return parser.parse_args()
 

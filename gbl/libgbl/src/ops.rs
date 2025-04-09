@@ -892,6 +892,14 @@ pub(crate) mod test {
 
         /// For returned by `get_base_sp`.
         pub base_sp: Option<usize>,
+
+        /// If true, return [IoError::NotImplemented] from
+        /// [avb_cert_read_permanent_attributes].
+        pub avb_cert_read_permanent_attributes_not_implemented: bool,
+
+        /// If true, return [IoError::NotImplemented] from
+        /// [avb_cert_read_permanent_attributes_hash].
+        pub avb_cert_read_permanent_attributes_hash_not_implemented: bool,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1032,12 +1040,22 @@ pub(crate) mod test {
             &mut self,
             attributes: &mut CertPermanentAttributes,
         ) -> AvbIoResult<()> {
+            // [AvbTestOps] doesn't have any support for returning
+            // [IoError::NotImplemented] here, so we add it separately.
+            if self.avb_cert_read_permanent_attributes_not_implemented {
+                return Err(AvbIoError::NotImplemented);
+            }
             self.avb_ops.read_permanent_attributes(attributes)
         }
 
         fn avb_cert_read_permanent_attributes_hash(
             &mut self,
         ) -> AvbIoResult<[u8; SHA256_DIGEST_SIZE]> {
+            // [AvbTestOps] doesn't have any support for returning
+            // [IoError::NotImplemented] here, so we add it separately.
+            if self.avb_cert_read_permanent_attributes_hash_not_implemented {
+                return Err(AvbIoError::NotImplemented);
+            }
             self.avb_ops.read_permanent_attributes_hash()
         }
 
