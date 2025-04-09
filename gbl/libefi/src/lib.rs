@@ -644,7 +644,7 @@ pub type EventNotifyCallback<'a> = &'a mut (dyn FnMut(EfiEvent) + Sync);
 
 /// `EventNotify` contains the task level priority setting and a mutable reference to a
 /// closure for the callback. It is passed as the context pointer to low level EFI event
-/// notification function entry (`unsafe extern "C" fn efi_event_cb(...)`).
+/// notification function entry (`unsafe extern "efiapi" fn efi_event_cb(...)`).
 pub struct EventNotify<'e> {
     tpl: Tpl,
     cb: EventNotifyCallback<'e>,
@@ -702,7 +702,7 @@ impl Drop for Event<'_, '_> {
 ///   `ctx` must point to a `EventNotify` type object.
 ///   `ctx` must live longer than the event.
 ///   There should be no other references to `ctx`.
-unsafe extern "C" fn efi_event_cb(event: EfiEvent, ctx: *mut core::ffi::c_void) {
+unsafe extern "efiapi" fn efi_event_cb(event: EfiEvent, ctx: *mut core::ffi::c_void) {
     // SAFETY: By safety requirement of this function, ctx points to a valid `EventNotify` object,
     // outlives the event/the function call, and there is no other borrows.
     let event_cb = unsafe { (ctx as *mut EventNotify).as_mut() }.unwrap();
@@ -1005,7 +1005,7 @@ mod test {
     }
 
     /// Mock of the `EFI_BOOT_SERVICE.FreePool` C API in test environment.
-    extern "C" fn free_pool(buf: *mut core::ffi::c_void) -> EfiStatus {
+    extern "efiapi" fn free_pool(buf: *mut core::ffi::c_void) -> EfiStatus {
         EFI_CALL_TRACES.with(|traces| {
             traces.borrow_mut().free_pool_trace.inputs.push_back(buf);
             EFI_STATUS_SUCCESS
@@ -1026,7 +1026,7 @@ mod test {
     /// # Safety
     ///
     ///   Caller should guarantee that `intf` and `protocol_guid` point to valid memory locations.
-    unsafe extern "C" fn open_protocol(
+    unsafe extern "efiapi" fn open_protocol(
         handle: EfiHandle,
         protocol_guid: *const EfiGuid,
         intf: *mut *mut core::ffi::c_void,
@@ -1064,7 +1064,7 @@ mod test {
     /// # Safety
     ///
     ///   Caller should guarantee that `protocol_guid` points to valid memory location.
-    unsafe extern "C" fn close_protocol(
+    unsafe extern "efiapi" fn close_protocol(
         handle: EfiHandle,
         protocol_guid: *const EfiGuid,
         agent_handle: EfiHandle,
@@ -1095,7 +1095,7 @@ mod test {
     /// # Safety
     /// Caller should guarantee that `protocol`, `num_handles`, and `buf` point to valid memory
     /// locations.
-    unsafe extern "C" fn locate_handle_buffer(
+    unsafe extern "efiapi" fn locate_handle_buffer(
         search_type: EfiLocateHandleSearchType,
         protocol: *const EfiGuid,
         search_key: *mut core::ffi::c_void,
@@ -1134,7 +1134,7 @@ mod test {
     ///
     ///   Caller should guarantee that `memory_map_size`, `map_key` and `desc_size` point to valid
     ///   memory locations.
-    unsafe extern "C" fn get_memory_map(
+    unsafe extern "efiapi" fn get_memory_map(
         memory_map_size: *mut usize,
         memory_map: *mut EfiMemoryDescriptor,
         map_key: *mut usize,
@@ -1160,7 +1160,7 @@ mod test {
     }
 
     /// Mock of the `EFI_BOOT_SERVICE.ExitBootServices` C API in test environment.
-    extern "C" fn exit_boot_services(image_handle: EfiHandle, map_key: usize) -> EfiStatus {
+    extern "efiapi" fn exit_boot_services(image_handle: EfiHandle, map_key: usize) -> EfiStatus {
         EFI_CALL_TRACES.with(|traces| {
             let trace = &mut traces.borrow_mut().exit_boot_services_trace;
             trace.inputs.push_back((image_handle, map_key));
@@ -1182,7 +1182,7 @@ mod test {
     /// # Safety
     ///
     ///   Caller should guarantee that `event` points to valid memory location.
-    unsafe extern "C" fn create_event(
+    unsafe extern "efiapi" fn create_event(
         type_: u32,
         notify_tpl: EfiTpl,
         notify_fn: EfiEventNotify,
@@ -1206,7 +1206,7 @@ mod test {
     }
 
     /// Mock of the `EFI_BOOT_SERVICE.CloseEvent` C API in test environment.
-    extern "C" fn close_event(event: EfiEvent) -> EfiStatus {
+    extern "efiapi" fn close_event(event: EfiEvent) -> EfiStatus {
         EFI_CALL_TRACES.with(|traces| {
             let trace = &mut traces.borrow_mut().close_event_trace;
             trace.inputs.push_back(event);
@@ -1222,7 +1222,7 @@ mod test {
     }
 
     /// Mock of the `EFI_BOOT_SERVICE.CheckEvent` C API in test environment.
-    extern "C" fn check_event(_: EfiEvent) -> EfiStatus {
+    extern "efiapi" fn check_event(_: EfiEvent) -> EfiStatus {
         EFI_CALL_TRACES.with(|traces| {
             let trace = &mut traces.borrow_mut().check_event_trace;
             trace.outputs.pop_front().unwrap()
@@ -1239,7 +1239,7 @@ mod test {
     }
 
     /// Mock of the `EFI_BOOT_SERVICE.SetTimer` C API in test environment.
-    extern "C" fn set_timer(
+    extern "efiapi" fn set_timer(
         event: EfiEvent,
         delay_type: EfiTimerDelay,
         duration: u64,

@@ -71,7 +71,7 @@ mod test {
         const UPDATED_DEVICE_TREE_BUFFER: &[u8] = b"this_is_device_trie";
 
         // C callback implementation to modify provided FDT to UPDATED_DEVICE_TREE_BUFFER.
-        unsafe extern "C" fn c_modify(
+        unsafe extern "efiapi" fn c_modify(
             _: *mut EfiDtFixupProtocol,
             device_tree: *mut c_void,
             buffer_size: *mut usize,
@@ -105,7 +105,7 @@ mod test {
     fn fixup_device_tree_fixup_buffer_too_small() {
         const EXPECTED_REQUESTED_FIXUP_SIZE: usize = 256;
         // C callback implementation to return an error.
-        unsafe extern "C" fn c_error(
+        unsafe extern "efiapi" fn c_error(
             _: *mut EfiDtFixupProtocol,
             _: *mut c_void,
             buffer_size: *mut usize,

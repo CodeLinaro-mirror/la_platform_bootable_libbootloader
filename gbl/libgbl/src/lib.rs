@@ -33,7 +33,6 @@
 extern crate avb;
 extern crate core;
 extern crate gbl_storage;
-extern crate spin;
 extern crate zbi;
 
 use avb::{HashtreeErrorMode, SlotVerifyData, SlotVerifyFlags};
@@ -78,8 +77,6 @@ where
     _get_image_buffer_lifetime: PhantomData<&'d ()>,
 }
 
-// TODO(b/312610985): Investigate whether to deprecate this and remove this allow.
-#[allow(unused_variables)]
 impl<'a, 'f, G> Gbl<'a, 'f, G>
 where
     G: GblOps<'a, 'f>,

@@ -91,7 +91,7 @@ impl Protocol<'_, GblFastbootProtocol> {
         ///   size `len` and outlives the call.
         /// * Caller must guarantee that `val` points to valid NULL-terminated strings and outlives
         ///   the call.
-        unsafe extern "C" fn get_var_all_cb(
+        unsafe extern "efiapi" fn get_var_all_cb(
             ctx: *mut c_void,
             args: *const *const c_char,
             len: usize,
@@ -352,7 +352,7 @@ mod test {
         ///   size `num_args`.
         /// * Caller must guarantee that `out` points to a `[u8]`
         /// * Caller must guarantee that `out_size` points to a `usize`
-        unsafe extern "C" fn get_var_test(
+        unsafe extern "efiapi" fn get_var_test(
             _: *mut GblEfiFastbootProtocol,
             args: *const *const c_char,
             num_args: usize,
@@ -392,7 +392,7 @@ mod test {
         /// # Safety
         ///
         /// * Caller must guarantee that `ctx` points to data needed by function pointer `cb`.
-        unsafe extern "C" fn test_get_var_all(
+        unsafe extern "efiapi" fn test_get_var_all(
             _: *mut GblEfiFastbootProtocol,
             ctx: *mut c_void,
             cb: GetVarAllCallback,
@@ -435,7 +435,7 @@ mod test {
         /// # Safety
         ///
         /// * Caller must guarantee that `ctx` points to data needed by function pointer `cb`.
-        unsafe extern "C" fn test_get_var_all(
+        unsafe extern "efiapi" fn test_get_var_all(
             _: *mut GblEfiFastbootProtocol,
             ctx: *mut c_void,
             cb: GetVarAllCallback,
@@ -470,7 +470,9 @@ mod test {
 
     #[test]
     fn test_should_stop_in_fastboot() {
-        unsafe extern "C" fn test_should_stop_in_fastboot(_: *mut GblEfiFastbootProtocol) -> bool {
+        unsafe extern "efiapi" fn test_should_stop_in_fastboot(
+            _: *mut GblEfiFastbootProtocol,
+        ) -> bool {
             true
         }
         run_test(|image_handle, systab_ptr| {

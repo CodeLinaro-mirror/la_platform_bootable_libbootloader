@@ -164,6 +164,7 @@ mod test {
     use crate::protocol::Protocol;
     use crate::test::*;
     use crate::EfiEntry;
+    use core::ops::DerefMut;
     use efi_types::{
         EfiStatus, GblEfiABSlotProtocol, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
         EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS,
@@ -185,12 +186,9 @@ mod test {
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
         ops::ImageBuffer,
     };
-    // TODO(b/350526796): use ptr.is_aligned() when Rust 1.79 is in Android
-    use core::ops::DerefMut;
     use std::{
         ffi::CStr,
         fmt::Write,
-        mem::align_of,
         num::NonZeroUsize,
         sync::atomic::{AtomicBool, AtomicU32, Ordering},
     };
@@ -214,13 +212,12 @@ mod test {
     //
     // SAFETY: checks that `info` is properly aligned and not null.
     // Caller must make sure `info` points to a valid GblEfiSlotInfo struct.
-    unsafe extern "C" fn get_info(
+    unsafe extern "efiapi" fn get_info(
         _: *mut GblEfiABSlotProtocol,
         idx: u8,
         info: *mut GblEfiSlotInfo,
     ) -> EfiStatus {
-        // TODO(b/350526796): use ptr.is_aligned() when Rust 1.79 is in Android
-        if !info.is_null() && (info as usize) % align_of::<GblEfiSlotInfo>() == 0 && idx < 3 {
+        if !info.is_null() && info.is_aligned() && idx < 3 {
             let slot_info = GblEfiSlotInfo {
                 suffix: ('a' as u8 + idx).into(),
                 unbootable_reason: 0,
@@ -235,7 +232,7 @@ mod test {
         }
     }
 
-    extern "C" fn flush(_: *mut GblEfiABSlotProtocol) -> EfiStatus {
+    extern "efiapi" fn flush(_: *mut GblEfiABSlotProtocol) -> EfiStatus {
         ATOMIC.with(|a| a.store(true, Ordering::Relaxed));
         EFI_STATUS_SUCCESS
     }
@@ -503,12 +500,11 @@ mod test {
         // SAFETY: verfies that `info` properly aligned and not null.
         // It is the callers responsibility to make sure
         // that `info` points to a valid GblEfiSlotInfo.
-        unsafe extern "C" fn get_current_slot(
+        unsafe extern "efiapi" fn get_current_slot(
             _: *mut GblEfiABSlotProtocol,
             info: *mut GblEfiSlotInfo,
         ) -> EfiStatus {
-            // TODO(b/350526796): use ptr.is_aligned() when Rust 1.79 is in Android
-            if info.is_null() || (info as usize) % align_of::<GblEfiSlotInfo>() != 0 {
+            if info.is_null() || !info.is_aligned() {
                 return EFI_STATUS_INVALID_PARAMETER;
             }
             let slot_info = GblEfiSlotInfo {
@@ -526,7 +522,7 @@ mod test {
         // SAFETY: verifies that `reason` and `subreason_size` are aligned and not null.
         // It is the caller's responsibility to make sure that `reason`
         // and `subreason_size` point to valid output parameters.
-        unsafe extern "C" fn get_boot_reason(
+        unsafe extern "efiapi" fn get_boot_reason(
             _: *mut GblEfiABSlotProtocol,
             reason: *mut u32,
             subreason_size: *mut usize,
@@ -534,9 +530,8 @@ mod test {
         ) -> EfiStatus {
             if reason.is_null()
                 || subreason_size.is_null()
-            // TODO(b/350526796): use ptr.is_aligned() when Rust 1.79 is in Android
-                || (reason as usize) % align_of::<u32>() != 0
-                || (subreason_size as usize) % align_of::<usize>() != 0
+                || !reason.is_aligned()
+                || !subreason_size.is_aligned()
             {
                 return EFI_STATUS_INVALID_PARAMETER;
             }
@@ -601,12 +596,11 @@ mod test {
         // SAFETY: verifies that `meta` is properly aligned and not null.
         // It is the caller's responsibility to make sure that `meta` points to
         // a valid GblEfiSlotMetadataBlock.
-        unsafe extern "C" fn load_boot_data(
+        unsafe extern "efiapi" fn load_boot_data(
             _: *mut GblEfiABSlotProtocol,
             meta: *mut GblEfiSlotMetadataBlock,
         ) -> EfiStatus {
-            // TODO(b/350526796): use ptr.is_aligned() when Rust 1.79 is in Android
-            if meta.is_null() || (meta as usize) % align_of::<GblEfiSlotMetadataBlock>() != 0 {
+            if meta.is_null() || !meta.is_aligned() {
                 return EFI_STATUS_INVALID_PARAMETER;
             }
 
@@ -639,7 +633,7 @@ mod test {
 
     #[test]
     fn test_set_active_slot() {
-        extern "C" fn set_active_slot(_: *mut GblEfiABSlotProtocol, idx: u8) -> EfiStatus {
+        extern "efiapi" fn set_active_slot(_: *mut GblEfiABSlotProtocol, idx: u8) -> EfiStatus {
             // This is deliberate: we want to make sure that other logic catches
             // 'no such slot' first but we also want to verify that errors propagate.
             if idx != 2 {
@@ -673,7 +667,7 @@ mod test {
 
     #[test]
     fn test_set_slot_unbootable() {
-        extern "C" fn set_slot_unbootable(
+        extern "efiapi" fn set_slot_unbootable(
             _: *mut GblEfiABSlotProtocol,
             idx: u8,
             _: u32,
@@ -719,14 +713,13 @@ mod test {
     fn test_oneshot() {
         // SAFETY: checks that `reason` is not null and is properly aligned.
         // Caller must make sure reason points to a valid u32.
-        unsafe extern "C" fn get_boot_reason(
+        unsafe extern "efiapi" fn get_boot_reason(
             _: *mut GblEfiABSlotProtocol,
             reason: *mut u32,
             _: *mut usize,
             _: *mut u8,
         ) -> EfiStatus {
-            // TODO(b/350526796): use ptr.is_aligned() when Rust 1.79 is in Android
-            if reason.is_null() || (reason as usize) % align_of::<u32>() != 0 {
+            if reason.is_null() || !reason.is_aligned() {
                 return EFI_STATUS_INVALID_PARAMETER;
             }
 
@@ -735,7 +728,7 @@ mod test {
             EFI_STATUS_SUCCESS
         }
 
-        extern "C" fn set_boot_reason(
+        extern "efiapi" fn set_boot_reason(
             _: *mut GblEfiABSlotProtocol,
             reason: u32,
             _: usize,

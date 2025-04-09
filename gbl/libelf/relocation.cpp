@@ -69,7 +69,13 @@ bool FixUpRelxTable(uintptr_t program_base, [[maybe_unused]] const Elf64_Sym* sy
     // Type of the relocation. It determines the calculation.
     uint64_t reloc_type = entry.r_info & 0xffffffff;
     // Address for storing the new calculated address.
-    // TODO(294059825): Add support for overflow checking.
+    if (UINTPTR_MAX - entry.r_offset < program_base) {
+      RELOCATION_PRINTF(
+          "Integer overflow detected in relocation: 0x%lx + 0x%lx will "
+          "overflow\n",
+          program_base, entry.r_offset);
+      return false;
+    }
     uint64_t* addr = reinterpret_cast<uint64_t*>(program_base + entry.r_offset);
     // Addend value. For RELA, it comes from the entry. For REL, it's the current
     // value at address `addr`.
