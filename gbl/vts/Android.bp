@@ -25,6 +25,11 @@ java_test_host {
     ],
     libs: [
         "tradefed",
+        "compatibility-tradefed",
+    ],
+    data_native_bins: [
+        "mtools",
+        "gblsigntool",
     ],
     test_suites: [
         "general-tests",
