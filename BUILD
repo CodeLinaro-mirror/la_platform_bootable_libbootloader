@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load("@rules_pkg//pkg:install.bzl", "pkg_install")
-load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files", "strip_prefix")
 
 pkg_files(
     name = "gbl_efi_dist_files",
@@ -26,4 +26,17 @@ pkg_install(
     name = "gbl_efi_dist",
     srcs = [":gbl_efi_dist_files"],
     destdir = "out/gbl_efi/",
+)
+
+pkg_files(
+    name = "gblsigntool_dist_files",
+    srcs = ["@gbl//signtool:gblsigntool"],
+    attributes = pkg_attributes(mode = "0755"),
+    visibility = ["//visibility:private"],
+)
+
+pkg_install(
+    name = "gblsigntool_dist",
+    srcs = [":gblsigntool_dist_files"],
+    destdir = "out/signtool",
 )
