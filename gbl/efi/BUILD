@@ -240,3 +240,11 @@ filegroup(
         ":x86_64_prod",
     ],
 )
+
+filegroup(
+    name = "all_platforms_prod",
+    srcs = [
+        ":aarch64_prod",
+        ":x86_64_prod",
+    ],
+)

@@ -14,18 +14,22 @@
 
 load("@rules_pkg//pkg:install.bzl", "pkg_install")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files", "strip_prefix")
+load("@rules_pkg//pkg:zip.bzl", "pkg_zip")
+
+pkg_zip(
+    name = "gbl_efi_prod_zip",
+    srcs = ["@gbl//efi:all_platforms_prod"],
+    out = "gbl-img.zip",
+)
 
 pkg_files(
     name = "gbl_efi_dist_files",
-    srcs = ["@gbl//efi:all_platforms"],
+    srcs = [
+        ":gbl_efi_prod_zip",
+        "@gbl//efi:all_platforms",
+    ],
     strip_prefix = strip_prefix.files_only(),
     visibility = ["//visibility:private"],
-)
-
-pkg_install(
-    name = "gbl_efi_dist",
-    srcs = [":gbl_efi_dist_files"],
-    destdir = "out/gbl_efi/",
 )
 
 pkg_files(
@@ -36,7 +40,10 @@ pkg_files(
 )
 
 pkg_install(
-    name = "gblsigntool_dist",
-    srcs = [":gblsigntool_dist_files"],
-    destdir = "out/signtool",
+    name = "gbl_efi_dist",
+    srcs = [
+        ":gbl_efi_dist_files",
+        ":gblsigntool_dist_files",
+    ],
+    destdir = "out/gbl_efi/",
 )
