@@ -124,12 +124,13 @@ genrule(
             # 1. `llvm-objcopy <elf image> -O binary <efi image>`
             # 2. `elf_static_relocation_checker <elf image> <efi image>`
             "@gbl//toolchain:gbl_rust_elf_riscv64": """
-            {} -O binary $(location @gbl//efi:app) $(OUTS) && \\
-            $(location @gbl//libelf:elf_static_relocation_checker) $(SRCS) $(OUTS)
+{} -O binary $(location @gbl//efi:app) $(OUTS) &&
+$(location @gbl//signtool:gblsigntool_py) sign $(OUTS) -o $(OUTS) --avbtool_args '--key $(location @gbl//signtool:testkey_RSA4096) --algorithm SHA256_RSA4096' &&
+$(location @gbl//libelf:elf_static_relocation_checker) $(SRCS) $(OUTS)
         """.format(
                 gbl_llvm_tool_path("llvm-objcopy"),
             ),
-            "//conditions:default": "cp $(SRCS) $(OUTS)",
+            "//conditions:default": "$(location @gbl//signtool:gblsigntool_py) sign $(SRCS) -o $(OUTS) --avbtool_args '--key $(location @gbl//signtool:testkey_RSA4096) --algorithm SHA256_RSA4096'",
         },
     ),
     tools = select(
@@ -139,7 +140,10 @@ genrule(
             ],
             "//conditions:default": [],
         },
-    ),
+    ) + [
+        "@gbl//signtool:gblsigntool_py",
+        "@gbl//signtool:testkey_RSA4096",
+    ],
 )
 
 build_with_platform(
