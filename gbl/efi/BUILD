@@ -127,12 +127,11 @@ genrule(
             # 2. `elf_static_relocation_checker <elf image> <efi image>`
             "@gbl//toolchain:gbl_rust_elf_riscv64": """
 {} -O binary $(location @gbl//efi:app) $(OUTS) &&
-$(location @gbl//signtool:gblsigntool_py) sign $(OUTS) -o $(OUTS) --avbtool_args '--key $(location @gbl//signtool:testkey_RSA4096) --algorithm SHA256_RSA4096' &&
 $(location @gbl//libelf:elf_static_relocation_checker) $(SRCS) $(OUTS)
         """.format(
                 gbl_llvm_tool_path("llvm-objcopy"),
             ),
-            "//conditions:default": "$(location @gbl//signtool:gblsigntool_py) sign $(SRCS) -o $(OUTS) --avbtool_args '--key $(location @gbl//signtool:testkey_RSA4096) --algorithm SHA256_RSA4096'",
+            "//conditions:default": "cp $(SRCS) $(OUTS)",
         },
     ),
     tools = select(
@@ -142,7 +141,18 @@ $(location @gbl//libelf:elf_static_relocation_checker) $(SRCS) $(OUTS)
             ],
             "//conditions:default": [],
         },
-    ) + [
+    ),
+)
+
+genrule(
+    name = "gbl_efi_testkey",
+    srcs = [":gbl_efi"],
+    outs = ["testkey_signed/gbl.efi"],
+    cmd = "$(location @gbl//signtool:gblsigntool_py) sign $(SRCS) -o $(OUTS)" +
+          " --avbtool_args '--key $(location @gbl//signtool:testkey_RSA4096)'" +
+          " --avbtool_args '--algorithm SHA256_RSA4096'" +
+          " --avbtool_args '--prop testkey:true'",
+    tools = [
         "@gbl//signtool:gblsigntool_py",
         "@gbl//signtool:testkey_RSA4096",
     ],
@@ -151,49 +161,49 @@ $(location @gbl//libelf:elf_static_relocation_checker) $(SRCS) $(OUTS)
 build_with_platform(
     name = "x86_64_dev",
     platform = "@gbl//toolchain:gbl_uefi_x86_64_dev",
-    deps = [":gbl_efi"],
+    deps = [":gbl_efi_testkey"],
 )
 
 build_with_platform(
     name = "x86_64_prod",
     platform = "@gbl//toolchain:gbl_uefi_x86_64_prod",
-    deps = [":gbl_efi"],
+    deps = [":gbl_efi_testkey"],
 )
 
 build_with_platform(
     name = "x86_32_dev",
     platform = "@gbl//toolchain:gbl_uefi_x86_32_dev",
-    deps = [":gbl_efi"],
+    deps = [":gbl_efi_testkey"],
 )
 
 build_with_platform(
     name = "x86_32_prod",
     platform = "@gbl//toolchain:gbl_uefi_x86_32_prod",
-    deps = [":gbl_efi"],
+    deps = [":gbl_efi_testkey"],
 )
 
 build_with_platform(
     name = "aarch64_dev",
     platform = "@gbl//toolchain:gbl_uefi_aarch64_dev",
-    deps = [":gbl_efi"],
+    deps = [":gbl_efi_testkey"],
 )
 
 build_with_platform(
     name = "aarch64_prod",
     platform = "@gbl//toolchain:gbl_uefi_aarch64_prod",
-    deps = [":gbl_efi"],
+    deps = [":gbl_efi_testkey"],
 )
 
 build_with_platform(
     name = "riscv64_dev",
     platform = "@gbl//toolchain:gbl_elf_riscv64_dev",
-    deps = [":gbl_efi"],
+    deps = [":gbl_efi_testkey"],
 )
 
 build_with_platform(
     name = "riscv64_prod",
     platform = "@gbl//toolchain:gbl_elf_riscv64_prod",
-    deps = [":gbl_efi"],
+    deps = [":gbl_efi_testkey"],
 )
 
 # Our infra tests currently fetch GBL binaries from these paths:
