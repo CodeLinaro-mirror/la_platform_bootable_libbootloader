@@ -34,7 +34,7 @@ pkg_files(
 
 pkg_files(
     name = "gblsigntool_dist_files",
-    srcs = ["@gbl//signtool:gblsigntool"],
+    srcs = ["@gbl//signtool:gblsigntool_executable"],
     attributes = pkg_attributes(mode = "0755"),
     visibility = ["//visibility:private"],
 )
