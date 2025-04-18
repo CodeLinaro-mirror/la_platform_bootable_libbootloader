@@ -39,6 +39,7 @@ use misc::{AndroidBootMode, BootloaderMessage};
 use safemath::SafeNum;
 
 mod avf;
+use avf::pvmfw_place_in_memory;
 
 mod vboot;
 use vboot::{avb_verify_slot, PartitionsToVerify};
@@ -178,6 +179,11 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     // life time equal to the scope it lives in. This is unnecessarily strict and prevents us from
     // accessing `load` buffer.
     drop(components);
+
+    if images.pvmfw.len() > 0 {
+        let _img_buf = pvmfw_place_in_memory(ops, images.pvmfw)?;
+        gbl_println!(ops, "AVF: init success");
+    }
 
     // Make sure we provide an actual device tree size, so FW can calculate amount of space
     // available for fixup.

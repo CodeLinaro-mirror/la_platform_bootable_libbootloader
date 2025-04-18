@@ -140,15 +140,15 @@ impl<'a> BootImageV2Info<'a> {
 }
 
 // Contains information of a V3/V4 boot image.
-struct BootImageV3Info {
-    kernel_range: Range<usize>,
-    ramdisk_range: Range<usize>,
-    image_size: usize,
+pub(crate) struct BootImageV3Info {
+    pub kernel_range: Range<usize>,
+    pub ramdisk_range: Range<usize>,
+    pub image_size: usize,
 }
 
 impl BootImageV3Info {
     /// Creates a new instance.
-    fn new(buffer: &[u8]) -> Result<Self, Error> {
+    pub(crate) fn new(buffer: &[u8]) -> Result<Self, Error> {
         let header = BootImage::parse(buffer)?;
         if !matches!(header, BootImage::V3(_) | BootImage::V4(_)) {
             return Err(Error::InvalidInput);

@@ -33,6 +33,8 @@ const uint64_t GBL_EFI_IMAGE_LOADING_PROTOCOL_REVISION = 0x00010000;
 #define GBL_IMAGE_TYPE_OS_LOAD L"os_load"
 // Buffer for use as fastboot download buffer.
 #define GBL_IMAGE_TYPE_FASTBOOT L"fastboot"
+// Buffer reserved for pvmfw binary and configuration.
+#define GBL_IMAGE_TYPE_PVMFW_DATA L"pvmfw_data"
 
 typedef struct GblEfiImageInfo {
   char16_t ImageType[PARTITION_NAME_LEN_U16];

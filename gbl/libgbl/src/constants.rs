@@ -58,6 +58,9 @@ pub const BOOTCMD_SIZE: usize = KiB!(16);
 /// Page size
 pub const PAGE_SIZE: usize = KiB!(4);
 
+/// FDT image alignment requirement.
+pub const PVMFW_DATA_ALIGNMENT: usize = PAGE_SIZE;
+
 /// Image names list.
 /// Used for identifying what buffer size/alignment is necessary.
 #[derive(Debug, PartialEq, Clone)]
@@ -70,6 +73,8 @@ pub enum ImageName {
     Boot,
     /// FDT
     Fdt,
+    /// pVM firmware data
+    PvmfwData,
 }
 
 impl ImageName {
@@ -80,6 +85,7 @@ impl ImageName {
             Self::ZbiItems => PAGE_SIZE,
             Self::Boot => KERNEL_ALIGNMENT,
             Self::Fdt => FDT_ALIGNMENT,
+            Self::PvmfwData => PVMFW_DATA_ALIGNMENT,
         }
     }
 }
@@ -91,6 +97,7 @@ impl Display for ImageName {
             ImageName::ZbiItems => "zbi_items",
             ImageName::Boot => "boot",
             ImageName::Fdt => "fdt",
+            ImageName::PvmfwData => "pvmfw_data",
         };
         write!(f, "{str}")
     }
@@ -105,6 +112,7 @@ impl TryFrom<&str> for ImageName {
             "zbi_items" => ImageName::ZbiItems,
             "boot" => ImageName::Boot,
             "fdt" => ImageName::Fdt,
+            "pvmfw_data" => ImageName::PvmfwData,
             _ => return Err(Error::InvalidInput),
         })
     }
