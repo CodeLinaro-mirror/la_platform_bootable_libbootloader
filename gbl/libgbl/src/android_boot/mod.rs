@@ -39,7 +39,7 @@ use misc::{AndroidBootMode, BootloaderMessage};
 use safemath::SafeNum;
 
 mod avf;
-use avf::pvmfw_place_in_memory;
+use avf::{pkvm_describe_pvmfw_resvmem, pvmfw_place_in_memory};
 
 mod vboot;
 use vboot::{avb_verify_slot, PartitionsToVerify};
@@ -180,8 +180,10 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     // accessing `load` buffer.
     drop(components);
 
+    // Place pvmfw binary into reserved memory
     if images.pvmfw.len() > 0 {
-        let _img_buf = pvmfw_place_in_memory(ops, images.pvmfw)?;
+        let pvmfw_image_buf = pvmfw_place_in_memory(ops, images.pvmfw)?;
+        pkvm_describe_pvmfw_resvmem(&mut fdt, &pvmfw_image_buf)?;
         gbl_println!(ops, "AVF: init success");
     }
 

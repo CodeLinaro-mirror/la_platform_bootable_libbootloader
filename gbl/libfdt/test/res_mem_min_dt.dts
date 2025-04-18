@@ -1,0 +1,8 @@
+/dts-v1/;
+
+/ {
+    reserved-memory {
+        #address-cells = <0x00000002>;
+        #size-cells = <0x00000002>;
+    };
+};

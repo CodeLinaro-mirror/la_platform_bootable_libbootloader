@@ -37,6 +37,22 @@ pub const FDT_HEADER_SIZE: usize = size_of::<FdtHeader>();
 const MAXIMUM_OVERLAYS_TO_APPLY: usize = 16;
 const MAXIMUM_OVERLAYS_ERROR_MSG: &str = "At most 16 overlays are supported to apply at a time";
 
+/// Standard FDT property names
+pub mod std_props {
+    use core::ffi::CStr;
+
+    /// #address-cells property name
+    pub const ADDRESS_CELLS: &CStr = c"#address-cells";
+    /// #size-cells property name
+    pub const SIZE_CELLS: &CStr = c"#size-cells";
+    /// compatible property name
+    pub const COMPATIBLE: &CStr = c"compatible";
+    /// reg property name
+    pub const REG: &CStr = c"reg";
+    /// no-map property name
+    pub const NO_MAP: &CStr = c"no-map";
+}
+
 /// Convert libfdt_c error code to Result
 fn map_result(code: c_int) -> Result<c_int> {
     match code {

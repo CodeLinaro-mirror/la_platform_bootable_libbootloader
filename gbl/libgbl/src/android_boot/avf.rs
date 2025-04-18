@@ -19,6 +19,7 @@ use crate::constants::PAGE_SIZE;
 use crate::image_buffer::ImageBuffer;
 use crate::{GblOps, Result};
 use core::ffi::CStr;
+use fdt::{fdt_encode_cell_sized_property, std_props, Fdt};
 use liberror::Error;
 
 pub const DEFAULT_PVMFW_PART_NAME_CSTR: &CStr = c"pvmfw";
@@ -51,6 +52,41 @@ pub fn pvmfw_place_in_memory<'a, 'b>(
     Ok(target_buf)
 }
 
+/// Add a device tree node describing pvmfw memory carveout. This is default behavior, required for
+/// pKVM, and can be overridden for other hypervisors by removing the
+/// `/reserved-memory/pkvm_guest_firmware` node in `ops.fixup_device_tree`.
+pub fn pkvm_describe_pvmfw_resvmem<'a, T>(fdt: &mut Fdt<T>, buffer: &ImageBuffer<'a>) -> Result<()>
+where
+    T: AsMut<[u8]> + AsRef<[u8]>,
+{
+    const RESVMEM_PATH: &str = "/reserved-memory";
+    const PVMFW_RESVMEM_PATH: &str = "/reserved-memory/pkvm_guest_firmware";
+    const MAX_REG_CELLS: usize = 8;
+    const FDT_CELL_SIZE: usize = 4;
+
+    let mut reg_buf = [0u8; MAX_REG_CELLS * FDT_CELL_SIZE];
+
+    // Determine the number of u32 cells for 'reg' address and size, use default values if missing
+    let addr_cells = fdt.get_property_u32(RESVMEM_PATH, std_props::ADDRESS_CELLS).unwrap_or(2u32);
+    let size_cells = fdt.get_property_u32(RESVMEM_PATH, std_props::SIZE_CELLS).unwrap_or(1u32);
+
+    // Serialize region address and size, and write DT node properties
+    let reg_bytes = fdt_encode_cell_sized_property(
+        &[(buffer.as_ref().as_ptr() as usize), buffer.capacity()],
+        &[addr_cells, size_cells],
+        &mut reg_buf,
+    )?;
+
+    fdt.set_property(
+        PVMFW_RESVMEM_PATH,
+        std_props::COMPATIBLE,
+        b"linux,pkvm-guest-firmware-memory\0",
+    )?;
+    fdt.set_property(PVMFW_RESVMEM_PATH, std_props::REG, &reg_buf[..reg_bytes])?;
+    fdt.set_property(PVMFW_RESVMEM_PATH, std_props::NO_MAP, &[])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -58,6 +94,7 @@ mod test {
         ops::test::{FakeGblOps, FakeGblOpsStorage},
         tests::AlignedBuffer,
     };
+    use core::mem::MaybeUninit;
     use gbl_storage::as_uninit_mut;
     use std::collections::{HashMap, LinkedList};
 
@@ -117,5 +154,40 @@ mod test {
 
         let mut pvmfw_partition = [0u8; 0x1000];
         assert!(pvmfw_place_in_memory(&mut ops, &mut pvmfw_partition).is_err());
+    }
+
+    #[test]
+    fn test_pkvm_describe_pvmfw_resvmem() {
+        let mut buf = [MaybeUninit::new(0u8); 10];
+        let imbuf = ImageBuffer::new(buf.as_mut());
+
+        let init = include_bytes!("../../../libfdt/test/data/res_mem_min_dt.dtb").to_vec();
+        let mut fdt_buf = vec![0u8; init.len() + 512];
+        let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        assert_eq!(
+            fdt.get_property("/reserved-memory", std_props::ADDRESS_CELLS).unwrap(),
+            &[0x0, 0x0, 0x0, 0x2]
+        );
+        assert_eq!(
+            fdt.get_property("/reserved-memory", std_props::SIZE_CELLS).unwrap(),
+            &[0x0, 0x0, 0x0, 0x2]
+        );
+        assert!(fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::REG).is_err());
+
+        assert!(pkvm_describe_pvmfw_resvmem(&mut fdt, &imbuf).is_ok());
+        assert_eq!(
+            fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::COMPATIBLE)
+                .unwrap(),
+            b"linux,pkvm-guest-firmware-memory\0",
+        );
+        assert_eq!(
+            fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::NO_MAP).unwrap(),
+            &[]
+        );
+        let reg_prop =
+            fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::REG).unwrap();
+        assert_eq!(&reg_prop[..8], (imbuf.as_ref().as_ptr() as usize).to_be_bytes());
+        assert_eq!(&reg_prop[8..], imbuf.capacity().to_be_bytes());
     }
 }
