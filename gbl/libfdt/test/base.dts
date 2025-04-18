@@ -12,6 +12,7 @@
         dev-2.2 {
             dev221: dev-2.2.1 {
                 property-1 = "dev-2.2.1-property-1";
+                property-2 = <0x11223344>;
             };
         };
 

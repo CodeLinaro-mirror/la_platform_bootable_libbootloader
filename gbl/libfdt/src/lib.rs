@@ -29,6 +29,7 @@ use libfdt_bindgen::{
     fdt_setprop_placeholder, fdt_strerror, fdt_subnode_offset_namelen,
 };
 use libufdt_bindgen::ufdt_apply_multioverlay;
+use safemath::SafeNum;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Ref};
 
 /// Fdt header structure size.
@@ -96,6 +97,76 @@ fn fdt_subnode_offset(fdt: &[u8], parent: c_int, name: &str) -> Result<c_int> {
             name.len().try_into()?,
         )
     })
+}
+
+// Helper function used to set property bytes when sizes differ
+fn copy_bytes_right_align(src: &[u8], dst: &mut [u8]) -> Result<()> {
+    let dst_len = dst.len();
+    let src_len = src.len();
+    if src_len <= dst_len {
+        let (pad, dst) = dst.split_at_mut(dst_len - src_len);
+        pad.fill(0);
+        dst.copy_from_slice(src);
+    } else {
+        let (pad, src) = src.split_at(src_len - dst_len);
+        if pad.iter().any(|&v| v != 0) {
+            return Err(Error::InvalidInput);
+        }
+        dst.copy_from_slice(src);
+    }
+    Ok(())
+}
+
+/// Encode a slice of values into a cell sized property.
+///
+/// A cell-sized FDT property is used to describe hardware resources using units called cells -
+/// unsigned 32-bit integers. The number of cells used to encode each value from an array of values
+/// is defined by the parent node’s properties. Therefore, a cell-sized property can contain one or
+/// more values, each of which can span one or more 32-bit cells. This function encodes an array of
+/// values using a given number of cells, and writes the encoded values into a buffer. Values can
+/// form n-tuples, with each element taking up a different number of cells.
+///
+/// For example, a `reg` property may contain 5 pairs of (address, size) - a total of 10 values.
+/// Its parent node may set `#address-cells = <2>`  and `#size-cells = <1>`, meaning this function
+/// would use 2 u32 cells to encode the address, and one u32 cell to encode the size - a total of 3
+/// cells for one pair, and 15 cells for 5 pairs of (address, size) values.
+///
+/// # Arguments
+///
+/// * `values` - list of values to encode; its length must be a multiple of `cells` length
+/// * `tuple_cells` - list of cell sizes used to encode each n-tuple value; its length determines
+/// the n-tuple size
+/// * `out_buffer` - output buffer to write encoded values into
+///
+/// # Returns
+///
+/// * `Ok(usize)` - on success, the number of bytes written to output buffer.
+/// * `Err(Error::BufferTooSmall)` - if the output buffer is too small.
+/// * `Err(Error::InvalidInput)` - if the number of values is not a multiple of the size of `cells`.
+/// * `Err(Error::ArithmeticOverflow)` - if values cannot be encoded into given number of cells.
+pub fn fdt_encode_cell_sized_property(
+    values: &[usize],
+    tuple_cells: &[u32],
+    mut out_buffer: &mut [u8],
+) -> Result<usize> {
+    const FDT_CELL_SIZE: usize = 4; // 4 bytes per cell
+    if tuple_cells.is_empty() || values.len() % tuple_cells.len() != 0 {
+        return Err(Error::InvalidInput.into());
+    }
+    let total_size: usize = (SafeNum::from(FDT_CELL_SIZE) * values.len() / tuple_cells.len()
+        * tuple_cells.iter().fold(SafeNum::from(0), |a, i| a + *i))
+    .try_into()?;
+
+    // Encode values
+    for (value, cells) in values.into_iter().zip(tuple_cells.iter().cycle()) {
+        let encoding_bytes = (SafeNum::from(*cells) * FDT_CELL_SIZE).try_into()?;
+        let (encoding_buffer, rest) = out_buffer
+            .split_at_mut_checked(encoding_bytes)
+            .ok_or(Error::BufferTooSmall(Some(total_size)))?;
+        copy_bytes_right_align(&value.to_be_bytes(), encoding_buffer)?;
+        out_buffer = rest;
+    }
+    Ok(total_size)
 }
 
 /// Rust wrapper for the FDT header data.
@@ -204,6 +275,12 @@ impl<'a, T: AsRef<[u8]> + 'a> Fdt<T> {
             }),
             _ => Err(map_result(len).unwrap_err()),
         }
+    }
+
+    /// Treat the property value as a u32 and return it.
+    pub fn get_property_u32(&self, path: &str, name: &CStr) -> Result<u32> {
+        let bytes = self.get_property(path, name)?;
+        Ok(u32::from_be_bytes(bytes.try_into().map_err(|_| Error::Other(Some("not a u32 value")))?))
     }
 
     /// Find the offset of a node by a given node path.
@@ -491,6 +568,22 @@ mod test {
     }
 
     #[test]
+    fn test_get_property_u32() {
+        let init = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut fdt_buf = vec![0u8; init.len()];
+        let fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        assert_eq!(
+            fdt.get_property_u32("/dev-2/dev-2.2/dev-2.2.1", c"property-2").unwrap(),
+            0x11223344
+        );
+        // Non a valid u32
+        assert!(fdt.get_property_u32("/dev-2/dev-2.2/dev-2.2.1", c"property-1").is_err());
+        // Non exists
+        assert!(fdt.get_property_u32("/", c"non-existent").is_err());
+    }
+
+    #[test]
     fn test_set_property() {
         let init = include_bytes!("../test/data/base.dtb").to_vec();
         let mut fdt_buf = vec![0u8; init.len() + 512];
@@ -721,5 +814,54 @@ mod test {
             Err(Error::Other(Some(MAXIMUM_OVERLAYS_ERROR_MSG))),
             "too many overlays isn't handled"
         );
+    }
+
+    #[test]
+    fn test_fdt_encode_cell_sized_property() {
+        let mut buffer = [0u8; 48];
+        fdt_encode_cell_sized_property(&[0xABABABAB12121212, 0x12345678], &[2, 1], &mut buffer)
+            .unwrap();
+        let vals = buffer
+            .chunks_exact(size_of::<u32>())
+            .take(3)
+            .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(vals, vec![0xABABABAB, 0x12121212, 0x12345678]);
+
+        fdt_encode_cell_sized_property(&[1, 2, 3, 4, 5, 6], &[2, 2], &mut buffer).unwrap();
+        let vals = buffer
+            .chunks_exact(size_of::<u32>())
+            .take(12)
+            .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(vals, vec![0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6]);
+
+        fdt_encode_cell_sized_property(&[1, 2, 3, 4, 5, 6], &[1, 3, 1], &mut buffer).unwrap();
+        let vals = buffer
+            .chunks_exact(size_of::<u32>())
+            .take(10)
+            .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(vals, vec![1, 0, 0, 2, 3, 4, 0, 0, 5, 6]);
+    }
+
+    #[test]
+    fn test_fdt_encode_cell_sized_property_invalid_data() {
+        let mut buffer = [0u8; 48];
+        // Values do not form 3-tuples
+        fdt_encode_cell_sized_property(
+            &[0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7],
+            &[1, 1, 1],
+            &mut buffer,
+        )
+        .unwrap_err();
+        // Values do not form 3-tuples
+        fdt_encode_cell_sized_property(&[0x1, 0x2], &[1, 1, 1], &mut buffer).unwrap_err();
+        // Value does not fit into one cell
+        fdt_encode_cell_sized_property(&[0x1212121212121212, 0x2], &[1, 1], &mut buffer)
+            .unwrap_err();
+        // Buffer too small
+        fdt_encode_cell_sized_property(&[0x1, 0x2, 0x3, 0x4, 0x5, 0x6], &[4, 4], &mut buffer)
+            .unwrap_err();
     }
 }
