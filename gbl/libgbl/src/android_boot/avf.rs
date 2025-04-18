@@ -17,18 +17,65 @@
 use super::load::BootImageV3Info;
 use crate::constants::PAGE_SIZE;
 use crate::image_buffer::ImageBuffer;
-use crate::{GblOps, Result};
+use crate::{GblOps, KiB, Result};
 use core::ffi::CStr;
+use core::mem::{align_of, size_of, MaybeUninit};
 use fdt::{fdt_encode_cell_sized_property, std_props, Fdt};
 use liberror::Error;
+use safemath::SafeNum;
+use static_assertions::const_assert;
+use zerocopy::{Immutable, IntoBytes};
 
 pub const DEFAULT_PVMFW_PART_NAME_CSTR: &CStr = c"pvmfw";
 pub const DEFAULT_PVMFW_PART_NAME: &str = "pvmfw";
+const NUM_PVMFW_CONFIG_ENTRIES: usize = 4;
+
+type EntryBufsArray<'a> = [&'a [u8]; NUM_PVMFW_CONFIG_ENTRIES];
+
+fn align_up(size: usize, alignment: usize) -> Result<usize> {
+    Ok(SafeNum::from(size).round_up(alignment).try_into().map_err(Error::ArithmeticOverflow)?)
+}
+
+const fn align_up_const(size: usize, alignment: usize) -> usize {
+    let offset = alignment.checked_sub(1).unwrap();
+    size.checked_add(offset).unwrap() & !offset
+}
 
 /// Places pvmfw firmware binary into reserved memory region
+///
+/// Assembles the pvmfw binary and its configuration data into a single blob, and places it into a
+/// reserved memory region for later use by the hypervisor.
+///
+/// As per the requirements outlined at
+/// https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/guest/pvmfw/README.md,
+/// pvmfw expects to have been loaded at 4KiB-aligned address. Therefore we respect this alignment
+/// when loading the binary image. The bootloader is expected to describe the region using a
+/// reserved memory device tree node, with both address and size properly aligned to the page size
+/// used by the hypervisor. The configuration data must be 4KiB-aligned as well, while each config
+/// entry must be 8b-aligned.
+///
+/// See more details of pvmfw loading, the configuration data layout, and meaning of
+/// individual config entries at the link above.
+///
+/// # Arguments
+///
+/// * `ops` - an implementation of `GblOps`
+/// * `pvmfw_partition_buf` - a byte slice containing a preloaded pvmfw partition
+/// * `entries` - an array of individual pvmfw configuration entries (as byte slices) - appended to
+/// the configuration header unchanged
+///
+/// # Returns
+///
+/// * `Ok(ImageBuffer)` - on success, the newly allocated image buffer containing the final pvmfw
+/// data structure (the binary and appended configuration data)
+/// * `Err(InvalidArgument)` - if the pvmfw partition cannot be parsed
+/// * `Err(BadBufferSize)` - if pvmfw binary cannot be extracted or the size data is invalid
+/// * `Err(BufferTooSmall)` - of the pvmfw binary and config data doesn't fit into the target buffer
+/// * `Err(ArithmeticOverflow)` - on overflow when calculating image buffer size
 pub fn pvmfw_place_in_memory<'a, 'b>(
     ops: &mut impl GblOps<'a, 'b>,
     pvmfw_partition_buf: &[u8],
+    entries: EntryBufsArray,
 ) -> Result<ImageBuffer<'b>> {
     const PVMFW_RESVMEM_NAME: &str = "pvmfw_data";
 
@@ -37,10 +84,11 @@ pub fn pvmfw_place_in_memory<'a, 'b>(
     let pvmfw_bin =
         pvmfw_partition_buf.get(info.kernel_range.clone()).ok_or(Error::BadBufferSize)?;
     let pvmfw_bin_size = pvmfw_bin.len();
-    assert!(pvmfw_bin_size % PAGE_SIZE == 0, "expected page aligned buffer");
+    assert!(pvmfw_bin_size % PvmfwConfHeader::ALIGNMENT == 0, "expected 4k aligned buffer");
 
-    let mut target_buf =
-        ops.get_image_buffer(PVMFW_RESVMEM_NAME, pvmfw_bin_size.try_into().unwrap())?;
+    // Request buffer
+    let image_size = calc_pvmfw_data_image_size(pvmfw_bin_size, &entries)?;
+    let mut target_buf = ops.get_image_buffer(PVMFW_RESVMEM_NAME, image_size.try_into()?)?;
 
     // SAFETY: the used buffer will be fully initialized by writing pvmfw binary and padding
     unsafe { target_buf.advance_used(pvmfw_bin_size) }?;
@@ -49,6 +97,8 @@ pub fn pvmfw_place_in_memory<'a, 'b>(
     }
     target_buf.used_mut().copy_from_slice(pvmfw_bin);
 
+    // Append the rest of the configuration
+    write_pvmfw_config(&mut target_buf, entries)?;
     Ok(target_buf)
 }
 
@@ -84,6 +134,112 @@ where
     )?;
     fdt.set_property(PVMFW_RESVMEM_PATH, std_props::REG, &reg_buf[..reg_bytes])?;
     fdt.set_property(PVMFW_RESVMEM_PATH, std_props::NO_MAP, &[])?;
+    Ok(())
+}
+
+/// Pvmfw configuration entry implementation; see:
+/// https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/guest/pvmfw/README.md
+#[repr(C, packed)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, IntoBytes, Immutable)]
+struct PvmfwConfEntry {
+    offset: u32,
+    size: u32,
+}
+
+const_assert!(PvmfwConfEntry::ALIGNMENT >= align_of::<PvmfwConfEntry>());
+
+impl PvmfwConfEntry {
+    const ALIGNMENT: usize = 8;
+}
+
+/// Pvmfw configuration header implementation; see:
+/// https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/guest/pvmfw/README.md
+#[repr(C, packed)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, IntoBytes, Immutable)]
+struct PvmfwConfHeader {
+    magic: u32,
+    version: u32,
+    total_size: u32,
+    flags: u32,
+    entries: [PvmfwConfEntry; NUM_PVMFW_CONFIG_ENTRIES],
+}
+
+const_assert!(PvmfwConfHeader::ALIGNMENT >= align_of::<PvmfwConfHeader>());
+
+impl PvmfwConfHeader {
+    const MAGIC: u32 = u32::from_ne_bytes(*b"pvmf");
+    const DEFAULT_FLAGS: u32 = 0; // Flags field is currently unused and must be zero
+    const ALIGNMENT: usize = KiB!(4);
+    const PADDED_SIZE: usize = align_up_const(size_of::<Self>(), PvmfwConfEntry::ALIGNMENT);
+
+    fn make_config_entries(
+        entry_bufs: EntryBufsArray,
+    ) -> Result<([PvmfwConfEntry; NUM_PVMFW_CONFIG_ENTRIES], u32)> {
+        let mut total_size = SafeNum::from(Self::PADDED_SIZE);
+        let mut entries = [PvmfwConfEntry::default(); NUM_PVMFW_CONFIG_ENTRIES];
+        for (i, e) in entry_bufs.iter().enumerate() {
+            entries[i].offset = total_size.try_into().map_err(Error::ArithmeticOverflow)?;
+            entries[i].size = e.len().try_into()?;
+            total_size += align_up(e.len(), PvmfwConfEntry::ALIGNMENT)?;
+        }
+        Ok((entries, total_size.try_into().map_err(Error::ArithmeticOverflow)?))
+    }
+
+    const fn encode_pvmfw_config_version(major: u16, minor: u16) -> u32 {
+        ((major as u32) << 16) | (minor as u32)
+    }
+
+    fn new(entries: EntryBufsArray) -> Result<Self> {
+        let (entries, total_size) = Self::make_config_entries(entries)?;
+        Ok(Self {
+            magic: Self::MAGIC,
+            version: Self::encode_pvmfw_config_version(1, 2),
+            flags: Self::DEFAULT_FLAGS,
+            total_size,
+            entries,
+        })
+    }
+}
+
+/// Returns total size of pvmfw configuration data for given entries
+fn calc_pvmfw_data_image_size(pvmfw_bin_size: usize, entries: &EntryBufsArray) -> Result<usize> {
+    let mut total = SafeNum::from(pvmfw_bin_size) + PvmfwConfHeader::PADDED_SIZE;
+    for e in entries {
+        total += align_up(e.len(), PvmfwConfEntry::ALIGNMENT)?;
+    }
+    // Size must be aligned to the page size used by the hypervisor
+    Ok(align_up(total.try_into().map_err(Error::ArithmeticOverflow)?, PAGE_SIZE)?)
+}
+
+/// Write the pvmfw configuration to the image buffer. Creates the configuration header and appends
+/// the configuration entries.
+fn write_pvmfw_config(imgbuf: &mut ImageBuffer, entries: EntryBufsArray) -> Result<()> {
+    let uninit = imgbuf
+        .tail()
+        .get_mut(..PvmfwConfHeader::PADDED_SIZE)
+        .ok_or(Error::BufferTooSmall(Some(PvmfwConfHeader::PADDED_SIZE)))?;
+    if uninit.as_ptr().align_offset(PvmfwConfHeader::ALIGNMENT.into()) != 0 {
+        return Err(Error::InvalidAlignment.into());
+    }
+
+    // Initialize bytes by writing pvmfw config header bytes to uninit part
+    let header = PvmfwConfHeader::new(entries)?;
+    let (_, pad) = MaybeUninit::fill_from(uninit, header.as_bytes().iter().copied());
+    MaybeUninit::fill(pad, 0u8);
+    // SAFETY: successfully initialized buffer by creating config header + padding
+    unsafe { imgbuf.advance_used(PvmfwConfHeader::PADDED_SIZE) }?;
+
+    // Append the entries after the header and add padding
+    for entry in entries {
+        let entry_size = entry.len();
+        let padded_size = align_up(entry_size, PvmfwConfEntry::ALIGNMENT)?;
+        let uninit =
+            imgbuf.tail().get_mut(..padded_size).ok_or(Error::BufferTooSmall(Some(padded_size)))?;
+        let (_, pad) = MaybeUninit::fill_from(uninit, entry.into_iter().copied());
+        MaybeUninit::fill(pad, 0u8);
+        // SAFETY: successfully initialized buffer by copying the entry contents + padding
+        unsafe { imgbuf.advance_used(padded_size) }?;
+    }
     Ok(())
 }
 
@@ -137,12 +293,13 @@ mod test {
 
         const FILL_VALUE: u8 = 0xAB;
         let mut pvmfw_partition = dummy_pvmfw_partition(FILL_VALUE);
-        let reg = pvmfw_place_in_memory(&mut ops, &mut pvmfw_partition).unwrap();
+        let reg =
+            pvmfw_place_in_memory(&mut ops, &mut pvmfw_partition, [&[]; NUM_PVMFW_CONFIG_ENTRIES])
+                .unwrap();
         let used_bytes = reg.used();
 
-        assert_eq!(used_bytes.len(), 4096);
+        assert_eq!(used_bytes.len(), PAGE_SIZE + PvmfwConfHeader::PADDED_SIZE);
         assert!(&used_bytes[..0xc00].iter().all(|&b| b == FILL_VALUE));
-        assert!(&used_bytes[0xc00..].iter().all(|&b| b == 0u8));
     }
 
     #[test]
@@ -153,7 +310,12 @@ mod test {
         add_image_buffer(&mut ops, &mut pvmfw_buf_aligned);
 
         let mut pvmfw_partition = [0u8; 0x1000];
-        assert!(pvmfw_place_in_memory(&mut ops, &mut pvmfw_partition).is_err());
+        assert!(pvmfw_place_in_memory(
+            &mut ops,
+            &mut pvmfw_partition,
+            [&[]; NUM_PVMFW_CONFIG_ENTRIES]
+        )
+        .is_err());
     }
 
     #[test]
@@ -189,5 +351,81 @@ mod test {
             fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::REG).unwrap();
         assert_eq!(&reg_prop[..8], (imbuf.as_ref().as_ptr() as usize).to_be_bytes());
         assert_eq!(&reg_prop[8..], imbuf.capacity().to_be_bytes());
+    }
+
+    #[repr(align(4096))] // pvmfw config data alignment requirement
+    struct ConfBuffer([MaybeUninit<u8>; 1000]);
+
+    #[test]
+    fn test_write_pvmfw_config() {
+        let mut buf = ConfBuffer([MaybeUninit::uninit(); 1000]);
+        let buf_uninit = &mut buf.0[..];
+        let mut imbuf = ImageBuffer::new(buf_uninit);
+
+        const DATA_LEN: usize = 10;
+        let data_len_padded = align_up(DATA_LEN, 8).unwrap();
+
+        let data = [[1u8; DATA_LEN], [2u8; DATA_LEN], [3u8; DATA_LEN], [4u8; DATA_LEN]];
+        write_pvmfw_config(&mut imbuf, [&data[0], &data[1], &data[2], &data[3]]).unwrap();
+
+        let config = imbuf.used();
+        let header: &PvmfwConfHeader = unsafe { &*(config.as_ptr() as *const PvmfwConfHeader) };
+
+        let expected_entries = [
+            PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: DATA_LEN as u32 },
+            PvmfwConfEntry {
+                offset: (PvmfwConfHeader::PADDED_SIZE + data_len_padded) as u32,
+                size: DATA_LEN as u32,
+            },
+            PvmfwConfEntry {
+                offset: (PvmfwConfHeader::PADDED_SIZE + data_len_padded * 2) as u32,
+                size: DATA_LEN as u32,
+            },
+            PvmfwConfEntry {
+                offset: (PvmfwConfHeader::PADDED_SIZE + data_len_padded * 3) as u32,
+                size: DATA_LEN as u32,
+            },
+        ];
+        let expected_header = PvmfwConfHeader {
+            magic: PvmfwConfHeader::MAGIC,
+            version: PvmfwConfHeader::encode_pvmfw_config_version(1, 2),
+            total_size: config.len() as u32,
+            flags: PvmfwConfHeader::DEFAULT_FLAGS,
+            entries: expected_entries,
+        };
+
+        assert!(header == &expected_header);
+        for i in 0..NUM_PVMFW_CONFIG_ENTRIES {
+            let offset = expected_entries[i].offset as usize;
+            let size = expected_entries[i].size as usize;
+            assert_eq!(&config[offset..offset + size], data[i]);
+            assert!(&config[offset + size..offset + data_len_padded].iter().all(|&v| v == 0u8));
+        }
+    }
+
+    #[test]
+    fn test_write_empty_pvmfw_config() {
+        let mut buf = ConfBuffer([MaybeUninit::uninit(); 1000]);
+        let buf_uninit = &mut buf.0[..];
+        let mut imbuf = ImageBuffer::new(buf_uninit);
+
+        write_pvmfw_config(&mut imbuf, [&[]; NUM_PVMFW_CONFIG_ENTRIES]).unwrap();
+
+        let config = imbuf.used();
+        let header: &PvmfwConfHeader = unsafe { &*(config.as_ptr() as *const PvmfwConfHeader) };
+        let expected_header = PvmfwConfHeader {
+            magic: PvmfwConfHeader::MAGIC,
+            version: PvmfwConfHeader::encode_pvmfw_config_version(1, 2),
+            total_size: config.len() as u32,
+            flags: PvmfwConfHeader::DEFAULT_FLAGS,
+            entries: [
+                PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: 0 },
+                PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: 0 },
+                PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: 0 },
+                PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: 0 },
+            ],
+        };
+        assert!(header == &expected_header);
+        assert_eq!(config.len(), PvmfwConfHeader::PADDED_SIZE);
     }
 }

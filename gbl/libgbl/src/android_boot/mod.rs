@@ -182,7 +182,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
 
     // Place pvmfw binary into reserved memory
     if images.pvmfw.len() > 0 {
-        let pvmfw_image_buf = pvmfw_place_in_memory(ops, images.pvmfw)?;
+        let pvmfw_image_buf = pvmfw_place_in_memory(ops, images.pvmfw, [&[]; 4])?;
         pkvm_describe_pvmfw_resvmem(&mut fdt, &pvmfw_image_buf)?;
         gbl_println!(ops, "AVF: init success");
     }
