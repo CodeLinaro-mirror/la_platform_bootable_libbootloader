@@ -38,6 +38,8 @@ use libutils::{aligned_offset, aligned_subslice};
 use misc::{AndroidBootMode, BootloaderMessage};
 use safemath::SafeNum;
 
+mod avf;
+
 mod vboot;
 use vboot::{avb_verify_slot, PartitionsToVerify};
 
@@ -430,7 +432,7 @@ pub(crate) mod tests {
     /// Helper for testing `android_load_verify_fixup` given a partition layout, target slot and
     /// custom device tree.
     fn test_android_load_verify_fixup(
-        slot: u8,
+        slot_nr: u8,
         partitions: &[(CString, String)],
         expected_kernel: &[u8],
         expected_ramdisk: &[u8],
@@ -443,6 +445,8 @@ pub(crate) mod tests {
             storage.add_raw_device(part, read_test_data(file));
         }
         let mut ops = FakeGblOps::new(&storage);
+        let slot_suffix = char::from_u32('a' as u32 + slot_nr as u32).unwrap();
+        ops.current_slot = Some(Ok(slot(slot_suffix)));
         ops.avb_ops.unlock_state = Ok(false);
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         let mut out_color = None;
@@ -462,7 +466,7 @@ pub(crate) mod tests {
 
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let (ramdisk, fdt, kernel, _) =
-            android_load_verify_fixup(&mut ops, slot, false, &mut load_buffer).unwrap();
+            android_load_verify_fixup(&mut ops, slot_nr, false, &mut load_buffer).unwrap();
         assert_eq!(kernel, expected_kernel);
         check_ramdisk(ramdisk, expected_ramdisk, expected_bootconfig);
 

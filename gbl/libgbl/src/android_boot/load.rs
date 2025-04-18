@@ -14,6 +14,7 @@
 
 use super::{avb_verify_slot, cstr_bytes_to_str};
 use crate::{
+    android_boot::avf::{DEFAULT_PVMFW_PART_NAME, DEFAULT_PVMFW_PART_NAME_CSTR},
     android_boot::PartitionsToVerify,
     constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE},
     decompress::decompress_kernel,
@@ -246,6 +247,8 @@ pub struct LoadedImages<'a> {
     pub kernel: &'a mut [u8],
     /// Ramdisk image.
     pub ramdisk: &'a mut [u8],
+    /// pVM firmware image.
+    pub pvmfw: &'a mut [u8],
     /// Unused portion. Can be used by the caller to construct FDT.
     pub unused: &'a mut [u8],
 }
@@ -260,6 +263,7 @@ impl<'a> Default for LoadedImages<'a> {
             dtb_part: &mut [][..],
             kernel: &mut [][..],
             ramdisk: &mut [][..],
+            pvmfw: &mut [][..],
             unused: &mut [][..],
         }
     }
@@ -293,6 +297,13 @@ pub fn android_load_verify<'a, 'b, 'c>(
         partitions.try_push_preloaded(c"dtb", &dtb[..])?;
     }
 
+    // Load pvmfw partition if it exists
+    let pvmfw_part = slotted_part(DEFAULT_PVMFW_PART_NAME, slot)?;
+    let (pvmfw, remains) = load_entire_part(ops, &pvmfw_part, &mut remains[..])?;
+    if !pvmfw.is_empty() {
+        partitions.try_push_preloaded(DEFAULT_PVMFW_PART_NAME_CSTR, &pvmfw[..])?;
+    }
+
     let add = |v: &mut BootConfigBuilder| {
         if !is_recovery {
             v.add("androidboot.force_normal_boot=1\n")?;
@@ -319,6 +330,7 @@ pub fn android_load_verify<'a, 'b, 'c>(
     drop(partitions);
     res.dtbo = dtbo;
     res.dtb_part = dtb;
+    res.pvmfw = pvmfw;
     Ok(res)
 }
 
@@ -728,7 +740,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
-        ops::test::{FakeGblOps, FakeGblOpsStorage},
+        ops::test::{slot, FakeGblOps, FakeGblOpsStorage},
         tests::AlignedBuffer,
     };
     use bootparams::bootconfig::BOOTCONFIG_TRAILER_SIZE;
@@ -795,7 +807,7 @@ pub(crate) mod tests {
 
     /// Helper for testing load/verify and assert verfiication success.
     fn test_android_load_verify_success(
-        slot: u8,
+        slot_nr: u8,
         partitions: &[(CString, String)],
         expected_kernel: &[u8],
         expected_ramdisk: &[u8],
@@ -811,6 +823,8 @@ pub(crate) mod tests {
         let mut ops = FakeGblOps::new(&storage);
         ops.avb_ops.unlock_state = Ok(false);
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
+        let slot_suffix = char::from_u32('a' as u32 + slot_nr as u32).unwrap();
+        ops.current_slot = Some(Ok(slot(slot_suffix)));
         let mut load_buffer = AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
         let mut out_color = None;
         let mut handler = |color,
@@ -826,7 +840,7 @@ pub(crate) mod tests {
         };
         ops.avb_handle_verification_result = Some(&mut handler);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
-        let loaded = android_load_verify(&mut ops, slot, false, &mut load_buffer).unwrap();
+        let loaded = android_load_verify(&mut ops, slot_nr, false, &mut load_buffer).unwrap();
 
         assert_eq!(loaded.dtb, expected_dtb);
         assert_eq!(out_color, Some(BootStateColor::Green));
