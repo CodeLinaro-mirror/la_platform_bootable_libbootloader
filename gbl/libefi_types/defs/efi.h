@@ -36,6 +36,7 @@
 #include "protocols/gbl_efi_image_loading_protocol.h"
 #include "protocols/gbl_efi_os_configuration_protocol.h"
 #include "protocols/loaded_image_protocol.h"
+#include "protocols/random_number_generator_protocol.h"
 #include "protocols/riscv_efi_boot_protocol.h"
 #include "protocols/simple_network_protocol.h"
 #include "protocols/simple_text_input_protocol.h"

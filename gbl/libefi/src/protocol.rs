@@ -30,6 +30,7 @@ pub mod gbl_efi_fastboot_usb;
 pub mod gbl_efi_image_loading;
 pub mod gbl_efi_os_configuration;
 pub mod loaded_image;
+pub mod random_number_generator;
 pub mod riscv;
 pub mod simple_network;
 pub mod simple_text_input;

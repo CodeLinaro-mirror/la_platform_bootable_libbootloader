@@ -25,8 +25,11 @@
 mod riscv64;
 
 use cfg_if::cfg_if;
-use core::{ffi::c_void, panic::PanicInfo};
-use efi::{initialize, panic, EfiAllocator};
+use core::{ffi::c_void, fmt::Write, panic::PanicInfo};
+use efi::{
+    efi_print, efi_println, initialize, panic,
+    protocol::random_number_generator::RandomNumberGeneratorProtocol, EfiAllocator, EfiEntry,
+};
 use efi_types::EfiSystemTable;
 use gbl_efi::app_main;
 
@@ -46,39 +49,63 @@ extern crate avb_sysdeps;
 /// Pull in the sysdeps required by boringssl so the linker can find them.
 extern crate boringssl_sysdeps;
 
+fn generate_canary(entry: &EfiEntry) -> usize {
+    let canary = entry
+        .system_table()
+        .boot_services()
+        .find_first_and_open::<RandomNumberGeneratorProtocol>()
+        .and_then(|rng_proto| rng_proto.get_rng());
+
+    cfg_if! {
+        if #[cfg(feature = "gbl_dev")] {
+            let canary_default;
+            cfg_if!{
+                if #[cfg(target_pointer_width = "64")] {
+                    canary_default = 0x27085dc5dd4d6b7d;
+                } else if #[cfg(target_pointer_width = "32")] {
+                    canary_default = 0x612826c7;
+                } else {
+                    compile_error!("Stack canaries require size_of::<usize>() >= 4");
+                }
+            }
+            canary
+                .unwrap_or_else(|e| {
+                    efi_println!(entry,
+                                 "SECURITY WARNING: Failed to generate stack canary, using static default: {:?}", e);
+                    canary_default}
+                )
+        } else {
+            // It's better to crash on failure than to ignore the error.
+            canary
+                .inspect_err(|e| efi_println!(entry, "SECURITY WARNING: Failed to generate stack canary: {:?}", e))
+                .unwrap()
+        }
+    }
+}
+
 /// EFI application entry point. Does not return.
 ///
 /// # Safety
 /// `image_handle` and `systab_ptr` must be valid objects that adhere to the UEFI specification.
 #[no_mangle]
 pub unsafe extern "C" fn efi_main(image_handle: *mut c_void, systab_ptr: *mut EfiSystemTable) {
-    // TODO(b/411227922): use platform specific tricks to generate a random canary.
-    let canary;
-    cfg_if! {
-        if #[cfg(target_pointer_width = "64")] {
-            canary = 0x27085dc5dd4d6b7d;
-        } else if #[cfg(target_pointer_width = "32")] {
-            canary = 0x612826c7;
-        } else {
-            compile_error!("Stack canaries require size_of::<usize>() >= 4");
-        }
-    }
     // SAFETY:
-    // * `initialize_canary` is called before any stack-protected function that returns.
+    // * caller provides valid `image_handle` and `systab_ptr` objects
+    // * we only call `initialize()` once
+    let entry = unsafe { initialize(image_handle, systab_ptr) }.unwrap();
+    let canary = generate_canary(&entry);
+    // SAFETY:
     // * `systab_ptr` is non-NULL because this is a just-started UEFI application.
     // * `initialize_canary` has sole access to static mutable variables.
     // * UEFI is single-threaded, so there can be no concurrent
     //   mutations to static, mutable variables.
+    // * `efi_main` does not exit as required by `initialize_canary`.
     //
     // Note: the mask clears the two least significant bytes,
     // and `usize::to_le` ensures that those null bytes are on the left.
     unsafe {
         initialize_canary(systab_ptr, usize::to_le(canary & !0xFFFF));
     }
-    // SAFETY:
-    // * caller provides valid `image_handle` and `systab_ptr` objects
-    // * we only call `initialize()` once
-    let entry = unsafe { initialize(image_handle, systab_ptr) }.unwrap();
     app_main(entry).unwrap();
     loop {}
 }

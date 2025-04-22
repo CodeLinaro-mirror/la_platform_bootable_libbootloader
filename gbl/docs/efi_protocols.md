@@ -121,6 +121,18 @@ to specify their own custom fastboot triggers.
 Used for logging and debugging. Implementations must provide this protocol, but
 the functions may be no-ops.
 
+### RandomNumberGeneratorProtocol
+
+* [`EFI_RNG_PROTOCOL`](https://uefi.org/specs/UEFI/2.11/37_Secure_Technologies.html#random-number-generator-protocol)
+* required: enables dynamic stack canary values
+
+On entry, GBL uses the RandomNumberGeneratorProtocol to set a new random value for
+the global stack canary.
+
+For development builds, the RNG protocol is technically optional: if the protocol
+is absent a random but static value will be used instead to initialize the global
+stack canary value.
+
 ## Community Protocols
 
 Protocols defined by a community and used across the ecosystem, but not officially
