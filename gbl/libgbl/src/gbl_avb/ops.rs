@@ -214,6 +214,19 @@ impl<'a, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, T> {
             _ => result,
         }
     }
+
+    /// For dev builds only, returns true if both cert ops return
+    /// [IoError::NotImplemented].
+    #[cfg(feature = "gbl_dev")]
+    fn cert_ops_not_implemented(&mut self) -> bool {
+        let mut attributes = CertPermanentAttributes {
+            version: 0,
+            product_root_public_key: [0u8; 1032],
+            product_id: [0u8; 16],
+        };
+        self.read_permanent_attributes(&mut attributes) == Err(IoError::NotImplemented)
+            && self.read_permanent_attributes_hash() == Err(IoError::NotImplemented)
+    }
 }
 
 /// A helper function for converting `CStr` to `str`
@@ -298,31 +311,41 @@ impl<'a, 'b, 'c, T: GblOps<'b, 'c>> AvbOps<'a> for GblAvbOps<'a, T> {
         public_key: &[u8],
         public_key_metadata: Option<&[u8]>,
     ) -> IoResult<bool> {
-        let status = if self.use_cert {
-            // TODO(b/408283572): provide dev-board fallback for cert ops.
-            match cert_validate_vbmeta_public_key(self, public_key, public_key_metadata)? {
-                true => KeyValidationStatus::Valid,
-                false => KeyValidationStatus::Invalid,
-            }
-        } else {
-            let result =
-                self.gbl_ops.avb_validate_vbmeta_public_key(public_key, public_key_metadata);
+        let result = if self.use_cert {
+            let result = cert_validate_vbmeta_public_key(self, public_key, public_key_metadata)
+                .map(|ret| match ret {
+                    true => KeyValidationStatus::Valid,
+                    false => KeyValidationStatus::Invalid,
+                });
 
-            // On dev boards fall back to `Invalid`, which indicates that the
-            // boot image was not signed but will still allow booting on
-            // unlocked boards.
+            // `cert_validate_vbmeta_public_key` is a little trickier to
+            // identify the not-implemented case, because
+            // [IoError::NotImplemented] is only returned directly from ops
+            // callbacks; top-level libavb APIs like this will end up converting
+            // it to [IoError::Io] instead.
+            //
+            // To work around this, we make an additional call to each cert op
+            // callback to check whether it's implemented or not.
             #[cfg(feature = "gbl_dev")]
-            let result = self.with_dev_fallback(
-                result,
-                Ok(KeyValidationStatus::Invalid),
-                "validate vbmeta key",
-            );
+            let result = match result {
+                Err(IoError::Io) if self.cert_ops_not_implemented() => Err(IoError::NotImplemented),
+                _ => result,
+            };
 
-            result?
+            result
+        } else {
+            self.gbl_ops.avb_validate_vbmeta_public_key(public_key, public_key_metadata)
         };
 
-        self.key_validation_status = Some(status);
+        // On dev boards fall back to `Invalid`, which indicates that the
+        // boot image was not signed but will still allow booting on
+        // unlocked boards.
+        #[cfg(feature = "gbl_dev")]
+        let result =
+            self.with_dev_fallback(result, Ok(KeyValidationStatus::Invalid), "validate vbmeta key");
 
+        let status = result?;
+        self.key_validation_status = Some(status);
         Ok(matches!(status, KeyValidationStatus::Valid | KeyValidationStatus::ValidCustomKey))
     }
 
@@ -468,7 +491,15 @@ impl<'a, 'b, T: GblOps<'a, 'b>> CertOps for GblAvbOps<'_, T> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::ops::test::{FakeGblOps, FakeGblOpsStorage};
+    use crate::{
+        ops::test::{FakeGblOps, FakeGblOpsStorage},
+        tests::{testdata, TEST_PERMANENT_ATTRIBUTES_HASH_PATH, TEST_PERMANENT_ATTRIBUTES_PATH},
+    };
+    use avb::{CERT_PIK_VERSION_LOCATION, CERT_PSK_VERSION_LOCATION};
+    use zerocopy::FromBytes;
+
+    const TEST_CERT_PUBLIC_KEY_PATH: &str = "testkey_cert_psk.bin";
+    const TEST_CERT_METADATA_PATH: &str = "cert_metadata.bin";
 
     // Returns test data consisting of `size` incrementing bytes (0-255 repeating).
     fn test_data(size: usize) -> Vec<u8> {
@@ -752,6 +783,97 @@ mod test {
 
         // Dev should succeed but report invalid key, prod should fail.
         assert_eq!(avb_ops.validate_vbmeta_public_key(&[], None), dev_only(Ok(false)));
+        assert_eq!(avb_ops.key_validation_status(), dev_only(Ok(KeyValidationStatus::Invalid)));
+    }
+
+    /// Creates a [FakeGblOps] with all the necessary configuration to
+    /// successfully validate the vbmeta key using the libavb cert extension.
+    ///
+    /// # Returns
+    /// A tuple containing:
+    /// * the [FakeGblOps]
+    /// * the corresponding vbmeta public key
+    /// * the corresponding vbmeta public key metadata
+    fn create_fake_gbl_ops_with_cert() -> (FakeGblOps<'static, 'static>, Vec<u8>, Vec<u8>) {
+        let mut gbl_ops = FakeGblOps::new(&[]);
+
+        // Cert verification requires both permanent attribute ops plus reading
+        // rollback indices for the signing keys.
+        gbl_ops.avb_ops.cert_permanent_attributes = Some(
+            CertPermanentAttributes::read_from(&testdata(TEST_PERMANENT_ATTRIBUTES_PATH)).unwrap(),
+        );
+        gbl_ops.avb_ops.cert_permanent_attributes_hash =
+            Some(testdata(TEST_PERMANENT_ATTRIBUTES_HASH_PATH).try_into().unwrap());
+        gbl_ops.avb_ops.rollbacks.insert(CERT_PIK_VERSION_LOCATION, Ok(0));
+        gbl_ops.avb_ops.rollbacks.insert(CERT_PSK_VERSION_LOCATION, Ok(0));
+
+        (gbl_ops, testdata(TEST_CERT_PUBLIC_KEY_PATH), testdata(TEST_CERT_METADATA_PATH))
+    }
+
+    #[test]
+    fn cert_validate_vbmeta_public_key_valid() {
+        let (mut gbl_ops, public_key, metadata) = create_fake_gbl_ops_with_cert();
+
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], true);
+        assert_eq!(avb_ops.validate_vbmeta_public_key(&public_key, Some(&metadata)), Ok(true));
+        assert_eq!(avb_ops.key_validation_status(), Ok(KeyValidationStatus::Valid));
+    }
+
+    #[test]
+    fn cert_validate_vbmeta_public_key_invalid() {
+        let (mut gbl_ops, mut public_key, metadata) = create_fake_gbl_ops_with_cert();
+
+        // Modify the public key so it no longer matches the perm attributes.
+        public_key[0] ^= 0x01;
+
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], true);
+        assert_eq!(avb_ops.validate_vbmeta_public_key(&public_key, Some(&metadata)), Ok(false));
+        assert_eq!(avb_ops.key_validation_status(), Ok(KeyValidationStatus::Invalid));
+    }
+
+    #[test]
+    fn cert_validate_vbmeta_public_key_failed() {
+        let (mut gbl_ops, public_key, metadata) = create_fake_gbl_ops_with_cert();
+
+        // Setting the fake perm attributes to `None` causes [IoError::Io].
+        gbl_ops.avb_ops.cert_permanent_attributes = None;
+
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], true);
+        assert_eq!(
+            avb_ops.validate_vbmeta_public_key(&public_key, Some(&metadata)),
+            Err(IoError::Io)
+        );
+        assert!(avb_ops.key_validation_status().is_err());
+    }
+
+    #[test]
+    fn cert_validate_vbmeta_public_key_not_implemented() {
+        // Start with regular [FakeGblOps] without cert backends so we can
+        // make sure everything reports [IoError::NotImplemented].
+        let mut gbl_ops = FakeGblOps::new(&[]);
+
+        // Cert verification requires both permanent attribute ops plus reading
+        // rollback indices for the signing keys.
+        gbl_ops.avb_cert_read_permanent_attributes_not_implemented = true;
+        gbl_ops.avb_cert_read_permanent_attributes_hash_not_implemented = true;
+        gbl_ops.avb_ops.rollbacks.insert(CERT_PIK_VERSION_LOCATION, Err(IoError::NotImplemented));
+        gbl_ops.avb_ops.rollbacks.insert(CERT_PSK_VERSION_LOCATION, Err(IoError::NotImplemented));
+
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], true);
+        // Dev should succeed but report invalid key, prod should fail.
+        //
+        // Because of the extra complications detecting the not-implemented case
+        // for cert verification, in prod builds this ends up failing with
+        // [IoError::Io] rather than [IoError::NotImplemented] like the other
+        // ops do. This could cause some minor confusion for developers, but it
+        // doesn't seem worth adding the workaround logic to prod builds.
+        assert_eq!(
+            avb_ops.validate_vbmeta_public_key(&[], None),
+            match cfg!(feature = "gbl_dev") {
+                true => Ok(false),
+                false => Err(IoError::Io),
+            }
+        );
         assert_eq!(avb_ops.key_validation_status(), dev_only(Ok(KeyValidationStatus::Invalid)));
     }
 

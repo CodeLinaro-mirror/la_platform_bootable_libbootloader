@@ -15,9 +15,9 @@
 use crate::{
     fuchsia_boot::{zbi_split_unused_buffer_mut, zircon_part_name, SlotIndex},
     gbl_avb::ops::GblAvbOps,
-    gbl_print, GblOps, Result as GblResult,
+    gbl_println, GblOps, Result as GblResult,
 };
-use avb::{slot_verify, Descriptor, HashtreeErrorMode, Ops as _, SlotVerifyFlags};
+use avb::{slot_verify, Descriptor, HashtreeErrorMode, Ops as _, SlotVerifyError, SlotVerifyFlags};
 use zbi::{merge_within, ZbiContainer};
 use zerocopy::SplitByteSliceMut;
 
@@ -105,23 +105,40 @@ fn zircon_verify_kernel_internal<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>(
     let verified_success = verify_res.is_ok();
     let verify_data = match verify_res {
         Ok(ref v) => {
-            gbl_print!(avb_ops.gbl_ops, "{} successfully verified.\r\n", part);
+            gbl_println!(avb_ops.gbl_ops, "{} successfully verified", part);
             v
         }
         Err(ref e) if e.verification_data().is_some() && unlocked => {
-            gbl_print!(avb_ops.gbl_ops, "Verification failed. Device is unlocked. Ignore.\r\n");
+            // Verification failed but was able to load the images from disk,
+            // and we're unlocked so it's OK to proceed.
+            gbl_println!(
+                avb_ops.gbl_ops,
+                "Verification failed, but device is unlocked - continuing boot"
+            );
             e.verification_data().unwrap()
         }
-        Err(_) if unlocked => {
-            gbl_print!(
+        Err(SlotVerifyError::InvalidMetadata) | Err(SlotVerifyError::UnsupportedVersion)
+            if unlocked =>
+        {
+            // The vbmetadata is invalid or unknown version, but we're unlocked
+            // so we can just return success. In this case there will be no
+            // vbmeta items to collect or rollbacks to set.
+            //
+            // This is useful so that boards don't have to flash a random vbmeta
+            // image just to boot.
+            gbl_println!(
                 avb_ops.gbl_ops,
-                "Verification failed. No valid verify metadata. \
-                    Device is unlocked. Ignore.\r\n"
+                "Failed to load vbmeta, but device is unlocked - continuing boot"
             );
             return Ok(());
         }
         Err(e) => {
-            gbl_print!(avb_ops.gbl_ops, "Verification failed {:?}.\r\n", e);
+            // Anything else is a critical failure (e.g. I/O error, OOM, etc).
+            // In these cases we want to fail even on an unlocked board because
+            // the state is now unknown and unpredictable. It's also more useful
+            // for board bringup if we fail when the callbacks are not properly
+            // implemented.
+            gbl_println!(avb_ops.gbl_ops, "Verification failed {:?}", e);
             return Err(e.without_verify_data().into());
         }
     };
@@ -165,35 +182,54 @@ mod test {
         fuchsia_boot::{
             test::{
                 append_cmd_line, corrupt_data, create_gbl_ops, create_storage, normalize_zbi,
-                read_test_data, ZIRCON_A_ZBI_FILE,
+                read_test_data, TEST_ROLLBACK_INDEX_LOCATION, ZIRCON_A_ZBI_FILE,
             },
             ZIRCON_KERNEL_ALIGN,
         },
         tests::AlignedBuffer,
     };
-    use avb_bindgen::{AVB_CERT_PIK_VERSION_LOCATION, AVB_CERT_PSK_VERSION_LOCATION};
+    use avb::{IoError, CERT_PIK_VERSION_LOCATION, CERT_PSK_VERSION_LOCATION};
     use zbi::ZBI_ALIGNMENT_USIZE;
 
     // The cert test keys were both generated with rollback version 42.
     const TEST_CERT_PIK_VERSION: u64 = 42;
     const TEST_CERT_PSK_VERSION: u64 = 42;
 
+    /// Creates the buffers used for `zircon_verify_kernel()`.
+    ///
+    /// # Arguments
+    /// * `zbi_file`: name of the ZBI file to preload.
+    ///
+    /// # Returns
+    /// A tuple of containing:
+    /// * the load buffer, preloaded with `zbi_file` contents
+    /// * the ZBI items buffer, zeroed out
+    fn create_verify_buffers(zbi_file: &str) -> (AlignedBuffer, AlignedBuffer) {
+        let zbi = &read_test_data(zbi_file);
+        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGN);
+        load_buffer[..zbi.len()].clone_from_slice(zbi);
+        let zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
+        (load_buffer, zbi_items_buffer)
+    }
+
     #[test]
     fn test_verify_success() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
 
+        let (mut load_buffer, mut zbi_items_buffer) = create_verify_buffers(ZIRCON_A_ZBI_FILE);
         let expect_rollback = ops.avb_ops.rollbacks.clone();
-        let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGN);
-        let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
-        let mut zbi_items = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
-        load_buffer[..zbi.len()].clone_from_slice(zbi);
-        zircon_verify_kernel(&mut ops, Some(SlotIndex::A), false, &mut load_buffer, &mut zbi_items)
-            .unwrap();
+        assert!(zircon_verify_kernel(
+            &mut ops,
+            Some(SlotIndex::A),
+            false,
+            &mut load_buffer,
+            &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap()
+        )
+        .is_ok());
 
         // Verifies that vbmeta ZBI items are appended. Non-zbi items are ignored.
-        let mut expected_zbi_items = AlignedBuffer::new(zbi.len() + 1024, 8);
+        let mut expected_zbi_items = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
         let _ = ZbiContainer::new(&mut expected_zbi_items[..]).unwrap();
         append_cmd_line(&mut expected_zbi_items, b"vb_prop_0=val\0");
         append_cmd_line(&mut expected_zbi_items, b"vb_prop_1=val\0");
@@ -207,14 +243,16 @@ mod test {
     fn test_verify_update_rollback_index_for_successful_slot() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        let (mut load_buffer, mut zbi_items_buffer) = create_verify_buffers(ZIRCON_A_ZBI_FILE);
 
-        let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGN);
-        load_buffer[..zbi.len()].clone_from_slice(zbi);
-        let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
-        let mut zbi_items = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
-        zircon_verify_kernel(&mut ops, Some(SlotIndex::A), true, &mut load_buffer, &mut zbi_items)
-            .unwrap();
+        assert!(zircon_verify_kernel(
+            &mut ops,
+            Some(SlotIndex::A),
+            true,
+            &mut load_buffer,
+            &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap()
+        )
+        .is_ok());
 
         // Slot is successful, rollback index should be updated.
         // vbmeta_a has rollback index value 2 at location 1.
@@ -222,14 +260,8 @@ mod test {
             ops.avb_ops.rollbacks,
             [
                 (1, Ok(2)),
-                (
-                    usize::try_from(AVB_CERT_PSK_VERSION_LOCATION).unwrap(),
-                    Ok(TEST_CERT_PSK_VERSION)
-                ),
-                (
-                    usize::try_from(AVB_CERT_PIK_VERSION_LOCATION).unwrap(),
-                    Ok(TEST_CERT_PIK_VERSION)
-                )
+                (usize::try_from(CERT_PSK_VERSION_LOCATION).unwrap(), Ok(TEST_CERT_PSK_VERSION)),
+                (usize::try_from(CERT_PIK_VERSION_LOCATION).unwrap(), Ok(TEST_CERT_PIK_VERSION))
             ]
             .into()
         );
@@ -239,13 +271,9 @@ mod test {
     fn test_verify_failed_on_corrupted_image() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        let (mut load_buffer, mut zbi_items_buffer) = create_verify_buffers(ZIRCON_A_ZBI_FILE);
 
         let expect_rollback = ops.avb_ops.rollbacks.clone();
-        let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGN);
-        load_buffer[..zbi.len()].clone_from_slice(zbi);
-        let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
-        let mut zbi_items = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
         // Corrupts a random kernel bytes. Skips pass two ZBI headers.
         load_buffer[64] = !load_buffer[64];
         let expect_load = load_buffer.to_vec();
@@ -254,7 +282,7 @@ mod test {
             Some(SlotIndex::A),
             true,
             &mut load_buffer,
-            &mut zbi_items
+            &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap()
         )
         .is_err());
         // Failed while device is locked. ZBI items should not be appended.
@@ -267,26 +295,22 @@ mod test {
     fn test_verify_failed_on_corrupted_vbmetadata() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        let (mut load_buffer, mut zbi_items_buffer) = create_verify_buffers(ZIRCON_A_ZBI_FILE);
 
         let expect_rollback = ops.avb_ops.rollbacks.clone();
-        let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGN);
-        load[..zbi.len()].clone_from_slice(zbi);
-        let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
-        let mut zbi_items = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
-        let expect_load = load.to_vec();
+        let expect_load = load_buffer.to_vec();
         // Corrupts vbmetadata
         corrupt_data(&mut ops, "vbmeta_a");
         assert!(zircon_verify_kernel(
             &mut ops,
             Some(SlotIndex::A),
             true,
-            &mut load,
-            &mut zbi_items
+            &mut load_buffer,
+            &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap()
         )
         .is_err());
         // Failed while device is locked. ZBI items should not be appended.
-        assert_eq!(expect_load, &load[..]);
+        assert_eq!(expect_load, &load_buffer[..]);
         // Rollback index should not be updated on verification failure.
         assert_eq!(expect_rollback, ops.avb_ops.rollbacks);
     }
@@ -295,12 +319,8 @@ mod test {
     fn test_verify_failed_on_rollback_protection() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        let (mut load_buffer, mut zbi_items_buffer) = create_verify_buffers(ZIRCON_A_ZBI_FILE);
 
-        let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGN);
-        load_buffer[..zbi.len()].clone_from_slice(zbi);
-        let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
-        let mut zbi_items = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
         let expect_load = load_buffer.to_vec();
         // vbmeta_a has rollback index value 2 at location 1. Setting min rollback value of 3 should
         // cause rollback protection failure.
@@ -311,7 +331,7 @@ mod test {
             Some(SlotIndex::A),
             true,
             &mut load_buffer,
-            &mut zbi_items
+            &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap()
         )
         .is_err());
         // Failed while device is locked. ZBI items should not be appended.
@@ -324,20 +344,22 @@ mod test {
     fn test_verify_failure_when_unlocked() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        let (mut load_buffer, mut zbi_items_buffer) = create_verify_buffers(ZIRCON_A_ZBI_FILE);
 
         ops.avb_ops.unlock_state = Ok(true);
         let expect_rollback = ops.avb_ops.rollbacks.clone();
 
-        let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGN);
-        load_buffer[..zbi.len()].clone_from_slice(zbi);
-        let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
-        let mut zbi_items = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
         // Corrupts a random kernel bytes. Skips pass two ZBI headers.
         load_buffer[64] = !load_buffer[64];
         // Verification should proceeds OK.
-        zircon_verify_kernel(&mut ops, Some(SlotIndex::A), true, &mut load_buffer, &mut zbi_items)
-            .unwrap();
+        assert!(zircon_verify_kernel(
+            &mut ops,
+            Some(SlotIndex::A),
+            true,
+            &mut load_buffer,
+            &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap()
+        )
+        .is_ok());
         // Verifies that vbmeta ZBI items are appended as long as unlocked.
         let mut expected_zbi_items = AlignedBuffer::new(load_buffer.len(), ZBI_ALIGNMENT_USIZE);
         let _ = ZbiContainer::new(&mut expected_zbi_items[..]).unwrap();
@@ -378,22 +400,95 @@ mod test {
     fn test_verify_failure_by_corrupted_vbmetadata_unlocked() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        let (mut load_buffer, mut zbi_items_buffer) = create_verify_buffers(ZIRCON_A_ZBI_FILE);
 
         ops.avb_ops.unlock_state = Ok(true);
         let expect_rollback = ops.avb_ops.rollbacks.clone();
-        let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGN);
-        load_buffer[..zbi.len()].clone_from_slice(zbi);
-        let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
-        let mut zbi_items = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
         let expect_load = load_buffer.to_vec();
         // Corrupts vbmetadata
         corrupt_data(&mut ops, "vbmeta_a");
-        zircon_verify_kernel(&mut ops, Some(SlotIndex::A), true, &mut load_buffer, &mut zbi_items)
-            .unwrap();
+        assert!(zircon_verify_kernel(
+            &mut ops,
+            Some(SlotIndex::A),
+            true,
+            &mut load_buffer,
+            &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap()
+        )
+        .is_ok());
         // Unlocked but vbmetadata is invalid so no ZBI items should be appended.
         assert_eq!(expect_load, &load_buffer[..]);
         // Rollback index should not be updated on verification failure.
         assert_eq!(expect_rollback, ops.avb_ops.rollbacks);
+    }
+
+    #[test]
+    fn test_verify_failure_by_io_error_unlocked() {
+        let storage = create_storage();
+        let mut ops = create_gbl_ops(&storage);
+        let (mut load_buffer, mut zbi_items_buffer) = create_verify_buffers(ZIRCON_A_ZBI_FILE);
+
+        ops.avb_ops.unlock_state = Ok(true);
+
+        // Make some verification callback return I/O error.
+        ops.avb_ops.rollbacks.insert(TEST_ROLLBACK_INDEX_LOCATION, Err(IoError::Io));
+        let expect_rollback = ops.avb_ops.rollbacks.clone();
+
+        // Even when unlocked, I/O error represents a critical failure and
+        // should refuse to verify.
+        assert_eq!(
+            zircon_verify_kernel(
+                &mut ops,
+                Some(SlotIndex::A),
+                true,
+                &mut load_buffer,
+                &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap()
+            )
+            .unwrap_err(),
+            SlotVerifyError::Io.into()
+        );
+        // Rollback index should not be updated on verification failure.
+        assert_eq!(expect_rollback, ops.avb_ops.rollbacks);
+    }
+
+    #[test]
+    fn test_verify_with_unimplemented_ops() {
+        let storage = create_storage();
+        let mut ops = create_gbl_ops(&storage);
+        let (mut load_buffer, mut zbi_items_buffer) = create_verify_buffers(ZIRCON_A_ZBI_FILE);
+
+        // Set the AVB ops to return `NotImplemented`.
+        ops.avb_ops.unlock_state = Err(IoError::NotImplemented);
+        ops.avb_cert_read_permanent_attributes_not_implemented = true;
+        ops.avb_cert_read_permanent_attributes_hash_not_implemented = true;
+        ops.avb_ops.rollbacks.insert(TEST_ROLLBACK_INDEX_LOCATION, Err(IoError::NotImplemented));
+        ops.avb_ops.rollbacks.insert(CERT_PIK_VERSION_LOCATION, Err(IoError::NotImplemented));
+        ops.avb_ops.rollbacks.insert(CERT_PSK_VERSION_LOCATION, Err(IoError::NotImplemented));
+
+        let expect_rollback = ops.avb_ops.rollbacks.clone();
+        let result = zircon_verify_kernel(
+            &mut ops,
+            Some(SlotIndex::A),
+            true,
+            &mut load_buffer,
+            &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap(),
+        );
+
+        if cfg!(feature = "gbl_dev") {
+            // On dev builds, unimplemented ops should allow booting by default.
+            assert!(result.is_ok());
+
+            // The vbmeta ZBI items should be appended.
+            let mut expected_zbi_items = AlignedBuffer::new(load_buffer.len(), ZBI_ALIGNMENT_USIZE);
+            let _ = ZbiContainer::new(&mut expected_zbi_items[..]).unwrap();
+            append_cmd_line(&mut expected_zbi_items, b"vb_prop_0=val\0");
+            append_cmd_line(&mut expected_zbi_items, b"vb_prop_1=val\0");
+            assert_eq!(normalize_zbi(&zbi_items_buffer), normalize_zbi(&expected_zbi_items));
+
+            // Unimplemented rollback indices should not attempt to update.
+            assert_eq!(expect_rollback, ops.avb_ops.rollbacks);
+        } else {
+            // On prod builds, unimplemented ops should fail verification.
+            assert!(result.is_err());
+        }
     }
 }

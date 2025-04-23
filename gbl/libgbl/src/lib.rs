@@ -203,8 +203,8 @@ mod tests {
     const TEST_ZIRCON_VBMETA_PATH: &str = "zircon_a.vbmeta";
     const TEST_ZIRCON_VBMETA_CERT_PATH: &str = "zircon_a.vbmeta.cert";
     const TEST_PUBLIC_KEY_PATH: &str = "testkey_rsa4096_pub.bin";
-    const TEST_PERMANENT_ATTRIBUTES_PATH: &str = "cert_permanent_attributes.bin";
-    const TEST_PERMANENT_ATTRIBUTES_HASH_PATH: &str = "cert_permanent_attributes.hash";
+    pub(crate) const TEST_PERMANENT_ATTRIBUTES_PATH: &str = "cert_permanent_attributes.bin";
+    pub(crate) const TEST_PERMANENT_ATTRIBUTES_HASH_PATH: &str = "cert_permanent_attributes.hash";
     const TEST_BAD_PERMANENT_ATTRIBUTES_PATH: &str = "cert_permanent_attributes.bad.bin";
     const TEST_BAD_PERMANENT_ATTRIBUTES_HASH_PATH: &str = "cert_permanent_attributes.bad.hash";
     const TEST_VBMETA_ROLLBACK_LOCATION: usize = 0; // Default value, we don't explicitly set this.
@@ -217,7 +217,7 @@ mod tests {
     ///
     /// # Arguments
     /// * `path`: file path relative to libgbl's `testdata/` directory.
-    fn testdata(path: &str) -> Vec<u8> {
+    pub(crate) fn testdata(path: &str) -> Vec<u8> {
         let full_path = Path::new("external/gbl/libgbl/testdata").join(path);
         fs::read(full_path).unwrap()
     }
