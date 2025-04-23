@@ -29,7 +29,7 @@ filegroup(
 )
 
 genrule(
-    name = "gblsigntool",
+    name = "gblsigntool_executable",
     srcs = [":gblsigntool_zip"],
     outs = ["gblsigntool"],
     cmd = """
