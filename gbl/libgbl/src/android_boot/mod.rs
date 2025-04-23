@@ -222,7 +222,7 @@ pub(crate) fn get_boot_slot<'a, 'b, 'c>(
     };
     match slot {
         Ok(slot) => Ok(slot.suffix.0),
-        Err(Error::Unsupported) => {
+        Err(Error::Unsupported) | Err(Error::NotFound) => {
             // Default to slot A if slotting is not supported.
             // Slotless partition name is currently not supported. Revisit if this causes problems.
             gbl_println!(ops, "Slotting is not supported. Choose A slot by default");
