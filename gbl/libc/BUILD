@@ -48,7 +48,11 @@ rust_library(
 cc_library(
     name = "headers",
     hdrs = [
+        "include/assert.h",
+        "include/bits/types/mbstate_t.h",
         "include/debug.h",
+        "include/features.h",
+        "include/gbl/defs.h",
         "include/gbl/print.h",
         "include/inttypes.h",
         "include/limits.h",
@@ -56,6 +60,7 @@ cc_library(
         "include/stdlib.h",
         "include/string.h",
         "include/sys/types.h",
+        "include/time.h",
     ],
     includes = ["include"],
 )

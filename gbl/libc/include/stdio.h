@@ -15,4 +15,11 @@
  *
  */
 
-// Placeholder only.
+#ifndef __STDLIB_STDIO_H__
+#define __STDLIB_STDIO_H__
+
+// Need to compile boringssl/include/openssl/err.h, but never getting used.
+typedef int FILE;
+int fputs(const char *str, FILE *stream);
+
+#endif  // __STDLIB_STDIO_H__

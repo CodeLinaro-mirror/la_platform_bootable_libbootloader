@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,15 @@
  *
  */
 
-#ifndef __STDLIB_INTTYPES_H__
-#define __STDLIB_INTTYPES_H__
+#ifndef __STDLIB_MBSTATE_T_H__
+#define __STDLIB_MBSTATE_T_H__
 
-#define PRIx32 "x"
-#define PRIX32 "X"
-#define PRIu64 "llu"
-#define PRIx64 "llx"
+// Glibc uses this guard, rely on it to define mbstate_t only for non-std env.
+#ifndef __mbstate_t_defined
+#define __mbstate_t_defined 1
 
-#endif  // __STDLIB_INTTYPES_H__
+typedef void *mbstate_t;
+
+#endif  // __mbstate_t_defined
+
+#endif  // __STDLIB_MBSTATE_T_H__
