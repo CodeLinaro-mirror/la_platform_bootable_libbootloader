@@ -505,6 +505,12 @@ cc_library(
         ),
     )
 
+    native.new_local_repository(
+        name = "boringssl",
+        path = "external/boringssl/src",
+        build_file = "@gbl//libboringssl:BUILD.boringssl.bazel",
+    )
+
     # Set up a repo to export LLVM tool/library/header/sysroot paths
     gbl_llvm_prebuilts(name = "gbl_llvm_prebuilts")
 
