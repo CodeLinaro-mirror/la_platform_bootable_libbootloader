@@ -55,8 +55,8 @@ cc_library(
         "libavb/avb_util.h",
         "libavb/avb_vbmeta_image.h",
         "libavb/avb_version.h",
+        "libavb/boringssl/avb_crypto_ops_impl.h",
         "libavb/libavb.h",
-        "libavb/sha/avb_crypto_ops_impl.h",
         "libavb_cert/avb_cert_ops.h",
         "libavb_cert/avb_cert_types.h",
         "libavb_cert/avb_cert_validate.h",
@@ -64,9 +64,12 @@ cc_library(
     ],
     includes = [
         ".",
-        "libavb/sha/",
+        "libavb/boringssl/",
     ],
-    deps = ["@gbl//libc:headers"],
+    deps = [
+        "@boringssl//:libcrypto_c_baremetal",
+        "@gbl//libc:headers",
+    ],
 )
 
 cc_library(
@@ -119,12 +122,12 @@ link_static_cc_library(
 cc_library(
     name = "avb_crypto_ops_sha_impl",
     srcs = [
-        "libavb/sha/sha256_impl.c",
-        "libavb/sha/sha512_impl.c",
+        "libavb/boringssl/sha.c",
     ],
     copts = ["-DAVB_COMPILATION"],
     deps = [
         ":headers",
+        "@boringssl//:libcrypto_c_baremetal",
     ],
 )
 
