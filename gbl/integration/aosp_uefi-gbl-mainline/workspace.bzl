@@ -18,7 +18,7 @@ u-boot-mainline branch.
 """
 
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
-load("@gbl//toolchain:gbl_workspace_util.bzl", "android_rust_prebuilts", "gbl_llvm_prebuilts")
+load("@gbl//toolchain:gbl_workspace_util.bzl", "android_rust_prebuilts", "gbl_config", "gbl_llvm_prebuilts")
 
 _CLANG_VERSION = "r547379"
 
@@ -512,3 +512,5 @@ cc_library(
     # `build/kleaf//:` as they are registered earlier. Instead, we will pass GBL toolchains via
     # bazel commandline argument "--extra_toolchains=@gbl//toolchain:all" when building GBL
     # targets, which allows them to be evaluated first during toolchain resolution.
+
+    gbl_config(name = "gbl_config")

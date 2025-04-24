@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
 load("@rules_pkg//pkg:install.bzl", "pkg_install")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files", "strip_prefix")
 load("@rules_pkg//pkg:zip.bzl", "pkg_zip")
@@ -19,7 +20,7 @@ load("@rules_pkg//pkg:zip.bzl", "pkg_zip")
 pkg_zip(
     name = "gbl_efi_prod_zip",
     srcs = ["@gbl//efi:all_platforms_prod"],
-    out = "gbl-img.zip",
+    out = "gbl-img-{}.zip".format(BUILD_NUMBER),
 )
 
 pkg_files(

@@ -162,6 +162,26 @@ android_rust_prebuilts = repository_rule(
     },
 )
 
+def _gbl_config_impl(repo_ctx):
+    """Exports configurable value to build rules."""
+
+    build_number = repo_ctx.getenv("BUILD_NUMBER")
+    if not build_number:
+        build_number = "eng.{}".format(repo_ctx.getenv("USER"))
+
+    # Create a file to export environment variables.
+    variables_content = """
+BUILD_NUMBER = "{}"
+""".format(build_number)
+
+    repo_ctx.file("variables.bzl", variables_content)
+    repo_ctx.file("BUILD", "")
+
+gbl_config = repository_rule(
+    implementation = _gbl_config_impl,
+    local = True,
+)
+
 # This should match upstream Android defaults at
 # https://cs.android.com/android/platform/superproject/main/+/main:build/soong/rust/config/lints.go.
 #
