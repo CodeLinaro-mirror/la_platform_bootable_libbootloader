@@ -24,7 +24,7 @@
 
 const uint64_t GBL_EFI_IMAGE_LOADING_PROTOCOL_REVISION = 0x00010000;
 
-const size_t PARTITION_NAME_LEN_U16 = 36;
+#define PARTITION_NAME_LEN_U16 36
 
 //******************************************************
 // GBL reserved image types

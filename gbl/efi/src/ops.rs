@@ -35,7 +35,9 @@ use efi::{
         dt_fixup::DtFixupProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
-        gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
+        gbl_efi_image_loading::{
+            EfiImageBufferInfo, GblImageLoadingProtocol, PARTITION_NAME_LEN_U16,
+        },
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
     },
     EfiEntry,
@@ -44,7 +46,7 @@ use efi_types::{
     GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootReason,
     GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
     GBL_EFI_BOOT_REASON_BOOTLOADER, GBL_EFI_BOOT_REASON_COLD, GBL_EFI_BOOT_REASON_FASTBOOTD,
-    GBL_EFI_BOOT_REASON_RECOVERY, PARTITION_NAME_LEN_U16,
+    GBL_EFI_BOOT_REASON_RECOVERY,
 };
 use fdt::Fdt;
 use gbl_storage::{BlockIo, Disk, Gpt};
