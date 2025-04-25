@@ -15,10 +15,11 @@
 // Subset of boringssl crypto/fipsmodule/bcm.cc to allow compiling the required
 // fips modules only.
 
-#include "crypto/fipsmodule/digest/digest.cc.inc"
-#include "crypto/fipsmodule/digest/digests.cc.inc"
-#include "crypto/fipsmodule/hkdf/hkdf.cc.inc"
-#include "crypto/fipsmodule/hmac/hmac.cc.inc"
+// TODO(dimorinny): handle boringssl update
+// #include "crypto/fipsmodule/digest/digest.cc.inc"
+// #include "crypto/fipsmodule/digest/digests.cc.inc"
+// #include "crypto/fipsmodule/hkdf/hkdf.cc.inc"
+// #include "crypto/fipsmodule/hmac/hmac.cc.inc"
 #include "crypto/fipsmodule/sha/sha1.cc.inc"
 #include "crypto/fipsmodule/sha/sha256.cc.inc"
 #include "crypto/fipsmodule/sha/sha512.cc.inc"
