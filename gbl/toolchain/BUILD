@@ -232,6 +232,13 @@ cc_flags_uefi_common = cc_flags_common + [
     "-ffreestanding",
     # This prevents clang C++ header from defining _LIBCPP_MSVCRT which requires MSVC runtime.
     "-U_MSC_VER",
+    "-fstack-protector-all",
+]
+
+uefi_ld_flags_common = [
+    "-z,noexecstack",
+    "-z,now",
+    "--as-needed",
 ]
 
 builtin_includes_uefi_common = builtin_includes_common + [GBL_EFI_SYSROOT]
@@ -248,7 +255,11 @@ gbl_clang_cc_toolchain(
         # libavb and boringssl uses more than 4K of stack space. This prevents the compiler
         # from inserting _chkstk().
         "-mno-stack-arg-probe",
+        # Enable shadow stack
+        "-mshstk",
+        "-fcf-protection=full",
     ],
+    ld_flags = uefi_ld_flags_common,
     target_cpu = "x86_64",
     target_system_triple = "x86_64-unknown-windows-msvc",
 )
@@ -265,7 +276,10 @@ toolchain(
 gbl_clang_cc_toolchain(
     name = "aarch64_uefi_clang_cc_toolchain",
     builtin_includes = builtin_includes_uefi_common,
-    cc_flags = cc_flags_uefi_common,
+    cc_flags = cc_flags_uefi_common + [
+        "-mbranch-protection=standard",
+    ],
+    ld_flags = uefi_ld_flags_common,
     target_cpu = "aarch64",
     target_system_triple = "aarch64-windows-msvc",
 )
@@ -292,7 +306,10 @@ gbl_clang_cc_toolchain(
         "-DFP_ZERO=2",
         "-DFP_SUBNORMAL=3",
         "-DFP_NORMAL=4",
+        # The default setting 'all' causes problems on RISC-V
+        "-fstack-protector-strong",
     ],
+    ld_flags = uefi_ld_flags_common,
     target_cpu = "riscv64",
     target_system_triple = "riscv64-unknown-linux",
 )
@@ -380,6 +397,8 @@ uefi_rustc_flags = [
     # Disable default sysroot. We'll pass sysroot explicitly via the `rust_std` field.
     "--sysroot",
     "/dev/null",
+    "-C",
+    "opt-level=3",
     # The bootloader does not persist for long and does not directly
     # do any heavy computation.
     # Trade some performance for additional security checks.

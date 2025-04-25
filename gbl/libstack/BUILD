@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_library")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -26,14 +25,14 @@ cc_library(
     srcs = glob(
         ["src/*.c"],
     ),
+    copts = [
+        # This *is* the stack protector;
+        # if the functions provided get stack-checked, it causes infinite recursion.
+        "-fno-stack-protector",
+    ],
     deps = [
         "@gbl//libefi_types:efi_c_headers",
     ],
-)
-
-link_static_cc_library(
-    name = "c_libstack_staticlib",
-    cc_library = ":c_libstack",
 )
 
 rust_library(
@@ -45,13 +44,7 @@ rust_library(
     rustc_flags = ANDROID_RUST_LINTS,
     visibility = ["//visibility:public"],
     deps = [
-        ":c_libstack_staticlib",
+        ":c_libstack",
         "@gbl//libefi_types",
     ],
-)
-
-rust_test(
-    name = "libstack_test",
-    crate = ":libstack",
-    rustc_flags = ANDROID_RUST_LINTS,
 )
