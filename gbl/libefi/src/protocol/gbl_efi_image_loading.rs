@@ -20,7 +20,6 @@ use arrayvec::ArrayVec;
 use core::mem::{size_of, MaybeUninit};
 use efi_types::{
     EfiGuid, GblEfiImageBuffer, GblEfiImageInfo, GblEfiImageLoadingProtocol, GblEfiPartitionName,
-    PARTITION_NAME_LEN_U16,
 };
 use liberror::{Error, Result};
 use spin::Mutex;
@@ -35,7 +34,10 @@ impl ProtocolInfo for GblImageLoadingProtocol {
         EfiGuid::new(0xdb84b4fa, 0x53bd, 0x4436, [0x98, 0xa7, 0x4e, 0x02, 0x71, 0x42, 0x8b, 0xa8]);
 }
 
-/// Max length of partition name in UTF8 in bytes.
+/// Max length of a UTF16 partition name in u16 units.
+pub const PARTITION_NAME_LEN_U16: usize = efi_types::PARTITION_NAME_LEN_U16 as usize;
+
+/// Max length of a UTF8 partition name in u8 units (bytes).
 pub const PARTITION_NAME_LEN_U8: usize = size_of::<char>() * PARTITION_NAME_LEN_U16;
 
 const MAX_ARRAY_SIZE: usize = 100;
