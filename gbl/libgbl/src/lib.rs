@@ -146,6 +146,7 @@ where
 mod tests {
     extern crate avb_sysdeps;
     extern crate avb_test;
+    extern crate boringssl_sysdeps;
     extern crate libc_deps_posix;
 
     use super::*;

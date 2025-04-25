@@ -43,6 +43,8 @@ static mut EFI_GLOBAL_ALLOCATOR: EfiAllocator = EfiAllocator::new();
 
 /// Pull in the sysdeps required by libavb so the linker can find them.
 extern crate avb_sysdeps;
+/// Pull in the sysdeps required by boringssl so the linker can find them.
+extern crate boringssl_sysdeps;
 
 /// EFI application entry point. Does not return.
 ///

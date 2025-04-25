@@ -73,8 +73,10 @@ rust_test(
     deps = [
         "@avb//:avb_crypto_ops_sha_impl_staticlib",
         "@avb//:avb_test",
+        "@boringssl//:libcrypto_c_baremetal_static",
         "@gbl//libasync:cyclic_executor",
         "@gbl//libavb:sysdeps",
+        "@gbl//libboringssl:sysdeps",
         "@gbl//libc:libc_deps_posix",
         "@itertools",
         "@itertools_noalloc",
