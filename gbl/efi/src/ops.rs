@@ -28,7 +28,6 @@ use core::{
     ffi::CStr, fmt::Write, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut, ptr::null,
     slice::from_raw_parts_mut, time::Duration,
 };
-#[cfg(any(test, feature = "gbl_efi_enable_slot"))]
 use efi::protocol::gbl_efi_ab_slot::GblSlotProtocol;
 use efi::{
     efi_print, efi_println,
@@ -618,48 +617,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
-    // TODO(b/383620444): GBL EFI slot protocol is currently implemented on a few platforms such
-    // as Cuttlefish but is out of sync. Wait until protocol is more stable and all platforms
-    // pick up the latest before enabling.
-    //
-    // The feature flag "gbl_efi_enable_slot" is temporary for locally enabling slot protocol for
-    // testing
-    #[cfg(all(not(test), not(feature = "gbl_efi_enable_slot")))]
-    fn get_current_slot(&mut self) -> Result<Slot> {
-        Err(Error::Unsupported)
-    }
-
-    #[cfg(all(not(test), not(feature = "gbl_efi_enable_slot")))]
-    fn get_next_slot(&mut self, _: bool) -> Result<Slot> {
-        // TODO(b/383620444): See `get_current_slot()`.
-        Err(Error::Unsupported)
-    }
-
-    #[cfg(all(not(test), not(feature = "gbl_efi_enable_slot")))]
-    fn set_active_slot(&mut self, _: u8) -> Result<()> {
-        // TODO(b/383620444): See `get_current_slot()`.
-        Err(Error::Unsupported)
-    }
-
-    #[cfg(all(not(test), not(feature = "gbl_efi_enable_slot")))]
-    fn set_reboot_reason(&mut self, _: RebootReason) -> Result<()> {
-        // TODO(b/383620444): See `get_current_slot()`.
-        Err(Error::Unsupported)
-    }
-
-    #[cfg(all(not(test), not(feature = "gbl_efi_enable_slot")))]
-    fn get_reboot_reason(&mut self) -> Result<RebootReason> {
-        // TODO(b/383620444): See `get_current_slot()`.
-        Err(Error::Unsupported)
-    }
-
-    #[cfg(all(not(test), not(feature = "gbl_efi_enable_slot")))]
-    fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
-        // TODO(b/383620444): See `get_current_slot()`.
-        Err(Error::Unsupported)
-    }
-
-    #[cfg(any(test, feature = "gbl_efi_enable_slot"))]
     fn get_current_slot(&mut self) -> Result<Slot> {
         // TODO(b/363075013): Refactors the opening of slot protocol into a common helper once
         // `MockBootServices::find_first_and_open` is updated to return Protocol<'_, T>.
@@ -671,7 +628,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .try_into()
     }
 
-    #[cfg(any(test, feature = "gbl_efi_enable_slot"))]
     fn get_next_slot(&mut self, mark_boot_attempt: bool) -> Result<Slot> {
         self.efi_entry
             .system_table()
@@ -681,7 +637,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .try_into()
     }
 
-    #[cfg(any(test, feature = "gbl_efi_enable_slot"))]
     fn set_active_slot(&mut self, slot: u8) -> Result<()> {
         self.efi_entry
             .system_table()
@@ -690,7 +645,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .set_active_slot(slot)
     }
 
-    #[cfg(any(test, feature = "gbl_efi_enable_slot"))]
     fn set_reboot_reason(&mut self, reason: RebootReason) -> Result<()> {
         self.efi_entry
             .system_table()
@@ -699,7 +653,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .set_boot_reason(gbl_to_efi_boot_reason(reason), b"")
     }
 
-    #[cfg(any(test, feature = "gbl_efi_enable_slot"))]
     fn get_reboot_reason(&mut self) -> Result<RebootReason> {
         let mut subreason = [0u8; 128];
         self.efi_entry
@@ -710,7 +663,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .map(|(v, _)| efi_to_gbl_boot_reason(v))
     }
 
-    #[cfg(any(test, feature = "gbl_efi_enable_slot"))]
     fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
         Ok(SlotsMetadata {
             slot_count: self
