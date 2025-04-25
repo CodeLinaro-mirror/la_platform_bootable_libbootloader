@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,4 @@
  *
  */
 
-#ifndef __STDLIB_INTTYPES_H__
-#define __STDLIB_INTTYPES_H__
-
-#define PRIx32 "x"
-#define PRIX32 "X"
-#define PRIu64 "llu"
-#define PRIx64 "llx"
-
-#endif  // __STDLIB_INTTYPES_H__
+// Placeholder only.

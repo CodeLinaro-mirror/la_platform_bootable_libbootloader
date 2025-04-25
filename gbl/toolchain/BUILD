@@ -15,6 +15,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_setting")
 load(
     "@gbl_llvm_prebuilts//:info.bzl",
+    "GBL_EFI_SYSROOT",
     "LINUX_SYSROOT_INCLUDES",
     "LLVM_PREBUILTS_CPP_INCLUDE",
     "LLVM_PREBUILTS_C_INCLUDE",
@@ -201,15 +202,18 @@ config_setting(
     flag_values = {":rust_no_sysroot": "True"},
 )
 
+builtin_includes_common = [
+    LLVM_PREBUILTS_CPP_INCLUDE,  # C++ headers must come first.
+    LLVM_PREBUILTS_C_INCLUDE,
+]
+
 # Linux host LLVM toolchain.
 # The toolchain is mainly used for building/linking host tools, i.e. bindgen pre-processing
 gbl_clang_cc_toolchain(
     name = "x86_64-unknown-linux-gnu",
     # Host LLVM toolchain has additional C++ stdlib.
-    builtin_includes = [
-        LLVM_PREBUILTS_CPP_INCLUDE,  # C++ headers must come first.
-        LLVM_PREBUILTS_C_INCLUDE,
-    ] + LINUX_SYSROOT_INCLUDES,
+    builtin_includes = builtin_includes_common + LINUX_SYSROOT_INCLUDES,
+    cc_flags = ["-D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE"],
     ld_flags = [
         "-stdlib=libc++",
         "-static-libstdc++",
@@ -237,18 +241,29 @@ cc_flags_common = [
     "-fno-common",
     "-fno-exceptions",
     "-fno-rtti",
+    # This prevents clang C++ header from defining _LIBCPP_MSVCRT which requires MSVC runtime.
+    "-U_MSC_VER",
+    "-D_LIBCPP_NO_VCRUNTIME",
+    "-D_LIBCPP_HAS_NO_THREADS",
+    "-D_LIBCPP_HAS_NO_WIDE_CHARACTERS",
     # Enable optimization otherwise software AVB hash will be too slow.
     "-O3",
 ]
 
+builtin_includes_uefi_common = builtin_includes_common + [GBL_EFI_SYSROOT]
+
 # x86_64 UEFI targets
 gbl_clang_cc_toolchain(
     name = "x86_64_uefi_clang_cc_toolchain",
+    builtin_includes = builtin_includes_uefi_common,
     cc_flags = cc_flags_common + [
         # Adding this prevents the compiler from generating mmx, sse instructions such as
         # "movsd (%esp),%xmm0" which likely isn't enabled during the bootloader stage and causes
         # crash as a result.
         "-mgeneral-regs-only",
+        # libavb and boringssl uses more than 4K of stack space. This prevents the compiler
+        # from inserting _chkstk().
+        "-mno-stack-arg-probe",
     ],
     target_cpu = "x86_64",
     target_system_triple = "x86_64-unknown-windows-msvc",
@@ -265,17 +280,21 @@ toolchain(
 # x86_32 UEFI targets
 gbl_clang_cc_toolchain(
     name = "x86_32_uefi_clang_cc_toolchain",
+    builtin_includes = builtin_includes_uefi_common,
     cc_flags = cc_flags_common + [
         "-m32",
         # Adding this prevents the compiler from generating mmx, sse instructions such as
         # "movsd (%esp),%xmm0" which likely isn't enabled during the bootloader stage and causes
         # crash as a result.
         "-march=i686",
+        # libavb and boringssl uses more than 4K of stack space. This prevents the compiler
+        # from inserting _chkstk().
+        "-mno-stack-arg-probe",
     ],
     # Safe Exception Handlers is not applicable to EFI systems.
     ld_flags = ["/SAFESEH:no"],
     target_cpu = "x86_32",
-    target_system_triple = "i686-unknown-windows-gnu",
+    target_system_triple = "i686-unknown-windows-msvc",
 )
 
 toolchain(
@@ -289,6 +308,7 @@ toolchain(
 # aarch64 UEFI targets
 gbl_clang_cc_toolchain(
     name = "aarch64_uefi_clang_cc_toolchain",
+    builtin_includes = builtin_includes_uefi_common,
     cc_flags = cc_flags_common,
     target_cpu = "aarch64",
     target_system_triple = "aarch64-windows-msvc",
@@ -305,7 +325,18 @@ toolchain(
 # riscv64 ELF targets
 gbl_clang_cc_toolchain(
     name = "riscv64_elf_clang_cc_toolchain",
-    cc_flags = cc_flags_common + ["-fpie"],
+    builtin_includes = builtin_includes_uefi_common,
+    cc_flags = cc_flags_common + [
+        "-fpie",
+        # Macros required by floating APIs in C++ headers.
+        # This is typically provided by target platform sysroot, which we don't have for our EFI
+        # environment. But since floating point is not used, we simply define placeholder codes.
+        "-DFP_NAN=0",
+        "-DFP_INFINITE=1",
+        "-DFP_ZERO=2",
+        "-DFP_SUBNORMAL=3",
+        "-DFP_NORMAL=4",
+    ],
     target_cpu = "riscv64",
     target_system_triple = "riscv64-unknown-linux",
 )

@@ -50,6 +50,8 @@ def _gbl_llvm_prebuilts_impl(repo_ctx):
     # Get the bin directory so that we can access other LLVM tools by path.
     gbl_llvm_bin_dir = _abs_path(repo_ctx, "llvm-linux-x86/bin")
 
+    gbl_sysroot = _abs_path(repo_ctx, repo_ctx.path(Label("@gbl//libc:include")))
+
     # Create a info.bzl file in the assembled repo to export header/library/tool paths.
     info_bzl_content = """
 def gbl_llvm_tool_path(tool_name):
@@ -62,9 +64,11 @@ def gbl_llvm_tool_path(tool_name):
     info_bzl_content += """
 LLVM_PREBUILTS_C_INCLUDE = "{}"
 LLVM_PREBUILTS_CPP_INCLUDE = "{}"
+GBL_EFI_SYSROOT = "{}"
 """.format(
         "{}/include".format(llvm_resource_dir),
         _abs_path(repo_ctx, "llvm-linux-x86/include/c++/v1"),
+        gbl_sysroot,
     )
 
     # Linux sysroot headers

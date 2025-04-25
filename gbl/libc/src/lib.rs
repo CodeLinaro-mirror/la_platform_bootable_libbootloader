@@ -211,3 +211,9 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, maxlen: usize) -> usize {
         p => (p as usize) - (s as usize),
     }
 }
+
+/// void *abort();
+#[no_mangle]
+pub extern "C" fn abort() -> ! {
+    panic!("aborted by 3d party code")
+}

@@ -17,13 +17,31 @@
 #ifndef __STDLIB_H__
 #define __STDLIB_H__
 
+#include <gbl/defs.h>
 #include <string.h>
 
-void* malloc(size_t size);
-void free(void* ptr);
-int memcmp(const void* ptr1, const void* ptr2, size_t num);
-void* memset(void* destination, int c, size_t num);
-void* memcpy(void* destination, const void* source, size_t num);
-void* memmove(void* destination, const void* source, size_t num);
+__BEGIN_DECLS
+
+// Following are definitions referenced by floating point APIs in clang C++
+// headers.
+//
+// GBL does not use floating points. This is merely for getting compilation
+// successful.
+typedef struct {
+  long int quot;
+  long int rem;
+} ldiv_t;
+
+typedef struct {
+  long long quot;
+  long long rem;
+} lldiv_t;
+
+ldiv_t ldiv(long numer, long denom);
+lldiv_t lldiv(long long numer, long long denom);
+
+__attribute__((noreturn)) void abort();
+
+__END_DECLS
 
 #endif

@@ -17,10 +17,17 @@
 #ifndef __STDLIB_STRING_H__
 #define __STDLIB_STRING_H__
 
+#include <gbl/defs.h>
 #include <stddef.h>
+
+__BEGIN_DECLS
 
 size_t strlen(const char *str);
 void *memchr(const void *ptr, int ch, size_t count);
+int memcmp(const void *ptr1, const void *ptr2, size_t num);
+void *memset(void *destination, int c, size_t num);
+void *memcpy(void *destination, const void *source, size_t num);
+void *memmove(void *destination, const void *source, size_t num);
 char *strrchr(const char *str, int c);
 char *strchr(const char *str, int c);
 size_t strnlen(const char *s, size_t maxlen);
@@ -28,4 +35,5 @@ int strcmp(const char *s1, const char *s2);
 int strncmp(const char *s1, const char *s2, size_t n);
 unsigned long int strtoul(const char *s, char **endptr, int base);
 
+__END_DECLS
 #endif
