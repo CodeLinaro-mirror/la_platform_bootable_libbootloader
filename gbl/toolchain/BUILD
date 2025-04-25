@@ -21,13 +21,13 @@ load(
     "LLVM_PREBUILTS_C_INCLUDE",
     "gbl_llvm_tool_path",
 )
-load("@rules_rust//bindgen:defs.bzl", "rust_bindgen_toolchain")
 load(
     "@rules_rust//rust:toolchain.bzl",
     "rust_stdlib_filegroup",
     "rust_toolchain",
     "rustfmt_toolchain",
 )
+load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen_toolchain")
 load(
     ":gbl_toolchain.bzl",
     "build_with_no_rust_sysroot",
@@ -622,5 +622,5 @@ rust_bindgen_toolchain(
 toolchain(
     name = "bindgen_toolchain",
     toolchain = "bindgen_toolchain_impl",
-    toolchain_type = "@rules_rust//bindgen:toolchain_type",
+    toolchain_type = "@rules_rust_bindgen//:toolchain_type",
 )

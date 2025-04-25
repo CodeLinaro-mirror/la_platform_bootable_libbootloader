@@ -13,8 +13,9 @@
 # limitations under the License.
 
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
-load("@rules_rust//bindgen:defs.bzl", "rust_bindgen")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 
 package(
     default_visibility = ["//visibility:public"],

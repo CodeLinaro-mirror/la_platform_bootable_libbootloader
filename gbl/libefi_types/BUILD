@@ -15,8 +15,8 @@
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_C_INCLUDE")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_rust//bindgen:defs.bzl", "rust_bindgen")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 
 package(
     default_visibility = ["//visibility:public"],
