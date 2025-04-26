@@ -207,13 +207,23 @@ builtin_includes_common = [
     LLVM_PREBUILTS_C_INCLUDE,
 ]
 
+cc_flags_common = [
+    "-fno-common",
+    "-fno-exceptions",
+    "-fno-rtti",
+    # Enable optimization otherwise software AVB hash will be too slow.
+    "-O3",
+]
+
 # Linux host LLVM toolchain.
 # The toolchain is mainly used for building/linking host tools, i.e. bindgen pre-processing
 gbl_clang_cc_toolchain(
     name = "x86_64-unknown-linux-gnu",
     # Host LLVM toolchain has additional C++ stdlib.
     builtin_includes = builtin_includes_common + LINUX_SYSROOT_INCLUDES,
-    cc_flags = ["-D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE"],
+    cc_flags = cc_flags_common + [
+        "-D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE",
+    ],
     ld_flags = [
         "-stdlib=libc++",
         "-static-libstdc++",
@@ -236,18 +246,13 @@ toolchain(
 # The following defines LLVM C++ toolchains for UEFI/ELF targets. They are mostly used for the
 # final step of linking Rust executables, but may also be used for compiling mixed C/C++ code.
 
-cc_flags_common = [
-    "-ffreestanding",
-    "-fno-common",
-    "-fno-exceptions",
-    "-fno-rtti",
-    # This prevents clang C++ header from defining _LIBCPP_MSVCRT which requires MSVC runtime.
-    "-U_MSC_VER",
-    "-D_LIBCPP_NO_VCRUNTIME",
+cc_flags_uefi_common = cc_flags_common + [
     "-D_LIBCPP_HAS_NO_THREADS",
     "-D_LIBCPP_HAS_NO_WIDE_CHARACTERS",
-    # Enable optimization otherwise software AVB hash will be too slow.
-    "-O3",
+    "-D_LIBCPP_NO_VCRUNTIME",
+    "-ffreestanding",
+    # This prevents clang C++ header from defining _LIBCPP_MSVCRT which requires MSVC runtime.
+    "-U_MSC_VER",
 ]
 
 builtin_includes_uefi_common = builtin_includes_common + [GBL_EFI_SYSROOT]
@@ -256,7 +261,7 @@ builtin_includes_uefi_common = builtin_includes_common + [GBL_EFI_SYSROOT]
 gbl_clang_cc_toolchain(
     name = "x86_64_uefi_clang_cc_toolchain",
     builtin_includes = builtin_includes_uefi_common,
-    cc_flags = cc_flags_common + [
+    cc_flags = cc_flags_uefi_common + [
         # Adding this prevents the compiler from generating mmx, sse instructions such as
         # "movsd (%esp),%xmm0" which likely isn't enabled during the bootloader stage and causes
         # crash as a result.
@@ -281,7 +286,7 @@ toolchain(
 gbl_clang_cc_toolchain(
     name = "x86_32_uefi_clang_cc_toolchain",
     builtin_includes = builtin_includes_uefi_common,
-    cc_flags = cc_flags_common + [
+    cc_flags = cc_flags_uefi_common + [
         "-m32",
         # Adding this prevents the compiler from generating mmx, sse instructions such as
         # "movsd (%esp),%xmm0" which likely isn't enabled during the bootloader stage and causes
@@ -309,7 +314,7 @@ toolchain(
 gbl_clang_cc_toolchain(
     name = "aarch64_uefi_clang_cc_toolchain",
     builtin_includes = builtin_includes_uefi_common,
-    cc_flags = cc_flags_common,
+    cc_flags = cc_flags_uefi_common,
     target_cpu = "aarch64",
     target_system_triple = "aarch64-windows-msvc",
 )
@@ -326,7 +331,7 @@ toolchain(
 gbl_clang_cc_toolchain(
     name = "riscv64_elf_clang_cc_toolchain",
     builtin_includes = builtin_includes_uefi_common,
-    cc_flags = cc_flags_common + [
+    cc_flags = cc_flags_uefi_common + [
         "-fpie",
         # Macros required by floating APIs in C++ headers.
         # This is typically provided by target platform sysroot, which we don't have for our EFI
