@@ -31,12 +31,11 @@ use core::{
     fmt::Write,
     ops::{Deref, Range},
 };
+use libbuild_number::BUILD_NUMBER;
 use liberror::Error;
 use libutils::aligned_subslice;
 use safemath::SafeNum;
 use zerocopy::{IntoBytes, Ref};
-
-const DEFAULT_BUILD_ID: &str = "eng.build";
 
 // Represents a slot suffix.
 struct SlotSuffix([u8; 3]);
@@ -304,7 +303,7 @@ pub fn android_load_verify<'a, 'b, 'c>(
         // TODO(yochiang): Generate useful value like version, build_incremental in the bootconfig.
         v.add("androidboot.gbl.version=0\n")?;
 
-        write!(v, "androidboot.gbl.build_number={}\n", get_build_id())?;
+        write!(v, "androidboot.gbl.build_number={BUILD_NUMBER}\n")?;
         Ok(())
     };
 
@@ -321,14 +320,6 @@ pub fn android_load_verify<'a, 'b, 'c>(
     res.dtbo = dtbo;
     res.dtb_part = dtb;
     Ok(res)
-}
-
-/// Returns the current build ID, or a generic default if one wasn't set.
-pub(crate) fn get_build_id() -> &'static str {
-    match option_env!("BUILD_NUMBER") {
-        None | Some("") => DEFAULT_BUILD_ID,
-        Some(build_number) => build_number,
-    }
 }
 
 /// Loads and verifies android boot images of version 0, 1 and 2.
@@ -1035,7 +1026,7 @@ androidboot.veritymode=enforcing
             .extra("androidboot.force_normal_boot=1\n")
             .extra(format!("androidboot.slot_suffix=_{slot}\n"))
             .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={}\n", get_build_id()))
+            .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .extra(vendor_config);
 
