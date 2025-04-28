@@ -23,7 +23,7 @@ use core::{
     time::Duration,
 };
 use efi::{
-    efi_print, efi_println,
+    efi_println,
     protocol::{simple_network::SimpleNetworkProtocol, Protocol},
     utils::Timeout,
     DeviceHandle, EfiEntry, Event, EventNotify, EventType, Tpl,

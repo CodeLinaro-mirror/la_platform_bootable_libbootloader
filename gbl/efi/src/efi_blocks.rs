@@ -15,7 +15,7 @@
 use alloc::vec::Vec;
 use core::{cmp::max, fmt::Write};
 use efi::{
-    efi_print, efi_println,
+    efi_println,
     protocol::{block_io::BlockIoProtocol, block_io2::BlockIo2Protocol, Protocol},
     EfiEntry,
 };

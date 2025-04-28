@@ -23,7 +23,7 @@ use core::{
     cmp::min, fmt::Write, future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration,
 };
 use efi::{
-    efi_print, efi_println,
+    efi_println,
     local_session::LocalFastbootSession,
     protocol::{gbl_efi_fastboot_usb::GblFastbootUsbProtocol, Protocol},
     EfiEntry,

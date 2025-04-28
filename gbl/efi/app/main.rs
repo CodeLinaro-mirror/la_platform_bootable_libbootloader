@@ -27,7 +27,7 @@ mod riscv64;
 use cfg_if::cfg_if;
 use core::{ffi::c_void, fmt::Write, panic::PanicInfo};
 use efi::{
-    efi_print, efi_println, initialize, panic,
+    efi_println, initialize, panic,
     protocol::random_number_generator::RandomNumberGeneratorProtocol, EfiAllocator, EfiEntry,
 };
 use efi_types::EfiSystemTable;

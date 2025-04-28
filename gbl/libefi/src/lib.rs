@@ -921,8 +921,8 @@ macro_rules! efi_print {
 macro_rules! efi_println {
     ( $efi_entry:expr, $( $x:expr ),* $(,)? ) => {
         {
-            efi_print!($efi_entry, $($x,)*);
-            efi_print!($efi_entry, "\r\n");
+            $crate::efi_print!($efi_entry, $($x,)*);
+            $crate::efi_print!($efi_entry, "\r\n");
         }
     };
 }

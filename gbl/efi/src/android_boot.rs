@@ -14,7 +14,7 @@
 
 use crate::{fastboot::efi_gbl_fastboot_entry, ops::Ops, utils::take_os_load_buffer};
 use core::fmt::Write;
-use efi::{efi_print, efi_println, exit_boot_services, EfiEntry};
+use efi::{efi_println, exit_boot_services, EfiEntry};
 use libgbl::{android_boot::android_main, gbl_println, GblOps, Result};
 
 /// Android bootloader main entry (before booting).

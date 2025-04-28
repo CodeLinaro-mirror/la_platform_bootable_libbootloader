@@ -55,7 +55,7 @@ use {
         ops::Ops,
     },
     core::fmt::Write,
-    efi::{efi_print, efi_println, EfiEntry},
+    efi::{efi_println, EfiEntry},
     libgbl::{Os, Result},
     utils::loaded_image_path,
 };
