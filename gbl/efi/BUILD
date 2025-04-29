@@ -14,7 +14,11 @@
 
 load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform", "dev_test")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
+load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
 load("@gbl_llvm_prebuilts//:info.bzl", "gbl_llvm_tool_path")
+load("@rules_pkg//pkg:install.bzl", "pkg_install")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
+load("@rules_pkg//pkg:zip.bzl", "pkg_zip")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(
@@ -261,4 +265,30 @@ filegroup(
         ":aarch64_prod",
         ":x86_64_prod",
     ],
+)
+
+pkg_zip(
+    name = "gbl_efi_prod_zip",
+    srcs = [":all_platforms_prod"],
+    out = "gbl-img-{}.zip".format(BUILD_NUMBER),
+    visibility = ["//visibility:private"],
+)
+
+pkg_files(
+    name = "gbl_efi_dist_files",
+    srcs = [
+        ":all_platforms",
+        ":gbl_efi_prod_zip",
+    ],
+    strip_prefix = strip_prefix.files_only(),
+    visibility = ["//visibility:private"],
+)
+
+pkg_install(
+    name = "gbl_efi_dist",
+    srcs = [
+        ":gbl_efi_dist_files",
+        "//signtool:gblsigntool_dist_files",
+    ],
+    destdir = "out/gbl_efi/",
 )

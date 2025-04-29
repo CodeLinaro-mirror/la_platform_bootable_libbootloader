@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
 load("@rules_python//python:defs.bzl", "py_binary")
 
 py_binary(
@@ -45,4 +46,11 @@ filegroup(
     name = "testkey_RSA4096",
     srcs = ["testkeys/testkey_RSA4096.pem"],
     visibility = ["//visibility:public"],
+)
+
+pkg_files(
+    name = "gblsigntool_dist_files",
+    srcs = [":gblsigntool_executable"],
+    attributes = pkg_attributes(mode = "0755"),
+    visibility = ["//efi:__pkg__"],
 )

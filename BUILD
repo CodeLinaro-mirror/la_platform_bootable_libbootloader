@@ -12,39 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
-load("@rules_pkg//pkg:install.bzl", "pkg_install")
-load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files", "strip_prefix")
-load("@rules_pkg//pkg:zip.bzl", "pkg_zip")
-
-pkg_zip(
-    name = "gbl_efi_prod_zip",
-    srcs = ["@gbl//efi:all_platforms_prod"],
-    out = "gbl-img-{}.zip".format(BUILD_NUMBER),
-)
-
-pkg_files(
-    name = "gbl_efi_dist_files",
-    srcs = [
-        ":gbl_efi_prod_zip",
-        "@gbl//efi:all_platforms",
-    ],
-    strip_prefix = strip_prefix.files_only(),
-    visibility = ["//visibility:private"],
-)
-
-pkg_files(
-    name = "gblsigntool_dist_files",
-    srcs = ["@gbl//signtool:gblsigntool_executable"],
-    attributes = pkg_attributes(mode = "0755"),
-    visibility = ["//visibility:private"],
-)
-
-pkg_install(
+alias(
     name = "gbl_efi_dist",
-    srcs = [
-        ":gbl_efi_dist_files",
-        ":gblsigntool_dist_files",
-    ],
-    destdir = "out/gbl_efi/",
+    actual = "@gbl//efi:gbl_efi_dist",
 )
