@@ -123,11 +123,13 @@ def define_gbl_workspace(name = None):
     native.new_local_repository(
         name = "linux_x86_64_sysroot",
         path = "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
-        build_file_content = """exports_files(glob(["**/*"]))
+        build_file_content = """
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(glob(["**/*"]))
 cc_library(
     name = "linux_x86_64_sysroot_include",
     hdrs = glob(["sysroot/usr/include/**/*.h"]),
-    includes = [ "sysroot/usr/include" ],
+    includes = [ "sysroot/usr/include", "sysroot/usr/include/x86_64-linux-gnu" ],
     visibility = ["//visibility:public"],
 )
 """,
@@ -149,6 +151,7 @@ cc_library(
         name = "elfutils",
         path = "external/elfutils",
         build_file_content = """
+load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "elf_type_header",
     hdrs = ["libelf/elf.h"],
@@ -160,7 +163,16 @@ cc_library(
     native.new_local_repository(
         name = "mkbootimg",
         path = "tools/mkbootimg",
-        build_file_content = """exports_files(glob(["**/*"]))""",
+        build_file_content = """
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(glob(["**/*"]))
+cc_library(
+    name = "bootimg_header",
+    hdrs = ["include/bootimg/bootimg.h"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+""",
     )
 
     native.new_local_repository(

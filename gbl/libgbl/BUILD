@@ -66,6 +66,7 @@ rust_test(
         "@gbl//libstorage/test:test_data",
         "@gbl//libdttable/test/data:all",
         "@gbl//libfdt/test/data:all",
+        "@gbl//libgbl/testdata",
     ],
     crate = ":libgbl",
     crate_features = ["uuid"],

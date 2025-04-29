@@ -82,13 +82,14 @@ fn to_avb_validation_status_or_panic(status: GblEfiAvbKeyValidationStatus) -> Ke
 }
 
 fn avb_color_to_efi_color(color: BootStateColor) -> u32 {
-    match color {
+    // bindgen may make enum i32 or u32. because we only care about bits, cast to u32 is ok.
+    (match color {
         BootStateColor::Green => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_GREEN,
         BootStateColor::Yellow => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_YELLOW,
         BootStateColor::Orange => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_ORANGE,
         BootStateColor::RedEio => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_RED_EIO,
         BootStateColor::Red => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_RED,
-    }
+    }) as _
 }
 
 fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDeviceTree {
@@ -96,6 +97,7 @@ fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDevi
 
     GblEfiVerifiedDeviceTree {
         metadata: GblEfiDeviceTreeMetadata {
+            // bindgen may make enum i32 or u32. because we only care about bits, cast to u32 is ok.
             source: match component.component_source {
                 DeviceTreeComponentSource::Boot => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_BOOT,
                 DeviceTreeComponentSource::VendorBoot => {
@@ -103,7 +105,7 @@ fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDevi
                 }
                 DeviceTreeComponentSource::Dtb => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTB,
                 DeviceTreeComponentSource::Dtbo => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTBO,
-            },
+            } as _,
             type_: match component.component_type {
                 DeviceTreeComponentType::DeviceTree => {
                     efi_types::GBL_EFI_DEVICE_TREE_TYPE_DEVICE_TREE
@@ -112,7 +114,7 @@ fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDevi
                 DeviceTreeComponentType::PvmDeviceAssignmentOverlay => {
                     efi_types::GBL_EFI_DEVICE_TREE_TYPE_PVM_DA_OVERLAY
                 }
-            },
+            } as _,
             id: metadata.id,
             rev: metadata.rev,
             custom: metadata.custom,

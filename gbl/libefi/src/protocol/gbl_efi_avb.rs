@@ -41,8 +41,7 @@ impl Protocol<'_, GblAvbProtocol> {
         public_key: &[u8],
         public_key_metadata: Option<&[u8]>,
     ) -> Result<GblEfiAvbKeyValidationStatus> {
-        let mut validation_status: GblEfiAvbKeyValidationStatus =
-            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID;
+        let mut validation_status = efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID as _;
 
         // SAFETY:
         // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
@@ -62,7 +61,7 @@ impl Protocol<'_, GblAvbProtocol> {
             )?
         }
 
-        Ok(validation_status)
+        Ok(validation_status as _)
     }
 
     /// Wraps `GBL_EFI_AVB_PROTOCOL.read_is_device_unlocked()`.

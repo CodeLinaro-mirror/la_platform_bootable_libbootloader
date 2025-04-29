@@ -76,7 +76,6 @@ rust_library(
     edition = "2021",
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
-        ":x86_bootparam_defs",
         "@gbl//liberror",
         "@gbl//libsafemath",
         "@zbi",
@@ -85,6 +84,9 @@ rust_library(
         "@gbl//toolchain:gbl_rust_uefi_aarch64": [
             "@gbl//libboot/aarch64_cache_helper:aarch64_cache_helper_staticlib",
         ],
+        "@gbl//toolchain:gbl_rust_uefi_x86_32": [":x86_bootparam_defs"],
+        "@gbl//toolchain:gbl_rust_uefi_x86_64": [":x86_bootparam_defs"],
+        "@gbl//toolchain:gbl_rust_host_x86_64": [":x86_bootparam_defs"],
         "//conditions:default": [],
     }),
 )

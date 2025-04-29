@@ -71,7 +71,7 @@ pub fn get_efi_fdt(entry: &EfiEntry) -> Option<(&FdtHeader, &[u8])> {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub fn efi_to_e820_mem_type(efi_mem_type: u32) -> u32 {
-    match efi_mem_type {
+    match efi_mem_type as _ {
         efi_types::EFI_MEMORY_TYPE_LOADER_CODE
         | efi_types::EFI_MEMORY_TYPE_LOADER_DATA
         | efi_types::EFI_MEMORY_TYPE_BOOT_SERVICES_CODE
@@ -140,7 +140,7 @@ pub fn wait_key_stroke(
 
 // Converts an EFI memory type to a zbi_mem_range_t type.
 pub fn efi_to_zbi_mem_range_type(efi_mem_type: u32) -> u32 {
-    match efi_mem_type {
+    match efi_mem_type as _ {
         efi_types::EFI_MEMORY_TYPE_LOADER_CODE
         | efi_types::EFI_MEMORY_TYPE_LOADER_DATA
         | efi_types::EFI_MEMORY_TYPE_BOOT_SERVICES_CODE

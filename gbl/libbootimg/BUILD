@@ -33,7 +33,8 @@ genrule(
 cc_library(
     name = "bootimg_cc_header",
     srcs = [":bindgen_noop_cc"],
-    hdrs = ["@mkbootimg//:include/bootimg/bootimg.h"],
+    hdrs = ["bootimg_bindgen.h"],
+    deps = ["@mkbootimg//:bootimg_header"],
 )
 
 # The following genernates rust binding for C definitions in `bootimg.h`. It uses the same
@@ -80,7 +81,7 @@ use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout};""",
         "c++",
         "-nostdinc",
     ],
-    header = "@mkbootimg//:include/bootimg/bootimg.h",
+    header = "@gbl//libbootimg:bootimg_bindgen.h",
 )
 
 # The source files do not specify "no_std" and thus can't be used as library crate root in our EFI
