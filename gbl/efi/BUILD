@@ -177,18 +177,6 @@ build_with_platform(
 )
 
 build_with_platform(
-    name = "x86_32_dev",
-    platform = "@gbl//toolchain:gbl_uefi_x86_32_dev",
-    deps = [":gbl_efi_testkey"],
-)
-
-build_with_platform(
-    name = "x86_32_prod",
-    platform = "@gbl//toolchain:gbl_uefi_x86_32_prod",
-    deps = [":gbl_efi_testkey"],
-)
-
-build_with_platform(
     name = "aarch64_dev",
     platform = "@gbl//toolchain:gbl_uefi_aarch64_dev",
     deps = [":gbl_efi_testkey"],
@@ -215,7 +203,6 @@ build_with_platform(
 # Our infra tests currently fetch GBL binaries from these paths:
 # * gbl_aarch64.efi
 # * gbl_riscv64.efi
-# * gbl_x86_32.efi
 # * gbl_x86_64.efi
 # For now copy the "dev" build to these paths so the tests can find them; once
 # we modify the tests to fetch a variant expicitly we can remove these copies.
@@ -224,13 +211,11 @@ genrule(
     srcs = [
         ":aarch64_dev",
         ":riscv64_dev",
-        ":x86_32_dev",
         ":x86_64_dev",
     ],
     outs = [
         "gbl_aarch64.efi",
         "gbl_riscv64.efi",
-        "gbl_x86_32.efi",
         "gbl_x86_64.efi",
     ],
     # https://bazel.build/reference/be/general#general-advice says not to
@@ -239,7 +224,6 @@ genrule(
     cmd = """
         cp $(location :aarch64_dev) $(RULEDIR)/gbl_aarch64.efi
         cp $(location :riscv64_dev) $(RULEDIR)/gbl_riscv64.efi
-        cp $(location :x86_32_dev) $(RULEDIR)/gbl_x86_32.efi
         cp $(location :x86_64_dev) $(RULEDIR)/gbl_x86_64.efi
     """,
 )
@@ -252,8 +236,6 @@ filegroup(
         ":copies_for_tests",
         ":riscv64_dev",
         ":riscv64_prod",
-        ":x86_32_dev",
-        ":x86_32_prod",
         ":x86_64_dev",
         ":x86_64_prod",
     ],
