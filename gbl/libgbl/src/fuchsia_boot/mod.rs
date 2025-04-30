@@ -160,7 +160,7 @@ pub(crate) fn fixup_zbi_items<'a, 'b>(
 ///
 /// On success returns a pair containing: 1. the slice of the ZBI container with device ZBI items
 /// and 2. the slice of container containing the kernel.
-pub fn zircon_load_verify<'a, 'd>(
+fn zircon_load_verify<'a, 'd>(
     ops: &mut impl GblOps<'a, 'd>,
     slot: Option<SlotIndex>,
     slot_booted_successfully: bool,
