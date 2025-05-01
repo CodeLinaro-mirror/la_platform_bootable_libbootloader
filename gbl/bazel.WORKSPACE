@@ -24,6 +24,10 @@ load("@gbl//integration/aosp_uefi-gbl-mainline:workspace.bzl", "define_gbl_works
 
 define_gbl_workspace()
 
+load("@rules_rust//crate_universe:repositories.bzl", "crate_universe_dependencies")
+
+crate_universe_dependencies()
+
 load("@rules_rust//tools/rust_analyzer:deps.bzl", "rust_analyzer_dependencies")
 
 rust_analyzer_dependencies()
