@@ -47,6 +47,7 @@ rust_library(
         "@gbl//libfastboot",
         "@gbl//libfdt",
         "@gbl//libmisc",
+        "@gbl//libopendice",
         "@gbl//libsafemath",
         "@gbl//libstorage",
         "@gbl//libutils",

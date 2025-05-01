@@ -481,6 +481,12 @@ cc_library(
         build_file = "@gbl//libboringssl:BUILD.boringssl.bazel",
     )
 
+    native.new_local_repository(
+        name = "open_dice",
+        path = "external/open-dice",
+        build_file = "@gbl//libopendice:BUILD.open_dice.bazel",
+    )
+
     # Set up a repo to export LLVM tool/library/header/sysroot paths
     gbl_llvm_prebuilts(name = "gbl_llvm_prebuilts")
 
