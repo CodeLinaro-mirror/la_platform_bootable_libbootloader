@@ -70,13 +70,7 @@ rust_bindgen(
 use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout};""",
     ],
     cc_lib = ":bootimg_cc_header",
-    clang_flags = select(
-        {
-            # For x86_32, we need to explicitly specify 32bit architecture.
-            "@gbl//toolchain:gbl_rust_uefi_x86_32": ["-m32"],
-            "//conditions:default": ["-m64"],
-        },
-    ) + [
+    clang_flags = [
         "-x",
         "c++",
         "-nostdinc",

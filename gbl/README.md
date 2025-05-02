@@ -31,7 +31,7 @@ To build the EFI application:
 ./tools/bazel run //bootable/libbootloader:gbl_efi_dist --extra_toolchains=@gbl//toolchain:all
 ```
 
-The above builds the EFI application for all of `x86_64`, `x86_32`, `aarch64`
+The above builds the EFI application for all of `x86_64`, `aarch64`,
 and `riscv64` platforms.
 
 To run the set of unit tests:

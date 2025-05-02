@@ -62,10 +62,8 @@ fn generate_canary(entry: &EfiEntry) -> usize {
             cfg_if!{
                 if #[cfg(target_pointer_width = "64")] {
                     canary_default = 0x27085dc5dd4d6b7d;
-                } else if #[cfg(target_pointer_width = "32")] {
-                    canary_default = 0x612826c7;
                 } else {
-                    compile_error!("Stack canaries require size_of::<usize>() >= 4");
+                    compile_error!("Only 64 bit targets are supported");
                 }
             }
             canary
