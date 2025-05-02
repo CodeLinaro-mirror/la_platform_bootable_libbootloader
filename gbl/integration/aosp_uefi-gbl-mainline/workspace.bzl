@@ -18,7 +18,8 @@ u-boot-mainline branch.
 """
 
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
-load("@gbl//toolchain:gbl_workspace_util.bzl", "android_rust_prebuilts", "gbl_config", "gbl_llvm_prebuilts")
+load("@gbl//toolchain:gbl_new_local_repository.bzl", "gbl_new_local_repository")
+load("@gbl//toolchain:gbl_workspace_util.bzl", "GBL_RUST_VERSION", "gbl_config", "gbl_llvm_prebuilts")
 load("@gbl//toolchain:rust_crate_build_file.bzl", "rust_crate_build_file")
 
 _CLANG_VERSION = "r547379"
@@ -87,9 +88,9 @@ cc_library(
 """,
     )
 
-    android_rust_prebuilts(
+    gbl_new_local_repository(
         name = "rust_prebuilts",
-        path = "prebuilts/rust/",
+        path = "prebuilts/rust/linux-x86/{}".format(GBL_RUST_VERSION),
         build_file = "@gbl//toolchain:BUILD.android_rust_prebuilts.bazel",
     )
 
@@ -474,7 +475,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "boringssl",
         path = "external/boringssl/src",
         build_file = "@gbl//libboringssl:BUILD.boringssl.bazel",

@@ -133,39 +133,6 @@ gbl_llvm_prebuilts = repository_rule(
 # prebuilts is uploaded to https://android.googlesource.com/platform/prebuilts/rust/
 GBL_RUST_VERSION = "1.83.0"
 
-def _android_rust_prebuilts_impl(repo_ctx):
-    """Assemble a rust toolchain repo from the Android rust prebuilts repo.
-
-    The Android rust prebuilts repo is expected to be from
-    https://android.googlesource.com/platform/prebuilts/rust/.
-
-    Attributes:
-        path (String): Relative path to the Android rust prebuilts repo.
-        build_file (Label): Label of the build file to use.
-    """
-
-    # We only support linux x86 platform.
-    path = repo_ctx.workspace_root.get_child(repo_ctx.attr.path).get_child("linux-x86")
-
-    # Symlink everything into the assembled repo.
-    path = path.get_child(GBL_RUST_VERSION)
-    for entry in path.readdir():
-        # Ignore native BUILD file as we'll use override from `ctx.attr.build_file` instead.
-        if entry.basename == "BUILD" or entry.basename == "BUILD.bazel":
-            continue
-        repo_ctx.symlink(entry.realpath, entry.basename)
-
-    # Symlink the provided build file
-    repo_ctx.symlink(repo_ctx.attr.build_file, "BUILD")
-
-android_rust_prebuilts = repository_rule(
-    implementation = _android_rust_prebuilts_impl,
-    attrs = {
-        "path": attr.string(mandatory = True),
-        "build_file": attr.label(mandatory = True),
-    },
-)
-
 def _gbl_config_impl(repo_ctx):
     """Exports configurable value to build rules."""
 
