@@ -28,6 +28,8 @@ use opendice_android_bindgen::{
     DICE_ANDROID_CONFIG_SECURITY_VERSION,
 };
 
+mod clear_memory;
+
 pub mod dice;
 use dice::{context, InputValues};
 

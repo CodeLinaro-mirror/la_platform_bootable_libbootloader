@@ -34,7 +34,13 @@ rust_library(
         ":opendice_cbor_bindgen",
         "@open_dice//:libopen_dice_android_baremetal_ed25519_static",
         "@open_dice//:libopen_dice_cbor_baremetal_ed25519_static",
-    ],
+        "@zeroize",
+    ] + select({
+        "@gbl//toolchain:gbl_rust_uefi_aarch64": [
+            "@gbl//libboot/aarch64_cache_helper:aarch64_cache_helper_staticlib",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 rust_bindgen(

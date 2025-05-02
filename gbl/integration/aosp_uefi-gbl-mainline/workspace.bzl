@@ -395,6 +395,15 @@ cc_library(
     )
 
     native.new_local_repository(
+        name = "zeroize",
+        path = "external/rust/android-crates-io/crates/zeroize",
+        build_file_content = rust_crate_build_file(
+            "zeroize",
+            rustc_flags = ["--cap-lints=allow"],
+        ),
+    )
+
+    native.new_local_repository(
         name = "bitflags",
         path = "external/rust/android-crates-io/crates/bitflags",
         build_file_content = rust_crate_build_file("bitflags"),
