@@ -200,7 +200,7 @@ pub(crate) fn avb_verify_slot<'a, 'b, 'c>(
 mod test {
     use super::*;
     use crate::{
-        android_boot::load::tests::{
+        android_boot::tests::{
             dump_bootconfig, make_bootconfig, read_test_data, read_test_data_as_str,
             AvbResultBootconfigBuilder, TEST_PUBLIC_KEY_DIGEST,
         },
