@@ -1070,12 +1070,9 @@ fn is_fuchsia_fastboot_boot_image(img: &[u8]) -> bool {
 pub(crate) mod test {
     use super::*;
     use crate::{
-        android_boot::{
-            load::tests::read_test_data,
-            tests::{
-                checks_loaded_v2_slot_a_normal_mode, checks_loaded_v2_slot_b_normal_mode,
-                default_test_gbl_ops,
-            },
+        android_boot::tests::{
+            checks_loaded_v2_slot_a_normal_mode, checks_loaded_v2_slot_b_normal_mode,
+            default_test_gbl_ops, read_test_data,
         },
         constants::KiB,
         constants::KERNEL_ALIGNMENT,
