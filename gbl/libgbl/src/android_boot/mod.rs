@@ -27,26 +27,29 @@ use crate::{
     ops::RebootReason,
     GblOps, Result,
 };
-use bootparams::commandline::CommandlineBuilder;
-use core::{array::from_fn, ffi::CStr};
+use bootparams::{
+    bootconfig::BootConfigBuilder, commandline::CommandlineBuilder, entry::CommandlineParser,
+};
+use core::{array::from_fn, ffi::CStr, fmt::Write};
 use dttable::DtTableImage;
 use fastboot::local_session::LocalSession;
 use fdt::{Fdt, FdtHeader};
 use gbl_async::block_on;
+use libbuild_number::BUILD_NUMBER;
 use liberror::Error;
 use libutils::{aligned_offset, aligned_subslice};
 use misc::{AndroidBootMode, BootloaderMessage};
 use safemath::SafeNum;
 
 mod avf;
-use avf::{pkvm_describe_pvmfw_resvmem, pvmfw_place_in_memory};
+use avf::{pkvm_describe_pvmfw_resvmem, pvmfw_place_in_memory, DEFAULT_PVMFW_PART_NAME_CSTR};
 
-mod vboot;
-use vboot::{avb_verify_slot, PartitionsToVerify};
+pub mod vboot;
+pub use vboot::{avb_verify_slot, PartitionsToVerify};
 
 pub(crate) mod load;
-use load::split_chunks;
-pub use load::{android_load_verify, get_kernel};
+pub(crate) use load::get_kernel;
+use load::{android_load_verified, slotted_part, split, split_chunks, SlotSuffix};
 
 /// Device tree bootargs property to store kernel command line.
 pub const BOOTARGS_PROP: &CStr = c"bootargs";
@@ -66,10 +69,57 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     load: &'a mut [u8],
 ) -> Result<(&'a mut [u8], &'a mut [u8], &'a mut [u8], &'a mut [u8])> {
     let load_addr = load.as_ptr() as usize;
-    let images = android_load_verify(ops, slot, is_recovery, load)?;
+
+    // Performs libavb verification first.
+
+    let mut partitions = PartitionsToVerify::default();
+    // Adds all standard partitions on this device to verification. AVB will only verify
+    // partitions that have a hash descriptor in the vbmeta. Others will be ignored.
+    for part in
+        [c"dtbo", c"dtb", DEFAULT_PVMFW_PART_NAME_CSTR, c"boot", c"init_boot", c"vendor_boot"]
+    {
+        if ops.partition_size(&slotted_part(part.to_str().unwrap(), slot)?)?.is_some() {
+            partitions.try_push(part)?;
+        }
+    }
+
+    let (verify_data, color, unlocked) = avb_verify_slot(ops, slot, &partitions)?;
+    let images = android_load_verified(ops, slot, unlocked, &verify_data, load)?;
+
+    // Fixes up bootconfig.
+
+    let mut bootconfig_builder = BootConfigBuilder::new(images.unused)?;
+    for entry in CommandlineParser::new(verify_data.cmdline().to_str().unwrap()) {
+        write!(bootconfig_builder, "{}\n", entry?).map_err(Error::from)?;
+    }
+    write!(bootconfig_builder, "androidboot.verifiedbootstate={}\n", color).map_err(Error::from)?;
+    if !is_recovery {
+        bootconfig_builder.add("androidboot.force_normal_boot=1\n")?;
+    }
+    write!(bootconfig_builder, "androidboot.slot_suffix={}\n", &SlotSuffix::new(slot)? as &str)
+        .map_err(Error::from)?;
+    // Placeholder value for now. Userspace can use this value to tell if device is booted with GBL.
+    // TODO(yochiang): Generate useful value like version, build_incremental in the bootconfig.
+    bootconfig_builder.add("androidboot.gbl.version=0\n")?;
+    write!(bootconfig_builder, "androidboot.gbl.build_number={BUILD_NUMBER}\n")
+        .map_err(Error::from)?;
+    // Adds platform-specific bootconfig.
+    bootconfig_builder.add_with(|bytes, out| {
+        Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
+    })?;
+    // Add bootconfig from vendor_boot
+    bootconfig_builder.add_with(|_, out| {
+        out.get_mut(..images.vendor_bootconfig.len())
+            .ok_or(Error::BufferTooSmall(Some(images.vendor_bootconfig.len())))?
+            .clone_from_slice(images.vendor_bootconfig);
+        Ok(images.vendor_bootconfig.len())
+    })?;
+    let bootconfig_sz = bootconfig_builder.config_bytes().len();
+
+    // Fixes up FDT.
 
     let mut components = DeviceTreeComponentsRegistry::new();
-    let fdt_load = &mut images.unused[..];
+    let (_, fdt_load) = split(images.unused, bootconfig_sz)?;
     // TODO(b/353272981): Remove get_custom_device_tree
     let (fdt_load, base, overlays) = match ops.get_custom_device_tree() {
         Some(v) => (fdt_load, v, &[][..]),
@@ -87,7 +137,6 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
                 }
                 _ => fdt_load,
             };
-
             if images.dtb.len() > 0 {
                 gbl_println!(ops, "Handling device tree from boot/vendor_boot");
                 remains = if FdtHeader::from_bytes_ref(images.dtb).is_ok() {
@@ -139,13 +188,14 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     let fdt_load = aligned_subslice(fdt_load, FDT_ALIGNMENT)?;
     let mut fdt = Fdt::new_from_init(&mut fdt_load[..], base)?;
 
-    // Adds ramdisk range to FDT
     let ramdisk_addr: u64 = (images.ramdisk.as_ptr() as usize).try_into().map_err(Error::from)?;
-    let ramdisk_end: u64 = ramdisk_addr + u64::try_from(images.ramdisk.len()).unwrap();
+    let ramdisk_end = ramdisk_addr + u64::try_from(images.ramdisk.len() + bootconfig_sz)?;
     fdt.set_property("chosen", c"linux,initrd-start", &ramdisk_addr.to_be_bytes())?;
     fdt.set_property("chosen", c"linux,initrd-end", &ramdisk_end.to_be_bytes())?;
     gbl_println!(ops, "linux,initrd-start: {:#x}", ramdisk_addr);
     gbl_println!(ops, "linux,initrd-end: {:#x}", ramdisk_end);
+
+    // Fixes up commnadline in FDT.
 
     // Updates the FDT commandline.
     let device_tree_commandline_length = match fdt.get_property("chosen", BOOTARGS_PROP) {
@@ -153,7 +203,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         Err(_) => 0,
     };
 
-    // Reserves 1024 bytes for separators and fixup.
+    // Reserves 1024 bytes for separators and fixup
     let final_commandline_len = device_tree_commandline_length
         + images.boot_cmdline.len()
         + images.vendor_cmdline.len()
@@ -706,6 +756,7 @@ androidboot.veritymode=enforcing
         slot_nr: u8,
         partitions: &[(String, String)],
         unlock: bool,
+        rollback_idx: u64,
         expected_kernel: &[u8],
         expected_ramdisk: &[u8],
         expected_bootconfig: &[u8],
@@ -721,7 +772,7 @@ androidboot.veritymode=enforcing
         let slot_suffix = char::from_u32('a' as u32 + slot_nr as u32).unwrap();
         ops.current_slot = Some(Ok(slot(slot_suffix)));
         ops.avb_ops.unlock_state = Ok(unlock);
-        ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
+        ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(rollback_idx))]);
         let mut out_color = None;
         let mut handler = |color,
                            _: Option<&CStr>,
@@ -787,17 +838,18 @@ androidboot.veritymode=enforcing
     ) {
         let dtb = partitions.iter().any(|(name, _)| name.starts_with("dtb_"));
         let dtbo = partitions.iter().any(|(name, _)| name.starts_with("dtbo_"));
-        let test_common = |unlock, color, vbmeta_file: &str| {
-            let mut partitions = partitions.to_vec();
-            partitions.push((format!("vbmeta_{slot}"), vbmeta_file.into()));
+        let mut partitions = partitions.to_vec();
+        partitions.push((format!("vbmeta_{slot}"), vbmeta.into()));
+        let test_common = |unlock, color, rollback_idx| {
             test_android_load_verify_fixup(
                 (u64::from(slot) - ('a' as u64)).try_into().unwrap(),
                 &partitions,
                 unlock,
+                rollback_idx,
                 expected_kernel,
                 expected_ramdisk,
                 &make_expected_bootconfig(
-                    vbmeta_file,
+                    vbmeta,
                     unlock,
                     color,
                     slot,
@@ -810,16 +862,14 @@ androidboot.veritymode=enforcing
         };
         // AVB verification passes in locked mode.
         println!("\n---sub test: AVB passes, locked mode---\n");
-        test_common(false, BootStateColor::Green, vbmeta);
+        test_common(false, BootStateColor::Green, 0);
         // AVB verification passes in unlocked mode.
         println!("\n---sub test: AVB passes, unlocked mode---\n");
-        test_common(true, BootStateColor::Orange, vbmeta);
-        // Uses a noop vbmeta image that always succeeds but doesn't verified any on disk images.
-        // Tests that in unlocked mode, images will be loaded as usual.
-        println!("\n---sub test: Noop vbmeta, unlocked mode---\n");
-        // TODO(b/416000842): `android_load_verify_fixup` is not checking verification status of
-        // individual preloaded partitions. It will proceed even when locked, which is incorrect.
-        test_common(true, BootStateColor::Orange, "vbmeta_noop.img");
+        test_common(true, BootStateColor::Orange, 0);
+        println!("\n---sub test: AVB failed, unlocked mode---\n");
+        // Causes rollback protection failure. Tests that in unlocked mode, images will be loaded
+        // as usual.
+        test_common(true, BootStateColor::Orange, 3);
     }
 
     const EXPECTED_V2_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2";
@@ -1351,6 +1401,7 @@ androidboot.veritymode=enforcing
             0,
             &parts,
             false,
+            0,
             &read_test_data(format!("gki_boot_{compression}_kernel_uncompressed")),
             &expected_v3_v4_ramdisk('a'),
             &make_expected_bootconfig(
@@ -1374,6 +1425,44 @@ androidboot.veritymode=enforcing
     #[test]
     fn test_android_load_verify_lz4_boot_v4_vendor_v4_slot_a() {
         test_android_load_verify_boot_v4_compression_slot("lz4")
+    }
+
+    fn test_android_load_verify_fixup_fails_if_vbmeta_missing_partitions(unlocked: bool) {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_no_ramdisk_v4_a.img"));
+        storage.add_raw_device(c"vendor_boot_a", read_test_data("vendor_boot_v4_a.img"));
+        storage.add_raw_device(c"init_boot_a", read_test_data("init_boot_a.img"));
+        // vbmeta_noop.img has no partition descriptors. Thus nothing should be loaded by avb.
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_noop.img"));
+        let mut ops = FakeGblOps::new(&storage);
+        ops.avb_ops.unlock_state = Ok(unlocked);
+        ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
+        let mut out_color = None;
+        let mut handler = |color,
+                           _: Option<&CStr>,
+                           _: Option<&[u8]>,
+                           _: Option<&[u8]>,
+                           _: Option<&[u8]>,
+                           _: Option<&[u8]>,
+                           _: Option<&[u8]>,
+                           _: Option<&[u8]>| {
+            out_color = Some(color);
+            Ok(())
+        };
+        ops.avb_handle_verification_result = Some(&mut handler);
+        ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
+        let mut load_buffer = AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
+        assert!(android_load_verify_fixup(&mut ops, 0, false, &mut load_buffer).is_err());
+    }
+
+    #[test]
+    fn test_android_load_verify_fixup_fails_if_vbmeta_missing_partitions_unlocked() {
+        test_android_load_verify_fixup_fails_if_vbmeta_missing_partitions(true)
+    }
+
+    #[test]
+    fn test_android_load_verify_fixup_fails_if_vbmeta_missing_partitions_locked() {
+        test_android_load_verify_fixup_fails_if_vbmeta_missing_partitions(false)
     }
 
     /// Helper for checking V2 image loaded from slot A and in normal mode.

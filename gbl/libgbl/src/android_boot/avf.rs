@@ -27,7 +27,6 @@ use static_assertions::const_assert;
 use zerocopy::{Immutable, IntoBytes};
 
 pub const DEFAULT_PVMFW_PART_NAME_CSTR: &CStr = c"pvmfw";
-pub const DEFAULT_PVMFW_PART_NAME: &str = "pvmfw";
 const NUM_PVMFW_CONFIG_ENTRIES: usize = 4;
 
 type EntryBufsArray<'a> = [&'a [u8]; NUM_PVMFW_CONFIG_ENTRIES];
