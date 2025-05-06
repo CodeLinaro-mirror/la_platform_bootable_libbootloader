@@ -83,7 +83,7 @@ pub const E820_ADDRESS_TYPE_PMEM: u32 = 7;
 
 /// Wrapper for `struct boot_params {}` C structure
 #[repr(transparent)]
-#[derive(Copy, Clone, Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Copy, Clone, Immutable, FromBytes, IntoBytes, KnownLayout)]
 pub struct BootParams(boot_params);
 
 impl BootParams {
@@ -247,7 +247,6 @@ where
 
     // Clears stack pointers, interrupt and jumps to protected mode kernel.
     // SAFETY: By safety requirement of this function, input contains a valid linux kernel.
-    #[cfg(target_arch = "x86_64")]
     unsafe {
         asm!(
             "xor ebp, ebp",
@@ -257,20 +256,6 @@ where
             "jmp {ep}",
             ep = in(reg) LOAD_ADDR_HIGH + ENTRY_POINT_OFFSET,
             in("rsi") low_mem_addr,
-        );
-    }
-    // SAFETY: By safety requirement of this function, input contains a valid linux kernel.
-    #[cfg(target_arch = "x86")]
-    unsafe {
-        asm!(
-            "xor ebp, ebp",
-            "xor esp, esp",
-            "mov esi, eax",
-            "cld",
-            "cli",
-            "jmp {ep}",
-            ep = in(reg) LOAD_ADDR_HIGH,
-            in("eax") low_mem_addr,
         );
     }
 
@@ -285,7 +270,6 @@ where
 pub unsafe fn zbi_boot_raw(entry: usize, data: &[u8]) -> ! {
     // Clears stack pointers, interrupt and jumps to protected mode kernel.
     // SAFETY: By safety requirement of this function, input contains a valid ZBI kernel.
-    #[cfg(target_arch = "x86_64")]
     unsafe {
         asm!(
             "xor ebp, ebp",
@@ -295,20 +279,6 @@ pub unsafe fn zbi_boot_raw(entry: usize, data: &[u8]) -> ! {
             "jmp {ep}",
             ep = in(reg) entry,
             in("rsi") data.as_ptr(),
-        );
-    }
-    // SAFETY: By safety requirement of this function, input contains a valid ZBI kernel.
-    #[cfg(target_arch = "x86")]
-    unsafe {
-        asm!(
-            "xor ebp, ebp",
-            "xor esp, esp",
-            "mov esi, eax",
-            "cld",
-            "cli",
-            "jmp {ep}",
-            ep = in(reg) entry,
-            in("eax") data.as_ptr(),
         );
     }
 

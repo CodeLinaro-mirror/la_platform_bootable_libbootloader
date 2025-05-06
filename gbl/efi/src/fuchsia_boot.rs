@@ -100,7 +100,7 @@ pub fn efi_fuchsia_boot(efi_entry: EfiEntry, images: LoadedVerifiedZircon<'stati
         unsafe { boot::aarch64::jump_zircon_el2_or_lower(kernel, zbi_items) };
     }
 
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(any(target_arch = "x86_64"))]
     {
         const BUFFER_SIZE: usize = 32 * 1024 / 2;
         let mut mem_map_buf = [0u8; BUFFER_SIZE];

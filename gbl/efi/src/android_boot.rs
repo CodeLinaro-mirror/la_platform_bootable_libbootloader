@@ -59,7 +59,7 @@ pub fn efi_android_boot(
         unsafe { boot::aarch64::jump_linux_el2_or_lower(kernel, ramdisk, fdt) };
     }
 
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    #[cfg(any(target_arch = "x86_64"))]
     {
         use fdt::Fdt;
         use liberror::Error;

@@ -69,7 +69,7 @@ pub fn get_efi_fdt(entry: &EfiEntry) -> Option<(&FdtHeader, &[u8])> {
     None
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[cfg(any(target_arch = "x86_64"))]
 pub fn efi_to_e820_mem_type(efi_mem_type: u32) -> u32 {
     match efi_mem_type as _ {
         efi_types::EFI_MEMORY_TYPE_LOADER_CODE

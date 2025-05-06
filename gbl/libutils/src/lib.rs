@@ -134,8 +134,6 @@ pub fn get_sp() -> usize {
         asm!("mv {}, sp", out(reg) sp);
         #[cfg(target_arch = "x86_64")]
         asm!("mov {}, rsp", out(reg) sp);
-        #[cfg(target_arch = "x86")]
-        asm!("mov {}, esp", out(reg) sp);
     }
     sp
 }
