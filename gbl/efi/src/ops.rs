@@ -35,9 +35,7 @@ use efi::{
         dt_fixup::DtFixupProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
-        gbl_efi_image_loading::{
-            EfiImageBufferInfo, GblImageLoadingProtocol, PARTITION_NAME_LEN_U16,
-        },
+        gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
     },
     EfiEntry,
@@ -152,7 +150,8 @@ pub(crate) fn get_buffer_from_protocol(
     image_name: &str,
     size: usize,
 ) -> Result<EfiImageBufferInfo> {
-    let mut image_type = [0u16; PARTITION_NAME_LEN_U16];
+    // Max length of a UTF16 partition name in u16 units.
+    let mut image_type = [0u16; efi_types::PARTITION_NAME_LEN_U16 as usize];
     image_type.iter_mut().zip(image_name.encode_utf16()).for_each(|(dst, src)| {
         *dst = src;
     });
@@ -728,7 +727,7 @@ mod test {
         mock_efi.con_out.expect_write_str().with(eq("foo bar")).return_const(Ok(()));
         let installed = mock_efi.install();
 
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert!(write!(&mut ops, "{} {}", "foo", "bar").is_ok());
     }
@@ -742,7 +741,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let ops = Ops::new(installed.entry(), &[], None);
+        let ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_validate_vbmeta_public_key(&[], None), Ok(KeyValidationStatus::Valid));
     }
@@ -756,7 +755,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let ops = Ops::new(installed.entry(), &[], None);
+        let ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(
             ops.avb_validate_vbmeta_public_key(&[], None),
@@ -773,7 +772,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let ops = Ops::new(installed.entry(), &[], None);
+        let ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_validate_vbmeta_public_key(&[], None), Ok(KeyValidationStatus::Invalid));
     }
@@ -786,7 +785,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let ops = Ops::new(installed.entry(), &[], None);
+        let ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_validate_vbmeta_public_key(&[], None), Err(AvbIoError::Oom));
     }
@@ -800,7 +799,7 @@ mod test {
             .return_const(Err(Error::NotFound));
 
         let installed = mock_efi.install();
-        let ops = Ops::new(installed.entry(), &[], None);
+        let ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_validate_vbmeta_public_key(&[], None), Err(AvbIoError::NotImplemented));
     }
@@ -813,7 +812,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_read_is_device_unlocked(), Ok(true));
     }
@@ -826,7 +825,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_read_is_device_unlocked(), Ok(false));
     }
@@ -840,7 +839,7 @@ mod test {
             .return_const(Err(Error::NotFound));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_read_is_device_unlocked(), Err(AvbIoError::NotImplemented));
     }
@@ -853,7 +852,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_read_rollback_index(0), Ok(12345));
     }
@@ -866,7 +865,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_read_rollback_index(0), Err(AvbIoError::Oom));
     }
@@ -880,7 +879,7 @@ mod test {
             .return_const(Err(Error::NotFound));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_read_rollback_index(0), Err(AvbIoError::NotImplemented));
     }
@@ -893,7 +892,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert!(ops.avb_write_rollback_index(0, 12345).is_ok());
     }
@@ -906,7 +905,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_write_rollback_index(0, 12345), Err(AvbIoError::InvalidValueSize));
     }
@@ -920,7 +919,7 @@ mod test {
             .return_const(Err(Error::NotFound));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_write_rollback_index(0, 12345), Err(AvbIoError::NotImplemented));
     }
@@ -935,7 +934,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         let mut buffer = [0u8; EXPECTED_LEN];
         assert_eq!(ops.avb_read_persistent_value(c"test", &mut buffer), Ok(EXPECTED_LEN));
@@ -949,7 +948,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         let mut buffer = [0u8; 0];
         assert_eq!(ops.avb_read_persistent_value(c"test", &mut buffer), Err(AvbIoError::Oom));
@@ -964,7 +963,7 @@ mod test {
             .return_const(Err(Error::NotFound));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         let mut buffer = [0u8; 0];
         assert_eq!(
@@ -981,7 +980,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_write_persistent_value(c"test", b""), Ok(()));
     }
@@ -994,7 +993,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_write_persistent_value(c"test", b""), Err(AvbIoError::InvalidValueSize));
     }
@@ -1008,7 +1007,7 @@ mod test {
             .return_const(Err(Error::NotFound));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_write_persistent_value(c"test", b""), Err(AvbIoError::NotImplemented));
     }
@@ -1021,7 +1020,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_erase_persistent_value(c"test"), Ok(()));
     }
@@ -1034,7 +1033,7 @@ mod test {
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_erase_persistent_value(c"test"), Err(AvbIoError::Io));
     }
@@ -1048,7 +1047,7 @@ mod test {
             .return_const(Err(Error::NotFound));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_erase_persistent_value(c"test"), Err(AvbIoError::NotImplemented));
     }
@@ -1067,7 +1066,7 @@ mod test {
             },
         );
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
         assert_eq!(ops.set_reboot_reason(input), Ok(()));
     }
 
@@ -1102,7 +1101,7 @@ mod test {
             },
         );
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
         assert_eq!(ops.get_reboot_reason().unwrap(), expect)
     }
 
@@ -1134,7 +1133,7 @@ mod test {
             .expect_find_first_and_open::<GblFastbootProtocol>()
             .return_once(|| Err(Error::NotFound));
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
         ops.fastboot_visit_all_variables(|_, _| {}).unwrap();
     }
 
@@ -1146,7 +1145,7 @@ mod test {
             .expect_find_first_and_open::<GblFastbootProtocol>()
             .return_once(|| Err(Error::InvalidInput));
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
         assert!(ops.fastboot_visit_all_variables(|_, _| {}).is_err());
     }
 
@@ -1181,7 +1180,7 @@ mod test {
             });
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         ops.fixup_os_commandline(expected_base, fixup_buffer)
     }
@@ -1343,7 +1342,7 @@ mod test {
             });
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         ops.fixup_bootconfig(expected_base, fixup_buffer)
     }
@@ -1488,7 +1487,7 @@ mod test {
             });
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         let mut registry = DeviceTreeComponentsRegistry::new();
         let mut current_buffer = &mut buffer[..];
@@ -1541,7 +1540,7 @@ mod test {
             });
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         let mut registry = DeviceTreeComponentsRegistry::new();
 
@@ -1560,7 +1559,7 @@ mod test {
             .return_once(move || Err(Error::NotFound));
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         // Appends some data to ensure autoselect is passed.
         let mut registry = DeviceTreeComponentsRegistry::new();
@@ -1604,7 +1603,7 @@ mod test {
         );
 
         let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None);
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         let r = ops.fixup_device_tree(base);
         assert_eq!(base, base_after_fixup);

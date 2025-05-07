@@ -56,10 +56,10 @@ rust_library(
 
 rust_test(
     name = "test",
-    crate = ":libgbl_efi",
-    data = [
+    compile_data = [
         "@gbl//libfdt/test/data:all",
     ],
+    crate = ":libgbl_efi",
     # TODO(b/355436086): mock out the rest of the libefi APIs and
     # remove dead-code; for now it would require a lot of invasive
     # code changes to selectively disable things on tests so this
