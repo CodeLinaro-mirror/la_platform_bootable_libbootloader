@@ -14,7 +14,7 @@
 
 use super::{cstr_bytes_to_str, BootBuffer};
 use crate::{
-    android_boot::{avf::DEFAULT_PVMFW_PART_NAME_CSTR, pvmfw_place_in_memory},
+    android_boot::{avf::DEFAULT_PVMFW_PART_NAME_CSTR, build_pvmfw_data_region},
     constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
     decompress::decompress_kernel,
     gbl_println,
@@ -521,10 +521,19 @@ impl<'a> BootBufferLoader<'a> {
     }
 
     /// Loads pvmfw image.
-    pub(super) fn pvmfw_load(&mut self, img: &[u8]) -> Result<&'a mut [u8], Error> {
+    pub(super) fn pvmfw_load<'b, 'c>(
+        &mut self,
+        ops: &mut impl GblOps<'b, 'c>,
+        img: &[u8],
+        verify_data: &SlotVerifyData,
+    ) -> Result<&'a mut [u8], Error> {
+        // Parse the partition header and extract the pvmfw binary
+        let info = BootImageV3Info::new(img)?;
+        let pvmfw_bin = img.get(info.kernel_range.clone()).ok_or(Error::BadBufferSize)?;
         // TODO(b/429168146): Handled configuration from AVF protocols.
         Ok(match self.bufs.pvmfw_data.as_mut() {
-            Some(v) => pvmfw_place_in_memory(img, v, [&[]; 4]).map(|sz| &mut take(v)[..sz])?,
+            Some(v) => build_pvmfw_data_region(ops, v, pvmfw_bin, verify_data)
+                .map(|sz| &mut take(v)[..sz])?,
             _ => {
                 // Split out buffer from general load for loading pvmfw.
                 // Buffer must not be used yet.
@@ -533,7 +542,12 @@ impl<'a> BootBufferLoader<'a> {
                 assert_eq!(self.general_fdt, 0..0);
                 assert_eq!(self.general_kernel, 0..0);
                 let off = aligned_offset(&self.bufs.general[..], PVMFW_DATA_ALIGNMENT)?;
-                let sz = pvmfw_place_in_memory(img, &mut self.bufs.general[off..], [&[]; 4])?;
+                let sz = build_pvmfw_data_region(
+                    ops,
+                    &mut self.bufs.general[off..],
+                    pvmfw_bin,
+                    verify_data,
+                )?;
                 let (pvmfw, general) = take(&mut self.bufs.general)[off..].split_at_mut(sz);
                 self.bufs.general = general;
                 pvmfw

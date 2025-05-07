@@ -43,7 +43,7 @@ use libutils::aligned_subslice;
 use misc::{AndroidBootMode, BootloaderMessage};
 
 mod avf;
-use avf::{avf_update_bootconfig, pkvm_describe_pvmfw_resvmem, pvmfw_place_in_memory};
+use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region};
 
 pub mod vboot;
 pub use vboot::{avb_verify_slot, PartitionsToVerify};
@@ -122,7 +122,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
 
     let pvmfw = match images.pvmfw.is_empty() {
         true => None,
-        _ => Some(loader.pvmfw_load(images.pvmfw)?),
+        _ => Some(loader.pvmfw_load(ops, images.pvmfw, &verify_data)?),
     };
     loader.ramdisk_load(&images.ramdisks[..])?;
     loader.kernel_load(ops, images.kernel)?;
@@ -252,8 +252,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     fdt_append_bootarg(ops, &mut fdt, [images.boot_cmdline, images.vendor_cmdline], 1024)?;
 
     match pvmfw {
-        Some(ref v) => pkvm_describe_pvmfw_resvmem(&mut fdt, v)
-            .inspect(|_| gbl_println!(ops, "AVF: init success"))?,
+        Some(ref v) => avf_fixup_host_dt(ops, &mut fdt, v, &verify_data)?,
         _ => {}
     }
 
@@ -1846,6 +1845,7 @@ androidboot.veritymode=enforcing
     }
 
     const TEST_PVMFW_FILL_VALUE: u8 = 0xAB;
+    const TEST_PVMFW_FILL_COUNT: usize = 0xC00;
 
     /// Helper for testing pvmfw load.
     fn test_android_load_verify_fixup_pvmfw_load(boot_buffer: BootBuffer, expected_addr: usize) {
@@ -1853,7 +1853,8 @@ androidboot.veritymode=enforcing
         storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
         // We are just interested in pvmfw load behavior. Don't care about avb verification.
         storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_disabled.img"));
-        let (pvmfw_part, expected_sz) = dummy_pvmfw_partition(TEST_PVMFW_FILL_VALUE);
+        let (pvmfw_part, min_exp_size) =
+            dummy_pvmfw_partition(TEST_PVMFW_FILL_VALUE, TEST_PVMFW_FILL_COUNT);
         storage.add_raw_device(c"pvmfw_a", pvmfw_part);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -1885,7 +1886,7 @@ androidboot.veritymode=enforcing
         // to 8 bytes.
         length_bytes.reverse();
         length_bytes.resize(8, 0);
-        assert_eq!(length_bytes, expected_sz.to_le_bytes());
+        assert!(usize::from_le_bytes(length_bytes.try_into().unwrap()) >= min_exp_size);
     }
 
     #[test]

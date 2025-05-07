@@ -68,7 +68,7 @@ pub const BOOTCMD_SIZE: usize = KiB!(16);
 /// Page size
 pub const PAGE_SIZE: usize = KiB!(4);
 
-/// FDT image alignment requirement.
+/// Pvmfw image alignment requirement.
 pub const PVMFW_DATA_ALIGNMENT: usize = PAGE_SIZE;
 
 // Type alias for raw partition image name.
