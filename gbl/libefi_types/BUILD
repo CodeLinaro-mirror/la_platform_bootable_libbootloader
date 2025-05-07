@@ -100,7 +100,11 @@ rust_library(
 rust_test(
     name = "libefi_types_test",
     crate = ":libefi_types",
+    crate_features = ["mocks"],
     rustc_flags = ANDROID_RUST_LINTS,
+    deps = [
+        "@mockall",
+    ],
 )
 
 rust_doc_test(
