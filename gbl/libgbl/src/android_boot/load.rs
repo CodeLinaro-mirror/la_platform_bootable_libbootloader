@@ -345,8 +345,10 @@ pub(crate) fn android_load_verified<'a, 'b, 'c>(
     let mut images = LoadedImages::default();
     images.dtb_part = get_verified_partition(ops, c"dtb", slot, unlocked, true, verify_data)?;
     images.dtbo = get_verified_partition(ops, c"dtbo", slot, unlocked, true, verify_data)?;
-    let pvmfw = DEFAULT_PVMFW_PART_NAME_CSTR;
-    images.pvmfw = get_verified_partition(ops, pvmfw, slot, unlocked, true, verify_data)?;
+    if ops.avf_is_supported()? {
+        let pvmfw = DEFAULT_PVMFW_PART_NAME_CSTR;
+        images.pvmfw = get_verified_partition(ops, pvmfw, slot, unlocked, true, verify_data)?;
+    }
     let boot = get_verified_partition(ops, c"boot", slot, unlocked, false, verify_data)?;
     images.boot_hdr = boot;
     match log_and_parse_bootimg(ops, boot)? {

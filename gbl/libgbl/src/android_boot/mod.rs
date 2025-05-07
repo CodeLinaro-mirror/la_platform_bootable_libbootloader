@@ -42,7 +42,7 @@ use misc::{AndroidBootMode, BootloaderMessage};
 use safemath::SafeNum;
 
 mod avf;
-use avf::{pkvm_describe_pvmfw_resvmem, pvmfw_place_in_memory};
+use avf::{avf_update_bootconfig, pkvm_describe_pvmfw_resvmem, pvmfw_place_in_memory};
 
 pub mod vboot;
 pub use vboot::{avb_verify_slot, PartitionsToVerify};
@@ -116,6 +116,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
 
     let (verify_data, color, unlocked) = avb_verify_slot(ops, slot, &mut partitions)?;
     let images = android_load_verified(ops, slot, unlocked, &verify_data, &mut load)?;
+    let enable_avf = !images.pvmfw.is_empty();
 
     // Fixes up bootconfig.
 
@@ -141,6 +142,10 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
             .clone_from_slice(images.vendor_bootconfig);
         Ok(images.vendor_bootconfig.len())
     })?;
+    // Adds AVF-specific bootconfig.
+    if enable_avf {
+        avf_update_bootconfig(ops, &mut bootconfig_builder)?;
+    }
     // Adds platform-specific bootconfig.
     bootconfig_builder.add_with(|bytes, out| {
         Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
@@ -287,7 +292,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     // TODO(b/429168146): re-enable once allocation issue is fixed
     if false {
         // Place pvmfw binary into reserved memory
-        if images.pvmfw.len() > 0 {
+        if enable_avf {
             let pvmfw_image_buf = pvmfw_place_in_memory(ops, images.pvmfw, [&[]; 4])?;
             pkvm_describe_pvmfw_resvmem(&mut fdt, &pvmfw_image_buf)?;
             gbl_println!(ops, "AVF: init success");

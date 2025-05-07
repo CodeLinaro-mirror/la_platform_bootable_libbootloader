@@ -17,8 +17,10 @@
 use super::load::BootImageV3Info;
 use crate::constants::{ImageType, PAGE_SIZE};
 use crate::image_buffer::ImageBuffer;
-use crate::{GblOps, KiB, Result};
+use crate::{gbl_println, GblOps, KiB, Result};
+use bootparams::bootconfig::BootConfigBuilder;
 use core::ffi::CStr;
+use core::fmt::Write;
 use core::mem::{align_of, size_of, MaybeUninit};
 use fdt::{fdt_encode_cell_sized_property, std_props, Fdt};
 use liberror::Error;
@@ -76,7 +78,7 @@ pub fn pvmfw_place_in_memory<'a, 'b>(
     pvmfw_partition_buf: &[u8],
     entries: EntryBufsArray,
 ) -> Result<ImageBuffer<'b>> {
-    // Parse the partition header an extract the pvmfw binary
+    // Parse the partition header and extract the pvmfw binary
     let info = BootImageV3Info::new(pvmfw_partition_buf)?;
     let pvmfw_bin =
         pvmfw_partition_buf.get(info.kernel_range.clone()).ok_or(Error::BadBufferSize)?;
@@ -233,6 +235,32 @@ fn write_pvmfw_config(imgbuf: &mut ImageBuffer, entries: EntryBufsArray) -> Resu
         MaybeUninit::fill(pad, 0u8);
         // SAFETY: successfully initialized buffer by copying the entry contents + padding
         unsafe { imgbuf.advance_used(padded_size) }?;
+    }
+    Ok(())
+}
+
+/// Add AVF-specific parameters to bootconfig
+///
+/// # Note
+/// `androidboot.hypervisor.version` is free-form and should be set by vendor via bootconfig fixup
+pub fn avf_update_bootconfig<'a, 'b>(
+    ops: &mut impl GblOps<'a, 'b>,
+    bootconfig: &mut BootConfigBuilder,
+) -> core::result::Result<(), Error> {
+    const PROTECTED_PROP: &str = "androidboot.hypervisor.protected_vm.supported";
+    const UNPROTECTED_PROP: &str = "androidboot.hypervisor.vm.supported";
+
+    for prop in [PROTECTED_PROP, UNPROTECTED_PROP] {
+        if bootconfig.config_str().contains(prop) {
+            gbl_println!(
+                ops,
+                "WARNING: Unexpected property `{prop}` is detected in the platform \
+                bootconfig, this will not be supported by GBL in the future versions and will \
+                cause GBL boot failure."
+            );
+        } else {
+            write!(bootconfig, "{prop}=true\n")?;
+        }
     }
     Ok(())
 }
@@ -417,5 +445,26 @@ mod test {
         };
         assert!(header == &expected_header);
         assert_eq!(config.len(), PvmfwConfHeader::PADDED_SIZE);
+    }
+
+    #[test]
+    fn test_write_avf_bootconfig() {
+        let protected = "androidboot.hypervisor.protected_vm.supported";
+        let unprotected = "androidboot.hypervisor.vm.supported";
+        let mut ops = FakeGblOps::new(&[][..]);
+        let mut bootconf_buffer = [0u8; 128];
+        let mut bootconfig = BootConfigBuilder::new(&mut bootconf_buffer).unwrap();
+
+        let bootconf_str = bootconfig.config_str();
+        assert!(!bootconf_str.contains(protected));
+        assert!(!bootconf_str.contains(unprotected));
+
+        avf_update_bootconfig(&mut ops, &mut bootconfig).unwrap();
+        assert_eq!(bootconfig.config_str().matches(protected).count(), 1);
+        assert_eq!(bootconfig.config_str().matches(unprotected).count(), 1);
+
+        avf_update_bootconfig(&mut ops, &mut bootconfig).unwrap();
+        assert_eq!(bootconfig.config_str().matches(protected).count(), 1);
+        assert_eq!(bootconfig.config_str().matches(unprotected).count(), 1);
     }
 }
