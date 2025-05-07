@@ -25,6 +25,7 @@ pub mod device_path;
 pub mod dt_fixup;
 pub mod gbl_efi_ab_slot;
 pub mod gbl_efi_avb;
+pub mod gbl_efi_avf;
 pub mod gbl_efi_fastboot;
 pub mod gbl_efi_fastboot_usb;
 pub mod gbl_efi_image_loading;
