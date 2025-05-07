@@ -558,6 +558,10 @@ androidboot.config_2=val_2
                     ]
                     gen_android_test_vbmeta(parts, vbmeta_out)
 
+    # Generates a vbmeta image that doesn't verify any partition and will just
+    # trivially succeed.
+    gen_android_test_vbmeta([], out_dir / f"vbmeta_noop.img")
+
 
 def gen_zircon_test_images(zbi_tool):
     if not zbi_tool:

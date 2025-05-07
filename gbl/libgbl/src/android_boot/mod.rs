@@ -617,7 +617,7 @@ androidboot.veritymode=enforcing
         res.config_bytes().to_vec()
     }
 
-    pub(crate) struct MakeExpectedBootconfigInclude {
+    struct MakeExpectedBootconfigInclude {
         pub boot: bool,
         pub init_boot: bool,
         pub vendor_boot: bool,
@@ -651,8 +651,19 @@ androidboot.veritymode=enforcing
     }
 
     /// Helper for generating expected bootconfig after load and verification.
-    pub(crate) fn make_expected_bootconfig(
+    ///
+    /// # Args
+    ///
+    /// * `vbmeta_file``: The test file name for the target vbmeta data.
+    /// * `unlocked`: True if unlocked mode.
+    /// * `color`: The expected boot state color.
+    /// * `slot`: The expected slot.
+    /// * `vendor_config:` The expected vendor_boot config.
+    /// * `include`: Additional partition digest to include in the expected bootconfig.
+    fn make_expected_bootconfig(
         vbmeta_file: &str,
+        unlocked: bool,
+        color: BootStateColor,
         slot: char,
         vendor_config: &str,
         include: MakeExpectedBootconfigInclude,
@@ -664,6 +675,8 @@ androidboot.veritymode=enforcing
             .vbmeta_size(read_test_data(vbmeta_file.to_str().unwrap()).len())
             .digest(read_test_data_as_str(vbmeta_digest).strip_suffix("\n").unwrap())
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .unlocked(unlocked)
+            .color(color)
             .extra("androidboot.force_normal_boot=1\n")
             .extra(format!("androidboot.slot_suffix=_{slot}\n"))
             .extra("androidboot.gbl.version=0\n")
@@ -673,7 +686,6 @@ androidboot.veritymode=enforcing
 
         for name in ["boot", "vendor_boot", "init_boot", "dtbo", "dtb"].iter() {
             let file = vbmeta_file.with_extension(format!("{name}.digest.txt"));
-            println!("{file:?}");
             if include.is_include_str(name)
                 && Path::new(format!("{TEST_DATA_PATH}/{}", file.to_str().unwrap()).as_str())
                     .exists()
@@ -692,7 +704,8 @@ androidboot.veritymode=enforcing
     /// custom device tree.
     fn test_android_load_verify_fixup(
         slot_nr: u8,
-        partitions: &[(CString, String)],
+        partitions: &[(String, String)],
+        unlock: bool,
         expected_kernel: &[u8],
         expected_ramdisk: &[u8],
         expected_bootconfig: &[u8],
@@ -700,13 +713,14 @@ androidboot.veritymode=enforcing
         expected_fdt_property: &[(&str, &CStr, Option<&[u8]>)],
     ) {
         let mut storage = FakeGblOpsStorage::default();
-        for (part, file) in partitions {
-            storage.add_raw_device(part, read_test_data(file));
+        let partitions = partitions.iter().map(|(l, r)| (CString::new(l.clone()).unwrap(), r));
+        for (part, file) in partitions.filter(|(_, f)| !f.is_empty()) {
+            storage.add_raw_device(&part, read_test_data(file));
         }
         let mut ops = FakeGblOps::new(&storage);
         let slot_suffix = char::from_u32('a' as u32 + slot_nr as u32).unwrap();
         ops.current_slot = Some(Ok(slot(slot_suffix)));
-        ops.avb_ops.unlock_state = Ok(false);
+        ops.avb_ops.unlock_state = Ok(unlock);
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         let mut out_color = None;
         let mut handler = |color,
@@ -759,35 +773,77 @@ androidboot.veritymode=enforcing
         }
     }
 
+    /// Helper for testing that `android_load_verify_fixup` succeeds for the given partition setup
+    /// in various locked/unlocked mode.
+    fn test_android_load_verify_fixup_success(
+        slot: char,
+        partitions: &[(String, String)],
+        vbmeta: &str,
+        expected_kernel: &[u8],
+        expected_ramdisk: &[u8],
+        expected_vendor_bootconfig: &str,
+        expected_bootargs: &str,
+        expected_fdt_property: &[(&str, &CStr, Option<&[u8]>)],
+    ) {
+        let dtb = partitions.iter().any(|(name, _)| name.starts_with("dtb_"));
+        let dtbo = partitions.iter().any(|(name, _)| name.starts_with("dtbo_"));
+        let test_common = |unlock, color, vbmeta_file: &str| {
+            let mut partitions = partitions.to_vec();
+            partitions.push((format!("vbmeta_{slot}"), vbmeta_file.into()));
+            test_android_load_verify_fixup(
+                (u64::from(slot) - ('a' as u64)).try_into().unwrap(),
+                &partitions,
+                unlock,
+                expected_kernel,
+                expected_ramdisk,
+                &make_expected_bootconfig(
+                    vbmeta_file,
+                    unlock,
+                    color,
+                    slot,
+                    expected_vendor_bootconfig,
+                    MakeExpectedBootconfigInclude { dtb, dtbo, ..Default::default() },
+                ),
+                expected_bootargs,
+                expected_fdt_property,
+            )
+        };
+        // AVB verification passes in locked mode.
+        println!("\n---sub test: AVB passes, locked mode---\n");
+        test_common(false, BootStateColor::Green, vbmeta);
+        // AVB verification passes in unlocked mode.
+        println!("\n---sub test: AVB passes, unlocked mode---\n");
+        test_common(true, BootStateColor::Orange, vbmeta);
+        // Uses a noop vbmeta image that always succeeds but doesn't verified any on disk images.
+        // Tests that in unlocked mode, images will be loaded as usual.
+        println!("\n---sub test: Noop vbmeta, unlocked mode---\n");
+        // TODO(b/416000842): `android_load_verify_fixup` is not checking verification status of
+        // individual preloaded partitions. It will proceed even when locked, which is incorrect.
+        test_common(true, BootStateColor::Orange, "vbmeta_noop.img");
+    }
+
+    const EXPECTED_V2_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2";
+
     /// Helper for testing `android_load_verify_fixup` for v2 boot image or lower.
     fn test_android_load_verify_fixup_v2_or_lower(
         ver: u8,
         slot: char,
-        additional_parts: &[(&CStr, &str)],
+        additional_parts: &[(&str, &str)],
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
     ) {
-        let dtb =
-            additional_parts.iter().any(|(name, _)| name.to_str().unwrap().starts_with("dtb_"));
-        let dtbo =
-            additional_parts.iter().any(|(name, _)| name.to_str().unwrap().starts_with("dtbo_"));
-        let vbmeta = format!("vbmeta_v{ver}_{slot}.img");
-        let mut parts: Vec<(CString, String)> = vec![
-            (CString::new(format!("boot_{slot}")).unwrap(), format!("boot_v{ver}_{slot}.img")),
-            (CString::new(format!("vbmeta_{slot}")).unwrap(), vbmeta.clone()),
-        ];
+        let vbmeta_file = format!("vbmeta_v{ver}_{slot}.img");
+        let mut parts = vec![(format!("boot_{slot}"), format!("boot_v{ver}_{slot}.img"))];
         for (part, file) in additional_parts.iter().cloned() {
             parts.push((part.into(), file.into()));
         }
-
-        test_android_load_verify_fixup(
-            (u64::from(slot) - ('a' as u64)).try_into().unwrap(),
+        test_android_load_verify_fixup_success(
+            slot,
             &parts,
+            &vbmeta_file,
             &read_test_data(format!("kernel_{slot}.img")),
             &read_test_data(format!("generic_ramdisk_{slot}.img")),
-            &make_expected_bootconfig(&vbmeta, slot, "",
-                MakeExpectedBootconfigInclude {dtb, dtbo, ..Default::default() }
-            ),
-            "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2",
+            "",
+            EXPECTED_V2_CMDLINE,
             additional_expected_fdt_properties,
         )
     }
@@ -796,7 +852,7 @@ androidboot.veritymode=enforcing
     fn test_android_load_verify_fixup_v0_slot_a() {
         let fdt_prop: &[(&str, &CStr, Option<&[u8]>)] = &[("/chosen", c"dtb_slot", Some(b"a\0"))];
         // V0 image doesn't have built-in dtb. We need to provide from dtb partition.
-        let parts = &[(c"dtb_a", "dtb_a.img")];
+        let parts = &[("dtb_a", "dtb_a.img")];
         test_android_load_verify_fixup_v2_or_lower(0, 'a', parts, fdt_prop);
     }
 
@@ -806,14 +862,14 @@ androidboot.veritymode=enforcing
             ("/chosen", c"dtb_slot", Some(b"a\0")),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a", "dtbo_a.img"), (c"dtb_a", "dtb_a.img")];
+        let parts = &[("dtbo_a", "dtbo_a.img"), ("dtb_a", "dtb_a.img")];
         test_android_load_verify_fixup_v2_or_lower(0, 'a', parts, fdt_prop);
     }
 
     #[test]
     fn test_android_load_verify_fixup_v0_slot_b() {
         let fdt_prop: &[(&str, &CStr, Option<&[u8]>)] = &[("/chosen", c"dtb_slot", Some(b"b\0"))];
-        let parts = &[(c"dtb_b", "dtb_b.img")];
+        let parts = &[("dtb_b", "dtb_b.img")];
         test_android_load_verify_fixup_v2_or_lower(0, 'b', parts, fdt_prop);
     }
 
@@ -823,7 +879,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"dtb_slot", Some(b"b\0")),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b", "dtbo_b.img"), (c"dtb_b", "dtb_b.img")];
+        let parts = &[("dtbo_b", "dtbo_b.img"), ("dtb_b", "dtb_b.img")];
         test_android_load_verify_fixup_v2_or_lower(0, 'b', parts, fdt_prop);
     }
 
@@ -831,7 +887,7 @@ androidboot.veritymode=enforcing
     fn test_android_load_verify_fixup_v1_slot_a() {
         let fdt_prop: &[(&str, &CStr, Option<&[u8]>)] = &[("/chosen", c"dtb_slot", Some(b"a\0"))];
         // V1 image doesn't have built-in dtb. We need to provide from dtb partition.
-        let parts = &[(c"dtb_a", "dtb_a.img")];
+        let parts = &[("dtb_a", "dtb_a.img")];
         test_android_load_verify_fixup_v2_or_lower(1, 'a', parts, fdt_prop);
     }
 
@@ -841,14 +897,14 @@ androidboot.veritymode=enforcing
             ("/chosen", c"dtb_slot", Some(b"a\0")),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a", "dtbo_a.img"), (c"dtb_a", "dtb_a.img")];
+        let parts = &[("dtbo_a", "dtbo_a.img"), ("dtb_a", "dtb_a.img")];
         test_android_load_verify_fixup_v2_or_lower(1, 'a', parts, fdt_prop);
     }
 
     #[test]
     fn test_android_load_verify_fixup_v1_slot_b() {
         let fdt_prop: &[(&str, &CStr, Option<&[u8]>)] = &[("/chosen", c"dtb_slot", Some(b"b\0"))];
-        let parts = &[(c"dtb_b", "dtb_b.img")];
+        let parts = &[("dtb_b", "dtb_b.img")];
         test_android_load_verify_fixup_v2_or_lower(1, 'b', parts, fdt_prop);
     }
 
@@ -858,7 +914,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"dtb_slot", Some(b"b\0")),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b", "dtbo_b.img"), (c"dtb_b", "dtb_b.img")];
+        let parts = &[("dtbo_b", "dtbo_b.img"), ("dtb_b", "dtb_b.img")];
         test_android_load_verify_fixup_v2_or_lower(1, 'b', parts, fdt_prop);
     }
 
@@ -875,7 +931,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
         test_android_load_verify_fixup_v2_or_lower(2, 'a', parts, fdt_prop);
     }
 
@@ -891,7 +947,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
         test_android_load_verify_fixup_v2_or_lower(2, 'b', parts, fdt_prop);
     }
 
@@ -909,25 +965,18 @@ androidboot.veritymode=enforcing
     /// Common helper for testing `android_load_verify_fixup` for v3/v4 boot image.
     fn test_android_load_verify_fixup_v3_or_v4(
         slot: char,
-        partitions: &[(CString, String)],
+        partitions: &[(String, String)],
         vbmeta_file: &str,
         expected_vendor_bootconfig: &str,
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
     ) {
-        let dtbo = partitions
-            .iter()
-            .any(|(name, _)| name.clone().into_string().unwrap().starts_with("dtbo_"));
-        test_android_load_verify_fixup(
-            (u64::from(slot) - ('a' as u64)).try_into().unwrap(),
-            &partitions,
+        test_android_load_verify_fixup_success(
+            slot,
+            partitions,
+            vbmeta_file,
             &read_test_data(format!("kernel_{slot}.img")),
             &expected_v3_v4_ramdisk(slot),
-            &make_expected_bootconfig(
-                &vbmeta_file,
-                slot,
-                expected_vendor_bootconfig,
-                MakeExpectedBootconfigInclude { dtbo, dtb: false, ..Default::default() },
-            ),
+            expected_vendor_bootconfig,
             EXPECTED_V3_V4_CMDLINE,
             additional_expected_fdt_properties,
         )
@@ -939,17 +988,13 @@ androidboot.veritymode=enforcing
         vendor_ver: u32,
         slot: char,
         expected_vendor_bootconfig: &str,
-        additional_parts: &[(CString, String)],
+        additional_parts: &[(String, String)],
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
     ) {
         let vbmeta = format!("vbmeta_v{boot_ver}_v{vendor_ver}_{slot}.img");
-        let mut parts: Vec<(CString, String)> = vec![
-            (CString::new(format!("boot_{slot}")).unwrap(), format!("boot_v{boot_ver}_{slot}.img")),
-            (
-                CString::new(format!("vendor_boot_{slot}")).unwrap(),
-                format!("vendor_boot_v{vendor_ver}_{slot}.img"),
-            ),
-            (CString::new(format!("vbmeta_{slot}")).unwrap(), vbmeta.clone()),
+        let mut parts = vec![
+            (format!("boot_{slot}"), format!("boot_v{boot_ver}_{slot}.img")),
+            (format!("vendor_boot_{slot}"), format!("vendor_boot_v{vendor_ver}_{slot}.img")),
         ];
         parts.extend_from_slice(additional_parts);
         test_android_load_verify_fixup_v3_or_v4(
@@ -973,7 +1018,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(3, 3, 'a', "", parts, fdt_prop);
     }
 
@@ -989,7 +1034,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(3, 3, 'b', "", parts, fdt_prop);
     }
 
@@ -1005,7 +1050,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(4, 3, 'a', "", parts, fdt_prop);
     }
 
@@ -1021,7 +1066,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(4, 3, 'b', "", parts, fdt_prop);
     }
 
@@ -1038,7 +1083,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(3, 4, 'a', config, parts, fdt_prop);
     }
@@ -1056,7 +1101,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(3, 4, 'b', config, parts, fdt_prop);
     }
@@ -1074,7 +1119,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(4, 4, 'a', config, parts, fdt_prop);
     }
@@ -1092,7 +1137,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(4, 4, 'b', config, parts, fdt_prop);
     }
@@ -1101,17 +1146,13 @@ androidboot.veritymode=enforcing
     fn test_android_load_verify_fixup_v4_vendor_boot_dttable(
         slot: char,
         expected_vendor_bootconfig: &str,
-        additional_parts: &[(CString, String)],
+        additional_parts: &[(String, String)],
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
     ) {
         let vbmeta = format!("vbmeta_v4_dttable_{slot}.img");
-        let mut parts: Vec<(CString, String)> = vec![
-            (CString::new(format!("boot_{slot}")).unwrap(), format!("boot_v4_{slot}.img")),
-            (
-                CString::new(format!("vendor_boot_{slot}")).unwrap(),
-                format!("vendor_boot_v4_dttable_{slot}.img"),
-            ),
-            (CString::new(format!("vbmeta_{slot}")).unwrap(), vbmeta.clone()),
+        let mut parts = vec![
+            (format!("boot_{slot}"), format!("boot_v4_{slot}.img")),
+            (format!("vendor_boot_{slot}"), format!("vendor_boot_v4_dttable_{slot}.img")),
         ];
         parts.extend_from_slice(additional_parts);
         test_android_load_verify_fixup_v3_or_v4(
@@ -1143,21 +1184,14 @@ androidboot.veritymode=enforcing
         vendor_ver: u32,
         slot: char,
         expected_vendor_bootconfig: &str,
-        additional_parts: &[(CString, String)],
+        additional_parts: &[(String, String)],
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
     ) {
         let vbmeta = format!("vbmeta_v{boot_ver}_v{vendor_ver}_init_boot_{slot}.img");
-        let mut parts: Vec<(CString, String)> = vec![
-            (
-                CString::new(format!("boot_{slot}")).unwrap(),
-                format!("boot_no_ramdisk_v{boot_ver}_{slot}.img"),
-            ),
-            (
-                CString::new(format!("vendor_boot_{slot}")).unwrap(),
-                format!("vendor_boot_v{vendor_ver}_{slot}.img"),
-            ),
-            (CString::new(format!("init_boot_{slot}")).unwrap(), format!("init_boot_{slot}.img")),
-            (CString::new(format!("vbmeta_{slot}")).unwrap(), vbmeta.clone()),
+        let mut parts = vec![
+            (format!("boot_{slot}"), format!("boot_no_ramdisk_v{boot_ver}_{slot}.img")),
+            (format!("vendor_boot_{slot}"), format!("vendor_boot_v{vendor_ver}_{slot}.img")),
+            (format!("init_boot_{slot}"), format!("init_boot_{slot}.img")),
         ];
         parts.extend_from_slice(additional_parts);
         test_android_load_verify_fixup_v3_or_v4(
@@ -1181,7 +1215,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
         test_android_load_verify_fixup_v3_or_v4_init_boot(3, 3, 'a', "", parts, fdt_prop);
     }
 
@@ -1197,7 +1231,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
         test_android_load_verify_fixup_v3_or_v4_init_boot(3, 3, 'b', "", parts, fdt_prop);
     }
 
@@ -1213,7 +1247,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
         test_android_load_verify_fixup_v3_or_v4_init_boot(4, 3, 'a', "", parts, fdt_prop);
     }
 
@@ -1229,7 +1263,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
         test_android_load_verify_fixup_v3_or_v4_init_boot(4, 3, 'b', "", parts, fdt_prop);
     }
 
@@ -1246,7 +1280,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         test_android_load_verify_fixup_v3_or_v4_init_boot(3, 4, 'a', config, parts, fdt_prop);
     }
@@ -1264,7 +1298,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         test_android_load_verify_fixup_v3_or_v4_init_boot(3, 4, 'b', config, parts, fdt_prop);
     }
@@ -1282,7 +1316,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_a_property", Some(b"overlay_a_val\0")),
         ];
-        let parts = &[(c"dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         test_android_load_verify_fixup_v3_or_v4_init_boot(4, 4, 'a', config, parts, fdt_prop);
     }
@@ -1300,7 +1334,7 @@ androidboot.veritymode=enforcing
             ("/chosen", c"builtin", Some(&[1])),
             ("/chosen", c"overlay_b_property", Some(b"overlay_b_val\0")),
         ];
-        let parts = &[(c"dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         test_android_load_verify_fixup_v3_or_v4_init_boot(4, 4, 'b', config, parts, fdt_prop);
     }
@@ -1308,18 +1342,21 @@ androidboot.veritymode=enforcing
     /// Helper for testing v4 boot image with different kernel compression.
     fn test_android_load_verify_boot_v4_compression_slot(compression: &str) {
         let vbmeta = format!("vbmeta_v4_{compression}_a.img");
-        let parts: Vec<(CString, String)> = vec![
-            (CString::new(format!("boot_a")).unwrap(), format!("boot_v4_{compression}_a.img")),
-            (CString::new(format!("vendor_boot_a")).unwrap(), format!("vendor_boot_v4_a.img")),
-            (CString::new(format!("vbmeta_a")).unwrap(), vbmeta.clone()),
+        let parts = vec![
+            (format!("boot_a"), format!("boot_v4_{compression}_a.img")),
+            (format!("vendor_boot_a"), format!("vendor_boot_v4_a.img")),
+            (format!("vbmeta_a"), vbmeta.clone()),
         ];
         test_android_load_verify_fixup(
             0,
             &parts,
+            false,
             &read_test_data(format!("gki_boot_{compression}_kernel_uncompressed")),
             &expected_v3_v4_ramdisk('a'),
             &make_expected_bootconfig(
                 &vbmeta,
+                false,
+                BootStateColor::Green,
                 'a',
                 TEST_VENDOR_BOOTCONFIG,
                 MakeExpectedBootconfigInclude { dtbo: false, dtb: false, ..Default::default() },
