@@ -34,6 +34,7 @@ use efi::{
     protocol::{
         dt_fixup::DtFixupProtocol,
         gbl_efi_avb::GblAvbProtocol,
+        gbl_efi_avf::GblAvfProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
@@ -478,6 +479,55 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
+    fn avf_is_supported(&mut self) -> Result<bool> {
+        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvfProtocol>()
+        {
+            Ok(_) => Ok(true),
+            // Protocol is optional.
+            Err(Error::NotFound) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn avf_read_vendor_dice_handover<'c>(&mut self, buffer: &'c mut [u8]) -> Result<&'c [u8]> {
+        let handover_size = self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblAvfProtocol>()?
+            .read_vendor_dice_handover(buffer)?;
+
+        Ok(&buffer[..handover_size])
+    }
+
+    fn avf_read_secretkeeper_public_key<'c>(
+        &mut self,
+        buffer: &'c mut [u8],
+    ) -> Result<Option<&'c [u8]>> {
+        match self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblAvfProtocol>()?
+            .read_secretkeeper_public_key(buffer)
+        {
+            Ok(public_key_size) => Ok(Some(&buffer[..public_key_size])),
+            // Secret Keeper public key may not be provided for VMs booted with the legacy
+            // `VmSecrets::V1` scheme. This shouldn't be supported on modern devices, so
+            // print a warning to keep vendors aware.
+            //
+            // https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/docs/updatable_vm.md
+            Err(Error::NotImplemented) => {
+                efi_println!(
+                    self.efi_entry,
+                    "Warning: secret keeper public key isn't provided. PVM may not work properly.",
+                );
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     fn get_image_buffer(
         &mut self,
         image_name: &str,
@@ -719,6 +769,17 @@ mod test {
     use efi_types::GBL_EFI_BOOT_REASON;
     use mockall::predicate::eq;
     use std::slice;
+
+    /// Represents possible outcomes for protocol method call.
+    #[derive(Clone, Copy)]
+    enum ProtocolCallStatus {
+        /// Protocol found. Method call succeeded.
+        Success,
+        /// Protocol not found.
+        ProtocolLookupError(Error),
+        /// Protocol found. Method call failed.
+        ProtocolCallError(Error),
+    }
 
     #[test]
     fn ops_write_trait() {
@@ -1050,6 +1111,192 @@ mod test {
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_erase_persistent_value(c"test"), Err(AvbIoError::NotImplemented));
+    }
+
+    #[test]
+    fn ops_avf_is_supported() {
+        let mut mock_efi = MockEfi::new();
+        let avf = GblAvfProtocol::default();
+        mock_efi
+            .boot_services
+            .expect_find_first_and_open::<GblAvfProtocol>()
+            .return_once(move || Ok(avf));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+
+        assert_eq!(ops.avf_is_supported(), Ok(true));
+    }
+
+    #[test]
+    fn ops_avf_is_supported_not_found() {
+        let mut mock_efi = MockEfi::new();
+        mock_efi
+            .boot_services
+            .expect_find_first_and_open::<GblAvfProtocol>()
+            .return_once(|| Err(Error::NotFound));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+
+        assert_eq!(ops.avf_is_supported(), Ok(false));
+    }
+
+    /// Helper for testing `GblAvfProtocol.read_vendor_dice_handover`
+    fn test_read_vendor_dice_handover<'a>(
+        handover_buffer: &'a mut [u8],
+        handover_to_apply: &'static [u8],
+        call_status: ProtocolCallStatus,
+    ) -> Result<&'a [u8]> {
+        let mut mock_efi = MockEfi::new();
+        let call_status_scoped = call_status;
+
+        let mut avf = GblAvfProtocol::default();
+        avf.expect_read_vendor_dice_handover().return_once(move |buffer| {
+            if let ProtocolCallStatus::ProtocolCallError(err) = call_status_scoped {
+                return Err(err);
+            }
+            buffer[..handover_to_apply.len()].copy_from_slice(handover_to_apply);
+            Ok(handover_to_apply.len())
+        });
+
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvfProtocol>().return_once(
+            move || {
+                if let ProtocolCallStatus::ProtocolLookupError(err) = call_status {
+                    return Err(err);
+                }
+                Ok(avf)
+            },
+        );
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+        ops.avf_read_vendor_dice_handover(handover_buffer)
+    }
+
+    #[test]
+    fn ops_avf_read_vendor_dice_handover_returned() {
+        const HANDOVER_TO_APPLY: &[u8] = b"handover";
+
+        let mut handover_buffer = [0x0; HANDOVER_TO_APPLY.len()];
+        assert_eq!(
+            test_read_vendor_dice_handover(
+                &mut handover_buffer,
+                HANDOVER_TO_APPLY,
+                ProtocolCallStatus::Success
+            ),
+            Ok(HANDOVER_TO_APPLY)
+        );
+    }
+
+    #[test]
+    fn ops_avf_read_vendor_dice_handover_protocol_not_found() {
+        assert_eq!(
+            test_read_vendor_dice_handover(
+                &mut [],
+                &[],
+                ProtocolCallStatus::ProtocolLookupError(Error::NotFound),
+            ),
+            Err(Error::NotFound),
+        );
+    }
+
+    #[test]
+    fn ops_avf_read_vendor_dice_handover_error_buffer_too_small() {
+        const EXPECTED_SIZE: usize = 10;
+
+        assert_eq!(
+            test_read_vendor_dice_handover(
+                &mut [],
+                &[],
+                ProtocolCallStatus::ProtocolCallError(Error::BufferTooSmall(Some(EXPECTED_SIZE))),
+            ),
+            Err(Error::BufferTooSmall(Some(EXPECTED_SIZE))),
+        );
+    }
+
+    /// Helper for testing `GblAvfProtocol.read_secretkeeper_public_key`
+    fn test_read_secretkeeper_public_key<'a>(
+        key_buffer: &'a mut [u8],
+        key_to_apply: &'static [u8],
+        call_status: ProtocolCallStatus,
+    ) -> Result<Option<&'a [u8]>> {
+        let mut mock_efi = MockEfi::new();
+        mock_efi.con_out.expect_write_str().return_const(Ok(()));
+        let call_status_scoped = call_status;
+
+        let mut avf = GblAvfProtocol::default();
+        avf.expect_read_secretkeeper_public_key().return_once(move |buffer| {
+            if let ProtocolCallStatus::ProtocolCallError(err) = call_status_scoped {
+                return Err(err);
+            }
+            buffer[..key_to_apply.len()].copy_from_slice(key_to_apply);
+            Ok(key_to_apply.len())
+        });
+
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvfProtocol>().return_once(
+            move || {
+                if let ProtocolCallStatus::ProtocolLookupError(err) = call_status {
+                    return Err(err);
+                }
+                Ok(avf)
+            },
+        );
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+        ops.avf_read_secretkeeper_public_key(key_buffer)
+    }
+
+    #[test]
+    fn ops_avf_read_secretkeeper_public_key_returned() {
+        const PUBLIC_KEY: &[u8] = b"secretkeeper_public_key";
+        let mut key_buffer = [0u8; PUBLIC_KEY.len()];
+        assert_eq!(
+            test_read_secretkeeper_public_key(
+                &mut key_buffer,
+                PUBLIC_KEY,
+                ProtocolCallStatus::Success
+            ),
+            Ok(Some(PUBLIC_KEY)),
+        );
+    }
+
+    #[test]
+    fn ops_avf_read_secretkeeper_public_key_not_implemented() {
+        assert_eq!(
+            test_read_secretkeeper_public_key(
+                &mut [],
+                &[],
+                ProtocolCallStatus::ProtocolCallError(Error::NotImplemented)
+            ),
+            Ok(None),
+        );
+    }
+
+    #[test]
+    fn ops_avf_read_secretkeeper_public_key_protocol_not_found() {
+        assert_eq!(
+            test_read_secretkeeper_public_key(
+                &mut [],
+                &[],
+                ProtocolCallStatus::ProtocolLookupError(Error::NotFound)
+            ),
+            Err(Error::NotFound),
+        );
+    }
+
+    #[test]
+    fn ops_avf_read_secretkeeper_public_key_buffer_too_small() {
+        const EXPECTED_SIZE: usize = 64;
+        assert_eq!(
+            test_read_secretkeeper_public_key(
+                &mut [],
+                &[],
+                ProtocolCallStatus::ProtocolCallError(Error::BufferTooSmall(Some(EXPECTED_SIZE)))
+            ),
+            Err(Error::BufferTooSmall(Some(EXPECTED_SIZE))),
+        );
     }
 
     /// Helper for testing `set_boot_reason`

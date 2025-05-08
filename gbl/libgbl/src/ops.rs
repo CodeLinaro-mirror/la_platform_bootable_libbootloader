@@ -309,6 +309,26 @@ pub trait GblOps<'a, 'd> {
         vendor_security_patch: Option<&[u8]>,
     ) -> AvbIoResult<()>;
 
+    /// Check AVF vendor implementations are provided.
+    fn avf_is_supported(&mut self) -> Result<bool, Error>;
+
+    /// Returns vendor device handover.
+    ///
+    /// To be wrapped by GBL and provided to HLOS via the device tree.
+    fn avf_read_vendor_dice_handover<'c>(
+        &mut self,
+        buffer: &'c mut [u8],
+    ) -> Result<&'c [u8], Error>;
+
+    /// Returns the Secret Keeper public key.
+    ///
+    /// To be placed into the reference DT, which is built by GBL and passed to HLOS
+    /// via the device tree.
+    fn avf_read_secretkeeper_public_key<'c>(
+        &mut self,
+        buffer: &'c mut [u8],
+    ) -> Result<Option<&'c [u8]>, Error>;
+
     /// Get buffer for specific image of requested size.
     fn get_image_buffer(
         &mut self,
@@ -692,6 +712,24 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.avb_validate_vbmeta_public_key(public_key, public_key_metadata)
     }
 
+    fn avf_is_supported(&mut self) -> Result<bool, Error> {
+        self.ops.avf_is_supported()
+    }
+
+    fn avf_read_vendor_dice_handover<'c>(
+        &mut self,
+        buffer: &'c mut [u8],
+    ) -> Result<&'c [u8], Error> {
+        self.ops.avf_read_vendor_dice_handover(buffer)
+    }
+
+    fn avf_read_secretkeeper_public_key<'c>(
+        &mut self,
+        buffer: &'c mut [u8],
+    ) -> Result<Option<&'c [u8]>, Error> {
+        self.ops.avf_read_secretkeeper_public_key(buffer)
+    }
+
     fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {
         // Ramboot is not suppose to call this interface.
         unreachable!()
@@ -900,6 +938,9 @@ pub(crate) mod test {
         /// If true, return [IoError::NotImplemented] from
         /// [avb_cert_read_permanent_attributes_hash].
         pub avb_cert_read_permanent_attributes_hash_not_implemented: bool,
+
+        /// For returned by `avf_is_supported`
+        pub avf_is_supported: bool,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -919,6 +960,10 @@ pub(crate) mod test {
         pub const GBL_TEST_VAR: &'static str = "gbl-test-var";
         pub const GBL_TEST_VAR_VAL: &'static str = "gbl-test-var-val";
         pub const GBL_TEST_BOOTCONFIG: &'static str = "arg1=val1\x0aarg2=val2\x0a";
+        /// TODO(b/391191885): Generate real dice handover or use prebuilt
+        pub const GBL_TEST_AVF_VENDOR_DICE_HANDOVER: &'static [u8] = b"fake_handover_always_fail";
+        pub const GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY: &'static [u8] =
+            b"secret_keeper_public_key";
 
         pub fn new(partitions: &'a [TestGblDisk]) -> Self {
             let mut res = Self {
@@ -1099,6 +1144,36 @@ pub(crate) mod test {
                 ),
                 _ => Ok(()),
             }
+        }
+
+        fn avf_is_supported(&mut self) -> Result<bool, Error> {
+            Ok(self.avf_is_supported)
+        }
+
+        fn avf_read_vendor_dice_handover<'c>(
+            &mut self,
+            buffer: &'c mut [u8],
+        ) -> Result<&'c [u8], Error> {
+            if !self.avf_is_supported {
+                return Err(Error::NotImplemented);
+            }
+
+            let (out, _) = buffer.split_at_mut(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER.len());
+            out.clone_from_slice(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER);
+            Ok(out)
+        }
+
+        fn avf_read_secretkeeper_public_key<'c>(
+            &mut self,
+            buffer: &'c mut [u8],
+        ) -> Result<Option<&'c [u8]>, Error> {
+            if !self.avf_is_supported {
+                return Err(Error::NotImplemented);
+            }
+
+            let (out, _) = buffer.split_at_mut(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY.len());
+            out.clone_from_slice(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY);
+            Ok(Some(out))
         }
 
         fn get_image_buffer(

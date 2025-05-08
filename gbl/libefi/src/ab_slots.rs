@@ -357,6 +357,21 @@ mod test {
             unimplemented!();
         }
 
+        fn avf_is_supported(&mut self) -> Result<bool> {
+            unimplemented!();
+        }
+
+        fn avf_read_vendor_dice_handover<'c>(&mut self, _buffer: &'c mut [u8]) -> Result<&'c [u8]> {
+            unimplemented!();
+        }
+
+        fn avf_read_secretkeeper_public_key<'c>(
+            &mut self,
+            _buffer: &'c mut [u8],
+        ) -> Result<Option<&'c [u8]>> {
+            unimplemented!();
+        }
+
         fn get_image_buffer(
             &mut self,
             _image_name: &str,
