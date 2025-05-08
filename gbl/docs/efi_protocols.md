@@ -121,6 +121,11 @@ to specify their own custom fastboot triggers.
 Used for logging and debugging. Implementations must provide this protocol, but
 the functions may be no-ops.
 
+### TimestampProtocol
+
+* [`EFI_TIMESTAMP_PROTOCOL`](https://uefi.org/specs/UEFI/2.10/39_Micellaneous_Protocols.html?highlight=timestamp#efi-timestampprotocol-micellaneous-protocols)
+* optional. Enable performance analysis.
+
 ### RandomNumberGeneratorProtocol
 
 * [`EFI_RNG_PROTOCOL`](https://uefi.org/specs/UEFI/2.11/37_Secure_Technologies.html#random-number-generator-protocol)

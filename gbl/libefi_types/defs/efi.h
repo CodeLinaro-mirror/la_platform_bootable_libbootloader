@@ -41,6 +41,7 @@
 #include "protocols/simple_network_protocol.h"
 #include "protocols/simple_text_input_protocol.h"
 #include "protocols/simple_text_output_protocol.h"
+#include "protocols/timestamp.h"
 #include "system_table.h"
 #include "types.h"
 

@@ -14,11 +14,17 @@
 
 //! This file provides some utilities built on EFI APIs.
 
-use crate::{EfiEntry, Event, EventType};
-use core::{future::Future, time::Duration};
-use efi_types::{EFI_TIMER_DELAY_TIMER_PERIODIC, EFI_TIMER_DELAY_TIMER_RELATIVE};
+use crate::{protocol::timestamp::TimestampProtocol, EfiEntry, Event, EventType};
+use core::{
+    fmt::{Display, Formatter},
+    future::Future,
+    time::Duration,
+};
+use efi_types::{
+    EfiTimestampProperties, EFI_TIMER_DELAY_TIMER_PERIODIC, EFI_TIMER_DELAY_TIMER_RELATIVE,
+};
 use gbl_async::{select, yield_now};
-use liberror::Result;
+use liberror::{Error, Result};
 
 /// `Timeout` provide APIs for checking timeout.
 pub struct Timeout<'a> {
@@ -103,5 +109,52 @@ impl<'a> RecurringTimer<'a> {
             yield_now().await;
         }
         Ok(())
+    }
+}
+
+/// Represents a timestamp obtained using EFI_TIMESTAMP_PROTOCOL.
+pub struct Timestamp(Result<u64>);
+
+/// The result returned by `Timestamp::elapsed()`.
+pub struct Elapsed(pub Result<Duration>);
+
+impl Display for Elapsed {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            Ok(ref v) => write!(f, "{:?}", v),
+            Err(Error::NotFound) => write!(f, "EFI_TIMESTAMP_PROTOCOL not supported."),
+            Err(e) => write!(f, "Error getting timestamp: {e}"),
+        }
+    }
+}
+
+impl Timestamp {
+    /// Creates a new instance from the current timestamp.
+    pub fn now(entry: &EfiEntry) -> Self {
+        let v = entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<TimestampProtocol>()
+            .and_then(|v| v.get_timestamp());
+        Self(v)
+    }
+
+    /// Computes the time elapsed since this time instant.
+    ///
+    /// The API assumes that current timestamp wraps at most once since this timestamp.
+    ///
+    /// Example:
+    ///
+    /// let t0 = Timestamp::now(entry);
+    /// efi_println!(entry, "Time elapsed: {}", t0.elapsed(entry));
+    pub fn elapsed(&self, entry: &EfiEntry) -> Elapsed {
+        Elapsed((|| {
+            let protocol =
+                entry.system_table().boot_services().find_first_and_open::<TimestampProtocol>()?;
+            let EfiTimestampProperties { frequency, end_value } = protocol.get_properties()?;
+            let now = protocol.get_timestamp()?;
+            let delta = now.overflowing_sub(self.0?).0 as u128 % (end_value as u128 + 1);
+            Ok(Duration::from_millis((delta as u64) * 1000 / frequency))
+        })())
     }
 }

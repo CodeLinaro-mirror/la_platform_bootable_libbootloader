@@ -17,6 +17,7 @@ use core::{cmp::max, fmt::Write};
 use efi::{
     efi_println,
     protocol::{block_io::BlockIoProtocol, block_io2::BlockIo2Protocol, Protocol},
+    utils::Timestamp,
     EfiEntry,
 };
 use efi_types::EfiBlockIoMedia;
@@ -88,6 +89,7 @@ pub type EfiGblDisk<'a> = GblDisk<Disk<EfiBlockDeviceIo<'a>, Vec<u8>>, Gpt<Vec<u
 
 /// Finds and returns all EFI devices supporting either EFI_BLOCK_IO or EFI_BLOCK_IO2 protocol.
 pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, Error> {
+    let t_start = Timestamp::now(efi_entry);
     let bs = efi_entry.system_table().boot_services();
     let block_dev_handles = bs.locate_handle_buffer_by_protocol::<BlockIoProtocol>()?;
     let mut gbl_disks = vec![];
@@ -113,5 +115,6 @@ pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, E
         };
         gbl_disks.push(disk);
     }
+    efi_println!(efi_entry, "All block devices scanned. Time: {}", t_start.elapsed(efi_entry));
     Ok(gbl_disks)
 }
