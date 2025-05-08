@@ -266,7 +266,7 @@ fn check_entries(header: &GptHeader, entries: &[u8]) -> Result<()> {
 
 /// GptEntry is the partition entry data structure in the GPT.
 #[repr(C, packed)]
-#[derive(Debug, Copy, Clone, Immutable, IntoBytes, FromBytes, KnownLayout, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 pub struct GptEntry {
     /// Partition type GUID.
     pub part_type: [u8; GPT_GUID_LEN],
@@ -347,7 +347,7 @@ enum HeaderType {
 }
 
 /// `Partition` contains information about a GPT partition.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Partition {
     entry: GptEntry,
     block_size: u64,
@@ -426,7 +426,7 @@ impl Iterator for PartitionIterator<'_> {
 }
 
 /// Contains result of GPT syncing/restoration.
-#[derive(Copy, Clone, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum GptSyncResult {
     /// Both primary and secondary GPT are valid.
     #[default]
@@ -469,12 +469,12 @@ impl core::fmt::Display for GptSyncResult {
 
 /// A packed wrapper of `Option<NonZeroU64>`
 #[repr(C, packed)]
-#[derive(Debug, Copy, Clone, Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Copy, Clone, Debug, Immutable, FromBytes, IntoBytes, KnownLayout)]
 struct BlockSize(Option<NonZeroU64>);
 
 /// Represents the structure of a load buffer for loading/verifying/syncing up to N GPT entries.
 #[repr(C, packed)]
-#[derive(Debug, Copy, Clone, Immutable, IntoBytes, FromBytes)]
+#[derive(Copy, Clone, Debug, Immutable, FromBytes, IntoBytes)]
 pub struct GptLoadBufferN<const N: usize> {
     // GPT doesn't care about block size. But it's easier to have it available for computing offset
     // and size in bytes for partitions. It's also used as a flag for indicating whether a valid

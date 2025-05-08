@@ -92,7 +92,7 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
 ///                                       const AbrSlotData* b_slot_data, uint8_t one_shot_flags);
 /// } AbrOps;
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct AbrOps {
     pub context: *mut c_void,
     pub read_abr_metadata:
@@ -393,7 +393,7 @@ pub unsafe extern "C" fn AbrMarkSlotSuccessful(
 /// TODO(b/338243123): Detailed documentation is available in Fuchsia upstream header
 /// "src/firmware/lib/abr/include/lib/abr/abr.h", which will migrate to the GBL repo.
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct SlotInfo {
     /// Whether the slot is expected to be bootable.
     pub is_bootable: bool,

@@ -25,7 +25,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Ref};
 
 /// Rust wrapper for the dt table header
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, IntoBytes, FromBytes, Immutable, KnownLayout, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 struct DtTableHeader(dt_table_header);
 
 impl DtTableHeader {
@@ -52,7 +52,7 @@ impl DtTableHeader {
 
 /// Rust wrapper for the dt table entry
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, Immutable, IntoBytes, KnownLayout, FromBytes, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 struct DtTableHeaderEntry(dt_table_entry);
 
 impl DtTableHeaderEntry {
@@ -78,7 +78,7 @@ impl DtTableHeaderEntry {
 }
 
 /// Metadata provided by entry header
-#[derive(Copy, Default, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct DtTableMetadata {
     /// id field from corresponding entry header
     pub id: u32,
@@ -89,7 +89,7 @@ pub struct DtTableMetadata {
 }
 
 /// Device tree blob obtained from multidt table image
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DtTableEntry<'a> {
     /// dtb payload extracted from image
     pub dtb: &'a [u8],

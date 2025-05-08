@@ -30,7 +30,7 @@ pub const MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG: &str =
     "At most 256 device components are supported to build the final one";
 
 /// The source device tree component is coming from.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DeviceTreeComponentSource {
     /// Loaded from Boot partition.
     Boot,
@@ -43,7 +43,7 @@ pub enum DeviceTreeComponentSource {
 }
 
 /// The device tree component type.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DeviceTreeComponentType {
     /// HLOS base device tree.
     DeviceTree,
@@ -75,7 +75,7 @@ impl core::fmt::Display for DeviceTreeComponentType {
 }
 
 /// Device tree component (device tree or overlay) to build the final one.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DeviceTreeComponent<'a> {
     /// Source the component is loaded from.
     pub component_source: DeviceTreeComponentSource,

@@ -78,7 +78,7 @@ macro_rules! avb_print {
 }
 
 /// `SlotIndex` represents the A/B/R slot index.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SlotIndex {
     /// A slot; normal boot.
     A,
@@ -182,7 +182,7 @@ pub struct SlotInfo {
 
 /// `AbrSlotData` is the wire format metadata for A/B slot.
 #[repr(C, packed)]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct AbrSlotData {
     /// Slot priority. Unbootable slots should always have priority 0.
     pub priority: u8,
@@ -253,7 +253,7 @@ impl AbrSlotData {
 
 /// `AbrData` is the wire format of A/B/R metadata.
 #[repr(C, packed)]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct AbrData {
     /// Magic value; must be [ABR_MAGIC].
     pub magic: [u8; 4],

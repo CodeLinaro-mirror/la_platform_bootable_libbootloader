@@ -187,7 +187,7 @@ pub fn fdt_encode_cell_sized_property(
 
 /// Rust wrapper for the FDT header data.
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, Immutable, IntoBytes, KnownLayout, FromBytes, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 pub struct FdtHeader(fdt_header);
 
 impl FdtHeader {

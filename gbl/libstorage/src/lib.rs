@@ -44,7 +44,7 @@ pub mod ram_block;
 pub use ram_block::RamBlockIo;
 
 /// `BlockInfo` contains information for a block device.
-#[derive(Clone, Copy, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct BlockInfo {
     /// Native block size of the block device.
     pub block_size: u64,

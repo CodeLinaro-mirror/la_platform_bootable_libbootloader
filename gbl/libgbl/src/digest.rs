@@ -15,7 +15,7 @@
 //! GBL Digest trait that defines interface for hash computation.
 
 /// List of supported algorithms
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Algorithm {
     /// SHA256 algorithm
     SHA256,

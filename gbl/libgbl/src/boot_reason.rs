@@ -16,7 +16,7 @@
 
 use core::fmt::{Debug, Display, Formatter};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Clone, Debug, PartialEq)]
 /// Boot reasons that could be used in [BootMode]
 pub enum KnownBootReason {
     // kernel

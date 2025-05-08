@@ -133,7 +133,7 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> Default for Task<'a, 'b, B, P> {
 }
 
 /// Contains the load buffer layout of images loaded by "fastboot boot".
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum LoadedImageInfo {
     /// Android loaded images.
     Android {
@@ -156,7 +156,7 @@ pub enum LoadedImageInfo {
 }
 
 /// Contains result data returned by GBL Fastboot.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct GblFastbootResult {
     /// Buffer layout for images loaded by "fastboot boot"
     pub loaded_image_info: Option<LoadedImageInfo>,

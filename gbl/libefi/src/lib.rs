@@ -181,7 +181,7 @@ pub fn exit_boot_services(entry: EfiEntry, mmap_buffer: &mut [u8]) -> Result<Efi
 }
 
 /// `SystemTable` provides methods for accessing fields in `EFI_SYSTEM_TABLE`.
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 pub struct SystemTable<'a> {
     efi_entry: &'a EfiEntry,
     table: &'a EfiSystemTable,
@@ -254,7 +254,7 @@ impl<'a> SystemTable<'a> {
 }
 
 /// `BootServices` provides methods for accessing various EFI_BOOT_SERVICES interfaces.
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 pub struct BootServices<'a> {
     efi_entry: &'a EfiEntry,
     boot_services: &'a EfiBootService,
@@ -517,7 +517,7 @@ impl<'a> BootServices<'a> {
 }
 
 /// `RuntimeServices` provides methods for accessing various EFI_RUNTIME_SERVICES interfaces.
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 pub struct RuntimeServices {
     runtime_services: EfiRuntimeService,
 }
@@ -863,7 +863,7 @@ impl<'a> IntoIterator for &EfiMemoryAttributesTable<'a> {
 }
 
 /// A type representing a UEFI handle to a UEFI device.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct DeviceHandle(EfiHandle);
 
 impl DeviceHandle {

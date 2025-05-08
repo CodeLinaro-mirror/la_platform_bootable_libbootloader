@@ -33,7 +33,7 @@ const SPARSE_HEADER_MAJOR_VER: u16 = 1;
 const SPARSE_HEADER_MINOR_VER: u16 = 0;
 
 #[repr(C)]
-#[derive(Debug, Default, Copy, Clone, Immutable, IntoBytes, FromBytes)]
+#[derive(Copy, Clone, Debug, Default, Immutable, FromBytes, IntoBytes)]
 pub struct SparseHeader {
     pub magic: u32,
     pub major_version: u16,
@@ -54,7 +54,7 @@ impl SparseHeader {
 }
 
 #[repr(C)]
-#[derive(Debug, Default, Copy, Clone, IntoBytes, FromBytes)]
+#[derive(Copy, Clone, Debug, Default, FromBytes, IntoBytes)]
 pub struct ChunkHeader {
     pub chunk_type: u16,
     pub reserved1: u16,
@@ -100,7 +100,7 @@ pub fn is_sparse_image(sparse_img: &[u8]) -> Result<SparseHeader, Error> {
 /// first pass, we are guaranteed to have at least 1/3 of the input buffer free to use as fill
 /// buffer.
 #[repr(C, packed)]
-#[derive(Debug, Default, Copy, Clone, Immutable, IntoBytes, FromBytes)]
+#[derive(Copy, Clone, Debug, Default, Immutable, FromBytes, IntoBytes)]
 struct FillInfo {
     // Number of blocks to fill.
     pub fill_blocks: u32,
@@ -212,7 +212,7 @@ pub async fn write_sparse_image(
 /// `FillUnit` is a packed C struct wrapping a u32. It is mainly used for filling a buffer of
 /// arbitrary alignment with a u32 value.
 #[repr(C, packed)]
-#[derive(Debug, Default, Copy, Clone, Immutable, IntoBytes, FromBytes)]
+#[derive(Copy, Clone, Debug, Default, Immutable, FromBytes, IntoBytes)]
 struct FillUnit(u32);
 
 /// `FillBuffer` manages a buffer and provides API for making a fill buffer with the given value.

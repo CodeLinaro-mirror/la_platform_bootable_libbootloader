@@ -17,7 +17,7 @@
 use core::fmt::{Display, Formatter};
 
 /// https://source.android.com/docs/security/features/verifiedboot/boot-flow#communicating-verified-boot-state-to-users
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum BootStateColor {
     /// Success .
     Green,
@@ -45,7 +45,7 @@ impl Display for BootStateColor {
 }
 
 /// https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum KeyValidationStatus {
     /// Vbmeta key is matched with a production key.
     Valid,

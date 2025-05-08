@@ -152,7 +152,7 @@
 ///
 /// This is subset of compliant tems from map: system/core/bootstat/bootstat.cpp kBootReasonMap
 // Underlying format is <reason>,<sub_reason>,<detil>,...
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum BootMode {
     /// Normal system start
     Normal,

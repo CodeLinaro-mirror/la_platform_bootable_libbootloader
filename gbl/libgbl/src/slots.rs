@@ -423,7 +423,7 @@ impl Drop for Cursor<'_> {
 }
 
 /// Contains information of the platform's slot scheme.
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct SlotsMetadata {
     /// Number of slots on this platform.
     pub slot_count: usize,

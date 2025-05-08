@@ -41,7 +41,7 @@ use super::device_tree;
 use super::slots;
 
 /// Target Type of OS to boot.
-#[derive(PartialEq, Debug, Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Os {
     /// Android
     Android,
@@ -50,7 +50,7 @@ pub enum Os {
 }
 
 /// Contains reboot reasons for instructing GBL to boot to different modes.
-#[derive(PartialEq, Debug, Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum RebootReason {
     /// Normal boot.
     Normal,

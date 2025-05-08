@@ -33,7 +33,7 @@ const DEFAULT_PRIORITY: u8 = 15;
 const DEFAULT_RETRIES: u8 = 7;
 
 #[repr(C, packed)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 struct AbrSlotData {
     priority: u8,
     tries: u8,
@@ -53,7 +53,7 @@ impl Default for AbrSlotData {
 }
 
 #[repr(C, packed)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 struct OneShotFlags(u8);
 
 bitflags! {
@@ -96,7 +96,7 @@ const ABR_VERSION_MAJOR: u8 = 2;
 const ABR_VERSION_MINOR: u8 = 3;
 
 #[repr(C, packed)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 struct AbrData {
     magic: [u8; 4],
     version_major: u8,

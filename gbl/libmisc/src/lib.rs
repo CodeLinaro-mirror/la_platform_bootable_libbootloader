@@ -30,7 +30,7 @@ use liberror::{Error, Result};
 
 /// Android boot modes type
 /// Usually obtained from BCB block of misc partition
-#[derive(PartialEq, Debug)]
+#[derive(Debug, PartialEq)]
 pub enum AndroidBootMode {
     /// Boot normally using A/B slots.
     Normal = 0,
@@ -61,7 +61,7 @@ pub const COMMAND_FIELD_SIZE: usize = 32;
 /// Reference code:
 /// https://cs.android.com/android/platform/superproject/main/+/95ec3cc1d879b92dd9db3bb4c4345c5fc812cdaa:bootable/recovery/bootloader_message/include/bootloader_message/bootloader_message.h;l=67
 #[repr(C, packed)]
-#[derive(IntoBytes, FromBytes, Immutable, KnownLayout, PartialEq, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 pub struct BootloaderMessage {
     command: [u8; COMMAND_FIELD_SIZE],
     status: [u8; 32],

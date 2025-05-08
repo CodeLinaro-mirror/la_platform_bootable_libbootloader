@@ -31,7 +31,7 @@ use safemath::SafeNum;
 pub const RAW_PARTITION_NAME_LEN: usize = 72;
 
 /// Wraps a bytes buffer containing a null-terminated C string
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RawName([u8; RAW_PARTITION_NAME_LEN]);
 
 impl RawName {
@@ -50,7 +50,7 @@ impl RawName {
 }
 
 /// Represents a GBL partition.
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Partition {
     /// Raw storage partition.
     Raw(RawName, u64),

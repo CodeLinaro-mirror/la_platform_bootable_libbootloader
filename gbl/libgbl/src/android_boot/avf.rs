@@ -140,7 +140,7 @@ where
 /// Pvmfw configuration entry implementation; see:
 /// https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/guest/pvmfw/README.md
 #[repr(C, packed)]
-#[derive(Copy, Clone, Default, PartialEq, Eq, IntoBytes, Immutable)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Immutable, IntoBytes)]
 struct PvmfwConfEntry {
     offset: u32,
     size: u32,
@@ -155,7 +155,7 @@ impl PvmfwConfEntry {
 /// Pvmfw configuration header implementation; see:
 /// https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/guest/pvmfw/README.md
 #[repr(C, packed)]
-#[derive(Copy, Clone, Default, PartialEq, Eq, IntoBytes, Immutable)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Immutable, IntoBytes)]
 struct PvmfwConfHeader {
     magic: u32,
     version: u32,

@@ -68,7 +68,7 @@ const DEFAULT_RETRIES: u8 = 7;
 ///
 /// Does NOT contain unbootable reason information.
 #[repr(C, packed)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 struct SlotMetaData(u16);
 
 #[allow(dead_code)]
@@ -198,7 +198,7 @@ const BOOT_CTRL_VERSION: u8 = 1;
 ///
 /// Does NOT support oneshots
 #[repr(C, packed)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, IntoBytes, FromBytes, KnownLayout)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 struct BootloaderControl {
     slot_suffix: [u8; 4],
     magic: u32,

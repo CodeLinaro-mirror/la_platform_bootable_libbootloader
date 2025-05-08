@@ -63,7 +63,7 @@ pub const PVMFW_DATA_ALIGNMENT: usize = PAGE_SIZE;
 
 /// Image names list.
 /// Used for identifying what buffer size/alignment is necessary.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ImageName {
     /// ZBI for Zircon kernel
     ZbiZircon,

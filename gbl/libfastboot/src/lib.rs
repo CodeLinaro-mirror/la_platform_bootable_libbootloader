@@ -206,7 +206,7 @@ impl<T: Display> From<T> for CommandError {
 pub type CommandResult<T> = core::result::Result<T, CommandError>;
 
 /// Fastboot reboot mode
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum RebootMode {
     /// "fastboot reboot". Normal reboot.
     Normal,
