@@ -28,6 +28,9 @@ use efi_types::{
 use liberror::Result;
 use mockall::mock;
 
+/// Mock `Protocol` type.
+pub type Protocol<'a, T> = T;
+
 /// Mock device_path module.
 pub mod device_path {
     use super::*;

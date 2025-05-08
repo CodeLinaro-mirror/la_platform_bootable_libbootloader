@@ -38,6 +38,7 @@ use efi::{
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
+        Protocol,
     },
     EfiEntry,
 };
@@ -263,6 +264,14 @@ impl<'a, 'b> Ops<'a, 'b> {
         let buf = unsafe { from_raw_parts_mut(ptr, size) };
 
         Ok(ImageBuffer::new(buf))
+    }
+
+    /// Helper for opening GblSlotProtocol protocol. Maps `Error::NotFound` to `Error::Unsupported`
+    fn open_slot_protocol(&mut self) -> Result<Protocol<'a, GblSlotProtocol>> {
+        match self.efi_entry.system_table().boot_services().find_first_and_open() {
+            Err(Error::NotFound) => Err(Error::Unsupported),
+            v => Ok(v?),
+        }
     }
 }
 
@@ -671,62 +680,31 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     }
 
     fn get_current_slot(&mut self) -> Result<Slot> {
-        // TODO(b/363075013): Refactors the opening of slot protocol into a common helper once
-        // `MockBootServices::find_first_and_open` is updated to return Protocol<'_, T>.
-        self.efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblSlotProtocol>()?
-            .get_current_slot()?
-            .try_into()
+        self.open_slot_protocol()?.get_current_slot()?.try_into()
     }
 
     fn get_next_slot(&mut self, mark_boot_attempt: bool) -> Result<Slot> {
-        self.efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblSlotProtocol>()?
-            .get_next_slot(mark_boot_attempt)?
-            .try_into()
+        self.open_slot_protocol()?.get_next_slot(mark_boot_attempt)?.try_into()
     }
 
     fn set_active_slot(&mut self, slot: u8) -> Result<()> {
-        self.efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblSlotProtocol>()?
-            .set_active_slot(slot)
+        self.open_slot_protocol()?.set_active_slot(slot)
     }
 
     fn set_reboot_reason(&mut self, reason: RebootReason) -> Result<()> {
-        self.efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblSlotProtocol>()?
-            .set_boot_reason(gbl_to_efi_boot_reason(reason), b"")
+        self.open_slot_protocol()?.set_boot_reason(gbl_to_efi_boot_reason(reason), b"")
     }
 
     fn get_reboot_reason(&mut self) -> Result<RebootReason> {
         let mut subreason = [0u8; 128];
-        self.efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblSlotProtocol>()?
+        self.open_slot_protocol()?
             .get_boot_reason(&mut subreason[..])
             .map(|(v, _)| efi_to_gbl_boot_reason(v))
     }
 
     fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
         Ok(SlotsMetadata {
-            slot_count: self
-                .efi_entry
-                .system_table()
-                .boot_services()
-                .find_first_and_open::<GblSlotProtocol>()?
-                .load_boot_data()?
-                .slot_count
-                .try_into()
-                .unwrap(),
+            slot_count: self.open_slot_protocol()?.load_boot_data()?.slot_count.try_into().unwrap(),
         })
     }
 
