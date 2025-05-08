@@ -21,7 +21,10 @@ use crate::{
 };
 use abr::SlotIndex;
 use arrayvec::ArrayVec;
-use avb::{slot_verify, HashtreeErrorMode, Ops as _, SlotVerifyFlags};
+use avb::{
+    slot_verify, HashtreeErrorMode, Ops as _, SlotVerifyData, SlotVerifyError, SlotVerifyFlags,
+    SlotVerifyResult,
+};
 use bootparams::{bootconfig::BootConfigBuilder, entry::CommandlineParser};
 use core::{ffi::CStr, fmt::Write};
 use liberror::Error;
@@ -79,6 +82,32 @@ impl<'a> Default for PartitionsToVerify<'a> {
     }
 }
 
+/// Helper for checking that all requested partitions are verified by avb.
+fn check_all_partitions_verified<'a, 'b, 'c>(
+    ops: &mut impl GblOps<'a, 'b>,
+    partitions: &PartitionsToVerify<'c>,
+    verify_data: SlotVerifyResult<'c, SlotVerifyData<'c>>,
+) -> SlotVerifyResult<'c, SlotVerifyData<'c>> {
+    let verify_data = verify_data?;
+    let mut count = 0;
+    for part in partitions.partitions() {
+        let part_res = verify_data
+            .partition_data()
+            .iter()
+            .find(|v| v.partition_name() == *part)
+            .map(|v| v.verify_result());
+        match part_res {
+            None => gbl_println!(ops, "{part:?} is not loaded or verified by avb"),
+            Some(Err(ref e)) => gbl_println!(ops, "Failed to verify {part:?}: {e}"),
+            _ => count += 1,
+        }
+    }
+    match count == partitions.partitions().len() {
+        true => Ok(verify_data),
+        _ => Err(SlotVerifyError::Verification(Some(verify_data))),
+    }
+}
+
 /// Android verified boot flow.
 ///
 /// All relevant images from disk must be preloaded and provided as `partitions`; in its final
@@ -125,6 +154,12 @@ pub(crate) fn avb_verify_slot<'a, 'b, 'c>(
         // Pass AVB_HASHTREE_ERROR_MODE_MANAGED_RESTART_AND_EIO and handle EIO.
         HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_RESTART_AND_INVALIDATE,
     );
+
+    // GBL only requests partitions that it will use. Therefore, mandates that all requested
+    // partitions are verified. This is necessary because libavb ignores partitions that do not
+    // have a hash descriptor.
+    let verify_result = check_all_partitions_verified(avb_ops.gbl_ops, partitions, verify_result);
+
     let (color, verify_data) = match verify_result {
         Ok(ref verify_data) => {
             let color = match unlocked {
@@ -594,6 +629,41 @@ mod test {
             ),
             // Cannot continue boot
             Err(AvbIoError(IoError::NoSuchValue)),
+        );
+    }
+
+    #[test]
+    fn test_avb_verify_slot_verification_failed_not_all_partition_verified() {
+        let mut partitions_to_verify = PartitionsToVerify::default();
+        partitions_to_verify.try_push(c"boot").unwrap();
+        partitions_to_verify.try_push(c"init_boot").unwrap();
+        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        let partitions_data = [
+            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "init_boot_a.img"),
+            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
+            // Uses a noop vbmeta that doesn't verify any partitions.
+            (c"vbmeta_a", "vbmeta_noop.img"),
+        ];
+        let expected_bootconfig = make_bootconfig("");
+
+        assert_eq!(
+            test_avb_verify_slot(
+                &partitions_data,
+                &partitions_to_verify,
+                // Unlocked result
+                Ok(false),
+                // Rollback index result
+                Ok(0),
+                // Slot
+                0,
+                // Expected color
+                Some(BootStateColor::Red),
+                // Expected bootconfig
+                &expected_bootconfig,
+            ),
+            // Cannot continue boot
+            Err(SlotVerifyError::Verification(None).into()),
         );
     }
 }

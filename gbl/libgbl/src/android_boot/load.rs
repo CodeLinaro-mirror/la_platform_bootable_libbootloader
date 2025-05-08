@@ -28,6 +28,7 @@ use bootimg::{defs::*, BootImage, VendorImageHeader};
 use bootparams::bootconfig::BootConfigBuilder;
 use core::{
     array,
+    cmp::min,
     ffi::CStr,
     fmt::Write,
     ops::{Deref, Range},
@@ -37,6 +38,10 @@ use liberror::Error;
 use libutils::aligned_subslice;
 use safemath::SafeNum;
 use zerocopy::{IntoBytes, Ref};
+
+// Refers to
+// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:tools/mkbootimg/gki/certify_bootimg.py;l=31
+const GKI_CERT_BOOT_SIGNATURE_SIZE: usize = 16 * 1024;
 
 // Represents a slot suffix.
 struct SlotSuffix([u8; 3]);
@@ -485,7 +490,14 @@ fn load_verify_v3_and_v4<'a, 'b, 'c>(
     ops.read_from_partition_sync(&vendor_boot_part, 0, vendor_boot)?;
 
     // Loads boot image.
-    let (boot, remains) = split(remains, boot_img_info.image_size)?;
+    let bootpart_sz = usize::try_from(ops.partition_size(&boot_part)?.ok_or(Error::NotFound)?)
+        .map_err(Error::from)?;
+    // A GKI certificate may be appended to the boot image and included into avb verification.
+    // Preload additional amount of data just in case. See
+    // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:tools/mkbootimg/gki/certify_bootimg.py
+    // for more detail.
+    let bootimg_sz = min(boot_img_info.image_size + GKI_CERT_BOOT_SIGNATURE_SIZE, bootpart_sz);
+    let (boot, remains) = split(remains, bootimg_sz)?;
     ops.read_from_partition_sync(&boot_part, 0, boot)?;
 
     // Loads init_boot image if boot doesn't contain a ramdisk.
