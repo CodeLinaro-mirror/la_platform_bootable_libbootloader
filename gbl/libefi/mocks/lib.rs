@@ -36,7 +36,7 @@ use protocol::{
 use std::cell::RefCell;
 
 /// libefi types that can be used in tests as-is.
-pub use efi::{efi_println, DeviceHandle, EventNotify, EventType};
+pub use efi::{efi_print, efi_println, DeviceHandle, EventNotify, EventType};
 
 /// Holds state to set up a mock UEFI environment.
 ///

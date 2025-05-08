@@ -24,9 +24,7 @@
 extern crate alloc;
 
 mod efi_blocks;
-#[cfg(not(test))]
 mod ops;
-#[cfg(not(test))]
 #[macro_use]
 mod utils;
 
@@ -47,6 +45,8 @@ mod net;
 // and automatically pick up the correct one.
 #[cfg(not(test))]
 pub(crate) use efi;
+#[cfg(test)]
+pub(crate) use efi_mocks as efi;
 
 #[cfg(not(test))]
 use {
