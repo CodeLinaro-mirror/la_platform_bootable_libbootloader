@@ -15,7 +15,7 @@
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_C_INCLUDE")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_doc_test", "rust_library", "rust_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 load(":license.bzl", "spdx_license_test")
 
@@ -49,6 +49,12 @@ rust_bindgen(
         "--with-derive-default",
         "--with-derive-custom-struct=EfiMemoryDescriptor=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--with-derive-custom-struct=EfiMemoryAttributesTableHeader=Immutable,IntoBytes,FromBytes,KnownLayout",
+        # newtype-global-enum allows us to implement traits on EfiStatus but
+        # still use the EFI_STATUS_* codes as unscoped constants. Looks like:
+        #   pub struct EfiStatus(pub usize);
+        #   pub const EFI_STATUS_SUCCESS: EFI_STATUS = EFI_STATUS(0);
+        #   ... etc for other status codes ...
+        "--newtype-global-enum=EFI_STATUS",
         "--override-abi",
         ".*=efiapi",
         "--allowlist-type",
@@ -95,6 +101,11 @@ rust_test(
     name = "libefi_types_test",
     crate = ":libefi_types",
     rustc_flags = ANDROID_RUST_LINTS,
+)
+
+rust_doc_test(
+    name = "libefi_types_doc_test",
+    crate = ":libefi_types",
 )
 
 # GBL protocols require to be published under both Apache-2.0 and BDS-2-Clause-Patent licenses.

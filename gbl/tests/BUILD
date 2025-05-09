@@ -21,6 +21,7 @@ test_suite(
         # Doc tests does not work for `build_and_run_tests` because it accesses
         # `../rules_rust/util/process_wrapper` and its path can't be correctly provided as test
         # data.
+        "@gbl//libefi_types:libefi_types_doc_test",
         "@gbl//libstorage:libstorage_doc_test",
     ],
 )

@@ -367,7 +367,7 @@ pub fn efi_status_to_result(e: efi::EfiStatus) -> Result<()> {
 pub fn result_to_efi_status(res: Result<()>) -> efi::EfiStatus {
     match res {
         Ok(()) => efi::EFI_STATUS_SUCCESS,
-        Err(Error::UnexpectedEfiError(e)) if (e >> (efi::EfiStatus::BITS - 1)) != 0 => e,
+        Err(Error::UnexpectedEfiError(e)) if (e.0.leading_zeros() == 0) => e,
         Err(e) => EFI_STATUS_TO_ERR_TABLE
             .iter()
             .find_map(|(err, v)| (*v == e).then_some(*err))
@@ -378,6 +378,7 @@ pub fn result_to_efi_status(res: Result<()>) -> efi::EfiStatus {
 #[cfg(test)]
 mod test {
     use super::*;
+    use efi::defs::EfiStatus;
 
     #[test]
     fn test_from_safemath_error() {
@@ -398,17 +399,17 @@ mod test {
     }
 
     #[test]
-    fn test_result_to_efi_status_unkonw_efi_error_code() {
+    fn test_result_to_efi_status_unknown_efi_error_code() {
         assert_eq!(
-            result_to_efi_status(Err(Error::UnexpectedEfiError(0xc000000000000000))),
-            0xc000000000000000
+            result_to_efi_status(Err(Error::UnexpectedEfiError(EfiStatus(0xc000000000000000)))),
+            EfiStatus(0xc000000000000000)
         );
     }
 
     #[test]
-    fn test_result_to_efi_status_unkonw_non_efi_error_code_map_to_device_error() {
+    fn test_result_to_efi_status_unknown_non_efi_error_code_map_to_device_error() {
         assert_eq!(
-            result_to_efi_status(Err(Error::UnexpectedEfiError(1))),
+            result_to_efi_status(Err(Error::UnexpectedEfiError(EfiStatus(1)))),
             efi::EFI_STATUS_DEVICE_ERROR
         );
     }

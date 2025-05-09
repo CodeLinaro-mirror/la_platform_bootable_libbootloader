@@ -13,6 +13,9 @@
 // limitations under the License.
 
 //! Rust definitions for EFI types, data structures, and methods.
+//!
+//! This crate aims to have as few dependencies as possible so that it can be
+//! used in GBL or ported to different UEFI implementations.
 
 // This is both safe and stable but is being tweaked due to the "system" abi variant
 // potentially not supporting varargs.
@@ -20,8 +23,9 @@
 #![feature(extended_varargs_abi_support)]
 #![cfg_attr(not(test), no_std)]
 
-#[rustfmt::skip]
 pub mod defs;
+pub mod status;
+
 pub use defs::*;
 
 impl EfiGuid {
