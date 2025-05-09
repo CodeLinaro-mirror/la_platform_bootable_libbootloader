@@ -48,13 +48,25 @@ mod network_fastboot {
 
     const FASTBOOT_TCP_PORT: u16 = 5554;
 
+    #[derive(PartialEq)]
+    /// Represents the connection state resolution done by previous `accept_new` call.
+    enum AcceptNewState {
+        /// First call of `accept_new`. No previous state.
+        None,
+        /// A connection was successfully accepted by a previous `accept_new` call.
+        Accepted,
+        /// We're actively listening for a new connection.
+        Listening,
+    }
+
     pub(super) struct EfiFastbootTcpTransport<'a, 'b, 'c> {
         socket: &'c mut EfiTcpSocket<'a, 'b>,
+        accept_new_state: AcceptNewState,
     }
 
     impl<'a, 'b, 'c> EfiFastbootTcpTransport<'a, 'b, 'c> {
         pub(super) fn new(socket: &'c mut EfiTcpSocket<'a, 'b>) -> Self {
-            Self { socket: socket }
+            Self { socket: socket, accept_new_state: AcceptNewState::None }
         }
     }
 
@@ -74,28 +86,45 @@ mod network_fastboot {
         fn accept_new(&mut self) -> bool {
             let efi_entry = self.socket.efi_entry;
             self.socket.poll();
-            // If not listenining, start listening.
-            // If not connected but it's been `DEFAULT_TIMEOUT`, restart listening in case the
-            // remote client disconnects in the middle of TCP handshake and leaves the socket in a
-            // half open state.
-            if !self.socket.is_listening_or_handshaking()
-                || (!self.socket.check_active()
-                    && self.socket.time_since_last_listen() > DEFAULT_TIMEOUT)
-            {
-                let _ = self
-                    .socket
-                    .listen(FASTBOOT_TCP_PORT)
-                    .inspect_err(|e| efi_println!(efi_entry, "TCP listen error: {:?}", e));
+            self.accept_new_state = match self.accept_new_state {
+                // If first call or connection has been accepted before, just reset to establish a new
+                // connection.
+                AcceptNewState::None | AcceptNewState::Accepted => {
+                    let _ = self
+                        .socket
+                        .listen(FASTBOOT_TCP_PORT)
+                        .inspect_err(|e| efi_println!(efi_entry, "TCP listen error: {:?}", e));
 
-                // TODO(b/368647237): Enable only in Fuchsia context.
-                self.socket.broadcast_fuchsia_fastboot_mdns();
-            } else if self.socket.check_active() {
-                self.socket.set_io_yield_threshold(1024 * 1024); // 1MB
-                let remote = self.socket.get_socket().remote_endpoint().unwrap();
-                efi_println!(efi_entry, "TCP connection from {}", remote);
-                return true;
-            }
-            false
+                    // TODO(b/368647237): Enable only in Fuchsia context.
+                    self.socket.broadcast_fuchsia_fastboot_mdns();
+                    AcceptNewState::Listening
+                }
+                AcceptNewState::Listening => {
+                    // If new connection is accepted, mark and return indication of it.
+                    // If it's been `DEFAULT_TIMEOUT`, restart listening in case the remote client
+                    // disconnects in the middle of TCP handshake and leaves the socket in a half open
+                    // state.
+                    if self.socket.is_established() {
+                        self.socket.set_io_yield_threshold(1024 * 1024); // 1MB
+                        let remote = self.socket.get_socket().remote_endpoint().unwrap();
+                        efi_println!(efi_entry, "TCP connection from {}", remote);
+                        AcceptNewState::Accepted
+                    } else if self.socket.time_since_last_listen() > DEFAULT_TIMEOUT {
+                        let _ = self
+                            .socket
+                            .listen(FASTBOOT_TCP_PORT)
+                            .inspect_err(|e| efi_println!(efi_entry, "TCP listen error: {:?}", e));
+
+                        // TODO(b/368647237): Enable only in Fuchsia context.
+                        self.socket.broadcast_fuchsia_fastboot_mdns();
+                        AcceptNewState::Listening
+                    } else {
+                        AcceptNewState::Listening
+                    }
+                }
+            };
+
+            self.accept_new_state == AcceptNewState::Accepted
         }
     }
 }

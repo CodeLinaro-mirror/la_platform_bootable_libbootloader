@@ -356,11 +356,6 @@ impl<'a, 'b> EfiTcpSocket<'a, 'b> {
         Ok(())
     }
 
-    // Checks if the socket is listening or performing handshake.
-    pub fn is_listening_or_handshaking(&mut self) -> bool {
-        matches!(self.get_socket().state(), State::Listen | State::SynReceived)
-    }
-
     /// Returns the amount of time elapsed since last call to `Self::listen()`. If `listen()` has
     /// never been called, `Duration::MAX` is returned.
     pub fn time_since_last_listen(&mut self) -> Duration {
@@ -372,12 +367,6 @@ impl<'a, 'b> EfiTcpSocket<'a, 'b> {
         self.interface.poll(self.instant(), self.efi_net_dev, &mut self.socket_set);
     }
 
-    /// Polls network and check if the socket is in an active state.
-    pub fn check_active(&mut self) -> bool {
-        self.poll();
-        self.get_socket().is_active()
-    }
-
     /// Gets a reference to the smoltcp socket object.
     pub fn get_socket(&mut self) -> &mut TcpSocket<'b> {
         // We only consider single socket use case for now.
@@ -385,8 +374,13 @@ impl<'a, 'b> EfiTcpSocket<'a, 'b> {
         self.socket_set.get_mut::<TcpSocket>(handle)
     }
 
+    /// Checks whether a socket connection is established.
+    pub fn is_established(&mut self) -> bool {
+        self.get_socket().state() == State::Established
+    }
+
     /// Checks whether a socket is closed.
-    fn is_closed(&mut self) -> bool {
+    pub fn is_closed(&mut self) -> bool {
         return !self.get_socket().is_open() || self.get_socket().state() == State::CloseWait;
     }
 
