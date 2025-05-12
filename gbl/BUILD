@@ -26,6 +26,7 @@ readme_test(
     deps = [
         "@gbl//efi:app",
         "@gbl//efi:libgbl_efi",
+        "@gbl//libasync",
         "@gbl//libavb:sysdeps",
         "@gbl//libboot",
         "@gbl//libbootimg",
@@ -40,5 +41,6 @@ readme_test(
         "@gbl//libmisc",
         "@gbl//libsafemath",
         "@gbl//libstorage",
+        "@gbl//libutils",
     ],
 )
