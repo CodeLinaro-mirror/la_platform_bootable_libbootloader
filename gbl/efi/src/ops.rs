@@ -749,7 +749,7 @@ mod test {
     use std::slice;
 
     /// Represents possible outcomes for protocol method call.
-    #[derive(Clone, Copy)]
+    #[derive(Copy, Clone)]
     enum ProtocolCallStatus {
         /// Protocol found. Method call succeeded.
         Success,
