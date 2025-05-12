@@ -54,7 +54,6 @@ use {
         efi_blocks::{find_block_devices, EfiGblDisk},
         ops::Ops,
     },
-    core::fmt::Write,
     efi::{efi_println, EfiEntry},
     libgbl::{Os, Result},
     utils::loaded_image_path,

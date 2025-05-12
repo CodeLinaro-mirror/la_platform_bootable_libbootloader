@@ -912,7 +912,10 @@ impl Drop for LocatedHandles<'_> {
 #[macro_export]
 macro_rules! efi_print {
     ( $efi_entry:expr, $( $x:expr ),* $(,)? ) => {
-            write!($efi_entry.system_table().con_out().unwrap(), $($x,)*).unwrap()
+        {
+            use core::fmt::Write;
+            write!($efi_entry.system_table().con_out().unwrap(), $($x,)*).unwrap();
+        }
     };
 }
 

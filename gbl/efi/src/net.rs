@@ -18,7 +18,6 @@
 use crate::utils::{get_device_path, loop_with_timeout};
 use alloc::{boxed::Box, vec::Vec};
 use core::{
-    fmt::Write,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use alloc::vec::Vec;
-use core::{cmp::max, fmt::Write};
+use core::cmp::max;
 use efi::{
     efi_println,
     protocol::{block_io::BlockIoProtocol, block_io2::BlockIo2Protocol, Protocol},

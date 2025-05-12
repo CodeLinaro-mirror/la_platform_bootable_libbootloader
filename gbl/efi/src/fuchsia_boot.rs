@@ -18,7 +18,6 @@ use crate::{
     ops::Ops,
     utils::{efi_to_zbi_mem_range_type, take_os_load_buffer},
 };
-use core::fmt::Write;
 use efi::{efi_println, EfiEntry, EfiMemoryAttributesTable, EfiMemoryMap};
 use efi_types::{
     EfiMemoryAttributesTableHeader, EfiMemoryDescriptor, EFI_MEMORY_ATTRIBUTE_EMA_RUNTIME,

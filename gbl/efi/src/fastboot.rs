@@ -19,9 +19,7 @@
 
 use crate::utils::{get_platform_buffer_info, BufferInfo, SZ_MB};
 use alloc::{boxed::Box, vec::Vec};
-use core::{
-    cmp::min, fmt::Write, future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration,
-};
+use core::{cmp::min, future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration};
 use efi::{
     efi_println,
     local_session::LocalFastbootSession,

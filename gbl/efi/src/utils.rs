@@ -14,7 +14,7 @@
 
 use crate::{efi, ops::get_buffer_from_protocol};
 use ::efi::{efi_println, EfiMemoryAttributesTable};
-use core::{fmt::Write, slice::from_raw_parts_mut, str::from_utf8, time::Duration};
+use core::{slice::from_raw_parts_mut, str::from_utf8, time::Duration};
 use efi::{
     protocol::{
         device_path::{DevicePathProtocol, DevicePathText, DevicePathToTextProtocol},
