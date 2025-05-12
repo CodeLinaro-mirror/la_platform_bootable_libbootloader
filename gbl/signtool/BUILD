@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
-load("@rules_python//python:defs.bzl", "py_binary")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 
 py_binary(
     name = "gblsigntool_py",
@@ -42,9 +42,36 @@ PRELUDE
     visibility = ["//visibility:public"],
 )
 
+py_test(
+    name = "gblsigntool_test",
+    srcs = ["gblsigntool_test.py"],
+    data = [
+        ":gblsigntool_executable",
+        ":testdata",
+        ":testkey_RSA4096",
+        ":testkey_RSA4096_pub",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "testdata",
+    srcs = [
+        "testdata/gbl-img.zip",
+        "testdata/gbl_aarch64_prod.efi",
+    ],
+    visibility = ["//visibility:private"],
+)
+
 filegroup(
     name = "testkey_RSA4096",
     srcs = ["testkeys/testkey_RSA4096.pem"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "testkey_RSA4096_pub",
+    srcs = ["testkeys/testkey_RSA4096_pub.pem"],
     visibility = ["//visibility:public"],
 )
 
