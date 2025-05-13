@@ -83,27 +83,33 @@ typedef struct GblEfiABSlotProtocol {
   // Currently must contain 0x00010000
   uint32_t version;
   // Slot metadata query methods
-  EfiStatus (*load_boot_data)(struct GblEfiABSlotProtocol*,
-                              GblEfiSlotMetadataBlock* /* out param*/);
-  EfiStatus (*get_slot_info)(struct GblEfiABSlotProtocol*, uint8_t,
-                             GblEfiSlotInfo* /* out param */);
-  EfiStatus (*get_current_slot)(struct GblEfiABSlotProtocol*,
-                                GblEfiSlotInfo* /* out param */);
-  EfiStatus (*get_next_slot)(struct GblEfiABSlotProtocol*, bool,
-                             GblEfiSlotInfo* /* out param */);
+  EfiStatus (*load_boot_data)(struct GblEfiABSlotProtocol* self,
+                              /* out */ GblEfiSlotMetadataBlock* metadata);
+  EfiStatus (*get_slot_info)(struct GblEfiABSlotProtocol* self,
+                             /* in */ uint8_t index,
+                             /* out */ GblEfiSlotInfo* info);
+  EfiStatus (*get_current_slot)(struct GblEfiABSlotProtocol* self,
+                                /* out */ GblEfiSlotInfo* info);
+  EfiStatus (*get_next_slot)(struct GblEfiABSlotProtocol* self,
+                             /* in */ bool mark_boot_attempt,
+                             /* out */ GblEfiSlotInfo* info);
   // Slot metadata manipulation methods
-  EfiStatus (*set_active_slot)(struct GblEfiABSlotProtocol*, uint8_t);
-  EfiStatus (*set_slot_unbootable)(struct GblEfiABSlotProtocol*, uint8_t,
-                                   uint32_t);
-  EfiStatus (*reinitialize)(struct GblEfiABSlotProtocol*);
+  EfiStatus (*set_active_slot)(struct GblEfiABSlotProtocol* self,
+                               /* in */ uint8_t index);
+  EfiStatus (*set_slot_unbootable)(struct GblEfiABSlotProtocol* self,
+                                   /* in */ uint8_t index,
+                                   /* in */ uint32_t unbootable_reason);
+  EfiStatus (*reinitialize)(struct GblEfiABSlotProtocol* self);
   // Miscellaneous methods
-  EfiStatus (*get_boot_reason)(struct GblEfiABSlotProtocol*,
-                               uint32_t* /* out param */,
-                               size_t* /* in-out param */,
-                               uint8_t* /* out param*/);
-  EfiStatus (*set_boot_reason)(struct GblEfiABSlotProtocol*, uint32_t, size_t,
-                               const uint8_t*);
-  EfiStatus (*flush)(struct GblEfiABSlotProtocol*);
+  EfiStatus (*get_boot_reason)(struct GblEfiABSlotProtocol* self,
+                               /* out */ uint32_t* reason,
+                               /* in-out */ size_t* subreason_len,
+                               /* out */ uint8_t* subreason);
+  EfiStatus (*set_boot_reason)(struct GblEfiABSlotProtocol* self,
+                               /* in */ uint32_t reason,
+                               /* in */ size_t subreason_len,
+                               /* in */ const uint8_t* subreason);
+  EfiStatus (*flush)(struct GblEfiABSlotProtocol* self);
 } GblEfiABSlotProtocol;
 
 #endif  // __GBL_EFI_AB_SLOT_PROTOCOL_H__

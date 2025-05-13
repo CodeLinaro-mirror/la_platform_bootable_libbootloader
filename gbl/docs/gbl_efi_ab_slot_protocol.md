@@ -663,7 +663,7 @@ EFI_STATUS
     IN GBL_EFI_AB_SLOT_PROTOCOL* This,
     IN UINT32                    Reason,
     IN UINTN                     SubreasonLength,
-    IN UINT8                     Subreason,
+    IN UINT8*                    Subreason,
 );
 ```
 
