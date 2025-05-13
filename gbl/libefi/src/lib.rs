@@ -253,6 +253,24 @@ impl<'a> SystemTable<'a> {
     }
 }
 
+/// Watchdog timer code wrapper to be passed to `EFI_BOOT_SERVICE.SetWatchdogTimer()`.
+///
+/// The firmware reserves codes from 0x0000 to 0xFFFF, so make sure these are not used by the UEFI app.
+/// https://uefi.org/specs/UEFI/2.9_A/07_Services_Boot_Services.html#efi-boot-services-setwatchdogtimer
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct WatchdogTimerCode(u64);
+
+impl WatchdogTimerCode {
+    /// The minimal allowed code to use.
+    const MIN: u64 = 0x10000;
+
+    /// Create new WatchdogTimerCode with respect to system reserved codes.
+    pub const fn new(code: u64) -> Self {
+        assert!(code >= Self::MIN, "Reserved UEFI watchdog code is used");
+        Self(code)
+    }
+}
+
 /// `BootServices` provides methods for accessing various EFI_BOOT_SERVICES interfaces.
 #[derive(Copy, Clone)]
 pub struct BootServices<'a> {
@@ -511,6 +529,22 @@ impl<'a> BootServices<'a> {
                 event.efi_event,
                 delay_type,
                 (trigger_time.as_nanos() / 100).try_into()?
+            )
+        }
+    }
+
+    /// Wrapper of `EFI_BOOT_SERVICE.SetWatchdogTimer()`.
+    pub fn set_watchdog_timer(&self, timeout: Duration, code: WatchdogTimerCode) -> Result<()> {
+        // SAFETY:
+        // `watchdog_data` is allowed to be a null pointer if `data_size` is 0.
+        unsafe {
+            efi_call!(
+                self.boot_services.set_watchdog_timer,
+                timeout.as_secs().try_into()?,
+                code.0,
+                // Watchdog data is optional.
+                0,
+                null_mut(),
             )
         }
     }
@@ -987,6 +1021,7 @@ mod test {
         pub close_event_trace: CloseEventTrace,
         pub check_event_trace: CheckEventTrace,
         pub set_timer_trace: SetTimerTrace,
+        pub set_watchdog_timer_trace: SetWatchdogTimerTrace,
     }
 
     // Declares a global instance of EfiCallTraces.
@@ -1254,6 +1289,29 @@ mod test {
         })
     }
 
+    /// EFI_BOOT_SERVICE.SetWatchdogTimer.
+    #[derive(Default)]
+    pub struct SetWatchdogTimerTrace {
+        // Capture call params
+        pub inputs: VecDeque<(usize, u64)>,
+        // EfiStatus for return
+        pub outputs: VecDeque<EfiStatus>,
+    }
+
+    /// Mock of the `EFI_BOOT_SERVICE.SetWatchdogTimer` C API in test environment.
+    extern "efiapi" fn set_watchdog_timer(
+        timeout: usize,
+        watchdog_code: u64,
+        _data_size: usize,
+        _watchdog_data: *mut u16,
+    ) -> EfiStatus {
+        EFI_CALL_TRACES.with(|traces| {
+            let trace = &mut traces.borrow_mut().set_watchdog_timer_trace;
+            trace.inputs.push_back((timeout, watchdog_code));
+            trace.outputs.pop_front().unwrap()
+        })
+    }
+
     /// A test wrapper that sets up a system table, image handle and runs a test function like it
     /// is an EFI application.
     /// TODO(300168989): Investigate using procedural macro to generate test that auto calls this.
@@ -1276,6 +1334,7 @@ mod test {
         boot_services.close_event = Some(close_event);
         boot_services.check_event = Some(check_event);
         boot_services.set_timer = Some(set_timer);
+        boot_services.set_watchdog_timer = Some(set_watchdog_timer);
         systab.boot_services = &mut boot_services as *mut _;
         let image_handle: usize = 1234; // Don't care.
 
@@ -1711,6 +1770,42 @@ mod test {
             });
 
             assert_eq!(recurring_timer.check(), Ok(true));
+        });
+    }
+
+    #[test]
+    fn test_set_watchdog_timer() {
+        const FIRST_CALL_CODE: WatchdogTimerCode = WatchdogTimerCode::new(0x10000);
+        const SECOND_CALL_CODE: WatchdogTimerCode = WatchdogTimerCode::new(0x10001);
+
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+
+            EFI_CALL_TRACES.with(|traces| {
+                let mut traces = traces.borrow_mut();
+                traces.set_watchdog_timer_trace.outputs.push_back(EFI_STATUS_SUCCESS);
+                traces.set_watchdog_timer_trace.outputs.push_back(EFI_STATUS_UNSUPPORTED);
+            });
+
+            assert!(efi_entry
+                .system_table()
+                .boot_services()
+                .set_watchdog_timer(Duration::from_secs(30), FIRST_CALL_CODE)
+                .is_ok());
+
+            assert!(efi_entry
+                .system_table()
+                .boot_services()
+                .set_watchdog_timer(Duration::from_secs(60), SECOND_CALL_CODE)
+                .is_err());
+
+            EFI_CALL_TRACES.with(|traces| {
+                let traces = traces.borrow();
+                assert_eq!(
+                    traces.set_watchdog_timer_trace.inputs,
+                    [(30, FIRST_CALL_CODE.0), (60, SECOND_CALL_CODE.0)]
+                );
+            });
         });
     }
 }

@@ -24,7 +24,7 @@ use efi::{
     efi_println,
     local_session::LocalFastbootSession,
     protocol::{gbl_efi_fastboot_usb::GblFastbootUsbProtocol, Protocol},
-    EfiEntry,
+    EfiEntry, WatchdogTimerCode,
 };
 use efi_types::GBL_IMAGE_TYPE_FASTBOOT;
 use fastboot::Transport;
@@ -35,6 +35,7 @@ use libgbl::{
     {android_boot::GblFastbootEntry, GblOps},
 };
 
+const FASTBOOT_WATCHDOG_TIMER_CODE: WatchdogTimerCode = WatchdogTimerCode::new(0x10000);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 // Network fastboot is only allowed on dev boards.
@@ -333,6 +334,15 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
         .ok();
     #[cfg(feature = "gbl_dev")]
     let tcp = tcp.as_mut().map(|v| EfiFastbootTcpTransport::new(v));
+
+    if local.is_some() || usb.is_some() || tcp.is_some() {
+        let _ = entry
+            .system_table()
+            .boot_services()
+            .set_watchdog_timer(Duration::ZERO, FASTBOOT_WATCHDOG_TIMER_CODE)
+            .inspect(|_| efi_println!(entry, "Watchdog is successfully reset for fastboot."))
+            .inspect_err(|e| efi_println!(entry, "Failed to reset watchdog. {:?}.", e));
+    }
 
     // We currently only consider 1 parallel flash + 1 parallel download.
     // This can be made configurable if necessary.
