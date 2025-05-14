@@ -47,31 +47,8 @@ py_test(
     srcs = ["gblsigntool_test.py"],
     data = [
         ":gblsigntool_executable",
-        ":testdata",
-        ":testkey_RSA4096",
-        ":testkey_RSA4096_pub",
+        "//signtool/testdata",
     ],
-    visibility = ["//visibility:public"],
-)
-
-filegroup(
-    name = "testdata",
-    srcs = [
-        "testdata/gbl-img.zip",
-        "testdata/gbl_aarch64_prod.efi",
-    ],
-    visibility = ["//visibility:private"],
-)
-
-filegroup(
-    name = "testkey_RSA4096",
-    srcs = ["testkeys/testkey_RSA4096.pem"],
-    visibility = ["//visibility:public"],
-)
-
-filegroup(
-    name = "testkey_RSA4096_pub",
-    srcs = ["testkeys/testkey_RSA4096_pub.pem"],
     visibility = ["//visibility:public"],
 )
 

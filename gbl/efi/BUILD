@@ -155,12 +155,12 @@ genrule(
     srcs = [":gbl_efi"],
     outs = ["testkey_signed/gbl.efi"],
     cmd = "$(location @gbl//signtool:gblsigntool_py) sign $(SRCS) -o $(OUTS)" +
-          " --avbtool_args '--key $(location @gbl//signtool:testkey_RSA4096)'" +
+          " --avbtool_args '--key $(location @gbl//signtool/testkeys:testkey_RSA4096)'" +
           " --avbtool_args '--algorithm SHA256_RSA4096'" +
           " --avbtool_args '--prop testkey:true'",
     tools = [
         "@gbl//signtool:gblsigntool_py",
-        "@gbl//signtool:testkey_RSA4096",
+        "@gbl//signtool/testkeys:testkey_RSA4096",
     ],
 )
 
