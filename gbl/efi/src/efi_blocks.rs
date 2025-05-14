@@ -16,8 +16,8 @@ use alloc::vec::Vec;
 use core::cmp::max;
 use efi::{
     efi_println,
+    profiling::EfiProfileBackend,
     protocol::{block_io::BlockIoProtocol, block_io2::BlockIo2Protocol, Protocol},
-    utils::Timestamp,
     EfiEntry,
 };
 use efi_types::EfiBlockIoMedia;
@@ -25,6 +25,7 @@ use gbl_async::block_on;
 use gbl_storage::{gpt_buffer_size, BlockInfo, BlockIo, Disk, Gpt, SliceMaybeUninit};
 use liberror::Error;
 use libgbl::partition::GblDisk;
+use libgbl_macros::gbl_profile;
 
 /// `EfiBlockDeviceIo` wraps a EFI `BlockIoProtocol` and optionally a `BlockIo2Protocol` and
 /// implements the `BlockIo` interface.
@@ -100,8 +101,8 @@ const MAX_GPT_ENTRIES: usize = 128;
 pub type EfiGblDisk<'a> = GblDisk<Disk<EfiBlockDeviceIo<'a>, Vec<u8>>, Gpt<Vec<u8>>>;
 
 /// Finds and returns all EFI devices supporting either EFI_BLOCK_IO or EFI_BLOCK_IO2 protocol.
+#[gbl_profile(backend = EfiProfileBackend::new(efi_entry))]
 pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, Error> {
-    let t_start = Timestamp::now(efi_entry);
     let bs = efi_entry.system_table().boot_services();
     let block_dev_handles = bs.locate_handle_buffer_by_protocol::<BlockIoProtocol>()?;
     let mut gbl_disks = vec![];
@@ -125,6 +126,5 @@ pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, E
         };
         gbl_disks.push(disk);
     }
-    efi_println!(efi_entry, "All block devices scanned. Time: {}", t_start.elapsed(efi_entry));
     Ok(gbl_disks)
 }

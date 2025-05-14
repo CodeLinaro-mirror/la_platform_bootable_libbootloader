@@ -28,11 +28,12 @@ use core::{
     ffi::CStr, fmt::Write, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut, ptr::null,
     slice::from_raw_parts_mut, time::Duration,
 };
-use efi::protocol::gbl_efi_ab_slot::GblSlotProtocol;
 use efi::{
     efi_print, efi_println,
+    profiling::{ConsoleProfileReporter, EfiProfileBackend, EfiProfileTimer},
     protocol::{
         dt_fixup::DtFixupProtocol,
+        gbl_efi_ab_slot::GblSlotProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
@@ -63,6 +64,7 @@ use libgbl::{
         SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
+    profiling::{ProfileBackend, ProfileTimer, Reporter},
     slots::{BootToken, Cursor},
     GblOps, Os, Result as GblResult,
 };
@@ -272,6 +274,16 @@ impl<'a, 'b> Ops<'a, 'b> {
             Err(Error::NotFound) => Err(Error::Unsupported),
             v => Ok(v?),
         }
+    }
+}
+
+impl ProfileBackend for Ops<'_, '_> {
+    fn new_timer(&self) -> impl ProfileTimer {
+        EfiProfileTimer::new(self.efi_entry)
+    }
+
+    fn reporter(&self) -> impl Reporter {
+        ConsoleProfileReporter::new(self.efi_entry)
     }
 }
 
@@ -710,6 +722,10 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
     fn get_base_sp(&mut self) -> Option<usize> {
         Some(self.base_sp)
+    }
+
+    fn get_profiling_backend(&self) -> impl ProfileBackend {
+        EfiProfileBackend::new(self.efi_entry)
     }
 }
 

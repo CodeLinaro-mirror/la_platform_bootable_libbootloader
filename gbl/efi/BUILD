@@ -29,6 +29,7 @@ rust_library(
     name = "libgbl_efi",
     srcs = glob(["src/**/*.rs"]),
     crate_name = "gbl_efi",
+    proc_macro_deps = ["@gbl//libgbl:libgbl_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
         "@arrayvec",

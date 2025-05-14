@@ -22,8 +22,8 @@ use core::ffi::CStr;
 use core::fmt::Write;
 pub use efi::protocol::gbl_efi_image_loading::EfiImageBufferInfo;
 use efi_types::{
-    EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiImageInfo,
-    GblEfiPartitionName, GblEfiVerifiedDeviceTree,
+    EfiInputKey, EfiTimestampProperties, GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult,
+    GblEfiImageInfo, GblEfiPartitionName, GblEfiVerifiedDeviceTree,
 };
 use liberror::Result;
 use mockall::mock;
@@ -128,6 +128,25 @@ pub mod simple_text_output {
     /// While this mock itself isn't necessarily thread-local, passing through to the thread-local
     /// state is our primary use case, so we just disallow [Send] entirely.
     impl !Send for MockSimpleTextOutputProtocol {}
+}
+
+/// Mock timestamp protocol
+pub mod timestamp {
+    use super::*;
+
+    mock! {
+        /// Mock [efi::TimestampProtocol]
+        pub TimestampProtocol {
+            /// Returns the current timestamp.
+            pub fn get_timestamp(&self)->Result<u64>;
+
+            /// Returns properties of the timestamp protocol.
+            pub fn get_properties(&self)->Result<EfiTimestampProperties>;
+        }
+    }
+
+    /// Map to the libefi name so code under test can just use one name.
+    pub type TimestampProtocol = MockTimestampProtocol;
 }
 
 /// Mock image_loading protocol.

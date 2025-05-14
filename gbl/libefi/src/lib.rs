@@ -66,6 +66,8 @@ pub use allocation::EfiAllocator;
 pub mod ab_slots;
 /// Local fastboot/bootmenu support.
 pub mod local_session;
+/// EFI backed implementations for profiling framework.
+pub mod profiling;
 /// Idiomatic wrappers around EFI protocols.
 pub mod protocol;
 pub mod utils;

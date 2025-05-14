@@ -164,7 +164,7 @@ mod test {
     use crate::protocol::Protocol;
     use crate::test::*;
     use crate::EfiEntry;
-    use core::ops::DerefMut;
+    use core::{ops::DerefMut, time::Duration};
     use efi_types::{
         EfiStatus, GblEfiABSlotProtocol, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
         EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS,
@@ -185,6 +185,7 @@ mod test {
         device_tree::DeviceTreeComponentsRegistry,
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
         ops::ImageBuffer,
+        profiling::{ProfileBackend, ProfileTimer, Reporter},
     };
     use std::{
         ffi::CStr,
@@ -235,6 +236,29 @@ mod test {
     extern "efiapi" fn flush(_: *mut GblEfiABSlotProtocol) -> EfiStatus {
         ATOMIC.with(|a| a.store(true, Ordering::Relaxed));
         EFI_STATUS_SUCCESS
+    }
+
+    #[derive(Copy, Clone)]
+    struct NullProfiler {}
+
+    impl ProfileBackend for NullProfiler {
+        fn new_timer(&self) -> impl ProfileTimer {
+            *self
+        }
+
+        fn reporter(&self) -> impl Reporter {
+            *self
+        }
+    }
+
+    impl ProfileTimer for NullProfiler {
+        fn elapsed(&self) -> Duration {
+            Duration::ZERO
+        }
+    }
+
+    impl Reporter for NullProfiler {
+        fn report(&self, _: &'static str, _: &'static str, _: Duration) {}
     }
 
     struct TestGblOps<'a> {
@@ -450,6 +474,10 @@ mod test {
 
         fn get_base_sp(&mut self) -> Option<usize> {
             None
+        }
+
+        fn get_profiling_backend(&self) -> impl ProfileBackend {
+            NullProfiler {}
         }
     }
 

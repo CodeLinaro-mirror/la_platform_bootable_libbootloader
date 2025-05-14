@@ -24,6 +24,7 @@ use crate::{
         check_part_unique, read_unique_partition, read_unique_partition_sync,
         write_unique_partition, GblDisk,
     },
+    profiling::ProfileBackend,
 };
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
 use core::{ffi::CStr, fmt::Write, num::NonZeroUsize, ops::DerefMut, result::Result};
@@ -485,6 +486,9 @@ pub trait GblOps<'a, 'd> {
         };
         gbl_println!(self, "{s}");
     }
+
+    /// Provides backend specific hooks for profiling.
+    fn get_profiling_backend(&self) -> impl ProfileBackend;
 }
 
 /// Prints the stack usage at the callsite.
@@ -812,6 +816,10 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         // Ramboot should not need this.
         unreachable!();
     }
+
+    fn get_profiling_backend(&self) -> impl ProfileBackend {
+        self.ops.get_profiling_backend()
+    }
 }
 
 #[cfg(test)]
@@ -820,12 +828,14 @@ pub(crate) mod test {
     use crate::device_tree::DeviceTreeComponentType;
     use crate::error::IntegrationError;
     use crate::partition::GblDisk;
+    use crate::profiling::{ProfileTimer, Reporter};
     use abr::{get_and_clear_one_shot_bootloader, get_boot_slot};
     use avb::{CertOps, Ops};
     use avb_test::TestOps as AvbTestOps;
     use core::{
         fmt::Write,
         ops::{Deref, DerefMut},
+        time::Duration,
     };
     use fdt::Fdt;
     use gbl_async::block_on;
@@ -1032,6 +1042,29 @@ pub(crate) mod test {
             contents.iter_mut().for_each(|v| *v = !*v);
             self.write_to_partition_sync(name, off, &mut contents[..]).unwrap();
         }
+    }
+
+    #[derive(Copy, Clone)]
+    struct NullProfiler {}
+
+    impl ProfileBackend for NullProfiler {
+        fn new_timer(&self) -> impl ProfileTimer {
+            *self
+        }
+
+        fn reporter(&self) -> impl Reporter {
+            *self
+        }
+    }
+
+    impl ProfileTimer for NullProfiler {
+        fn elapsed(&self) -> Duration {
+            Duration::ZERO
+        }
+    }
+
+    impl Reporter for NullProfiler {
+        fn report(&self, _: &'static str, _: &'static str, _: Duration) {}
     }
 
     impl<'a, 'd> GblOps<'a, 'd> for FakeGblOps<'a, 'd> {
@@ -1323,6 +1356,10 @@ pub(crate) mod test {
 
         fn get_base_sp(&mut self) -> Option<usize> {
             self.base_sp
+        }
+
+        fn get_profiling_backend(&self) -> impl ProfileBackend {
+            NullProfiler {}
         }
     }
 
