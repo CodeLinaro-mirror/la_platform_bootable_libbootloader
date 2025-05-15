@@ -73,7 +73,7 @@ pub fn dice_android_handover_main_flow(
 /// Contains the input values used to construct the Android Profile for DICE
 /// configuration descriptor.
 #[derive(Debug, Default)]
-pub struct DiceConfigValues<'a> {
+pub struct DiceAndroidConfig<'a> {
     /// Name of the component.
     pub component_name: Option<&'a CStr>,
     /// Version of the component.
@@ -88,7 +88,10 @@ pub struct DiceConfigValues<'a> {
 
 /// Formats a configuration descriptor following the Android Profile for DICE specification.
 /// See <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>.
-pub fn bcc_format_config_descriptor(values: &DiceConfigValues, buffer: &mut [u8]) -> Result<usize> {
+pub fn dice_android_format_config_descriptor(
+    values: &DiceAndroidConfig,
+    buffer: &mut [u8],
+) -> Result<usize> {
     let mut configs = 0;
 
     let component_name = values.component_name.map_or(ptr::null(), |name| {
