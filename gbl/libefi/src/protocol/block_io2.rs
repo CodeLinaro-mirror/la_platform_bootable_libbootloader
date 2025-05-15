@@ -17,8 +17,9 @@
 use crate::{
     efi_call,
     protocol::{Protocol, ProtocolInfo},
-    Event, EventNotify, EventType, Tpl,
+    EventNotify, EventType, Tpl,
 };
+use core::sync::atomic::{AtomicBool, Ordering};
 use efi_types::{
     EfiBlockIo2Protocol, EfiBlockIo2Token, EfiBlockIoMedia, EfiGuid, EFI_STATUS_NOT_READY,
 };
@@ -36,25 +37,15 @@ impl ProtocolInfo for BlockIo2Protocol {
         EfiGuid::new(0xa77b2472, 0xe282, 0x4e9f, [0xa2, 0x45, 0xc2, 0xc0, 0xe2, 0x7b, 0xbc, 0xc1]);
 }
 
+/// Helper for waiting an AtomicBool to become true.
+async fn wait_completion(complete: &AtomicBool) {
+    while !complete.load(Ordering::Relaxed) {
+        yield_now().await;
+    }
+}
+
 // Protocol interface wrappers.
 impl Protocol<'_, BlockIo2Protocol> {
-    /// Syncs a non-blocking operation by waiting for the corresponding EFI event to be signaled.
-    async fn wait_io_completion(&self, event: &Event<'_, '_>) -> Result<()> {
-        let bs = self.efi_entry().system_table().boot_services();
-        loop {
-            match bs.check_event(&event) {
-                Err(e) => {
-                    // If we fail to check event/status, force reset the device to release any
-                    // retained user buffer. The reset cannot fail.
-                    self.reset(true).unwrap();
-                    return Err(e);
-                }
-                Ok(true) => return Ok(()),
-                _ => yield_now().await,
-            }
-        }
-    }
-
     /// Wraps `EfiBlockIo2Protocol.read_blocks_ex`.
     pub async fn read_blocks_ex(
         &self,
@@ -62,24 +53,24 @@ impl Protocol<'_, BlockIo2Protocol> {
         buffer: &mut (impl SliceMaybeUninit + ?Sized),
     ) -> Result<()> {
         let bs = self.efi_entry().system_table().boot_services();
-        // UEFI spec requires that NOTIFY_WAIT event be always created with a callback.
-        let mut notify_fn = &mut |_| ();
+        let complete = AtomicBool::new(false);
+        let mut notify_fn = &mut |_| complete.store(true, Ordering::Relaxed);
         let mut notify = EventNotify::new(Tpl::Callback, &mut notify_fn);
         // SAFETY: the notification callback never allocates, deallocates, or panics.
         let event =
-            unsafe { bs.create_event_with_notification(EventType::NotifyWait, &mut notify) }?;
+            unsafe { bs.create_event_with_notification(EventType::NotifySignal, &mut notify) }?;
         let mut token =
             EfiBlockIo2Token { event: event.efi_event, transaction_status: EFI_STATUS_NOT_READY };
         // SAFETY:
         // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
         //    established by `Protocol::new()`.
         // * `self.interface` is input parameter and will not be retained. It outlives the call.
-        // * `Self::wait_io_completion()` is called immediately after. It makes sure the IO is
-        //   either completed successfully or is reset if `check_event` fails. Thus it's
-        //   guaranteed that after `Self::wait_io_completion()` returns, `buffer` and `token` are
-        //   not being retained by the UEFI firmware anymore.
-        // * `assert_return` asserts that `wait_io_completion` returns eventually. Otherwise it
-        //   panics if the top level Future gets dropped before it returns.
+        // * The function waits until `complete` is marked true by the event notification function,
+        //   which guarantees that `buffer` and `token` are not being retained by the UEFI firmware
+        //   anymore.
+        // * `assert_return` asserts that the wait for `complete = true` must complete. Otherwise
+        //   it panics. This makes sure that we don't violate aliasing rule due to the top level
+        //   Future getting dropped before it can execute to completion.
         unsafe {
             efi_call!(
                 self.interface()?.read_blocks_ex,
@@ -91,18 +82,19 @@ impl Protocol<'_, BlockIo2Protocol> {
                 buffer.as_mut().as_mut_ptr() as _
             )?;
         }
-        assert_return(self.wait_io_completion(&event)).await?;
+        assert_return(wait_completion(&complete)).await;
         efi_status_to_result(token.transaction_status)
     }
 
     /// Wraps `EfiBlockIo2Protocol.write_blocks_ex`.
     pub async fn write_blocks_ex(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
         let bs = self.efi_entry().system_table().boot_services();
-        let mut notify_fn = &mut |_| ();
+        let complete = AtomicBool::new(false);
+        let mut notify_fn = &mut |_| complete.store(true, Ordering::Relaxed);
         let mut notify = EventNotify::new(Tpl::Callback, &mut notify_fn);
         // SAFETY: the notification callback never allocates, deallocates, or panics.
         let event =
-            unsafe { bs.create_event_with_notification(EventType::NotifyWait, &mut notify) }?;
+            unsafe { bs.create_event_with_notification(EventType::NotifySignal, &mut notify) }?;
         let mut token =
             EfiBlockIo2Token { event: event.efi_event, transaction_status: EFI_STATUS_NOT_READY };
         // SAFETY: See safety comment for `Self::read_blocks_ex()`.
@@ -117,23 +109,24 @@ impl Protocol<'_, BlockIo2Protocol> {
                 buffer.as_mut_ptr() as _
             )?;
         }
-        assert_return(self.wait_io_completion(&event)).await?;
+        assert_return(wait_completion(&complete)).await;
         efi_status_to_result(token.transaction_status)
     }
 
     /// Wraps `EFI_BLOCK_IO2_PROTOCOL.flush_blocks_ex()`
     pub async fn flush_blocks_ex(&self) -> Result<()> {
         let bs = self.efi_entry().system_table().boot_services();
-        let mut notify_fn = &mut |_| ();
+        let complete = AtomicBool::new(false);
+        let mut notify_fn = &mut |_| complete.store(true, Ordering::Relaxed);
         let mut notify = EventNotify::new(Tpl::Callback, &mut notify_fn);
         // SAFETY: the notification callback never allocates, deallocates, or panics.
         let event =
-            unsafe { bs.create_event_with_notification(EventType::NotifyWait, &mut notify) }?;
+            unsafe { bs.create_event_with_notification(EventType::NotifySignal, &mut notify) }?;
         let mut token =
             EfiBlockIo2Token { event: event.efi_event, transaction_status: EFI_STATUS_NOT_READY };
         // SAFETY: See safety comment for `Self::read_blocks_ex()`.
         unsafe { efi_call!(self.interface()?.flush_blocks_ex, self.interface, &mut token) }?;
-        assert_return(self.wait_io_completion(&event)).await?;
+        assert_return(wait_completion(&complete)).await;
         efi_status_to_result(token.transaction_status)
     }
 
