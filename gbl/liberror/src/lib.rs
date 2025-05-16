@@ -38,8 +38,10 @@ use core::{
     ffi::{FromBytesUntilNulError, FromBytesWithNulError},
     str::Utf8Error,
 };
-
-use efi_types as efi;
+use efi_types::{
+    defs::EfiStatus,
+    status::{EfiError, EfiResult},
+};
 
 /// Gpt related errors.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -240,7 +242,7 @@ pub enum Error {
     /// The remote network endpoint is not addressable.
     Unaddressable,
     /// An unknown, unexpected EFI_STATUS error code was returned,
-    UnexpectedEfiError(efi::EfiStatus),
+    UnexpectedEfiError(EfiStatus),
     /// Return from function that is not expected to return.
     UnexpectedReturn,
     /// Operation is unsupported
@@ -313,72 +315,111 @@ impl From<core::fmt::Error> for Error {
 /// Helper type alias.
 pub type Result<T> = core::result::Result<T, Error>;
 
-const EFI_STATUS_TO_ERR_TABLE: &[(efi::EfiStatus, Error)] = &[
-    (efi::EFI_STATUS_CRC_ERROR, Error::BadChecksum),
-    (efi::EFI_STATUS_ABORTED, Error::Aborted),
-    (efi::EFI_STATUS_ACCESS_DENIED, Error::AccessDenied),
-    (efi::EFI_STATUS_ALREADY_STARTED, Error::AlreadyStarted),
-    (efi::EFI_STATUS_BAD_BUFFER_SIZE, Error::BadBufferSize),
-    (efi::EFI_STATUS_BUFFER_TOO_SMALL, Error::BufferTooSmall(None)),
-    (efi::EFI_STATUS_COMPROMISED_DATA, Error::CompromisedData),
-    (efi::EFI_STATUS_CONNECTION_FIN, Error::Disconnected),
-    (efi::EFI_STATUS_CONNECTION_REFUSED, Error::OperationProhibited),
-    (efi::EFI_STATUS_CONNECTION_RESET, Error::ConnectionReset),
-    (efi::EFI_STATUS_DEVICE_ERROR, Error::DeviceError),
-    (efi::EFI_STATUS_END_OF_FILE, Error::EndOfFile),
-    (efi::EFI_STATUS_END_OF_MEDIA, Error::EndOfMedia),
-    (efi::EFI_STATUS_HTTP_ERROR, Error::HttpError),
-    (efi::EFI_STATUS_ICMP_ERROR, Error::IcmpError),
-    (efi::EFI_STATUS_INCOMPATIBLE_VERSION, Error::UnsupportedVersion),
-    (efi::EFI_STATUS_INVALID_LANGUAGE, Error::InvalidLanguage),
-    (efi::EFI_STATUS_INVALID_PARAMETER, Error::InvalidInput),
-    (efi::EFI_STATUS_IP_ADDRESS_CONFLICT, Error::IpAddressConflict),
-    (efi::EFI_STATUS_LOAD_ERROR, Error::LoadError),
-    (efi::EFI_STATUS_MEDIA_CHANGED, Error::MediaChanged),
-    (efi::EFI_STATUS_NOT_FOUND, Error::NotFound),
-    (efi::EFI_STATUS_NOT_READY, Error::NotReady),
-    (efi::EFI_STATUS_NOT_STARTED, Error::NotStarted),
-    (efi::EFI_STATUS_NO_MAPPING, Error::NoMapping),
-    (efi::EFI_STATUS_NO_MEDIA, Error::NoMedia),
-    (efi::EFI_STATUS_NO_RESPONSE, Error::NoResponse),
-    (efi::EFI_STATUS_OUT_OF_RESOURCES, Error::OutOfResources),
-    (efi::EFI_STATUS_PROTOCOL_ERROR, Error::ProtocolError),
-    (efi::EFI_STATUS_SECURITY_VIOLATION, Error::SecurityViolation),
-    (efi::EFI_STATUS_TFTP_ERROR, Error::TftpError),
-    (efi::EFI_STATUS_TIMEOUT, Error::Timeout),
-    (efi::EFI_STATUS_UNSUPPORTED, Error::Unsupported),
-    (efi::EFI_STATUS_VOLUME_CORRUPTED, Error::VolumeCorrupted),
-    (efi::EFI_STATUS_VOLUME_FULL, Error::VolumeFull),
-    (efi::EFI_STATUS_WRITE_PROTECTED, Error::WriteProtected),
+/// Table mapping between [EfiError] and our [Error] types.
+///
+/// The purpose of this rather than a `match` statement is that we need to
+/// go both ways, and this allows us to do that without writing the large
+/// `match` statement twice. However, it does require special-case handling
+/// for any error type that holds additional data.
+const EFI_ERROR_TO_ERR_TABLE: &[(EfiError, Error)] = &[
+    (EfiError::CrcError, Error::BadChecksum),
+    (EfiError::Aborted, Error::Aborted),
+    (EfiError::AccessDenied, Error::AccessDenied),
+    (EfiError::AlreadyStarted, Error::AlreadyStarted),
+    (EfiError::BadBufferSize, Error::BadBufferSize),
+    (EfiError::CompromisedData, Error::CompromisedData),
+    (EfiError::ConnectionFin, Error::Disconnected),
+    (EfiError::ConnectionRefused, Error::OperationProhibited),
+    (EfiError::ConnectionReset, Error::ConnectionReset),
+    (EfiError::DeviceError, Error::DeviceError),
+    (EfiError::EndOfFile, Error::EndOfFile),
+    (EfiError::EndOfMedia, Error::EndOfMedia),
+    (EfiError::HttpError, Error::HttpError),
+    (EfiError::IcmpError, Error::IcmpError),
+    (EfiError::IncompatibleVersion, Error::UnsupportedVersion),
+    (EfiError::InvalidLanguage, Error::InvalidLanguage),
+    (EfiError::InvalidParameter, Error::InvalidInput),
+    (EfiError::IpAddressConflict, Error::IpAddressConflict),
+    (EfiError::LoadError, Error::LoadError),
+    (EfiError::MediaChanged, Error::MediaChanged),
+    (EfiError::NotFound, Error::NotFound),
+    (EfiError::NotReady, Error::NotReady),
+    (EfiError::NotStarted, Error::NotStarted),
+    (EfiError::NoMapping, Error::NoMapping),
+    (EfiError::NoMedia, Error::NoMedia),
+    (EfiError::NoResponse, Error::NoResponse),
+    (EfiError::OutOfResources, Error::OutOfResources),
+    (EfiError::ProtocolError, Error::ProtocolError),
+    (EfiError::SecurityViolation, Error::SecurityViolation),
+    (EfiError::TftpError, Error::TftpError),
+    (EfiError::Timeout, Error::Timeout),
+    (EfiError::Unsupported, Error::Unsupported),
+    (EfiError::VolumeCorrupted, Error::VolumeCorrupted),
+    (EfiError::VolumeFull, Error::VolumeFull),
+    (EfiError::WriteProtected, Error::WriteProtected),
 ];
 
-/// Maps a EfiStatus to Result<()>.
-pub fn efi_status_to_result(e: efi::EfiStatus) -> Result<()> {
-    match e {
-        efi::EFI_STATUS_SUCCESS => Ok(()),
-        _ => EFI_STATUS_TO_ERR_TABLE
-            .iter()
-            .find_map(|(v, err)| (*v == e).then_some(Err(*err)))
-            .unwrap_or(Err(Error::UnexpectedEfiError(e))),
+impl From<EfiError> for Error {
+    fn from(e: EfiError) -> Self {
+        match e {
+            // Special-case handling for `BufferTooSmall` to retain the size.
+            EfiError::BufferTooSmall(0) => Error::BufferTooSmall(None),
+            EfiError::BufferTooSmall(size) => Error::BufferTooSmall(Some(size)),
+            _ => EFI_ERROR_TO_ERR_TABLE
+                .iter()
+                .find_map(|(v, err)| (*v == e).then_some(*err))
+                .unwrap_or(Error::UnexpectedEfiError(e.into())),
+        }
     }
 }
 
-/// Maps a Result<()> to EfiStatus.
-pub fn result_to_efi_status(res: Result<()>) -> efi::EfiStatus {
-    match res {
-        Ok(()) => efi::EFI_STATUS_SUCCESS,
-        Err(Error::UnexpectedEfiError(e)) if (e.0.leading_zeros() == 0) => e,
-        Err(e) => EFI_STATUS_TO_ERR_TABLE
-            .iter()
-            .find_map(|(err, v)| (*v == e).then_some(*err))
-            .unwrap_or(efi::EFI_STATUS_DEVICE_ERROR),
+impl From<Error> for EfiError {
+    fn from(e: Error) -> Self {
+        match e {
+            // Special-case handling for `BufferTooSmall` to retain the size.
+            Error::BufferTooSmall(size) => EfiError::BufferTooSmall(size.unwrap_or(0)),
+            Error::UnexpectedEfiError(status) => {
+                match status.into() {
+                    // This indicates an internal error somewhere in GBL, and
+                    // it's dangerous to try to guess whether it's actually an
+                    // error or not. Panic to be safe.
+                    Ok(()) => panic!("UnexpectedEfiError contained EFI_SUCCESS"),
+                    // Snap warnings to `EfiError::DeviceError` instead to turn
+                    // them into real errors.
+                    Err(efi_error) if efi_error.is_warning() => EfiError::DeviceError,
+                    Err(efi_error) => efi_error,
+                }
+            }
+            _ => EFI_ERROR_TO_ERR_TABLE
+                .iter()
+                .find_map(|(err, v)| (*v == e).then_some(*err))
+                .unwrap_or(EfiError::DeviceError),
+        }
     }
+}
+
+/// Maps a EfiStatus to Result<()>.
+pub fn efi_status_to_result(e: EfiStatus) -> Result<()> {
+    // Convert to `EfiResult` using libefi_types, then from there into our
+    // GBL `Result`. Once the Rust protocol wrappers get pushed up to
+    // libefi_types, we'll get an `EfiResult` directly and won't have to deal
+    // with the raw `EfiStatus` here (b/413021069).
+    //
+    // This does incur a double-lookup, but it's easier to not have to maintain
+    // mappings to both `EfiStatus` and `EfiError`, and the extra lookup time
+    // should be negligible.
+    EfiResult::from(e).map_err(From::from)
+}
+
+/// Maps a Result<()> to EfiStatus.
+pub fn result_to_efi_status(res: Result<()>) -> EfiStatus {
+    res.map_err(From::from).into()
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use efi::defs::EfiStatus;
+    use efi_types::defs::EFI_STATUS_DEVICE_ERROR;
 
     #[test]
     fn test_from_safemath_error() {
@@ -410,7 +451,7 @@ mod test {
     fn test_result_to_efi_status_unknown_non_efi_error_code_map_to_device_error() {
         assert_eq!(
             result_to_efi_status(Err(Error::UnexpectedEfiError(EfiStatus(1)))),
-            efi::EFI_STATUS_DEVICE_ERROR
+            EFI_STATUS_DEVICE_ERROR
         );
     }
 }
