@@ -25,6 +25,7 @@ use core::{
     ops::DerefMut,
     slice::SliceIndex,
 };
+use gbl_async::block_on;
 use liberror::{Error, Result};
 use libutils::aligned_subslice;
 use safemath::SafeNum;
@@ -105,6 +106,51 @@ pub unsafe trait BlockIo {
     ///
     /// Returns true if exactly data.len() number of bytes are written. Otherwise false.
     async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()>;
+
+    /// Same as `Self::read_blocks()` but IO is blocking.
+    ///
+    /// The default implementation simply calls and blocks `Self::read_blocks` until completion.
+    /// In some cases however, non-blocking IO may have non-trivial overhead and platform may prefer
+    /// to have separate and optimized implementation for blocking IO use case. This can be provided
+    /// by overriding this API.
+    fn read_blocks_sync(
+        &mut self,
+        blk_offset: u64,
+        out: &mut (impl SliceMaybeUninit + ?Sized),
+    ) -> Result<()> {
+        block_on(self.read_blocks(blk_offset, out))
+    }
+
+    /// Same as `Self::write_blocks` but IO is blocking
+    fn write_blocks_sync(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
+        block_on(self.write_blocks(blk_offset, data))
+    }
+}
+
+/// `BlockIoSync` wraps another BlockIo implementation and only uses its blocking IO interface
+/// `BlockIo::read_block_sync()` and `BlockIo::write_block_sync()` for implementing its own
+/// `BlockIo`.
+pub struct BlockIoSync<T>(T);
+
+// SAFETY:
+// The implementation simply forwards from another implementation of `BlockIO` which is assumed
+// safely implemented.
+unsafe impl<T: BlockIo> BlockIo for BlockIoSync<T> {
+    fn info(&mut self) -> BlockInfo {
+        self.0.info()
+    }
+
+    async fn read_blocks(
+        &mut self,
+        blk_offset: u64,
+        out: &mut (impl SliceMaybeUninit + ?Sized),
+    ) -> Result<()> {
+        self.0.read_blocks_sync(blk_offset, out)
+    }
+
+    async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
+        self.0.write_blocks_sync(blk_offset, data)
+    }
 }
 
 // SAFETY:
@@ -128,6 +174,18 @@ where
 
     async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
         self.deref_mut().write_blocks(blk_offset, data).await
+    }
+
+    fn read_blocks_sync(
+        &mut self,
+        blk_offset: u64,
+        out: &mut (impl SliceMaybeUninit + ?Sized),
+    ) -> Result<()> {
+        self.deref_mut().read_blocks_sync(blk_offset, out)
+    }
+
+    fn write_blocks_sync(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
+        self.deref_mut().write_blocks_sync(blk_offset, data)
     }
 }
 
@@ -417,12 +475,27 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
         let offset = gpt.check_range(part_name, offset, data.len())?;
         self.write(offset, data).await
     }
+
+    /// Returns a `Disk` instance that forces all internal IOs to only go through
+    /// `BlockIo::read_blocks_sync()` and `BlockIo::write_block_sync()`.
+    ///
+    /// This is typically used when `T` has non-default and optimized implementation of
+    /// `BlockIo::read_blocks_sync()` and `BlockIo::write_block_sync()`  and caller only needs
+    /// blocking IO.
+    pub fn as_sync(&mut self) -> Disk<BlockIoSync<&mut T>, &mut [u8]> {
+        Disk::new(BlockIoSync(&mut self.io), &mut self.scratch[..]).unwrap()
+    }
+
+    /// Same as `Self::as_sync()` but consumes Self.
+    pub fn into_sync(self) -> Disk<BlockIoSync<T>, S> {
+        Disk::new(BlockIoSync(self.io), self.scratch).unwrap()
+    }
 }
 
 impl<'a, T: BlockIo> Disk<RefMut<'a, T>, RefMut<'a, [u8]>> {
     /// Converts a `RefMut<Disk<T, S>>` to `Disk<RefMut<T>, RefMut<[u8]>>`. The scratch buffer
     /// generic type is eliminated in the return.
-    pub fn from_ref_mut(val: RefMut<'a, Disk<T, impl DerefMut<Target = [u8]>>>) -> Self {
+    pub fn transpose_ref_mut(val: RefMut<'a, Disk<T, impl DerefMut<Target = [u8]>>>) -> Self {
         let (io, scratch) = RefMut::map_split(val, |v| (&mut v.io, &mut v.scratch[..]));
         Disk::new(io, scratch).unwrap()
     }

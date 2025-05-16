@@ -20,9 +20,10 @@ use core::{
     ffi::CStr,
     ops::{Deref, DerefMut},
 };
+use gbl_async::block_on;
 use gbl_storage::{
-    BlockInfo, BlockIo, Disk, Gpt, GptBuilder, GptSyncResult, Partition as GptPartition,
-    SliceMaybeUninit,
+    BlockInfo, BlockIo, BlockIoSync, Disk, Gpt, GptBuilder, GptSyncResult,
+    Partition as GptPartition, SliceMaybeUninit,
 };
 use liberror::Error;
 use safemath::SafeNum;
@@ -45,7 +46,12 @@ impl RawName {
 
     /// Decodes to a string.
     pub fn to_str(&self) -> &str {
-        CStr::from_bytes_until_nul(&self.0[..]).unwrap().to_str().unwrap()
+        self.to_cstr().to_str().unwrap()
+    }
+
+    /// Gets as CStr.
+    pub fn to_cstr(&self) -> &CStr {
+        CStr::from_bytes_until_nul(&self.0[..]).unwrap()
     }
 }
 
@@ -127,6 +133,30 @@ where
     S: DerefMut<Target = [u8]>,
     T: DerefMut<Target = [u8]>,
 {
+    /// Creates a new instance using the same disk and partition table where all IOs only go through
+    /// `BlockIO::read_blocks_sync()', `BlockIO::write_blocks_sync()'. This effectively makes API
+    /// blocking and makes sure backend provided optimized `BlockIO::read_blocks_sync()',
+    /// `BlockIO::write_blocks_sync()' are used.
+    pub fn as_sync(
+        &self,
+    ) -> Result<
+        GblDisk<Disk<BlockIoSync<RefMut<'_, B>>, RefMut<'_, [u8]>>, Gpt<RefMut<'_, [u8]>>>,
+        Error,
+    > {
+        let disk = Disk::transpose_ref_mut(self.get_disk()?).into_sync();
+        let mut parts = self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?;
+        Ok(match parts.deref_mut() {
+            PartitionTable::Raw(v, _) => GblDisk::new_raw(disk, v.to_cstr()).unwrap(),
+            PartitionTable::Gpt(_) => {
+                let gpt = RefMut::map(parts, |v| match v {
+                    PartitionTable::Gpt(v) => v,
+                    _ => unreachable!(),
+                });
+                GblDisk::new_gpt(disk, Gpt::transpose_ref_mut(gpt))
+            }
+        })
+    }
+
     /// Creates a new instance as a GPT device.
     pub fn new_gpt(mut disk: Disk<B, S>, gpt: Gpt<T>) -> Self {
         let info_cache = disk.io().info();
@@ -166,7 +196,7 @@ where
     /// If `part` is `None`, an IO for the whole block device is returned.
     pub fn partition_io(&self, part: Option<&str>) -> Result<PartitionIo<'_, B>, Error> {
         let (part_start, part_end) = self.find_partition(part)?.absolute_range()?;
-        Ok(PartitionIo { disk: Disk::from_ref_mut(self.get_disk()?), part_start, part_end })
+        Ok(PartitionIo { disk: Disk::transpose_ref_mut(self.get_disk()?), part_start, part_end })
     }
 
     /// Finds a partition.
@@ -388,6 +418,21 @@ pub async fn read_unique_partition(
     out: &mut (impl SliceMaybeUninit + ?Sized),
 ) -> Result<(), Error> {
     devs[check_part_unique(devs, part)?.0].partition_io(Some(part))?.read(off, out).await
+}
+
+/// Same as `read_unique_partition` but IO is blocking.
+pub fn read_unique_partition_sync(
+    devs: &'_ [GblDisk<
+        Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
+        Gpt<impl DerefMut<Target = [u8]>>,
+    >],
+    part: &str,
+    off: u64,
+    out: &mut (impl SliceMaybeUninit + ?Sized),
+) -> Result<(), Error> {
+    block_on(
+        devs[check_part_unique(devs, part)?.0].as_sync()?.partition_io(Some(part))?.read(off, out),
+    )
 }
 
 /// Checks that a partition is unique among all block devices and writes to it.
@@ -678,6 +723,10 @@ pub(crate) mod test {
     ) {
         let mut out = vec![0u8; to_usize(sz)];
         block_on(read_unique_partition(devs, part, off, &mut out[..])).unwrap();
+        assert_eq!(out, part_content[to_usize(off)..][..out.len()]);
+
+        let mut out = vec![0u8; to_usize(sz)];
+        read_unique_partition_sync(devs, part, off, &mut out[..]).unwrap();
         assert_eq!(out, part_content[to_usize(off)..][..out.len()]);
     }
 

@@ -15,6 +15,7 @@
 use crate::{BlockIo, Disk, Result};
 use core::{
     array::from_fn,
+    cell::RefMut,
     cmp::min,
     convert::TryFrom,
     default::Default,
@@ -556,6 +557,14 @@ fn max_supported_entries(buf: &[u8]) -> Result<usize> {
 /// [Gpt] manages a buffer for loading, verifying and syncing GPT.
 pub struct Gpt<B> {
     buffer: B,
+}
+
+impl<'a> Gpt<RefMut<'a, [u8]>> {
+    /// Converts a `RefMut<Gpt<B>>` to `Gpt<RefMut<[u8]>>`. The buffer generic type is eliminated in
+    /// the return.
+    pub fn transpose_ref_mut(val: RefMut<'a, Gpt<impl DerefMut<Target = [u8]>>>) -> Self {
+        Gpt { buffer: RefMut::map(val, |v| &mut v.buffer[..]) }
+    }
 }
 
 impl<B: DerefMut<Target = [u8]>> Gpt<B> {

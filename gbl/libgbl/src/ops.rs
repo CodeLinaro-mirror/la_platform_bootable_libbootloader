@@ -20,7 +20,10 @@ use crate::{
     fuchsia_boot::GblAbrOps,
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
     gbl_println,
-    partition::{check_part_unique, read_unique_partition, write_unique_partition, GblDisk},
+    partition::{
+        check_part_unique, read_unique_partition, read_unique_partition_sync,
+        write_unique_partition, GblDisk,
+    },
 };
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
 use core::{ffi::CStr, fmt::Write, num::NonZeroUsize, ops::DerefMut, result::Result};
@@ -154,7 +157,7 @@ pub trait GblOps<'a, 'd> {
         off: u64,
         out: &mut (impl SliceMaybeUninit + ?Sized),
     ) -> Result<(), Error> {
-        block_on(self.read_from_partition(part, off, out))
+        read_unique_partition_sync(self.disks(), part, off, out)
     }
 
     /// Writes data to a partition.
@@ -529,6 +532,27 @@ pub(crate) struct RambootOps<'a, T> {
     pub(crate) ram_partitions: &'a [(&'a str, &'a [u8])],
 }
 
+impl<'a, T> RambootOps<'a, T> {
+    /// Reads from ram partitions.
+    pub fn read_from_ram_partition(
+        &mut self,
+        part: &str,
+        off: u64,
+        out: &mut (impl SliceMaybeUninit + ?Sized),
+    ) -> Result<(), Error> {
+        match self.ram_partitions.iter().find(|(name, _)| *name == part) {
+            Some((_, data)) => {
+                let buf = data
+                    .get(off.try_into()?..)
+                    .and_then(|v| v.get(..out.len()))
+                    .ok_or(Error::OutOfRange)?;
+                Ok(out.clone_from_slice(buf))
+            }
+            _ => Err(Error::NotFound),
+        }
+    }
+}
+
 impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
     fn console_out(&mut self) -> Option<&mut dyn Write> {
         self.ops.console_out()
@@ -657,15 +681,21 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         off: u64,
         out: &mut (impl SliceMaybeUninit + ?Sized),
     ) -> Result<(), Error> {
-        match self.ram_partitions.iter().find(|(name, _)| *name == part) {
-            Some((_, data)) => {
-                let buf = data
-                    .get(off.try_into()?..)
-                    .and_then(|v| v.get(..out.len()))
-                    .ok_or(Error::OutOfRange)?;
-                Ok(out.clone_from_slice(buf))
-            }
-            _ => self.ops.read_from_partition(part, off, out).await,
+        match self.read_from_ram_partition(part, off, out) {
+            Err(Error::NotFound) => self.ops.read_from_partition(part, off, out).await,
+            v => v,
+        }
+    }
+
+    fn read_from_partition_sync(
+        &mut self,
+        part: &str,
+        off: u64,
+        out: &mut (impl SliceMaybeUninit + ?Sized),
+    ) -> Result<(), Error> {
+        match self.read_from_ram_partition(part, off, out) {
+            Err(Error::NotFound) => self.ops.read_from_partition_sync(part, off, out),
+            v => v,
         }
     }
 
