@@ -61,6 +61,11 @@ def define_gbl_workspace(name = None):
         path = "external/googletest",
     )
 
+    native.local_repository(
+        name = "build_bazel_apple_support",
+        path = "bootable/libbootloader/gbl/fake_modules/apple_support",
+    )
+
     native.new_local_repository(
         name = "rules_rust_tinyjson",
         path = "external/rust/android-crates-io/crates/tinyjson",
