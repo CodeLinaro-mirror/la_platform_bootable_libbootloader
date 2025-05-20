@@ -18,6 +18,18 @@
 #ifndef __STDLIB_STDIO_H__
 #define __STDLIB_STDIO_H__
 
+// Required by LLVM libc++ `char_traits.h` pulled in by
+// `boringssl/include/openssl/span.h`.
+//
+// Related bug: https://github.com/llvm/llvm-project/issues/85158
+#define EOF (-1)
+
+// Required by LLVM libc++ `char_traits.h` pulled in by
+// `boringssl/include/openssl/span.h`.
+//
+// Related bug: https://github.com/llvm/llvm-project/issues/85335
+int remove(const char *filename);
+
 // Need to compile boringssl/include/openssl/err.h, but never getting used.
 typedef int FILE;
 int fputs(const char *str, FILE *stream);
