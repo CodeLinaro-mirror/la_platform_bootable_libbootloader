@@ -18,6 +18,7 @@
 """Signs GBL images."""
 
 from argparse import ArgumentParser
+import glob
 import hashlib
 import os
 import shlex
@@ -256,9 +257,9 @@ def gbl_info(args):
     AvbTool().run(['avbtool', 'info_image', '--image', gbl_efi])
 
 
-def gbl_sign(args):
-  """Signs a GBL image."""
-  with open(args.gbl_image, 'rb') as gbl:
+def gbl_sign_one(gbl_image, output, avbtool_args):
+  """Signs one GBL image."""
+  with open(gbl_image, 'rb') as gbl:
     gbl_bytes = gbl.read()
   gbl_image = PEImage(gbl_bytes)
   gbl_image.erase_existing_win_certificates()
@@ -278,7 +279,7 @@ def gbl_sign(args):
             'avbtool',
             'add_hash_footer',
         ]
-        + args.avbtool_args
+        + avbtool_args
         + [
             '--image',
             gbl_efi,
@@ -291,9 +292,34 @@ def gbl_sign(args):
     )
     print('avbtool command:', ' '.join(avb_cmd))
     AvbTool().run(avb_cmd)
-    print('Authenticode digest (sha256):', digest)
-    shutil.copy2(gbl_efi, args.output)
-    print(f'Signed image written to {args.output}')
+    print(f'Authenticode digest (sha256): {digest}')
+    shutil.move(gbl_efi, output)
+    print(f'Signed image written to {output}')
+
+
+def gbl_sign(args):
+  """Signs a GBL image."""
+  gbl_sign_one(args.gbl_image, args.output, args.avbtool_args)
+
+
+def gbl_sign_archive(args):
+  """Signs a GBL image archive."""
+  with tempfile.TemporaryDirectory() as temp_dir:
+    unpack_dir = os.path.join(temp_dir, 'unpack')
+    shutil.unpack_archive(args.image_archive, unpack_dir)
+    signed_dir = os.path.join(temp_dir, 'signed')
+    os.mkdir(signed_dir)
+    for gbl_efi in glob.glob(os.path.join(unpack_dir, 'gbl*.efi')):
+      stem = os.path.basename(gbl_efi)
+      print(f'Found GBL image: {stem}')
+      gbl_sign_one(gbl_efi, os.path.join(signed_dir, stem), args.avbtool_args)
+      print('')
+
+    archive_name = shutil.make_archive(
+        os.path.join(temp_dir, 'signed_zip'), 'zip', signed_dir
+    )
+    shutil.move(archive_name, args.output)
+    print(f'Signed image archive written to {args.output}')
 
 
 def gbl_verify(args):
@@ -353,6 +379,23 @@ def main():
       help='signing args to pass to avbtool (can be specified multiple times)',
   )
   sign_command.set_defaults(func=gbl_sign)
+
+  sign_archive_command = subcommands.add_parser(
+      'sign_archive', help='sign a GBL image archive'
+  )
+  sign_archive_command.add_argument(
+      'image_archive', metavar='IMAGE_ARCHIVE', help='zip archive of GBL images'
+  )
+  sign_archive_command.add_argument(
+      '-o', '--output', required=True, help='output archive name'
+  )
+  sign_archive_command.add_argument(
+      '--avbtool_args',
+      default=[],
+      action='append',
+      help='signing args to pass to avbtool (can be specified multiple times)',
+  )
+  sign_archive_command.set_defaults(func=gbl_sign_archive)
 
   verify_command = subcommands.add_parser(
       'verify', help='verify a signed GBL image'
