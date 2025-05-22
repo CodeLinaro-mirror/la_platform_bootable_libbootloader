@@ -18,6 +18,7 @@ py_binary(
     name = "gblsigntool_py",
     srcs = ["gblsigntool.py"],
     main = "gblsigntool.py",
+    visibility = ["@gbl//efi:__subpackages__"],
     deps = ["@avb//:libavbtool"],
 )
 
@@ -37,5 +38,11 @@ cat -<<PRELUDE $(SRCS) > $(OUTS)
 PRELUDE
     """,
     executable = True,
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "testkey_RSA4096",
+    srcs = ["testkeys/testkey_RSA4096.pem"],
     visibility = ["//visibility:public"],
 )
