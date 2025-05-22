@@ -65,8 +65,11 @@ to bazel-output dir, and you are most likely editing source files in
 incorrectly. To fix this, run
 
 ```
-python3 bootable/libbootloader/gbl/rewrite_rust_project_path.py rust-project.json
+python3 bootable/libbootloader/gbl/rewrite_rust_project_path.py rust-project.json --arch <arch>
 ```
+where `<arch>` is the target architecture of interest and should be one of
+`x86_64`, `aarch64`, `riscv64`. `<arch>` affects intellisense on architecture
+specific code.
 
 And reload your IDE.
 
