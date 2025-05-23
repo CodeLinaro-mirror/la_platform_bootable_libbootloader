@@ -14,10 +14,13 @@
 
 //! EFI protocol wrappers to provide Rust-safe APIs for usage.
 
-use core::ptr::null_mut;
-
 use crate::{DeviceHandle, EfiEntry};
-use efi_types::*;
+use core::{
+    ops::{Deref, DerefMut},
+    ptr::null_mut,
+};
+use efi_types::{defs::EfiGuid, protocol::Client, Identified};
+use liberror::{Error, Result};
 
 pub mod block_io;
 pub mod block_io2;
@@ -38,8 +41,6 @@ pub mod simple_text_input;
 pub mod simple_text_output;
 pub mod timestamp;
 
-use liberror::{Error, Result};
-
 /// ProtocolInfo provides GUID info and the EFI data structure type for a protocol.
 pub trait ProtocolInfo {
     /// Data structure type of the interface.
@@ -48,45 +49,103 @@ pub trait ProtocolInfo {
     const GUID: EfiGuid;
 }
 
+/// Temporary trait to abstract over protocols using [ProtocolInfo] vs [Client].
+/// Once we use [Client] everywhere this can go away.
+pub trait ProtocolImpl {
+    /// The raw C struct type.
+    type CInterface;
+    /// The underlying implementation type.
+    type ImplType;
+    /// The protocol GUID.
+    const GUID: EfiGuid;
+
+    /// Creates the corresponding `ImplType` from a raw C struct.
+    ///
+    /// # Safety
+    ///
+    /// * `c_interface` must point to a valid `CInterface` object
+    /// * `c_interface` must outlive the returned `ImplType`
+    /// * ownership of `c_interface` must be passed in, and must not be used
+    ///   again except through the returned `ImplType`
+    unsafe fn new_impl(c_interface: *mut Self::CInterface) -> Self::ImplType;
+}
+
+/// For [ProtocolInfo], the implementation type is a raw C struct pointer.
+impl<T: ProtocolInfo> ProtocolImpl for T {
+    type CInterface = T::InterfaceType;
+    type ImplType = *mut T::InterfaceType;
+    const GUID: EfiGuid = T::GUID;
+
+    unsafe fn new_impl(c_interface: *mut Self::CInterface) -> Self::ImplType {
+        // Just pass the c_interface pointer through, we use it directly.
+        c_interface
+    }
+}
+
+/// For [Client], the implementation is a [Client] itself.
+impl<T: Identified> ProtocolImpl for Client<T> {
+    type CInterface = T;
+    type ImplType = Self;
+    const GUID: EfiGuid = T::GUID;
+
+    unsafe fn new_impl(c_interface: *mut Self::CInterface) -> Self::ImplType {
+        // SAFETY: by function safety,
+        // * `c_interface` is a valid `CInterface`
+        // * `c_interface` will outlive the returned `ImplType`
+        // * we have exclusive ownership of `c_interface`, which we transfer
+        //   into `Client` without retaining a copy
+        unsafe { Client::new(c_interface) }
+    }
+}
+
 /// A generic type for representing an EFI protcol.
-pub struct Protocol<'a, T: ProtocolInfo> {
+pub struct Protocol<'a, T: ProtocolImpl> {
     // The handle to the device offering the protocol. It's needed for closing the protocol.
     device: DeviceHandle,
-    // The interface protocol itself.
-    interface: *mut T::InterfaceType,
+    // The protocol implementation.
+    interface: T::ImplType,
     // The `EfiEntry` data
     efi_entry: &'a EfiEntry,
 }
 
-/// A base implementation for Protocol<T>.
-/// Protocol<T> will have additional implementation based on type `T`.
-impl<'a, T: ProtocolInfo> Protocol<'a, T> {
+/// Common functions for Protocol<T> with either raw or [Client] backend.
+///
+/// Protocol<T> may have additional implementation based on type `T`.
+impl<'a, T: ProtocolImpl> Protocol<'a, T> {
     /// Create a new instance with the given device handle, interface pointer and `EfiEntry` data.
     ///
     /// # Safety
     ///
-    /// Caller needs to ensure that
-    ///
-    /// * `interface` points to a valid object of type T::InterfaceType.
-    ///
-    /// * Object pointed to by `interface` must live as long as the create `Protocol` or 'a.
+    /// * `c_interface` must point to a valid `T::CInterface` object
+    /// * `c_interface` must outlive the returned `Protocol`
+    /// * ownership of `c_interface` must be passed in, and must not be used
+    ///   again except through the returned `Protocol`
     pub(crate) unsafe fn new(
         device: DeviceHandle,
-        interface: *mut T::InterfaceType,
+        c_interface: *mut T::CInterface,
         efi_entry: &'a EfiEntry,
     ) -> Self {
+        // SAFETY: by function safety,
+        // * `c_interface` is a valid `T::CInterface`
+        // * `c_interface` will outlive the returned `Protocol`
+        // * we have exclusive ownership of `c_interface`, which we transfer
+        //   into `T::new_impl` without retaining a copy
+        let interface = unsafe { T::new_impl(c_interface) };
         Self { device, interface, efi_entry }
-    }
-
-    /// Returns the EFI data structure for the protocol interface.
-    pub fn interface(&self) -> Result<&T::InterfaceType> {
-        // SAFETY: EFI protocol interface data structure.
-        unsafe { self.interface.as_ref() }.ok_or(Error::InvalidInput)
     }
 
     /// Returns the reference to EFI entry.
     pub fn efi_entry(&self) -> &'a EfiEntry {
         self.efi_entry
+    }
+}
+
+/// Additional functions for Protocol<T> with a raw pointer implementation.
+impl<'a, T: ProtocolInfo> Protocol<'a, T> {
+    /// Returns the EFI data structure for the protocol interface.
+    pub fn interface(&self) -> Result<&T::InterfaceType> {
+        // SAFETY: EFI protocol interface data structure.
+        unsafe { self.interface.as_ref() }.ok_or(Error::InvalidInput)
     }
 
     /// Returns the mutable pointer of the interface. Invisible from outside. Application should
@@ -96,7 +155,25 @@ impl<'a, T: ProtocolInfo> Protocol<'a, T> {
     }
 }
 
-impl<T: ProtocolInfo> Drop for Protocol<'_, T> {
+/// Protocol<T> with a [Client] implementation can deref to [Client] to call
+/// its protocol APIs.
+impl<'a, T: Identified> Deref for Protocol<'a, Client<T>> {
+    type Target = Client<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.interface
+    }
+}
+
+/// Protocol<T> with a [Client] implementation can deref to [Client] to call
+/// its protocol APIs.
+impl<'a, T: Identified> DerefMut for Protocol<'a, Client<T>> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.interface
+    }
+}
+
+impl<T: ProtocolImpl> Drop for Protocol<'_, T> {
     fn drop(&mut self) {
         // If the device handle is not specified when creating the Protocol<T>, treat the
         // handle as a static permanent reference and don't close it. An example is
@@ -181,13 +258,11 @@ macro_rules! efi_call {
     };
 }
 
-// Following are protocol specific implementations for Protocol<T>.
-// TODO(300168989): Consdier splitting each protocol into separate file as we add more protocols.
-
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::test::*;
+    use efi_types::defs::EfiBlockIoProtocol;
 
     #[test]
     fn test_dont_close_protocol_without_device_handle() {

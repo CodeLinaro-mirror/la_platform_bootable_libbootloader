@@ -343,7 +343,6 @@ impl Protocol<'_, GblFastbootProtocol> {
 mod test {
     use super::*;
     use crate::{
-        protocol::GetVarAllCallback,
         test::{generate_protocol, run_test},
         DeviceHandle, EfiEntry,
     };
@@ -352,7 +351,7 @@ mod test {
         ptr::null_mut,
         slice::from_raw_parts_mut,
     };
-    use efi_types::{EfiStatus, EFI_STATUS_SUCCESS};
+    use efi_types::defs::{EfiStatus, GetVarAllCallback, EFI_STATUS_SUCCESS};
 
     #[test]
     fn test_serial_number() {

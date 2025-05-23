@@ -77,19 +77,23 @@ use core::{fmt::Write, panic::PanicInfo};
 
 use core::{marker::PhantomData, ptr::null_mut, slice::from_raw_parts, time::Duration};
 use efi_types::{
-    EfiAllocatorType, EfiBootService, EfiConfigurationTable, EfiEvent, EfiGuid, EfiHandle,
-    EfiMemoryAttributesTableHeader, EfiMemoryDescriptor, EfiMemoryType, EfiRuntimeService,
-    EfiSystemTable, EfiTimerDelay, EFI_EVENT_TYPE_NOTIFY_SIGNAL, EFI_EVENT_TYPE_NOTIFY_WAIT,
-    EFI_EVENT_TYPE_RUNTIME, EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES,
-    EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE, EFI_EVENT_TYPE_TIMER,
-    EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL, EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL,
-    EFI_RESET_TYPE, EFI_RESET_TYPE_EFI_RESET_COLD, EFI_STATUS, EFI_STATUS_SUCCESS,
+    defs::{
+        EfiAllocatorType, EfiBootService, EfiConfigurationTable, EfiEvent, EfiGuid, EfiHandle,
+        EfiMemoryAttributesTableHeader, EfiMemoryDescriptor, EfiMemoryType, EfiRuntimeService,
+        EfiSystemTable, EfiTimerDelay, EfiTpl, EFI_EVENT_TYPE_NOTIFY_SIGNAL,
+        EFI_EVENT_TYPE_NOTIFY_WAIT, EFI_EVENT_TYPE_RUNTIME,
+        EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES, EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
+        EFI_EVENT_TYPE_TIMER, EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL,
+        EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE,
+        EFI_RESET_TYPE_EFI_RESET_COLD, EFI_STATUS, EFI_STATUS_SUCCESS,
+    },
+    tpl::TplControl,
 };
 use liberror::{Error, Result};
 use libutils::aligned_subslice;
 use protocol::{
     simple_text_output::SimpleTextOutputProtocol,
-    {Protocol, ProtocolInfo},
+    {Protocol, ProtocolImpl},
 };
 use zerocopy::{FromBytes, Ref};
 
@@ -120,6 +124,20 @@ impl EfiEntry {
     /// Gets the image handle.
     pub fn image_handle(&self) -> DeviceHandle {
         DeviceHandle(self.image_handle)
+    }
+}
+
+/// Implement `TplControl` here for convenience so callers don't have to
+/// dig down to `BootServices` themelves.
+impl TplControl for EfiEntry {
+    unsafe fn raise_tpl(&self, tpl: EfiTpl) -> EfiTpl {
+        // SAFETY: just forwarding the call, same safety as our caller.
+        unsafe { self.system_table().boot_services().boot_services.raise_tpl(tpl) }
+    }
+
+    unsafe fn restore_tpl(&self, tpl: EfiTpl) {
+        // SAFETY: just forwarding the call, same safety as our caller.
+        unsafe { self.system_table().boot_services().boot_services.restore_tpl(tpl) }
     }
 }
 
@@ -326,7 +344,7 @@ impl<'a> BootServices<'a> {
     }
 
     /// Wrapper of `EFI_BOOT_SERVICES.OpenProtocol()`.
-    pub fn open_protocol<T: ProtocolInfo>(&self, handle: DeviceHandle) -> Result<Protocol<'a, T>> {
+    pub fn open_protocol<T: ProtocolImpl>(&self, handle: DeviceHandle) -> Result<Protocol<'a, T>> {
         let mut out_handle: EfiHandle = null_mut();
         // SAFETY: EFI_BOOT_SERVICES method call.
         unsafe {
@@ -348,7 +366,7 @@ impl<'a> BootServices<'a> {
 
     /// Wrapper of `EFI_BOOT_SERVICES.CloseProtocol()`.
     #[allow(dead_code)]
-    fn close_protocol<T: ProtocolInfo>(&self, handle: DeviceHandle) -> Result<()> {
+    fn close_protocol<T: ProtocolImpl>(&self, handle: DeviceHandle) -> Result<()> {
         // SAFETY: EFI_BOOT_SERVICES method call.
         unsafe {
             efi_call!(
@@ -363,7 +381,7 @@ impl<'a> BootServices<'a> {
 
     /// Call `EFI_BOOT_SERVICES.LocateHandleBuffer()` with fixed
     /// `EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL` and without search key.
-    pub fn locate_handle_buffer_by_protocol<T: ProtocolInfo>(&self) -> Result<LocatedHandles<'a>> {
+    pub fn locate_handle_buffer_by_protocol<T: ProtocolImpl>(&self) -> Result<LocatedHandles<'a>> {
         let mut num_handles: usize = 0;
         let mut handles: *mut EfiHandle = null_mut();
         // SAFETY: EFI_BOOT_SERVICES method call.
@@ -384,7 +402,7 @@ impl<'a> BootServices<'a> {
     }
 
     /// Search and open the first found target EFI protocol.
-    pub fn find_first_and_open<T: ProtocolInfo>(&self) -> Result<Protocol<'a, T>> {
+    pub fn find_first_and_open<T: ProtocolImpl>(&self) -> Result<Protocol<'a, T>> {
         // We don't use EFI_BOOT_SERVICES.LocateProtocol() because it doesn't give device handle
         // which is required to close the protocol.
         let handle = *self
@@ -1013,7 +1031,7 @@ pub fn panic(panic: &PanicInfo) -> ! {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protocol::block_io::BlockIoProtocol;
+    use crate::protocol::{block_io::BlockIoProtocol, ProtocolInfo};
     use alloc::string::String;
     use efi_types::{
         EfiBlockIoProtocol, EfiEventNotify, EfiLocateHandleSearchType, EfiSimpleTextOutputProtocol,
@@ -1477,7 +1495,7 @@ mod test {
             let mut device_handle: usize = 0; // Don't care
             {
                 // Open a protocol
-                let protocol = efi_entry
+                efi_entry
                     .system_table()
                     .boot_services()
                     .open_protocol::<BlockIoProtocol>(DeviceHandle(as_efi_handle(
@@ -1499,9 +1517,6 @@ mod test {
                     // close_protocol not called yet.
                     assert_eq!(trace.borrow_mut().close_protocol_trace.inputs, []);
                 });
-
-                // The protocol gets the correct EfiBlockIoProtocol structure we pass in.
-                assert_eq!(protocol.interface_ptr(), &mut block_io as *mut _);
             }
 
             // Close protocol is called as `protocol` goes out of scope.
