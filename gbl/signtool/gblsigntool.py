@@ -241,8 +241,7 @@ def gbl_info(args):
 
   avb_footer = gbl_image.get_avb_footer()
   if not avb_footer:
-    print('AVB footer not found, image is unsigned')
-    return
+    raise ValueError('No AVB footer found, image is unsigned')
 
   with tempfile.TemporaryDirectory() as temp_dir:
     gbl_efi = os.path.join(temp_dir, 'gbl.efi')
@@ -345,6 +344,21 @@ def gbl_verify(args):
     AvbTool().run(avb_cmd)
 
 
+def gbl_remove(args):
+  """Removes signatures."""
+  with open(args.gbl_image, 'rb') as gbl:
+    gbl_bytes = gbl.read()
+  gbl_image = PEImage(gbl_bytes)
+  gbl_image.erase_existing_win_certificates()
+  gbl_image.erase_checksum()
+  avb_footer = gbl_image.get_avb_footer()
+  if avb_footer:
+    gbl_image._buf = gbl_image._buf[: avb_footer.original_image_size]
+    print('Erased existing AVB footer')
+  with open(args.output, 'wb') as f:
+    f.write(gbl_image._buf)
+
+
 def flatten_args(raw_args):
   """Split and flatten nested args."""
   args = []
@@ -405,6 +419,17 @@ def main():
   )
   verify_command.add_argument('--key', help='check public key')
   verify_command.set_defaults(func=gbl_verify)
+
+  remove_command = subcommands.add_parser(
+      'remove', help='remove any signatures from a GBL image'
+  )
+  remove_command.add_argument(
+      'gbl_image', metavar='GBL_IMAGE', help='GBL EFI image'
+  )
+  remove_command.add_argument(
+      '-o', '--output', required=True, help='output file name'
+  )
+  remove_command.set_defaults(func=gbl_remove)
 
   args = parser.parse_args()
   if 'avbtool_args' in args:
