@@ -13,6 +13,7 @@ production devices this protocol must be provided by the FW to ensure HLOS
 integrity.
 
 ### GUID
+
 ```c
 // {6bc66b9a-d5c9-4c02-9da9-50af198d912c}
 #define GBL_EFI_AVB_PROTOCOL_UUID                    \
@@ -37,6 +38,7 @@ backwards-incompatible ways.
 ```c
 typedef struct _GBL_EFI_AVB_PROTOCOL {
   UINT64 Revision;
+  GBL_EFI_AVB_READ_IS_DM_VERITY_ERROR ReadIsDmVerityError;
   GBL_EFI_AVB_VALIDATE_VBMETA_PUBLIC_KEY ValidateVbmetaPublicKey;
   GBL_EFI_AVB_READ_IS_DEVICE_UNLOCKED ReadIsDeviceUnlocked;
   GBL_EFI_AVB_READ_ROLLBACK_INDEX ReadRollbackIndex;
@@ -50,38 +52,84 @@ typedef struct _GBL_EFI_AVB_PROTOCOL {
 ### Parameters
 
 #### Revision
-The revision to which the `GBL_EFI_AVB_PROTOCOL` adheres. All
-future revisions must be backwards compatible. If a future version is not
-backwards compatible, a different GUID must be used.
+
+The revision to which the `GBL_EFI_AVB_PROTOCOL` adheres. All future revisions
+must be backwards compatible. If a future version is not backwards compatible,
+a different GUID must be used.
+
+#### ReadIsDmVerityError
+
+Gets whether the device is rebooted due to dm-verity error.
+[`ReadIsDmVerityError()`](#readisdmverityerror).
 
 #### ValidateVbmetaPublicKey
+
 Validate proper public key is used to sign HLOS artifacts.
-[`ValidateVbmetaPublicKey()`](#ValidateVbmetaPublicKey).
+[`ValidateVbmetaPublicKey()`](#validatevbmetapublickey).
 
 #### ReadIsDeviceUnlocked
+
 Gets whether the device is unlocked.
-[`ReadIsDeviceUnlocked()`](#ReadIsDeviceUnlocked).
+[`ReadIsDeviceUnlocked()`](#readisdeviceunlocked).
 
 #### ReadRollbackIndex
+
 Gets the rollback index corresponding to the location given by `index_location`.
-[`ReadRollbackIndex()`](#ReadRollbackIndex).
+[`ReadRollbackIndex()`](#readrollbackindex).
 
 #### WriteRollbackIndex
+
 Sets the rollback index corresponding to the location given by `index_location` to `rollback_index`.
-[`WriteRollbackIndex()`](#WriteRollbackIndex).
+[`WriteRollbackIndex()`](#writerollbackindex).
 
 #### ReadPersistentValue
+
 Gets the persistent value for the corresponding `name`.
-[`ReadPersistentValue()`](#ReadPersistentValue).
+[`ReadPersistentValue()`](#readpersistentvalue).
 
 #### WritePersistentValue
+
 Sets or erases the persistent value for the corresponding `name`.
-[`WritePersistentValue()`](#WritePersistentValue).
+[`WritePersistentValue()`](#writepersistentvalue).
 
 #### HandleVerificationResult
+
 Handle AVB verification result (i.e update ROT, set device state, display UI
 warnings/errors, handle anti-tampering, etc).
-[`HandleVerificationResult()`](#HandleVerificationResult).
+[`HandleVerificationResult()`](#handleverificationresult).
+
+## GBL_EFI_AVB_PROTOCOL.ReadIsDmVerityError() {#readisdmverityerror}
+
+### Summary
+
+Allows the firmware to provide the dm-verity error occurred to the GBL in a
+firmware-specific way.
+
+### Prototype
+
+```c
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_AVB_READ_IS_DM_VERITY_ERROR) (
+  IN GBL_EFI_AVB_PROTOCOL *This,
+  OUT BOOLEAN *IsDmVerityError);
+```
+
+### Parameters
+
+#### This
+
+A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
+
+#### IsDmVerityError
+
+An output parameter that communicates the dm-verity error state to the GBL.
+
+### Description
+
+If `IsDmVerityError` is set `True` by the FW, GBL will pass [`AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION`][dm_verity_error],
+so `RED_IO` status will be reported unless new OS images are detected by the
+`libavb`.
 
 ## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey() {#ValidateVbmetaPublicKey}
 
@@ -108,24 +156,30 @@ EFI_STATUS
 ### Parameters
 
 #### This
+
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
 #### PublicKeyData
+
 A pointer to the public key extracted from `vbmeta`. Guaranteed to contain valid
 data of length `PublicKeyLength`.
 
 #### PublicKeyLength
+
 Specifies the length of the public key provided by `PublicKeyData`.
 
 #### PublicKeyMetadata
+
 A pointer to public key metadata generated using the `avbtool` `--public_key_metadata`
 flag. May be `NULL` if no public key metadata is provided.
 
 #### PublicKeyMetadataLength
+
 Specifies the length of the public key metadata provided by `PublicKeyMetadata`.
 Guaranteed to be 0 in case of `NULL` `PublicKeyMetadata`.
 
 #### ValidationStatus
+
 An output parameter that communicates the verification status to the GBL. `VALID`
 and `VALID_CUSTOM_KEY` are interpreted as successful validation statuses.
 
@@ -182,9 +236,11 @@ EFI_STATUS
 ### Parameters
 
 #### This
+
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
 #### IsUnlocked
+
 An output parameter that communicates the device locking state to the GBL.
 
 ### Description
@@ -209,3 +265,5 @@ The following EFI error types are used to communicate result to GBL and libavb i
 | `EFI_STATUS_UNSUPPORTED`       | Operation isn't implemented / supported                                                                                                                 |
 
 TODO(b/337846185): Provide docs for all methods.
+
+[dm_verity_error]: https://android.googlesource.com/platform/external/avb/+/master/README.md#handling-dm_verity-errors

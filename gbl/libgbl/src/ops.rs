@@ -241,6 +241,9 @@ pub trait GblOps<'a, 'd> {
     // by GBL's usage of AVB. The rest of the APIs are either not relevant to or are implemented and
     // managed by GBL APIs.
 
+    /// Returns if device rebooted due to dm_verify error is occurred.
+    fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool>;
+
     /// Returns if device is in an unlocked state.
     ///
     /// The interface has the same requirement as `avb::Ops::read_is_device_unlocked`.
@@ -598,6 +601,10 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.load_slot_interface(_fnmut, _boot_token)
     }
 
+    fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
+        self.ops.avb_read_is_dm_verity_error()
+    }
+
     fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
         self.ops.avb_read_is_device_unlocked()
     }
@@ -910,6 +917,9 @@ pub(crate) mod test {
         /// For return by `Self::expected_os()`
         pub os: Option<Os>,
 
+        /// For return by `Self::avb_read_is_dm_verity_error`
+        pub avb_dm_verity_error_status: Option<AvbIoResult<bool>>,
+
         /// For return by `Self::avb_validate_vbmeta_public_key`
         pub avb_key_validation_status: Option<AvbIoResult<KeyValidationStatus>>,
 
@@ -1085,6 +1095,10 @@ pub(crate) mod test {
             _: slots::BootToken,
         ) -> GblResult<slots::Cursor<'b>> {
             unimplemented!();
+        }
+
+        fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
+            self.avb_dm_verity_error_status.clone().unwrap()
         }
 
         fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {

@@ -290,6 +290,10 @@ mod test {
             Ok(Cursor { ctx: &mut self.manager, persist })
         }
 
+        fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
+            unimplemented!();
+        }
+
         fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
             unimplemented!();
         }
