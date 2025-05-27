@@ -140,9 +140,9 @@ Examples:
   * `fastboot erase gpt` -- If there is only one storage or a default storage
     ID is set via `fastboot oem gbl-set-default-block <default ID>`, erase
     the GPT of that storage.
-  * `fastboot flash gpt/0` -- Erase GPT to storage device 0.
+  * `fastboot erase gpt/0` -- Erase GPT to storage device 0.
 
-## Non-blocking `fastboot flash`.
+## Non-blocking Flash.
 
 If the UEFI firmware supports `EFI_BLOCK_IO2_PROTOCOL` for the storage devices,
 GBL Fastboot provides an option to make `fastboot flash` non-blocking.
