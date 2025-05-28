@@ -169,7 +169,7 @@ def gen_android_test_dtb():
     out_dir = ANDROID_OUT
     # Generates base test device tree.
     gen_dtb(out_dir / "device_tree.dts", out_dir / "device_tree.dtb")
-    gen_dtb(out_dir / "device_tree_custom.dts", out_dir / "device_tree_custom.dtb")
+    gen_dtb(out_dir / "device_tree_vendor_kernel.dts", out_dir / "device_tree_vendor_kernel.dtb")
     # Generates dtb to be used inside boot/vendor_boot
     subprocess.run(
         [
@@ -305,37 +305,30 @@ def gen_android_test_vbmeta(partition_file_pairs, out_vbmeta):
             text=True,
             capture_output=True,
         )
-        out_digest.write_text(digest.stdout)
+        out_digest.write_text(digest.stdout.strip())
 
         extract_vbmeta_digests(out_vbmeta)
 
 
 # Extract digests from vbmeta data
 def extract_vbmeta_digests(vbmeta):
-    # Get vbmeta digests
-    digests = re.split(
-        "\n|: ",
-        subprocess.run(
-            [
-                AVB_TOOL,
-                "print_partition_digests",
-                "--image",
-                vbmeta,
-            ],
-            check=True,
-            text=True,
-            capture_output=True,
-        ).stdout,
-    )
-    digests = {
-        digests[i]: digests[i + 1]
-        for i in range(0, len(digests), 2)
-        if digests[i] in ["boot", "vendor_boot", "init_boot", "dtbo", "dtb"]
-    }
-
-    for key, value in digests.items():
-        out_digest = vbmeta.with_suffix(".{}.digest.txt".format(key))
-        out_digest.write_text(value + "\n")
+    digests = subprocess.run(
+        [
+            AVB_TOOL,
+            "print_partition_digests",
+            "--image",
+            vbmeta,
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout
+    for line in digests.strip().split("\n"):
+        res = re.match("(.*): (.*)", line)
+        if not res:
+            continue
+        out = vbmeta.with_suffix(f".{res.group(1)}.digest.txt")
+        out.write_text(res.group(2))
 
 
 def gen_android_test_images():
@@ -356,6 +349,9 @@ def gen_android_test_images():
 
             vendor_ramdisk = out_dir / f"vendor_ramdisk_{slot}.img"
             vendor_ramdisk.write_bytes(random.randbytes(12 * SZ_KB))
+
+            vendor_kernel = out_dir / f"vendor_kernel_{slot}.img"
+            vendor_kernel.write_bytes(random.randbytes(4 * SZ_KB))
 
             vendor_bootconfig = temp_dir / f"vendor_bootconfig_{slot}.img"
             vendor_bootconfig.write_bytes(
@@ -486,6 +482,28 @@ androidboot.config_2=val_2
                 stderr=subprocess.STDOUT,
                 check=True,
             )
+            # Generates vendor_kernel image.
+            (temp_dir / "temp").write_bytes(b"androidboot.should_not_add=1\n")
+            vendor_kernel_boot = out_dir / f"vendor_kernel_boot_{slot}.img"
+            subprocess.run(
+                [
+                    MKBOOTIMG_TOOL,
+                    "--vendor_cmdline",
+                    "should_not_add=1",
+                    "--dtb",
+                    out_dir / "device_tree_vendor_kernel.dtb",
+                    "--vendor_boot",
+                    vendor_kernel_boot,
+                    "--vendor_ramdisk",
+                    vendor_kernel,
+                    "--vendor_bootconfig",
+                    temp_dir / "temp",
+                    "--header_version",
+                    "4",
+                ],
+                stderr=subprocess.STDOUT,
+                check=True,
+            )
 
             # Generates a vbmeta data for v0 - v2 setup
             for i in [0, 1, 2]:
@@ -510,6 +528,7 @@ androidboot.config_2=val_2
                         parts = [
                             (f"boot", boot),
                             (f"vendor_boot", vendor_boot),
+                            ("vendor_kernel_boot", vendor_kernel_boot),
                             ("dtbo", out_dir / f"dtbo_{slot}.img"),
                             ("dtb", out_dir / f"dtb_{slot}.img"),
                         ]
