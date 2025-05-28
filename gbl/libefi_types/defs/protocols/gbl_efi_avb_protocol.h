@@ -65,34 +65,41 @@ typedef struct {
 typedef struct GblEfiAvbProtocol {
   uint64_t revision;
 
+  EfiStatus (*read_is_dm_verity_error)(struct GblEfiAvbProtocol* self,
+                                       /* out */ bool* is_dm_verity_error);
+
   EfiStatus (*validate_vbmeta_public_key)(
-      struct GblEfiAvbProtocol* self, const uint8_t* public_key_data,
-      size_t public_key_length, const uint8_t* public_key_metadata,
-      size_t public_key_metadata_length,
-      /* GblEfiAvbKeyValidationStatus */ uint32_t* validation_status);
+      struct GblEfiAvbProtocol* self,
+      /* in */ const uint8_t* public_key_data,
+      /* in */ size_t public_key_length,
+      /* in */ const uint8_t* public_key_metadata,
+      /* in */ size_t public_key_metadata_length,
+      /* out GblEfiAvbKeyValidationStatus */ uint32_t* validation_status);
 
   EfiStatus (*read_is_device_unlocked)(struct GblEfiAvbProtocol* self,
-                                       bool* is_unlocked);
+                                       /* out */ bool* is_unlocked);
 
   EfiStatus (*read_rollback_index)(struct GblEfiAvbProtocol* self,
-                                   size_t index_location,
-                                   uint64_t* rollback_index);
+                                   /* in */ size_t index_location,
+                                   /* out */ uint64_t* rollback_index);
 
   EfiStatus (*write_rollback_index)(struct GblEfiAvbProtocol* self,
-                                    size_t index_location,
-                                    uint64_t rollback_index);
+                                    /* in */ size_t index_location,
+                                    /* in */ uint64_t rollback_index);
 
   EfiStatus (*read_persistent_value)(struct GblEfiAvbProtocol* self,
-                                     const char* name, uint8_t* value,
-                                     size_t* value_size);
+                                     /* in */ const char8_t* name,
+                                     /* out */ uint8_t* value,
+                                     /* in-out */ size_t* value_size);
 
   EfiStatus (*write_persistent_value)(struct GblEfiAvbProtocol* self,
-                                      const char* name, const uint8_t* value,
-                                      size_t value_size);
+                                      /* in */ const char8_t* name,
+                                      /* in */ const uint8_t* value,
+                                      /* in */ size_t value_size);
 
   EfiStatus (*handle_verification_result)(
       struct GblEfiAvbProtocol* self,
-      const GblEfiAvbVerificationResult* result);
+      /* in */ const GblEfiAvbVerificationResult* result);
 
 } GblEfiAvbProtocol;
 

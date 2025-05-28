@@ -237,6 +237,8 @@ pub mod gbl_efi_avb {
     /// which is not practical for our use case.
     #[derive(Clone, Default)]
     pub struct GblAvbProtocol {
+        /// Expected return value from `read_is_dm_verity_error`.
+        pub read_is_dm_verity_error_result: Option<Result<bool>>,
         /// Expected return value from `validate_vbmeta_public_key`.
         pub validate_vbmeta_public_key_result: Option<Result<GblEfiAvbKeyValidationStatus>>,
         /// Expected return value from `read_is_device_unlocked`.
@@ -252,6 +254,11 @@ pub mod gbl_efi_avb {
     }
 
     impl GblAvbProtocol {
+        /// Wraps `GBL_EFI_AVB_PROTOCOL.read_is_dm_verity_error()`.
+        pub fn read_is_dm_verity_error(&self) -> Result<bool> {
+            self.read_is_dm_verity_error_result.unwrap()
+        }
+
         /// Wraps `GBL_EFI_AVB_PROTOCOL.validate_vbmeta_public_key()`.
         pub fn validate_vbmeta_public_key(
             &self,

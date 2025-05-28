@@ -374,6 +374,14 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         unimplemented!();
     }
 
+    fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
+        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
+        {
+            Ok(protocol) => protocol.read_is_dm_verity_error().map_err(efi_error_to_avb_error),
+            Err(_) => Err(AvbIoError::NotImplemented),
+        }
+    }
+
     fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
         match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
         {
@@ -785,6 +793,48 @@ mod test {
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert!(write!(&mut ops, "{} {}", "foo", "bar").is_ok());
+    }
+
+    #[test]
+    fn ops_avb_read_is_dm_verity_error_returns_true() {
+        let mut mock_efi = MockEfi::new();
+        let mut avb = GblAvbProtocol::default();
+        avb.read_is_dm_verity_error_result = Some(Ok(true));
+
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+
+        assert_eq!(ops.avb_read_is_dm_verity_error(), Ok(true));
+    }
+
+    #[test]
+    fn ops_avb_read_is_dm_verity_error_returns_false() {
+        let mut mock_efi = MockEfi::new();
+        let mut avb = GblAvbProtocol::default();
+        avb.read_is_dm_verity_error_result = Some(Ok(false));
+
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+
+        assert_eq!(ops.avb_read_is_dm_verity_error(), Ok(false));
+    }
+
+    #[test]
+    fn ops_avb_read_is_dm_verity_error_protocol_not_found() {
+        let mut mock_efi = MockEfi::new();
+        mock_efi
+            .boot_services
+            .expect_find_first_and_open::<GblAvbProtocol>()
+            .return_const(Err(Error::NotFound));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+
+        assert_eq!(ops.avb_read_is_dm_verity_error(), Err(AvbIoError::NotImplemented));
     }
 
     #[test]
