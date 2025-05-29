@@ -444,6 +444,8 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     let boot_info = BootImageV3Info::new(boot).unwrap();
     images.boot_cmdline = BootImageV3Info::cmdline(boot)?;
 
+    let remains = &mut load[..];
+
     // Loads vendor_boot partition, including ramdisk, dtb, commandline etc.
     let vendor_boot =
         get_verified_partition(ops, c"vendor_boot", slot, unlocked, false, verify_data)?;
@@ -451,8 +453,23 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     images.vendor_cmdline = VendorBootImageInfo::cmdline(vendor_boot)?;
     images.dtb = get_range(vendor_boot, &vendor_boot_info.dtb_range)?;
     images.vendor_bootconfig = get_range(vendor_boot, &vendor_boot_info.bootconfig_range)?;
-    let (vendor_ramdisk_buf, remains) = load.split_at_mut(vendor_boot_info.ramdisk_range.len());
+    let (vendor_ramdisk_buf, remains) = remains.split_at_mut(vendor_boot_info.ramdisk_range.len());
     vendor_ramdisk_buf.clone_from_slice(get_range(vendor_boot, &vendor_boot_info.ramdisk_range)?);
+
+    // Finds and loads vendor_kernel_boot partition if provided.
+    let vendor_kernel_boot =
+        get_verified_partition(ops, c"vendor_kernel_boot", slot, unlocked, true, verify_data)?;
+    let vendor_kernel_rd = match vendor_kernel_boot.len() > 0 {
+        true => {
+            let vendor_kernel_boot_info = VendorBootImageInfo::new(vendor_kernel_boot)?;
+            // DTB should be provided by vendor_kerenl_boot if it exists.
+            images.dtb = get_range(vendor_kernel_boot, &vendor_kernel_boot_info.dtb_range)?;
+            get_range(vendor_kernel_boot, &vendor_kernel_boot_info.ramdisk_range)?
+        }
+        _ => &[][..],
+    };
+    let (vendor_kernel_boot_buf, remains) = remains.split_at_mut(vendor_kernel_rd.len());
+    vendor_kernel_boot_buf.clone_from_slice(vendor_kernel_rd);
 
     // Loads generic ramdisk, which may come from either boot or init_boot.
     let generic_ramdisk = match boot_info.ramdisk_range.is_empty() {
@@ -463,7 +480,8 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     let (generic_ramdisk_buf, _) = remains.split_at_mut(generic_ramdisk_range.len());
     generic_ramdisk_buf.clone_from_slice(get_range(generic_ramdisk, &generic_ramdisk_range)?);
 
-    let ramdisk_len = vendor_ramdisk_buf.len() + generic_ramdisk_buf.len();
+    let ramdisk_len =
+        vendor_ramdisk_buf.len() + generic_ramdisk_buf.len() + vendor_kernel_boot_buf.len();
     let (ramdisk, remains) = load.split_at_mut(ramdisk_len);
     images.ramdisk = ramdisk;
 
