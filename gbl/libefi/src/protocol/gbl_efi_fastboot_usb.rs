@@ -19,7 +19,7 @@ use crate::{
     utils::with_timeout,
     {efi_call, Event},
 };
-use core::time::Duration;
+use core::{cmp::min, time::Duration};
 use efi_types::{EfiGuid, GblEfiFastbootUsbProtocol};
 use gbl_async::yield_now;
 use liberror::{Error, Result};
@@ -134,5 +134,30 @@ impl Protocol<'_, GblFastbootUsbProtocol> {
     pub async fn send_packet(&self, data: &[u8], timeout: Duration) -> Result<()> {
         self.fastboot_usb_send(data)?;
         with_timeout(self.efi_entry(), self.wait_send(), timeout).await?.ok_or(Error::Timeout)?
+    }
+
+    /// Sends `data` over the USB
+    ///
+    /// # Args
+    ///
+    /// * `data`: Data to send can be more than one packet of data.
+    /// * `max_packet_size`: The `max_packet_size` returned by `fastboot_usb_interface_start()`.
+    /// * `wait_completion_timeout`: Maximum timeout waiting for send completion at the end.
+    pub async fn send_all(
+        &self,
+        mut data: &[u8],
+        max_packet_size: usize,
+        wait_completion_timeout: Duration,
+    ) -> Result<()> {
+        while !data.is_empty() {
+            let to_send = min(data.len(), max_packet_size);
+            match self.fastboot_usb_send(&data[..to_send]) {
+                Err(Error::NotReady) => yield_now().await,
+                Err(e) => return Err(e),
+                _ => data = &data[to_send..],
+            }
+        }
+        with_timeout(self.efi_entry(), self.wait_send(), wait_completion_timeout).await?;
+        Ok(())
     }
 }

@@ -19,7 +19,7 @@
 
 use crate::utils::{get_platform_buffer_info, BufferInfo, SZ_MB};
 use alloc::{boxed::Box, vec::Vec};
-use core::{cmp::min, future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration};
+use core::{future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration};
 use efi::{
     efi_println,
     local_session::LocalFastbootSession,
@@ -227,17 +227,7 @@ impl Transport for UsbTransport<'_> {
     }
 
     async fn send_packet(&mut self, packet: &[u8]) -> Result<()> {
-        let mut curr = &packet[..];
-        while !curr.is_empty() {
-            let to_send = min(curr.len(), self.max_packet_size);
-            self.protocol.send_packet(&curr[..to_send], DEFAULT_TIMEOUT).await?;
-            // Forces a yield to the executor if the data received/sent reaches a certain
-            // threshold. This is to prevent the async code from holding up the CPU for too long
-            // in case IO speed is high and the executor uses cooperative scheduling.
-            self.io_yield_counter.increment(to_send.try_into().unwrap()).await;
-            curr = &curr[to_send..];
-        }
-        Ok(())
+        self.protocol.send_all(packet, self.max_packet_size, DEFAULT_TIMEOUT).await
     }
 }
 
