@@ -354,7 +354,7 @@ pub trait FastbootImplementation {
         &mut self,
         part: &str,
         offset: u64,
-        size: u64,
+        size: u32,
         responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()>;
 
@@ -508,7 +508,7 @@ pub trait UploadBuilder {
     ///
     /// In a real fastboot context, the method should send `DATA0xXXXXXXXX` to the remote host to
     /// start the download. An `Uploader` implementation should be returned for uploading payload.
-    async fn initiate_upload(self, data_size: u64) -> Result<impl Uploader>;
+    async fn initiate_upload(self, data_size: u32) -> Result<impl Uploader>;
 }
 
 /// `UploadBuilder` provides API for uploading payload.
@@ -561,7 +561,7 @@ impl<'a, T: Transport> Responder<'a, T> {
     }
 
     /// Sends a fastboot DATA message.
-    async fn send_data_message(&mut self, data_size: u64) -> Result<()> {
+    async fn send_data_message(&mut self, data_size: u32) -> Result<()> {
         self.send_formatted_msg("DATA", |v| write!(v, "{:08x}", data_size).unwrap()).await
     }
 }
@@ -617,9 +617,9 @@ impl<T: Transport> OkaySender for &mut Responder<'_, T> {
 }
 
 impl<'a, T: Transport> UploadBuilder for &mut Responder<'a, T> {
-    async fn initiate_upload(self, data_size: u64) -> Result<impl Uploader> {
+    async fn initiate_upload(self, data_size: u32) -> Result<impl Uploader> {
         self.send_data_message(data_size).await?;
-        self.remaining_upload = data_size;
+        self.remaining_upload = data_size.into();
         Ok(self)
     }
 }
@@ -652,7 +652,7 @@ pub mod test_utils {
     pub struct TestUploadBuilder<'a>(pub &'a mut [u8]);
 
     impl<'a> UploadBuilder for TestUploadBuilder<'a> {
-        async fn initiate_upload(self, _: u64) -> Result<impl Uploader, Error> {
+        async fn initiate_upload(self, _: u32) -> Result<impl Uploader, Error> {
             Ok(TestUploader(0, self.0))
         }
     }
@@ -751,8 +751,11 @@ async fn download(
 ) -> Result<()> {
     let mut resp = Responder::new(transport);
     let total_download_size = match (|| -> CommandResult<usize> {
-        usize::try_from(next_arg_u64(&mut args)?.ok_or("Not enough argument")?)
-            .map_err(|_| "Download size overflow".into())
+        usize::try_from(
+            u32::try_from(next_arg_u64(&mut args)?.ok_or("Not enough argument")?)
+                .map_err(|_| "Download size overflows u32 (can't fit DATA message)")?,
+        )
+        .map_err(|_| "Download size overflow usize".into())
     })() {
         Err(e) => return reply_fail!(resp, "{}", e.to_str()),
         Ok(v) => v,
@@ -766,8 +769,8 @@ async fn download(
 
     // Starts the download
     let download_buffer = &mut download_buffer[..total_download_size];
-    // `total_download_size` is parsed from `next_arg_u64` and thus should fit into u64.
-    resp.send_data_message(u64::try_from(total_download_size).unwrap()).await?;
+    // `total_download_size` already checked to be no more than u32 max.
+    resp.send_data_message(total_download_size.try_into().unwrap()).await?;
     let mut downloaded = 0;
     while downloaded < total_download_size {
         let (_, remains) = &mut download_buffer.split_at_mut(downloaded);
@@ -856,10 +859,11 @@ async fn fetch(
         // Parses backward. Parses size, offset first and treats the remaining string as
         // partition name. This allows ":" in partition name.
         let mut rev = args.clone().rev();
-        let sz = next_arg(&mut rev).ok_or("Missing size")?;
+        let sz_arg = next_arg(&mut rev).ok_or("Missing size")?;
+        let sz = u32::try_from(hex_to_u64(sz_arg)?).map_err(|_| "Size overflows u32")?;
         let off = next_arg(&mut rev).ok_or("Invalid offset")?;
-        let part = &cmd[..cmd.len() - (off.len() + sz.len() + 2)];
-        fb_impl.fetch(part, hex_to_u64(off)?, hex_to_u64(sz)?, &mut resp).await
+        let part = &cmd[..cmd.len() - (off.len() + sz_arg.len() + 2)];
+        fb_impl.fetch(part, hex_to_u64(off)?, sz, &mut resp).await
     }
     .await;
     match resp.remaining_upload > 0 {
@@ -1064,9 +1068,9 @@ mod test {
         // The partition arg from Fastboot erase command
         erase_partition: String,
         // Upload size, batches of data to upload,
-        upload_config: (u64, Vec<Vec<u8>>),
+        upload_config: (u32, Vec<Vec<u8>>),
         // A map from partition name to (upload size override, partition data)
-        fetch_data: BTreeMap<&'static str, (u64, Vec<u8>)>,
+        fetch_data: BTreeMap<&'static str, (u32, Vec<u8>)>,
         // result string, INFO strings.
         oem_output: (String, Vec<String>),
         oem_command: String,
@@ -1138,7 +1142,7 @@ mod test {
             &mut self,
             part: &str,
             offset: u64,
-            size: u64,
+            size: u32,
             responder: impl UploadBuilder + InfoSender,
         ) -> CommandResult<()> {
             let (size_override, data) = self.fetch_data.get(part).ok_or("Not Found")?;
@@ -1455,6 +1459,20 @@ mod test {
     }
 
     #[test]
+    fn test_download_size_overflows_u32() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        let mut transport = TestTransport::new();
+        transport.add_input(b"download:100000000");
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"FAILDownload size overflows u32 (can't fit DATA message)".into(),
+            ])
+        );
+    }
+
+    #[test]
     fn test_oem_cmd() {
         let mut fastboot_impl: FastbootTest = Default::default();
         fastboot_impl.download_buffer = vec![0u8; 2048];
@@ -1616,8 +1634,22 @@ mod test {
         transport.add_input(b"fetch:boot_a::");
         transport.add_input(b"fetch:boot_a:xxx:400");
         transport.add_input(b"fetch:boot_a:200:xxx");
+        transport.add_input(b"fetch:boot_a:0:100000000"); // u32 overflows
         let _ = block_on(run(&mut transport, &mut fastboot_impl));
-        assert!(transport.out_queue.iter().all(|v| v.starts_with(b"FAIL")));
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"FAILMissing arguments".into(),
+                b"FAILNot enough argments".into(),
+                b"FAILNot enough argments".into(),
+                b"FAILNot enough argments".into(),
+                b"FAILInvalid offset".into(),
+                b"FAILMissing size".into(),
+                b"FAILinvalid digit found in string".into(),
+                b"FAILinvalid digit found in string".into(),
+                b"FAILSize overflows u32".into(),
+            ])
+        );
     }
 
     #[test]

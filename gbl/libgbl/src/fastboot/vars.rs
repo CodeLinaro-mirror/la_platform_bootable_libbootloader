@@ -41,7 +41,9 @@ where
     const SLOT_COUNT: &'static str = "slot-count";
 
     const MAX_FETCH_SIZE: &'static str = "max-fetch-size";
-    const MAX_FETCH_SIZE_VAL: &'static str = "0xffffffffffffffff";
+    // Limited by DATA message which only allows 8 hex digits.
+    // Additionally fastboot upstream parses this value as int, so we only have 31 bits.
+    const MAX_FETCH_SIZE_VAL: &'static str = "0x7fffffff";
 
     /// Entry point for "fastboot getvar <variable>..."
     pub(crate) fn get_var_internal<'s, 't>(
