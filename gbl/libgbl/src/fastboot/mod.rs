@@ -771,7 +771,7 @@ where
         &mut self,
         part: &str,
         offset: u64,
-        size: u64,
+        size: u32,
         mut responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()> {
         let (_, mut part_io) = self.parse_and_get_partition_io(part).await?;
@@ -1255,7 +1255,7 @@ pub(crate) mod test {
             [
                 "version-bootloader:: 1.0",
                 "slot-count:: 0",
-                "max-fetch-size:: 0xffffffffffffffff",
+                "max-fetch-size:: 0x7fffffff",
                 "block-device:0:total-blocks: 0x80",
                 "block-device:0:block-size: 0x200",
                 "block-device:0:status: idle",
@@ -1294,7 +1294,7 @@ pub(crate) mod test {
         fb: &mut impl FastbootImplementation,
         part: String,
         off: impl TryInto<u64, Error = EOff>,
-        size: impl TryInto<u64, Error = ESz>,
+        size: impl TryInto<u32, Error = ESz>,
     ) -> CommandResult<Vec<u8>> {
         let off = off.try_into().unwrap();
         let size = size.try_into().unwrap();
@@ -2162,10 +2162,7 @@ pub(crate) mod test {
             listener.dump_tcp_out_queue()
         );
 
-        assert_eq!(
-            local.outgoing_packets,
-            VecDeque::from(vec![Vec::from(b"OKAY0xffffffffffffffff"),])
-        );
+        assert_eq!(local.outgoing_packets, VecDeque::from(vec![Vec::from(b"OKAY0x7fffffff"),]));
 
         // Verifies flashed image on raw_0.
         assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0x55u8; KiB!(4)]);
@@ -2358,7 +2355,7 @@ pub(crate) mod test {
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
                 b"INFOslot-count: 0",
-                b"INFOmax-fetch-size: 0xffffffffffffffff",
+                b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
                 b"INFOblock-device:0:status: idle",
@@ -2384,7 +2381,7 @@ pub(crate) mod test {
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
                 b"INFOslot-count: 0",
-                b"INFOmax-fetch-size: 0xffffffffffffffff",
+                b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
                 b"INFOblock-device:0:status: idle",

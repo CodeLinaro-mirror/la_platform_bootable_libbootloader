@@ -1647,9 +1647,7 @@ androidboot.veritymode=enforcing
 
         assert_eq!(
             listener.usb_out_queue(),
-            make_expected_usb_out(
-                &[b"OKAY0xffffffffffffffff", b"INFOSyncing storage...", b"OKAY",]
-            ),
+            make_expected_usb_out(&[b"OKAY0x7fffffff", b"INFOSyncing storage...", b"OKAY",]),
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         );
