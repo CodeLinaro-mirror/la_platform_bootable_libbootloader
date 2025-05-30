@@ -47,8 +47,8 @@ impl Protocol<'_, GblAvfProtocol> {
                 @bufsize used_size,
                 self.interface()?.read_vendor_dice_handover,
                 self.interface,
-                handover_buffer.as_ptr() as _,
                 &mut used_size,
+                handover_buffer.as_ptr() as _,
             )?;
         }
 
@@ -72,8 +72,8 @@ impl Protocol<'_, GblAvfProtocol> {
                 @bufsize used_size,
                 self.interface()?.read_secretkeeper_public_key,
                 self.interface,
-                key_buffer.as_ptr() as _,
                 &mut used_size,
+                key_buffer.as_ptr() as _,
             )?;
         }
 
@@ -95,8 +95,8 @@ mod test {
     fn read_vendor_dice_handover_no_op() {
         unsafe extern "efiapi" fn c_return_success(
             _: *mut GblEfiAvfProtocol,
-            _: *mut u8,
             size: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `size` is a valid pointer to writtable usize buffer.
@@ -123,8 +123,8 @@ mod test {
 
         unsafe extern "efiapi" fn c_return_success(
             _: *mut GblEfiAvfProtocol,
-            handover: *mut u8,
             size: *mut usize,
+            handover: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `handover` is a valid writtable buffer with enough space for test data.
@@ -157,8 +157,8 @@ mod test {
     fn read_vendor_dice_handover_error() {
         unsafe extern "efiapi" fn c_error(
             _: *mut GblEfiAvfProtocol,
-            _: *mut u8,
             _: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             EFI_STATUS_INVALID_PARAMETER
         }
@@ -182,8 +182,8 @@ mod test {
 
         unsafe extern "efiapi" fn c_buffer_too_small(
             _: *mut GblEfiAvfProtocol,
-            _: *mut u8,
             size: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `size` is a valid, writable pointer supplied by the caller.
@@ -212,8 +212,8 @@ mod test {
     fn read_secretkeeper_public_key_no_op() {
         unsafe extern "efiapi" fn c_return_success(
             _: *mut GblEfiAvfProtocol,
-            _: *mut u8,
             size: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `size` is a valid, writable pointer supplied by the caller.
@@ -238,8 +238,8 @@ mod test {
 
         unsafe extern "efiapi" fn c_return_success(
             _: *mut GblEfiAvfProtocol,
-            key: *mut u8,
             size: *mut usize,
+            key: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `key` is a valid writtable buffer with enough space for test data.
@@ -272,8 +272,8 @@ mod test {
     fn read_secretkeeper_public_key_error() {
         unsafe extern "efiapi" fn c_error(
             _: *mut GblEfiAvfProtocol,
-            _: *mut u8,
             _: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             EFI_STATUS_INVALID_PARAMETER
         }
@@ -296,8 +296,8 @@ mod test {
 
         unsafe extern "efiapi" fn c_buffer_too_small(
             _: *mut GblEfiAvfProtocol,
-            _: *mut u8,
             size: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `size` is a valid, writable pointer supplied by the caller.

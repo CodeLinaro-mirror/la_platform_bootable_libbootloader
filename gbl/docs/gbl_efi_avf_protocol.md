@@ -14,6 +14,7 @@ If the protocol is not present, GBL ignores the `pvmfw` partition, and AVF
 will not be available on such devices.
 
 ### GUID
+
 ```c
 // {e7f1c4a6-0a52-4f61-bd98-9e60b559452a}
 #define GBL_EFI_AVF_PROTOCOL_UUID                    \
@@ -46,21 +47,24 @@ typedef struct _GBL_EFI_AVF_PROTOCOL {
 ### Parameters
 
 #### Revision
+
 The revision to which the `GBL_EFI_AVF_PROTOCOL` adheres. All future revisions
 must be backwards compatible. If a future version is not backwards compatible,
 a different GUID must be used.
 
 #### ReadVendorDiceHandover
+
 Retrieves the vendor DICE handover, covering GBL and earlier boot stages, to be
 wrapped by GBL with pvmfw layer.
-[`ReadVendorDiceHandover()`](#ReadVendorDiceHandover)
+[`ReadVendorDiceHandover()`](#gbl_efi_avf_protocolreadvendordicehandover)
 
 #### ReadSecretKeeperPublicKey
+
 Retrieves the Secret Keeper public key to be used in the VM reference DT built
 by the GBL.
-[`ReadSecretKeeperPublicKey()`](#ReadSecretKeeperPublicKey)
+[`ReadSecretKeeperPublicKey()`](#gbl_efi_avf_protocolreadsecretkeeperpublickey)
 
-## GBL_EFI_AVF_PROTOCOL.ReadVendorDiceHandover() {#ReadVendorDiceHandover}
+## GBL_EFI_AVF_PROTOCOL.ReadVendorDiceHandover()
 
 ### Summary
 
@@ -72,20 +76,19 @@ wrapped by GBL with pvmfw layer.
 ```c
 typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_VENDOR_DICE_HANDOVER)(
   IN GBL_EFI_AVF_PROTOCOL *This,
-  OUT CONST UINT8         *Handover,
   IN OUT UINTN            *HandoverSize,
+  OUT CONST UINT8         *Handover,
   );
 ```
 
 ### Parameters
 
 #### This
+
 A pointer to the `GBL_EFI_AVF_PROTOCOL` instance.
 
-#### Handover [out]
-Pointer to a pre-allocated buffer to store vendor DICE handover provided by FW.
-
 #### HandoverSize [in, out]
+
 On function call, this points to the handover buffer size provided by `Handover`.
 The implementation is free to provide vendor handover up to this size.
 
@@ -96,6 +99,10 @@ call.
 
 `HandoverSize` must be also updated on success to let GBL determine the provided
 handover size.
+
+#### Handover [out]
+
+Pointer to a pre-allocated buffer to store vendor DICE handover provided by FW.
 
 ### Description
 
@@ -136,7 +143,7 @@ mainly adopted by the ecosystem.
 | `EFI_BUFFER_TOO_SMALL`  | The buffer is too small; `HandoverSize` has been updated with the required size. |
 | Other                   | Error loading vendor DICE handover; GBL will refuse to boot   |
 
-## GBL_EFI_AVF_PROTOCOL.ReadSecretKeeperPublicKey() {#ReadSecretKeeperPublicKey}
+## GBL_EFI_AVF_PROTOCOL.ReadSecretKeeperPublicKey()
 
 ### Summary
 
@@ -148,21 +155,19 @@ by GBL.
 ```c
 typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_SECRET_KEEPER_PUBLIC_KEY)(
   IN GBL_EFI_AVF_PROTOCOL *This,
-  OUT CONST UINT8         *PublicKey,
   IN OUT UINTN            *PublicKeySize,
+  OUT CONST UINT8         *PublicKey,
   );
 ```
 
 ### Parameters
 
 #### This
+
 A pointer to the `GBL_EFI_AVF_PROTOCOL` instance.
 
-#### PublicKey [out]
-Pointer to a pre-allocated buffer to store Secret Keeper public key provided by
-FW.
-
 #### PublicKeySize [in, out]
+
 On function call, this points to the Secret Keeper public key buffer size
 provided by `PublicKey`. The implementation is free to provide public key up to
 this size.
@@ -174,6 +179,11 @@ call.
 
 `PublicKeySize` must be also updated on success to let GBL determine the provided
 handover size.
+
+#### PublicKey [out]
+
+Pointer to a pre-allocated buffer to store Secret Keeper public key provided by
+FW.
 
 ### Description
 

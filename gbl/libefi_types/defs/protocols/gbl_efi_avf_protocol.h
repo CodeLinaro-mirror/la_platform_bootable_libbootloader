@@ -26,12 +26,13 @@ typedef struct GblEfiAvfProtocol {
   uint64_t revision;
 
   EfiStatus (*read_vendor_dice_handover)(struct GblEfiAvfProtocol* self,
-                                         uint8_t* handover,
-                                         size_t* handover_size);
+                                         /* in-out */ size_t* handover_size,
+                                         /* out */ uint8_t* handover);
 
-  EfiStatus (*read_secretkeeper_public_key)(struct GblEfiAvfProtocol* self,
-                                            uint8_t* public_key,
-                                            size_t* public_key_size);
+  EfiStatus (*read_secretkeeper_public_key)(
+      struct GblEfiAvfProtocol* self,
+      /* in-out */ size_t* public_key_size,
+      /* out */ uint8_t* public_key);
 
 } GblEfiAvfProtocol;
 
