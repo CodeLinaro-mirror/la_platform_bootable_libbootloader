@@ -22,8 +22,8 @@ use core::ffi::CStr;
 use core::fmt::Write;
 pub use efi::protocol::gbl_efi_image_loading::EfiImageBufferInfo;
 use efi_types::{
-    EfiInputKey, EfiTimestampProperties, GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult,
-    GblEfiImageInfo, GblEfiPartitionName, GblEfiVerifiedDeviceTree,
+    EfiInputKey, EfiTimestampProperties, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition,
+    GblEfiAvbVerificationResult, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
 };
 use liberror::Result;
 use mockall::mock;
@@ -160,16 +160,6 @@ pub mod gbl_efi_image_loading {
         pub GblImageLoadingProtocol {
             /// Returns [EfiImageBuffer] matching `gbl_image_info`
             pub fn get_buffer(&self, gbl_image_info: &GblEfiImageInfo) -> Result<EfiImageBufferInfo>;
-
-            /// Returns number of partitions to be provided via `get_verify_partitions()`, and thus
-            /// expected size of `partition_name` slice.
-            pub fn get_verify_partitions_count(&self) -> Result<usize>;
-
-            /// Returns number of partition names written to `partition_name` slice.
-            pub fn get_verify_partitions(
-                &self,
-                partition_names: &mut [GblEfiPartitionName]
-            ) -> Result<usize>;
         }
     }
 
@@ -237,6 +227,8 @@ pub mod gbl_efi_avb {
     /// which is not practical for our use case.
     #[derive(Clone, Default)]
     pub struct GblAvbProtocol {
+        /// Expected return value from `read_partitions_to_verify`.
+        pub read_partitions_to_verify_result: Option<Result<usize>>,
         /// Expected return value from `read_is_dm_verity_error`.
         pub read_is_dm_verity_error_result: Option<Result<bool>>,
         /// Expected return value from `validate_vbmeta_public_key`.
@@ -254,6 +246,14 @@ pub mod gbl_efi_avb {
     }
 
     impl GblAvbProtocol {
+        /// Wraps `GBL_EFI_AVB_PROTOCOL.read_partitions_to_verify()`.
+        pub fn read_partitions_to_verify(
+            &self,
+            _partitions: &mut [GblEfiAvbPartition],
+        ) -> Result<usize> {
+            self.read_partitions_to_verify_result.unwrap()
+        }
+
         /// Wraps `GBL_EFI_AVB_PROTOCOL.read_is_dm_verity_error()`.
         pub fn read_is_dm_verity_error(&self) -> Result<bool> {
             self.read_is_dm_verity_error_result.unwrap()

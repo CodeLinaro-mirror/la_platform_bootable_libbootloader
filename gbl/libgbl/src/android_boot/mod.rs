@@ -59,6 +59,8 @@ fn cstr_bytes_to_str(data: &[u8]) -> core::result::Result<&str, Error> {
     Ok(CStr::from_bytes_until_nul(data)?.to_str()?)
 }
 
+/// If this list is modified, make sure to update the `ReadPartitionsToVerify` documentation in
+/// `gbl/docs/gbl_efi_avb_protocol.md` accordingly.
 const STANDARD_PARTITIONS: &[&CStr] = &[
     c"dtbo",
     c"dtb",
