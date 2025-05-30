@@ -31,10 +31,7 @@ const uint32_t EFI_DT_APPLY_FIXUPS = 0x00000001;
 // Reserve memory according to the /reserved-memory node and the memory
 // reservation block
 const uint32_t EFI_DT_RESERVE_MEMORY = 0x00000002;
-// Install the device-tree as configuration table
-const uint32_t EFI_DT_INSTALL_TABLE = 0x00000004;
-const uint32_t EFI_DT_ALL =
-    EFI_DT_APPLY_FIXUPS | EFI_DT_RESERVE_MEMORY | EFI_DT_INSTALL_TABLE;
+const uint32_t EFI_DT_ALL = EFI_DT_APPLY_FIXUPS | EFI_DT_RESERVE_MEMORY;
 
 typedef struct EfiDtFixupProtocol {
   uint64_t revision;
