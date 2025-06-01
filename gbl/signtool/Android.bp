@@ -22,3 +22,17 @@ python_binary_host {
     srcs: ["gblsigntool.py"],
     libs: ["libavbtool"],
 }
+
+python_test_host {
+    name: "gblsigntool_test",
+    srcs: ["gblsigntool_test.py"],
+    data: [
+        ":gblsigntool_testdata",
+        ":gblsigntool",
+    ],
+}
+
+filegroup {
+    name: "gblsigntool_testdata",
+    srcs: ["testdata/**/*"],
+}
