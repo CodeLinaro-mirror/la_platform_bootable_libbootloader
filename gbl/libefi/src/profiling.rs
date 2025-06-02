@@ -20,62 +20,61 @@
 //!       will only indicate errors.
 
 use crate::protocol::timestamp::TimestampProtocol;
-use crate::{efi_println, EfiEntry};
+use crate::{efi_println, EfiEntry, Protocol};
 use core::time::Duration;
 use efi_types::EfiTimestampProperties;
-use liberror::Result;
+use liberror::{Error, Result};
 use libgbl::profiling::{ProfileBackend, ProfileTimer, Reporter};
 
-/// Represents a timestamp obtained using EFI_TIMESTAMP_PROTOCOL.
-pub struct Timestamp(Result<u64>);
-
-impl Timestamp {
-    /// Creates a new instance from the current timestamp.
-    pub fn now(entry: &EfiEntry) -> Self {
-        entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<TimestampProtocol>()
-            .inspect_err(|_| efi_println!(entry, "EFI_TIMESTAMP_PROTOCOL not supported"))
-            .and_then(|v| v.get_timestamp())
-            .inspect_err(|e| efi_println!(entry, "Error getting timestamp: {}", e))
-            .into()
-    }
-}
-
-impl From<Result<u64>> for Timestamp {
-    fn from(r: Result<u64>) -> Self {
-        Self(r)
-    }
-}
-
 /// EFI backed profiling timer
-pub struct EfiProfileTimer<'a> {
-    start: Timestamp,
-    efi_entry: &'a EfiEntry,
+pub enum EfiProfileTimer<'a> {
+    /// The EFI Timestamp protocol is not supported.
+    Unsupported,
+    /// The EFI Timestamp protocol is supported.
+    Supported {
+        /// The timestamp at the construction of the timer.
+        start: u64,
+        /// The timestamp protocol handle.
+        ts_proto: Protocol<'a, TimestampProtocol>,
+        /// The global EFI entry.
+        entry: &'a EfiEntry,
+    },
 }
 
 impl<'a> EfiProfileTimer<'a> {
     /// Construct a new profile timer that starts at the current timestamp.
-    pub fn new(efi_entry: &'a EfiEntry) -> Self {
-        Self { start: Timestamp::now(efi_entry), efi_entry }
-    }
-
-    fn elapsed_helper(&self) -> Result<Duration> {
-        let start = self.start.0?;
-        let entry = self.efi_entry;
-        let protocol = entry
+    pub fn new(entry: &'a EfiEntry) -> Self {
+        let Ok(ts_proto) = entry
             .system_table()
             .boot_services()
             .find_first_and_open::<TimestampProtocol>()
-            .inspect_err(|_| efi_println!(entry, "EFI_TIMESTAMP_PROTOCOL not supported"))?;
-        let EfiTimestampProperties { frequency, end_value } = protocol
+            .inspect_err(|_| efi_println!(entry, "EFI_TIMESTAMP_PROTOCOL not supported"))
+        else {
+            return Self::Unsupported;
+        };
+
+        let Ok(now) = ts_proto
+            .get_timestamp()
+            .inspect_err(|e| efi_println!(entry, "Error getting timestamp: {}", e))
+        else {
+            return Self::Unsupported;
+        };
+
+        Self::Supported { start: now, ts_proto, entry }
+    }
+
+    fn elapsed_helper(&self) -> Result<Duration> {
+        let Self::Supported { start, ts_proto, entry } = self else {
+            return Err(Error::Unsupported);
+        };
+
+        let EfiTimestampProperties { frequency, end_value } = ts_proto
             .get_properties()
             .inspect_err(|e| efi_println!(entry, "Error getting timestamp properties: {}", e))?;
-        let now = protocol
+        let now = ts_proto
             .get_timestamp()
             .inspect_err(|e| efi_println!(entry, "Error getting timestamp: {}", e))?;
-        let delta = now.overflowing_sub(start).0 as u128 % (end_value as u128 + 1);
+        let delta = now.overflowing_sub(*start).0 as u128 % (end_value as u128 + 1);
         Ok(Duration::from_millis((delta as u64) * 1000 / frequency))
     }
 }
@@ -123,5 +122,197 @@ impl ProfileBackend for EfiProfileBackend<'_> {
 
     fn reporter(&self) -> impl Reporter {
         ConsoleProfileReporter::new(self.efi_entry)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        protocol::{timestamp::TimestampProtocol, ProtocolInfo},
+        test::*,
+        DeviceHandle,
+    };
+    use efi_types::{
+        EfiStatus, EfiTimestampProtocol, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS,
+    };
+    use libgbl_macros::gbl_profile;
+    use std::{cell::RefCell, collections::VecDeque};
+
+    thread_local! {
+        pub static GET_TIMESTAMP_COUNTER: RefCell<u64> = RefCell::new(0);
+    }
+
+    /// Mocks `TimestampProtocol.get_timestamp`
+    extern "efiapi" fn get_timestamp() -> u64 {
+        GET_TIMESTAMP_COUNTER.with(|c| {
+            let mut c = c.borrow_mut();
+            let prev = *c;
+            *c += 1;
+            prev
+        }) * 1000
+    }
+
+    /// Mocks `TimestampProtocol.get_properties`.
+    ///
+    /// # SAFETY
+    ///
+    /// Caller needs to ensure that
+    ///
+    /// * `props` points to a valid object of type EfiTimestampProperties
+    unsafe extern "efiapi" fn get_properties(props: *mut EfiTimestampProperties) -> EfiStatus {
+        if !props.is_null() && props.is_aligned() {
+            // SAFETY:
+            // * just checked that `props` is aligned and not null.
+            // * caller is responsible for passing a pointer to a valid
+            //   `EfiTimestampProperties`
+            unsafe {
+                *props = EfiTimestampProperties { frequency: 1000, end_value: 0xFFFFFFFF };
+            }
+            EFI_STATUS_SUCCESS
+        } else {
+            EFI_STATUS_INVALID_PARAMETER
+        }
+    }
+
+    #[gbl_profile(backend = EfiProfileBackend::new(efi_entry))]
+    fn no_op_profile(efi_entry: &EfiEntry) {}
+
+    #[test]
+    fn test_profile_success() {
+        run_test(|image_handle, systab_ptr| {
+            GET_TIMESTAMP_COUNTER.with(|c| *c.borrow_mut() = 0);
+
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+            let mut ts = EfiTimestampProtocol {
+                get_timestamp: Some(get_timestamp),
+                get_properties: Some(get_properties),
+            };
+            let mut handles: [DeviceHandle; 1] = [1.into()];
+            efi_call_traces().with(|trace| {
+                let mut trace = trace.borrow_mut();
+
+                trace.locate_handle_buffer_trace.outputs = VecDeque::from([
+                    (handles.len(), handles.as_mut_ptr()),
+                    (handles.len(), handles.as_mut_ptr()),
+                ]);
+
+                let ts_handle = as_efi_handle(&mut ts);
+                trace.open_protocol_trace.outputs =
+                    VecDeque::from([(ts_handle, EFI_STATUS_SUCCESS)]);
+            });
+
+            efi_call_traces().with(|trace| {
+                let t = trace.borrow();
+                assert_eq!(t.open_protocol_trace.inputs, [])
+            });
+
+            no_op_profile(&efi_entry);
+
+            efi_call_traces().with(|trace| {
+                let t = trace.borrow();
+                assert_eq!(
+                    t.open_protocol_trace.inputs,
+                    [(1.into(), TimestampProtocol::GUID, image_handle),]
+                );
+
+                assert_eq!(GET_TIMESTAMP_COUNTER.with(|c| *c.borrow()), 2);
+
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert_eq!(out_str, "libefi/src/profiling.rs:no_op_profile: 1000ms\r\n");
+            });
+        });
+    }
+
+    #[test]
+    fn test_profile_no_protocol() {
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+
+            // Just want to verify that no error is generated
+            // if the protocol is absent.
+            no_op_profile(&efi_entry);
+
+            efi_call_traces().with(|trace| {
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert!(out_str.starts_with("EFI_TIMESTAMP_PROTOCOL not supported"));
+            });
+        });
+    }
+
+    #[test]
+    fn test_profile_no_properties() {
+        run_test(|image_handle, systab_ptr| {
+            GET_TIMESTAMP_COUNTER.with(|c| *c.borrow_mut() = 0);
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+
+            // Make sure the profiling implementation handles a protocol
+            // with a missing `get_properties` method.
+            // This is very unlikely if the protocol exists at all,
+            // but it is important that the implementation is robust.
+            let mut ts =
+                EfiTimestampProtocol { get_timestamp: Some(get_timestamp), get_properties: None };
+            let mut handles: [DeviceHandle; 1] = [1.into()];
+            efi_call_traces().with(|trace| {
+                let mut trace = trace.borrow_mut();
+
+                trace.locate_handle_buffer_trace.outputs =
+                    VecDeque::from([(handles.len(), handles.as_mut_ptr())]);
+
+                let ts_handle = as_efi_handle(&mut ts);
+                trace.open_protocol_trace.outputs =
+                    VecDeque::from([(ts_handle, EFI_STATUS_SUCCESS)]);
+            });
+
+            efi_call_traces().with(|trace| {
+                let t = trace.borrow();
+                assert_eq!(t.open_protocol_trace.inputs, [])
+            });
+
+            no_op_profile(&efi_entry);
+
+            efi_call_traces().with(|trace| {
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert!(out_str.starts_with("Error getting timestamp properties: "));
+            });
+        });
+    }
+
+    #[test]
+    fn test_profile_timestamp_error() {
+        run_test(|image_handle, systab_ptr| {
+            GET_TIMESTAMP_COUNTER.with(|c| *c.borrow_mut() = 0);
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+            let mut handles: [DeviceHandle; 1] = [1.into()];
+
+            // Make sure the profiling implementation handles a protocol
+            // with a missing `get_timestamp` method.
+            // This is very unlikely if the protocol exists at all,
+            // but it is important that the implementation is robust.
+            let mut ts =
+                EfiTimestampProtocol { get_timestamp: None, get_properties: Some(get_properties) };
+            efi_call_traces().with(|trace| {
+                let mut trace = trace.borrow_mut();
+
+                trace.locate_handle_buffer_trace.outputs =
+                    VecDeque::from([(handles.len(), handles.as_mut_ptr())]);
+
+                let ts_handle = as_efi_handle(&mut ts);
+                trace.open_protocol_trace.outputs =
+                    VecDeque::from([(ts_handle, EFI_STATUS_SUCCESS)]);
+            });
+
+            efi_call_traces().with(|trace| {
+                let t = trace.borrow();
+                assert_eq!(t.open_protocol_trace.inputs, [])
+            });
+
+            no_op_profile(&efi_entry);
+
+            efi_call_traces().with(|trace| {
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert!(out_str.starts_with("Error getting timestamp: "));
+            });
+        });
     }
 }

@@ -991,9 +991,11 @@ pub fn panic(panic: &PanicInfo) -> ! {
 mod test {
     use super::*;
     use crate::protocol::block_io::BlockIoProtocol;
+    use alloc::string::String;
     use efi_types::{
-        EfiBlockIoProtocol, EfiEventNotify, EfiLocateHandleSearchType, EfiStatus, EfiTpl,
-        EFI_MEMORY_TYPE_LOADER_CODE, EFI_MEMORY_TYPE_LOADER_DATA, EFI_STATUS_NOT_FOUND,
+        EfiBlockIoProtocol, EfiEventNotify, EfiLocateHandleSearchType, EfiSimpleTextOutputProtocol,
+        EfiStatus, EfiTpl, EFI_MEMORY_TYPE_LOADER_CODE, EFI_MEMORY_TYPE_LOADER_DATA,
+        EFI_STATUS_DEVICE_ERROR, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_NOT_FOUND,
         EFI_STATUS_NOT_READY, EFI_STATUS_SUCCESS, EFI_STATUS_UNSUPPORTED,
         EFI_TIMER_DELAY_TIMER_PERIODIC,
     };
@@ -1024,12 +1026,20 @@ mod test {
         pub check_event_trace: CheckEventTrace,
         pub set_timer_trace: SetTimerTrace,
         pub set_watchdog_timer_trace: SetWatchdogTimerTrace,
+        // Special case
+        pub console_out_trace: ConsoleOutTrace,
     }
 
     // Declares a global instance of EfiCallTraces.
     // Need to use thread local storage because rust unit test is multi-threaded.
     thread_local! {
         static EFI_CALL_TRACES: RefCell<EfiCallTraces> = RefCell::new(Default::default());
+    }
+
+    impl From<usize> for DeviceHandle {
+        fn from(h: usize) -> Self {
+            Self(h as *mut _)
+        }
     }
 
     /// Exports for unit-test in submodules.
@@ -1149,7 +1159,9 @@ mod test {
             // SAFETY: function safety docs require valid `protocol`.
             unsafe { trace.inputs.push_back(*protocol) };
 
-            let (num, handles) = trace.outputs.pop_front().unwrap();
+            let Some((num, handles)) = trace.outputs.pop_front() else {
+                return EFI_STATUS_DEVICE_ERROR;
+            };
             // SAFETY: function safety docs require valid `num_handles`.
             unsafe { *num_handles = num as usize };
             // SAFETY: function safety docs require valid `buf`.
@@ -1314,6 +1326,53 @@ mod test {
         })
     }
 
+    #[derive(Default)]
+    pub struct ConsoleOutTrace {
+        pub strings: Vec<String>,
+    }
+
+    impl ConsoleOutTrace {
+        /// Helper method for concatenating the individual printed characters.
+        pub fn as_single_string(&self) -> String {
+            // Due to conversion between the internal UTF-8 representation,
+            // the UTF-16 representation expected by most UEFI protocols,
+            // and the desire not to allocate memory for a conversion buffer,
+            // the Write implementation for SimpleTextOutputProtocol writes a single
+            // character at a time and loops over the entire input string.
+
+            let mut out = String::with_capacity(self.strings.iter().map(|s| s.len()).sum());
+            out.extend(self.strings.iter().map(String::as_str));
+            out
+        }
+    }
+
+    /// # SAFETY:
+    ///
+    /// * Caller should guarantee that `str` is a valid, null-terminated,
+    ///   UTF-16 encoded string.
+    unsafe extern "efiapi" fn output_string(
+        _proto: *mut EfiSimpleTextOutputProtocol,
+        str: *mut u16,
+    ) -> EfiStatus {
+        EFI_CALL_TRACES.with(|traces| {
+            if str.is_null() || !str.is_aligned() {
+                return EFI_STATUS_INVALID_PARAMETER;
+            }
+
+            // SAFETY: `str` is aligned and not null,
+            //         and the caller is responsible for passing a null-terminated
+            //         string.
+            let len = (0..).find(|i| unsafe { *str.add(*i) == 0x0000 }).unwrap_or(0);
+
+            // SAFETY: just verified that str is a null-terminated `len` long string.
+            let str = unsafe { std::slice::from_raw_parts(str, len) };
+            let str = std::string::String::from_utf16(str).unwrap();
+            traces.borrow_mut().console_out_trace.strings.push(str);
+
+            EFI_STATUS_SUCCESS
+        })
+    }
+
     /// A test wrapper that sets up a system table, image handle and runs a test function like it
     /// is an EFI application.
     /// TODO(300168989): Investigate using procedural macro to generate test that auto calls this.
@@ -1322,10 +1381,12 @@ mod test {
         EFI_CALL_TRACES.with(|trace| {
             *trace.borrow_mut() = Default::default();
         });
-
-        let mut systab: EfiSystemTable = Default::default();
+        let mut sto = EfiSimpleTextOutputProtocol {
+            output_string: Some(output_string),
+            ..Default::default()
+        };
+        let mut systab = EfiSystemTable { con_out: &mut sto, ..Default::default() };
         let mut boot_services: EfiBootService = Default::default();
-
         boot_services.free_pool = Some(free_pool);
         boot_services.open_protocol = Some(open_protocol);
         boot_services.close_protocol = Some(close_protocol);

@@ -42,6 +42,7 @@ rust_library(
 rust_test(
     name = "libefi_test",
     crate = ":libefi",
+    proc_macro_deps = ["@gbl//libgbl:libgbl_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
         "@gbl//libavb:sysdeps",
