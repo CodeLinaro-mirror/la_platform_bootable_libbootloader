@@ -2,13 +2,12 @@
 
 This document describes the GBL Image Loading protocol. This optional protocol
 defines interfaces that can be used by EFI applications to specify implement
-customised buffer location in memory. And additional images for verification.
+customised buffer location in memory.
 
 |||
 | :--- | :--- |
 | **Status** | Work in progress |
 | **Created** | 2024-12-11 |
-
 
 ## GBL_EFI_IMAGE_LOADING_PROTOCOL
 
@@ -17,9 +16,6 @@ customised buffer location in memory. And additional images for verification.
 This protocol allows firmware to provide platform reserved memory spaces to
 applications for a specific usage or feature, or alternatively, specify the
 amount of memory the application should allocate dynamically for it.
-
-It also provides interface to communicate additional images to be verified by
-GBL.
 
 ### GUID
 
@@ -45,7 +41,6 @@ GBL.
 typedef struct _GBL_EFI_IMAGE_LOADING_PROTOCOL {
   UINT64                        Revision;
   GBL_EFI_GET_IMAGE_BUFFER      GetBuffer;
-  GBL_EFI_GET_VERIFY_PARTITIONS GetVerifyPartitions;
 } GBL_EFI_IMAGE_LOADING_PROTOCOL;
 ```
 
@@ -59,11 +54,6 @@ compatible, a different GUID must be used.
 **GetBuffer** \
 Query custom buffer for the image. See
 [`GBL_EFI_IMAGE_LOADING_PROTOCOL.GetBuffer()`](#gbl_efi_image_loading_protocolgetbuffer).
-
-**GetVerifyPartitions** \
-Query for list of partitions to be verified by GBL. See
-[`GBL_EFI_IMAGE_LOADING_PROTOCOL.GetVerifyPartitions()`](#gbl_efi_image_loading_protocolgetverifypartitions).
-
 
 ## GBL_EFI_IMAGE_LOADING_PROTOCOL.GetBuffer()
 
@@ -102,7 +92,7 @@ Output pointer for `GBL_EFI_IMAGE_BUFFER`. See
 
 The interface is for the firmware to provide platform reserved memory spaces
 to, or instruct caller to allocate specific amount of memory for the usage
-context described in `GBL_EFI_IMAGE_INFO.StrUtf16`. The usage context is
+context described in `GBL_EFI_IMAGE_INFO.ImageType`. The usage context is
 application specific and may represent usages such as buffers for loading
 specific partitions, sharing data with secure world, and downloading in
 fastboot etc.
@@ -145,75 +135,6 @@ Start address of the reserved buffer or NULL if caller should allocate.
 
 **SizeBytes** \
 Size of the reserved buffer or amount of memory caller should allocate.
-
-## GBL_EFI_IMAGE_LOADING_PROTOCOL.GetVerifyPartitions()
-
-### Summary
-
-Query for list of partitions to be verified by GBL.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI *GBL_EFI_GET_VERIFY_PARTITIONS) (
-  IN GBL_EFI_IMAGE_LOADING_PROTOCOL *This,
-  IN OUT UINTN                      *NumberOfPartitions,
-  IN OUT GBL_EFI_PARTITION_NAME     *Partitions,
-);
-```
-
-### Parameters
-
-**This** \
-A pointer to the
-[`GBL_EFI_IMAGE_LOADING_PROTOCOL`](#gbl_efi_image_loading_protocol) instance.
-
-**NumberOfPartitions** \
-Number of elements in `Partitions[]`. Should be updated to
-number of partitions returned. If there are no partitions to be verified,
-`NumberOfPartitions` should be set to 0.
-
-**Partitions** \
-Array of partitions' names that should be verified. Should be update on return.
-And contain `NumberOfPartitions` valid elements.
-
-### Description
-
-This function is used to override list of partitions to be verified by GBL.
-
-If this function is not implemented or returns `EFI_UNSUPPORTED` GBL will verify
-default list of partitions.
-
-[`GBL_EFI_PARTITION_NAME`](#gbl_efi_partition_name) is struct representing
-partition name. Partition name is UCS-2 string of at most
-`PARTITION_NAME_LEN_U16` elements with terminating `NULL` element.
-
-### Status Codes Returned
-
-|||
-| --- | --- |
-| EFI_SUCCESS | Successfully provided additional partitions to verify |
-| EFI_INVALID_PARAMETER | If `Partitions[]` is `NULL`, where `NumberOfPartitions != 0` |
-
-### Related Definitions
-
-#### GBL_EFI_PARTITION_NAME
-
-```c
-const size_t PARTITION_NAME_LEN_U16 = 36;
-
-typedef
-struct GBL_EFI_PARTITION_NAME {
-  CHAR16 StrUtf16[PARTITION_NAME_LEN_U16];
-} GBL_EFI_PARTITION_NAME;
-```
-
-**StrUtf16** \
-UCS-2 C-String. This string contains partition name, that identifies what
-partition to use for additional validation. The string is at most
-`PARTITION_NAME_LEN_U16` of char16_t elements. E.g. `u"boot"`, `u"fdt"`
 
 #### GBL_EFI_IMAGE_INFO
 

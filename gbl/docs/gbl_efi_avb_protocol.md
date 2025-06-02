@@ -38,6 +38,7 @@ backwards-incompatible ways.
 ```c
 typedef struct _GBL_EFI_AVB_PROTOCOL {
   UINT64 Revision;
+  GBL_EFI_AVB_READ_PARTITIONS_TO_VERIFY ReadPartitionsToVerify;
   GBL_EFI_AVB_READ_IS_DM_VERITY_ERROR ReadIsDmVerityError;
   GBL_EFI_AVB_VALIDATE_VBMETA_PUBLIC_KEY ValidateVbmetaPublicKey;
   GBL_EFI_AVB_READ_IS_DEVICE_UNLOCKED ReadIsDeviceUnlocked;
@@ -57,20 +58,26 @@ The revision to which the `GBL_EFI_AVB_PROTOCOL` adheres. All future revisions
 must be backwards compatible. If a future version is not backwards compatible,
 a different GUID must be used.
 
+#### ReadPartitionsToVerify
+
+Gets the list of additional partitions to be verified, beyond the standard set
+loaded and verified by GBL.
+[`GetVerifyPartitions()`](#gbl_efi_image_loading_protocolreadpartitionstoverify).
+
 #### ReadIsDmVerityError
 
 Gets whether the device is rebooted due to dm-verity error.
-[`ReadIsDmVerityError()`](#readisdmverityerror).
+[`ReadIsDmVerityError()`](#gbl_efi_avb_protocolreadisdmverityerror).
 
 #### ValidateVbmetaPublicKey
 
 Validate proper public key is used to sign HLOS artifacts.
-[`ValidateVbmetaPublicKey()`](#validatevbmetapublickey).
+[`ValidateVbmetaPublicKey()`](#gbl_efi_avb_protocolvalidatevbmetapublickey).
 
 #### ReadIsDeviceUnlocked
 
 Gets whether the device is unlocked.
-[`ReadIsDeviceUnlocked()`](#readisdeviceunlocked).
+[`ReadIsDeviceUnlocked()`](#gbl_efi_avb_protocolreadisdeviceunlocked).
 
 #### ReadRollbackIndex
 
@@ -98,7 +105,100 @@ Handle AVB verification result (i.e update ROT, set device state, display UI
 warnings/errors, handle anti-tampering, etc).
 [`HandleVerificationResult()`](#handleverificationresult).
 
-## GBL_EFI_AVB_PROTOCOL.ReadIsDmVerityError() {#readisdmverityerror}
+## GBL_EFI_IMAGE_LOADING_PROTOCOL.ReadPartitionsToVerify()
+
+### Summary
+
+Gets the list of additional partitions to be verified, beyond the standard set
+loaded and verified by GBL.
+
+### Prototype
+
+```c
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_READ_PARTITIONS_TO_VERIFY) (
+  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN OUT UINTN *NumberOfPartitions,
+  IN OUT GBL_EFI_AVB_PARTITION *Partitions,
+);
+```
+
+### Parameters
+
+#### This
+
+A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
+
+#### NumberOfPartitions
+
+Number of `Partitions` available to be filled by the FW. Must be updated to the
+number of partitions returned. If there are no extra partitions to be verified,
+`NumberOfPartitions` should be set to 0.
+
+#### Partitions
+
+Pointer to an array of [`GBL_EFI_AVB_PARTITION`](#gbl_efi_avb_partition) with
+`NumberOfPartitions` elements, to be filled by the FW with additional partitions
+that GBL will load and verify.
+
+### Description
+
+GBL loads and verifies a default set of partitions needed to boot HLOS. For
+example, in case of Android, GBL loads and verifies the following standard
+partitions: `boot`, `init_boot`, `vendor_boot`, `vendor_kernel_boot`, `dtb`,
+`dtbo`, `pvmfw` used to boot the system.
+
+This method allows the firmware specify extra non-standard partitions that GBL
+will also load and verify to extend the integrity check.
+
+For example, to provide N additional partitions, the first N elements of
+`Partitions` must be filled with names, following the
+[`GBL_EFI_AVB_PARTITION`](#gbl_efi_avb_partition) format. If no extra partitions
+are required, `NumberOfPartitions` should be set to 0 or `EFI_UNSUPPORTED`
+should be returned.
+
+If a requested partition does not have a corresponding hash descriptor in
+`vbmeta` or chained partition then it cannot be verified. GBL will treat it the
+following way:
+
+1. For a locked device: `RED` boot status color, so fail to boot.
+2. For an unlocked device: `ORANGE` boot status color, still can boot.
+
+### Status Codes Returned
+
+|||
+| --- | --- |
+| `EFI_SUCCESS` | Successfully provided additional partitions to verify |
+| `EFI_UNSUPPORTED` | No extra partitions need to be verified |
+| `EFI_BUFFER_TOO_SMALL` | Provided list of `Partitions` is too small; `NumberOfPartitions` has been updated with the required amount. GBL will call this method again with extended `Partitions`. |
+| `EFI_BAD_BUFFER_SIZE` | One of provided `Partition.NameLen` values is not sufficient to hold the partition name. GBL will fail to boot. |
+
+### Related Definitions
+
+#### GBL_EFI_AVB_PARTITION
+
+```c
+typedef
+struct GblEfiAvbPartition {
+  UINTN NameLen;
+  UINT8* Name;
+} GBL_EFI_AVB_PARTITION;
+```
+
+##### NameLen
+
+On input, represents the size of available space pointed by `Name` to be filled
+with UTF-8 partition name. On output, must be updated to the partition name's
+length copied into `Name` buffer.
+
+##### Name
+
+A pointer to available buffer of `NameLen` size for UTF-8 partition name to be
+copied by FW implementation. A copied partition name must not be null-terminated
+and must not include the slot suffix.
+
+## GBL_EFI_AVB_PROTOCOL.ReadIsDmVerityError()
 
 ### Summary
 
@@ -131,7 +231,7 @@ If `IsDmVerityError` is set `True` by the FW, GBL will pass [`AVB_SLOT_VERIFY_FL
 so `RED_IO` status will be reported unless new OS images are detected by the
 `libavb`.
 
-## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey() {#ValidateVbmetaPublicKey}
+## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey()
 
 ### Summary
 
@@ -183,7 +283,7 @@ Guaranteed to be 0 in case of `NULL` `PublicKeyMetadata`.
 An output parameter that communicates the verification status to the GBL. `VALID`
 and `VALID_CUSTOM_KEY` are interpreted as successful validation statuses.
 
-### Related Definition
+### Related Definitions
 
 ```c
 // Vbmeta key validation status.
@@ -216,7 +316,7 @@ error, so `red` state is reported and GBL fails to boot even if device is unlock
 
 GBL calls this function once per AVB verification session.
 
-## GBL_EFI_AVB_PROTOCOL.ReadIsDeviceUnlocked() {#ReadIsDeviceUnlocked}
+## GBL_EFI_AVB_PROTOCOL.ReadIsDeviceUnlocked()
 
 ### Summary
 

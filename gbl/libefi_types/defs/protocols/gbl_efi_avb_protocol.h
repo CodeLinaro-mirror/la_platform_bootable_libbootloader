@@ -62,8 +62,20 @@ typedef struct {
   const char8_t* vendor_security_patch;
 } GblEfiAvbVerificationResult;
 
+typedef struct {
+  // On input - `name` buffer size
+  // On output - actual `name` length
+  size_t name_len;
+  char8_t* name;
+} GblEfiAvbPartition;
+
 typedef struct GblEfiAvbProtocol {
   uint64_t revision;
+
+  EfiStatus (*read_partitions_to_verify)(
+      struct GblEfiAvbProtocol* self,
+      /* in-out */ size_t* num_partitions,
+      /* in-out */ GblEfiAvbPartition* partitions);
 
   EfiStatus (*read_is_dm_verity_error)(struct GblEfiAvbProtocol* self,
                                        /* out */ bool* is_dm_verity_error);
