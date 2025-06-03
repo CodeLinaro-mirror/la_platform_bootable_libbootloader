@@ -409,19 +409,23 @@ pub trait FastbootImplementation {
     /// # Args
     ///
     /// * `cmd`: The OEM command string that comes after "oem ".
-    /// * `responder`: An instance of `InfoSender`.
-    /// * `res`: The responder buffer. Upon success, implementation can use the buffer to
-    ///   construct a valid UTF8 string which will be sent as "OKAY<string>"
+    /// * `responder`: An instance of `InfoSender + OkaySender + FailSender`.
+    /// * `res`: A buffer for backend to construct messages. The buffer is guaranteed large enough
+    ///   for a fastboot OKAY/FAIL/INFO message.
     ///
-    /// # Returns
-    ///
-    /// On success, returns the portion of `res` used by the construction of string message.
-    async fn oem<'a>(
+    /// * If backend does not plan to return from the function, or wants to construct custom result
+    ///   message, it should send either a OKAY or FAIL messgae with `responder`, otherwise host
+    ///   may hang waiting for reply.
+    /// * If implementation returns Ok(()) without sending a OKAY message via `responder`,
+    ///   an empty OKAY message will be sent by `process_next_command()`.
+    /// * If implementation returns Err(e) without sending a FAIL message via `responder`,
+    ///   a FAIL message of `e` will be sent.
+    async fn oem(
         &mut self,
         cmd: &str,
-        responder: impl InfoSender,
-        res: &'a mut [u8],
-    ) -> CommandResult<&'a [u8]>;
+        responder: impl InfoSender + OkaySender + FailSender,
+        res: &mut [u8],
+    ) -> CommandResult<()>;
 
     // TODO(b/322540167): Add methods for other commands.
 }
@@ -502,6 +506,23 @@ pub trait OkaySender {
     }
 }
 
+/// Provides an API for sending fastboot FAIL messages.
+pub trait FailSender {
+    /// Sends formatted FAIL message.
+    ///
+    /// # Args:
+    ///
+    /// * `cb`: A closure provided by the caller for constructing the formatted messagae.
+    async fn send_formatted_fail<F: FnOnce(&mut dyn Write)>(self, cb: F) -> Result<()>;
+
+    /// Sends a fastboot FAIL<msg> packet. `Self` is consumed.
+    async fn send_fail(self, msg: &str) -> Result<()>
+    where
+        Self: Sized,
+    {
+        self.send_formatted_fail(|w| write!(w, "{}", msg).unwrap()).await
+    }
+}
 /// `UploadBuilder` provides API for initiating a fastboot upload.
 pub trait UploadBuilder {
     /// Starts the upload.
@@ -519,6 +540,7 @@ pub trait Uploader {
 
 /// `Responder` implements APIs for fastboot backend to send fastboot messages and uploading data.
 struct Responder<'a, T: Transport> {
+    result_message_sent: bool,
     buffer: [u8; MAX_RESPONSE_SIZE],
     transport: &'a mut T,
     transport_error: Result<()>,
@@ -528,6 +550,7 @@ struct Responder<'a, T: Transport> {
 impl<'a, T: Transport> Responder<'a, T> {
     fn new(transport: &'a mut T) -> Self {
         Self {
+            result_message_sent: false,
             buffer: [0u8; MAX_RESPONSE_SIZE],
             transport,
             transport_error: Ok(()),
@@ -612,7 +635,15 @@ impl<T: Transport> InfoSender for &mut Responder<'_, T> {
 
 impl<T: Transport> OkaySender for &mut Responder<'_, T> {
     async fn send_formatted_okay<F: FnOnce(&mut dyn Write)>(self, cb: F) -> Result<()> {
+        self.result_message_sent = true;
         Ok(self.send_formatted_msg("OKAY", cb).await?)
+    }
+}
+
+impl<T: Transport> FailSender for &mut Responder<'_, T> {
+    async fn send_formatted_fail<F: FnOnce(&mut dyn Write)>(self, cb: F) -> Result<()> {
+        self.result_message_sent = true;
+        Ok(self.send_formatted_msg("FAIL", cb).await?)
     }
 }
 
@@ -939,10 +970,8 @@ async fn oem(
     let mut oem_out = [0u8; MAX_RESPONSE_SIZE - 4];
     let oem_res = fb_impl.oem(cmd, &mut resp, &mut oem_out[..]).await;
     match oem_res {
-        Ok(msg) => match from_utf8(msg) {
-            Ok(s) => reply_okay!(resp, "{}", s),
-            Err(e) => reply_fail!(resp, "Invalid return string {}", e),
-        },
+        _ if resp.result_message_sent => Ok(()), // Assumes backend has handled the error.
+        Ok(()) => reply_okay!(resp, ""),
         Err(e) => reply_fail!(resp, "{}", e.to_str()),
     }
 }
@@ -1059,6 +1088,11 @@ mod test {
     use core::cmp::min;
     use std::collections::{BTreeMap, VecDeque};
 
+    enum OemResponse {
+        Okay(String),
+        Fail(String),
+    }
+
     #[derive(Default)]
     struct FastbootTest {
         // A mapping from (variable name, argument) to variable value.
@@ -1071,8 +1105,8 @@ mod test {
         upload_config: (u32, Vec<Vec<u8>>),
         // A map from partition name to (upload size override, partition data)
         fetch_data: BTreeMap<&'static str, (u32, Vec<u8>)>,
-        // result string, INFO strings.
-        oem_output: (String, Vec<String>),
+        // OKAY/FAIL messages, INFO messages, result.
+        oem_output: (Option<OemResponse>, Vec<String>, Option<CommandResult<()>>),
         oem_command: String,
         download_buffer: Vec<u8>,
         downloaded_size: usize,
@@ -1175,18 +1209,23 @@ mod test {
             Ok(())
         }
 
-        async fn oem<'b>(
+        async fn oem(
             &mut self,
             cmd: &str,
-            mut responder: impl InfoSender,
-            res: &'b mut [u8],
-        ) -> CommandResult<&'b [u8]> {
-            let (res_str, infos) = &mut self.oem_output;
+            mut responder: impl InfoSender + OkaySender + FailSender,
+            _: &mut [u8],
+        ) -> CommandResult<()> {
+            let (resp, infos, res) = &mut self.oem_output;
             self.oem_command = cmd.into();
             for ele in infos {
                 responder.send_info(ele.as_str()).await?;
             }
-            Ok(snprintf!(res, "{}", *res_str).as_bytes())
+            match resp {
+                Some(OemResponse::Okay(v)) => responder.send_okay(v as _).await.unwrap(),
+                Some(OemResponse::Fail(v)) => responder.send_fail(v as _).await.unwrap(),
+                _ => {}
+            }
+            res.take().unwrap_or(Ok(()))
         }
     }
 
@@ -1473,13 +1512,16 @@ mod test {
     }
 
     #[test]
-    fn test_oem_cmd() {
+    fn test_oem_cmd_oem_send_okay_info() {
         let mut fastboot_impl: FastbootTest = Default::default();
         fastboot_impl.download_buffer = vec![0u8; 2048];
         let mut transport = TestTransport::new();
         transport.add_input(b"oem oem-command");
-        fastboot_impl.oem_output =
-            ("oem-return".into(), vec!["oem-info-1".into(), "oem-info-2".into()]);
+        fastboot_impl.oem_output = (
+            Some(OemResponse::Okay("oem-return".into())),
+            vec!["oem-info-1".into(), "oem-info-2".into()],
+            None,
+        );
         let _ = block_on(run(&mut transport, &mut fastboot_impl));
         assert_eq!(fastboot_impl.oem_command, "oem-command");
         assert_eq!(
@@ -1488,6 +1530,68 @@ mod test {
                 b"INFOoem-info-1".into(),
                 b"INFOoem-info-2".into(),
                 b"OKAYoem-return".into(),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_oem_cmd_send_default_okay_info() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        fastboot_impl.download_buffer = vec![0u8; 2048];
+        let mut transport = TestTransport::new();
+        transport.add_input(b"oem oem-command");
+        fastboot_impl.oem_output = (None, vec!["oem-info-1".into(), "oem-info-2".into()], None);
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
+        assert_eq!(fastboot_impl.oem_command, "oem-command");
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"INFOoem-info-1".into(),
+                b"INFOoem-info-2".into(),
+                b"OKAY".into(),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_oem_cmd_oem_send_fail_info() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        fastboot_impl.download_buffer = vec![0u8; 2048];
+        let mut transport = TestTransport::new();
+        transport.add_input(b"oem oem-command");
+        fastboot_impl.oem_output = (
+            Some(OemResponse::Fail("oem-return".into())),
+            vec!["oem-info-1".into(), "oem-info-2".into()],
+            None,
+        );
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
+        assert_eq!(fastboot_impl.oem_command, "oem-command");
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"INFOoem-info-1".into(),
+                b"INFOoem-info-2".into(),
+                b"FAILoem-return".into(),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_oem_cmd_oem_send_default_fail_info() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        fastboot_impl.download_buffer = vec![0u8; 2048];
+        let mut transport = TestTransport::new();
+        transport.add_input(b"oem oem-command");
+        fastboot_impl.oem_output =
+            (None, vec!["oem-info-1".into(), "oem-info-2".into()], Some(Err("error".into())));
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
+        assert_eq!(fastboot_impl.oem_command, "oem-command");
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"INFOoem-info-1".into(),
+                b"INFOoem-info-2".into(),
+                b"FAILerror".into(),
             ])
         );
     }

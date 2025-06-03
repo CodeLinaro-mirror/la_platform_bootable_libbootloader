@@ -184,7 +184,7 @@ mod test {
     use libgbl::{
         device_tree::DeviceTreeComponentsRegistry,
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
-        ops::ImageBuffer,
+        ops::{FailSender, ImageBuffer, InfoSender, OkaySender},
     };
     use libprofile::{ProfileBackend, ProfileTimer, Reporter};
     use std::{
@@ -449,6 +449,15 @@ mod test {
         }
 
         fn fastboot_visit_all_variables(&mut self, _: impl FnMut(&[&CStr], &CStr)) -> Result<()> {
+            unimplemented!()
+        }
+
+        fn fastboot_run_oem(
+            &mut self,
+            _: &str,
+            _: &mut [u8],
+            _: impl InfoSender + OkaySender + FailSender,
+        ) -> Result<()> {
             unimplemented!()
         }
 

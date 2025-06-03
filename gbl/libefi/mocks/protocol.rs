@@ -338,6 +338,16 @@ pub mod gbl_efi_fastboot {
         pub fn get_var_all(&self, _: impl FnMut(&[&CStr], &CStr)) -> Result<()> {
             unimplemented!()
         }
+
+        /// Protocol<'_, GblFastbootProtocol>::run_oem_function.
+        pub fn run_oem_function(
+            &self,
+            _: &str,
+            _: &mut [u8],
+            _: impl FnMut(i32, &str) -> Result<()>,
+        ) -> Result<()> {
+            unimplemented!()
+        }
     }
 
     /// Map to the libefi name so code under test can just use one name.
