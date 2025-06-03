@@ -103,7 +103,8 @@ pub fn gbl_profile(args: TokenStream, input: TokenStream) -> TokenStream {
             let backend = #backend;
             let timer = backend.new_timer();
             let reporter = backend.reporter();
-            let _ = Profiler::new(timer, reporter, stringify!(#funcname));
+            let _profiler = Profiler::new(timer, reporter, stringify!(#funcname));
+
             #(#statements)*
         }
     )
