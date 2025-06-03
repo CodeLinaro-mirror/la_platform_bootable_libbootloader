@@ -185,8 +185,8 @@ mod test {
         device_tree::DeviceTreeComponentsRegistry,
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
         ops::ImageBuffer,
-        profiling::{ProfileBackend, ProfileTimer, Reporter},
     };
+    use libprofile::{ProfileBackend, ProfileTimer, Reporter};
     use std::{
         ffi::CStr,
         fmt::Write,

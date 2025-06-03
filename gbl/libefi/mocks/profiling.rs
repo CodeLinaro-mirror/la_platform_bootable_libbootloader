@@ -16,7 +16,7 @@
 
 use crate::MockEfiEntry;
 use core::time::Duration;
-use libgbl::profiling::{ProfileBackend, ProfileTimer, Reporter};
+use libprofile::{ProfileBackend, ProfileTimer, Reporter};
 use mockall::mock;
 
 mock! {

@@ -51,7 +51,6 @@ pub mod fuchsia_boot;
 pub mod gbl_avb;
 pub mod ops;
 pub mod partition;
-pub mod profiling;
 
 /// The 'slots' module, containing types and traits for
 /// querying and modifying slotted boot behavior.

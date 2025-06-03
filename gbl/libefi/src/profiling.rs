@@ -24,7 +24,7 @@ use crate::{efi_println, EfiEntry, Protocol};
 use core::time::Duration;
 use efi_types::EfiTimestampProperties;
 use liberror::{Error, Result};
-use libgbl::profiling::{ProfileBackend, ProfileTimer, Reporter};
+use libprofile::{ProfileBackend, ProfileTimer, Reporter};
 
 /// EFI backed profiling timer
 pub enum EfiProfileTimer<'a> {
@@ -136,7 +136,7 @@ mod test {
     use efi_types::{
         EfiStatus, EfiTimestampProtocol, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS,
     };
-    use libgbl_macros::gbl_profile;
+    use libprofile_macros::profile;
     use std::{cell::RefCell, collections::VecDeque};
 
     thread_local! {
@@ -175,7 +175,7 @@ mod test {
         }
     }
 
-    #[gbl_profile(backend = EfiProfileBackend::new(efi_entry))]
+    #[profile(backend = EfiProfileBackend::new(efi_entry))]
     fn no_op_profile(efi_entry: &EfiEntry) {}
 
     #[test]

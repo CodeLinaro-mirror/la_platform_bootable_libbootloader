@@ -14,6 +14,8 @@
 
 //! Describe common traits and structures for GBL profiling.
 
+#![cfg_attr(not(test), no_std)]
+
 use core::{panic::Location, time::Duration};
 
 /// Timer for profiling
@@ -70,7 +72,7 @@ impl<T: ProfileTimer, R: Reporter> Drop for Profiler<T, R> {
 ///
 /// Intended use is to annotate target functions with
 ///
-/// #[gbl_profile(backend = <custom backend initialization>)]
+/// #[profile(backend = <custom backend initialization>)]
 /// fn expensive_function(...) { ... }
 pub trait ProfileBackend {
     /// Create a new timer.

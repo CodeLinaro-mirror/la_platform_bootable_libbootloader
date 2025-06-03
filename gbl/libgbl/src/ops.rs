@@ -24,12 +24,12 @@ use crate::{
         check_part_unique, read_unique_partition, read_unique_partition_sync,
         write_unique_partition, GblDisk,
     },
-    profiling::ProfileBackend,
 };
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
 use core::{ffi::CStr, fmt::Write, num::NonZeroUsize, ops::DerefMut, result::Result};
 use gbl_async::block_on;
 use gbl_storage::SliceMaybeUninit;
+use libprofile::ProfileBackend;
 use libutils::aligned_subslice;
 
 // Re-exports of types from other dependencies that appear in the APIs of this library.
@@ -835,7 +835,6 @@ pub(crate) mod test {
     use crate::device_tree::DeviceTreeComponentType;
     use crate::error::IntegrationError;
     use crate::partition::GblDisk;
-    use crate::profiling::{ProfileTimer, Reporter};
     use abr::{get_and_clear_one_shot_bootloader, get_boot_slot};
     use avb::{CertOps, Ops};
     use avb_test::TestOps as AvbTestOps;
@@ -847,6 +846,7 @@ pub(crate) mod test {
     use fdt::Fdt;
     use gbl_async::block_on;
     use gbl_storage::{new_gpt_max, Disk, GptMax, RamBlockIo};
+    use libprofile::{ProfileTimer, Reporter};
     use libutils::snprintf;
     use std::{
         collections::{HashMap, LinkedList},

@@ -30,7 +30,7 @@ use core::{
 };
 use efi::{
     efi_print, efi_println,
-    profiling::{ConsoleProfileReporter, EfiProfileBackend, EfiProfileTimer},
+    profiling::EfiProfileBackend,
     protocol::{
         dt_fixup::DtFixupProtocol,
         gbl_efi_ab_slot::GblSlotProtocol,
@@ -64,10 +64,10 @@ use libgbl::{
         SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
-    profiling::{ProfileBackend, ProfileTimer, Reporter},
     slots::{BootToken, Cursor},
     GblOps, Os, Result as GblResult,
 };
+use libprofile::ProfileBackend;
 use safemath::SafeNum;
 use zbi::ZbiContainer;
 use zerocopy::IntoBytes;
@@ -274,16 +274,6 @@ impl<'a, 'b> Ops<'a, 'b> {
             Err(Error::NotFound) => Err(Error::Unsupported),
             v => Ok(v?),
         }
-    }
-}
-
-impl ProfileBackend for Ops<'_, '_> {
-    fn new_timer(&self) -> impl ProfileTimer {
-        EfiProfileTimer::new(self.efi_entry)
-    }
-
-    fn reporter(&self) -> impl Reporter {
-        ConsoleProfileReporter::new(self.efi_entry)
     }
 }
 

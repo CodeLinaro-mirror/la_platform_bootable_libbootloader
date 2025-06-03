@@ -14,7 +14,7 @@
 
 load("@gbl//toolchain:gbl_toolchain.bzl", "dev_test")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_proc_macro", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -28,6 +28,7 @@ rust_library(
     ),
     aliases = {"@itertools_noalloc": "itertools_noalloc"},
     edition = "2021",
+    proc_macro_deps = ["@gbl//libprofile:libprofile_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
     visibility = ["//visibility:public"],
     deps = [
@@ -48,6 +49,7 @@ rust_library(
         "@gbl//libfdt",
         "@gbl//libmisc",
         "@gbl//libopendice",
+        "@gbl//libprofile",
         "@gbl//libsafemath",
         "@gbl//libstorage",
         "@gbl//libutils",
@@ -57,17 +59,6 @@ rust_library(
         "@zbi",
         "@zerocopy",
         "@zune_inflate",
-    ],
-)
-
-rust_proc_macro(
-    name = "libgbl_macros",
-    srcs = glob(["macros/**/*.rs"]),
-    rustc_flags = ANDROID_RUST_LINTS,
-    deps = [
-        "@proc_macro2",
-        "@quote",
-        "@syn",
     ],
 )
 

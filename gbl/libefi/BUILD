@@ -31,6 +31,7 @@ rust_library(
         "@gbl//liberror",
         "@gbl//libfastboot",
         "@gbl//libgbl",
+        "@gbl//libprofile",
         "@gbl//libsafemath",
         "@gbl//libstorage",
         "@gbl//libutils",
@@ -42,7 +43,7 @@ rust_library(
 rust_test(
     name = "libefi_test",
     crate = ":libefi",
-    proc_macro_deps = ["@gbl//libgbl:libgbl_macros"],
+    proc_macro_deps = ["@gbl//libprofile:libprofile_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
         "@gbl//libavb:sysdeps",
@@ -60,6 +61,7 @@ rust_library(
         "@gbl//libefi_types",
         "@gbl//liberror",
         "@gbl//libgbl",
+        "@gbl//libprofile",
         "@mockall",
     ],
 )
