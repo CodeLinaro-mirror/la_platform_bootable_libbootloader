@@ -92,7 +92,7 @@ fn zircon_load_verify_fixup<'a, 'b, 'c>(
 ) -> GblResult<(&'c mut [u8], &'c mut [u8])> {
     // Zircon kernel requires ZBI items address to be page aligned.
     let load = aligned_subslice(load_buffer, PAGE_SIZE)?;
-    read_zircon_image(ops, slot, load)?;
+    read_zircon_image(ops, slot, &mut *load)?;
     // Performs AVB verification.
     zircon_verify_kernel_in_place(ops, slot, slot_booted_successfully, &mut load[..])?;
     // Append additional ZBI items.

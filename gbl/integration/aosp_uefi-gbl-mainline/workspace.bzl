@@ -501,6 +501,14 @@ cc_library(
         build_file = "@gbl//libopendice:BUILD.open_dice.bazel",
     )
 
+    native.new_local_repository(
+        name = "bytes",
+        path = "external/rust/android-crates-io/crates/bytes",
+        build_file_content = rust_crate_build_file(
+            "bytes",
+        ),
+    )
+
     # Set up a repo to export LLVM tool/library/header/sysroot paths
     gbl_llvm_prebuilts(name = "gbl_llvm_prebuilts")
 

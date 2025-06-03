@@ -26,9 +26,9 @@ use crate::{
     },
 };
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
+use bytes::buf::UninitSlice;
 use core::{ffi::CStr, fmt::Write, num::NonZeroUsize, ops::DerefMut, result::Result};
 use gbl_async::block_on;
-use gbl_storage::SliceMaybeUninit;
 use libprofile::ProfileBackend;
 use libutils::aligned_subslice;
 
@@ -143,21 +143,21 @@ pub trait GblOps<'a, 'd> {
     >];
 
     /// Reads data from a partition.
-    async fn read_from_partition(
+    async fn read_from_partition<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
         read_unique_partition(self.disks(), part, off, out).await
     }
 
     /// Reads data from a partition synchronously.
-    fn read_from_partition_sync(
+    fn read_from_partition_sync<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
         read_unique_partition_sync(self.disks(), part, off, out)
     }
@@ -562,19 +562,20 @@ pub(crate) struct RambootOps<'a, T> {
 
 impl<'a, T> RambootOps<'a, T> {
     /// Reads from ram partitions.
-    pub fn read_from_ram_partition(
+    pub fn read_from_ram_partition<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
+        let out = out.into();
         match self.ram_partitions.iter().find(|(name, _)| *name == part) {
             Some((_, data)) => {
                 let buf = data
                     .get(off.try_into()?..)
                     .and_then(|v| v.get(..out.len()))
                     .ok_or(Error::OutOfRange)?;
-                Ok(out.clone_from_slice(buf))
+                Ok(out.copy_from_slice(buf))
             }
             _ => Err(Error::NotFound),
         }
@@ -699,25 +700,27 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.select_device_trees(components_registry)
     }
 
-    async fn read_from_partition(
+    async fn read_from_partition<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
-        match self.read_from_ram_partition(part, off, out) {
+        let out = out.into();
+        match self.read_from_ram_partition(part, off, &mut *out) {
             Err(Error::NotFound) => self.ops.read_from_partition(part, off, out).await,
             v => v,
         }
     }
 
-    fn read_from_partition_sync(
+    fn read_from_partition_sync<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
-        match self.read_from_ram_partition(part, off, out) {
+        let out = out.into();
+        match self.read_from_ram_partition(part, off, &mut *out) {
             Err(Error::NotFound) => self.ops.read_from_partition_sync(part, off, out),
             v => v,
         }
@@ -1274,7 +1277,7 @@ pub(crate) mod test {
             }
 
             let (out, _) = buffer.split_at_mut(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER.len());
-            out.clone_from_slice(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER);
+            out.copy_from_slice(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER);
             Ok(out)
         }
 
@@ -1287,7 +1290,7 @@ pub(crate) mod test {
             }
 
             let (out, _) = buffer.split_at_mut(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY.len());
-            out.clone_from_slice(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY);
+            out.copy_from_slice(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY);
             Ok(Some(out))
         }
 
@@ -1318,7 +1321,7 @@ pub(crate) mod test {
             fixup_buffer: &'c mut [u8],
         ) -> Result<Option<&'c [u8]>, Error> {
             let (out, _) = fixup_buffer.split_at_mut(Self::GBL_TEST_BOOTCONFIG.len());
-            out.clone_from_slice(Self::GBL_TEST_BOOTCONFIG.as_bytes());
+            out.copy_from_slice(Self::GBL_TEST_BOOTCONFIG.as_bytes());
             Ok(Some(out))
         }
 

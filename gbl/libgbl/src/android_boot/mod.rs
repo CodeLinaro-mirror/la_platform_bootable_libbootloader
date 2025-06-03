@@ -428,7 +428,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
         .split_at_mut_checked(BootloaderMessage::SIZE_BYTES)
         .ok_or(Error::BufferTooSmall(Some(BootloaderMessage::SIZE_BYTES)))
         .inspect_err(|e| gbl_println!(ops, "Buffer too small for reading misc. {e}"))?;
-    ops.read_from_partition_sync("misc", 0, bcb_buffer)
+    ops.read_from_partition_sync("misc", 0, &mut *bcb_buffer)
         .inspect_err(|e| gbl_println!(ops, "Failed to read misc partition: {e}"))?;
     let bcb = BootloaderMessage::from_bytes_ref(bcb_buffer)
         .inspect_err(|e| gbl_println!(ops, "Failed to parse bootloader messgae: {e}"))?;

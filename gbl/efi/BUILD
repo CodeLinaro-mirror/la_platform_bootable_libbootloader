@@ -34,6 +34,7 @@ rust_library(
     deps = [
         "@arrayvec",
         "@avb",
+        "@bytes",
         "@gbl//libasync",
         "@gbl//libasync:cyclic_executor",
         "@gbl//libboot",

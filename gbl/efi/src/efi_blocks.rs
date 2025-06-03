@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use alloc::vec::Vec;
+use bytes::buf::UninitSlice;
 use core::cmp::max;
 use efi::{
     efi_println,
@@ -22,7 +23,7 @@ use efi::{
 };
 use efi_types::EfiBlockIoMedia;
 use gbl_async::block_on;
-use gbl_storage::{gpt_buffer_size, BlockInfo, BlockIo, Disk, Gpt, SliceMaybeUninit};
+use gbl_storage::{gpt_buffer_size, BlockInfo, BlockIo, Disk, Gpt};
 use liberror::Error;
 use libgbl::partition::GblDisk;
 use libprofile_macros::profile;
@@ -62,10 +63,10 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
         (*self).info()
     }
 
-    async fn read_blocks(
+    async fn read_blocks<'a>(
         &mut self,
         blk_offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<(), Error> {
         match &self.block_io2 {
             Some(v) => v.read_blocks_ex(blk_offset, out).await,
@@ -82,10 +83,10 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
         .or(Err(Error::BlockIoError))
     }
 
-    fn read_blocks_sync(
+    fn read_blocks_sync<'a>(
         &mut self,
         blk_offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<(), Error> {
         self.block_io.read_blocks(blk_offset, out).or(Err(Error::BlockIoError))
     }

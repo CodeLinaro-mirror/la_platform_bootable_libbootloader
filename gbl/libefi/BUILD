@@ -26,6 +26,7 @@ rust_library(
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
         "@arrayvec",
+        "@bytes",
         "@gbl//libasync",
         "@gbl//libefi_types",
         "@gbl//liberror",
