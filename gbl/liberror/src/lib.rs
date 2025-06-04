@@ -313,51 +313,65 @@ impl From<core::fmt::Error> for Error {
 /// Helper type alias.
 pub type Result<T> = core::result::Result<T, Error>;
 
-/// Workaround for orphan rule.
+const EFI_STATUS_TO_ERR_TABLE: &[(efi::EfiStatus, Error)] = &[
+    (efi::EFI_STATUS_CRC_ERROR, Error::BadChecksum),
+    (efi::EFI_STATUS_ABORTED, Error::Aborted),
+    (efi::EFI_STATUS_ACCESS_DENIED, Error::AccessDenied),
+    (efi::EFI_STATUS_ALREADY_STARTED, Error::AlreadyStarted),
+    (efi::EFI_STATUS_BAD_BUFFER_SIZE, Error::BadBufferSize),
+    (efi::EFI_STATUS_BUFFER_TOO_SMALL, Error::BufferTooSmall(None)),
+    (efi::EFI_STATUS_COMPROMISED_DATA, Error::CompromisedData),
+    (efi::EFI_STATUS_CONNECTION_FIN, Error::Disconnected),
+    (efi::EFI_STATUS_CONNECTION_REFUSED, Error::OperationProhibited),
+    (efi::EFI_STATUS_CONNECTION_RESET, Error::ConnectionReset),
+    (efi::EFI_STATUS_DEVICE_ERROR, Error::DeviceError),
+    (efi::EFI_STATUS_END_OF_FILE, Error::EndOfFile),
+    (efi::EFI_STATUS_END_OF_MEDIA, Error::EndOfMedia),
+    (efi::EFI_STATUS_HTTP_ERROR, Error::HttpError),
+    (efi::EFI_STATUS_ICMP_ERROR, Error::IcmpError),
+    (efi::EFI_STATUS_INCOMPATIBLE_VERSION, Error::UnsupportedVersion),
+    (efi::EFI_STATUS_INVALID_LANGUAGE, Error::InvalidLanguage),
+    (efi::EFI_STATUS_INVALID_PARAMETER, Error::InvalidInput),
+    (efi::EFI_STATUS_IP_ADDRESS_CONFLICT, Error::IpAddressConflict),
+    (efi::EFI_STATUS_LOAD_ERROR, Error::LoadError),
+    (efi::EFI_STATUS_MEDIA_CHANGED, Error::MediaChanged),
+    (efi::EFI_STATUS_NOT_FOUND, Error::NotFound),
+    (efi::EFI_STATUS_NOT_READY, Error::NotReady),
+    (efi::EFI_STATUS_NOT_STARTED, Error::NotStarted),
+    (efi::EFI_STATUS_NO_MAPPING, Error::NoMapping),
+    (efi::EFI_STATUS_NO_MEDIA, Error::NoMedia),
+    (efi::EFI_STATUS_NO_RESPONSE, Error::NoResponse),
+    (efi::EFI_STATUS_OUT_OF_RESOURCES, Error::OutOfResources),
+    (efi::EFI_STATUS_PROTOCOL_ERROR, Error::ProtocolError),
+    (efi::EFI_STATUS_SECURITY_VIOLATION, Error::SecurityViolation),
+    (efi::EFI_STATUS_TFTP_ERROR, Error::TftpError),
+    (efi::EFI_STATUS_TIMEOUT, Error::Timeout),
+    (efi::EFI_STATUS_UNSUPPORTED, Error::Unsupported),
+    (efi::EFI_STATUS_VOLUME_CORRUPTED, Error::VolumeCorrupted),
+    (efi::EFI_STATUS_VOLUME_FULL, Error::VolumeFull),
+    (efi::EFI_STATUS_WRITE_PROTECTED, Error::WriteProtected),
+];
+
+/// Maps a EfiStatus to Result<()>.
 pub fn efi_status_to_result(e: efi::EfiStatus) -> Result<()> {
     match e {
         efi::EFI_STATUS_SUCCESS => Ok(()),
-        efi::EFI_STATUS_CRC_ERROR => Err(Error::BadChecksum),
-        efi::EFI_STATUS_ABORTED => Err(Error::Aborted),
-        efi::EFI_STATUS_ACCESS_DENIED => Err(Error::AccessDenied),
-        efi::EFI_STATUS_ALREADY_STARTED => Err(Error::AlreadyStarted),
-        efi::EFI_STATUS_BAD_BUFFER_SIZE => Err(Error::BadBufferSize),
-        efi::EFI_STATUS_BUFFER_TOO_SMALL => Err(Error::BufferTooSmall(None)),
-        efi::EFI_STATUS_COMPROMISED_DATA => Err(Error::CompromisedData),
-        efi::EFI_STATUS_CONNECTION_FIN => Err(Error::Disconnected),
-        efi::EFI_STATUS_CONNECTION_REFUSED => Err(Error::OperationProhibited),
-        efi::EFI_STATUS_CONNECTION_RESET => Err(Error::ConnectionReset),
-        efi::EFI_STATUS_DEVICE_ERROR => Err(Error::DeviceError),
-        efi::EFI_STATUS_END_OF_FILE => Err(Error::EndOfFile),
-        efi::EFI_STATUS_END_OF_MEDIA => Err(Error::EndOfMedia),
-        efi::EFI_STATUS_HTTP_ERROR => Err(Error::HttpError),
-        efi::EFI_STATUS_ICMP_ERROR => Err(Error::IcmpError),
-        efi::EFI_STATUS_INCOMPATIBLE_VERSION => Err(Error::UnsupportedVersion),
-        efi::EFI_STATUS_INVALID_LANGUAGE => Err(Error::InvalidLanguage),
-        efi::EFI_STATUS_INVALID_PARAMETER => Err(Error::InvalidInput),
-        efi::EFI_STATUS_IP_ADDRESS_CONFLICT => Err(Error::IpAddressConflict),
-        efi::EFI_STATUS_LOAD_ERROR => Err(Error::LoadError),
-        efi::EFI_STATUS_MEDIA_CHANGED => Err(Error::MediaChanged),
-        efi::EFI_STATUS_NOT_FOUND => Err(Error::NotFound),
-        efi::EFI_STATUS_NOT_READY => Err(Error::NotReady),
-        efi::EFI_STATUS_NOT_STARTED => Err(Error::NotStarted),
-        efi::EFI_STATUS_NO_MAPPING => Err(Error::NoMapping),
-        efi::EFI_STATUS_NO_MEDIA => Err(Error::NoMedia),
-        efi::EFI_STATUS_NO_RESPONSE => Err(Error::NoResponse),
-        efi::EFI_STATUS_OUT_OF_RESOURCES => Err(Error::OutOfResources),
-        efi::EFI_STATUS_PROTOCOL_ERROR => Err(Error::ProtocolError),
-        efi::EFI_STATUS_SECURITY_VIOLATION => Err(Error::SecurityViolation),
-        efi::EFI_STATUS_TFTP_ERROR => Err(Error::TftpError),
-        efi::EFI_STATUS_TIMEOUT => Err(Error::Timeout),
-        efi::EFI_STATUS_UNSUPPORTED => Err(Error::Unsupported),
-        efi::EFI_STATUS_VOLUME_CORRUPTED => Err(Error::VolumeCorrupted),
-        efi::EFI_STATUS_VOLUME_FULL => Err(Error::VolumeFull),
-        efi::EFI_STATUS_WRITE_PROTECTED => Err(Error::WriteProtected),
-        // The UEFI spec reserves part of the error space for
-        // OEM defined errors and warnings.
-        // We can't know in advance what these are or what they mean,
-        // so just preserve them as is.
-        e => Err(Error::UnexpectedEfiError(e)),
+        _ => EFI_STATUS_TO_ERR_TABLE
+            .iter()
+            .find_map(|(v, err)| (*v == e).then_some(Err(*err)))
+            .unwrap_or(Err(Error::UnexpectedEfiError(e))),
+    }
+}
+
+/// Maps a Result<()> to EfiStatus.
+pub fn result_to_efi_status(res: Result<()>) -> efi::EfiStatus {
+    match res {
+        Ok(()) => efi::EFI_STATUS_SUCCESS,
+        Err(Error::UnexpectedEfiError(e)) if (e >> (efi::EfiStatus::BITS - 1)) != 0 => e,
+        Err(e) => EFI_STATUS_TO_ERR_TABLE
+            .iter()
+            .find_map(|(err, v)| (*v == e).then_some(*err))
+            .unwrap_or(efi::EFI_STATUS_DEVICE_ERROR),
     }
 }
 
@@ -381,5 +395,21 @@ mod test {
         let _e: Error = Some("error string").into();
         let n: Option<&str> = None;
         let _e2: Error = n.into();
+    }
+
+    #[test]
+    fn test_result_to_efi_status_unkonw_efi_error_code() {
+        assert_eq!(
+            result_to_efi_status(Err(Error::UnexpectedEfiError(0xc000000000000000))),
+            0xc000000000000000
+        );
+    }
+
+    #[test]
+    fn test_result_to_efi_status_unkonw_non_efi_error_code_map_to_device_error() {
+        assert_eq!(
+            result_to_efi_status(Err(Error::UnexpectedEfiError(1))),
+            efi::EFI_STATUS_DEVICE_ERROR
+        );
     }
 }
