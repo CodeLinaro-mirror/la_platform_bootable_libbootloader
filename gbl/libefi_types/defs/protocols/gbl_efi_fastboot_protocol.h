@@ -44,6 +44,16 @@ typedef struct GblEfiFastbootPolicy {
 typedef void (*GetVarAllCallback)(void* context, const char* const* args,
                                   size_t num_args, const char* val);
 
+typedef enum EFI_FASTBOOT_MESSAGE_TYPE {
+  OKAY,
+  FAIL,
+  INFO,
+} EfiFastbootMessageType;
+
+typedef EfiStatus (*FastbootMessageSender)(void* context,
+                                           EfiFastbootMessageType msg_type,
+                                           const char* msg, size_t msg_len);
+
 typedef enum GBL_EFI_FASTBOOT_PARTITION_PERMISSION_FLAGS {
   // Firmware can read the given partition and send its data to fastboot client.
   GBL_EFI_FASTBOOT_PARTITION_READ = 0x1 << 0,
@@ -75,8 +85,10 @@ typedef struct GblEfiFastbootProtocol {
 
   // Fastboot oem function methods
   EfiStatus (*run_oem_function)(struct GblEfiFastbootProtocol* this,
-                                const char8_t* command, size_t command_len,
-                                char8_t* buf, size_t* bufsize);
+                                const char* cmd, size_t len,
+                                uint8_t* download_buffer,
+                                size_t download_data_size,
+                                FastbootMessageSender sender, void* ctx);
 
   // Device lock methods
   EfiStatus (*get_policy)(struct GblEfiFastbootProtocol* this,

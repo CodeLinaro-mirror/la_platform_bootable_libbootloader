@@ -277,8 +277,10 @@ EFI_STATUS
     IN GBL_EFI_FASTBOOT_PROTOCOL* This,
     IN CHAR8*                     Command,
     IN UINTN                      CommandLen,
-    OUT CHAR8*                    Buf,
-    IN OUT UINTN*                 BufSize,
+    IN UINT8*                     DownloadData,
+    IN UINTN                      DownloadDataLen,
+    IN FASTBOOT_MESSAGE_SENDER    Sender,
+    IN VOID*                      SenderContext,
 );
 ```
 
@@ -290,31 +292,44 @@ A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) in
 
 *Command*
 
-The command to run as a Null-terminated UTF-8 encoded string.
+The command to run as a UTF-8 encoded string, excluding the "oem " prefix.
+The string does not need to be NULL terminated.
 
 *CommandLen*
 
 The length of the command in bytes, excluding any Null-terminator.
 
-*Buf*
+*DownloadData*
 
-A pointer to the data buffer to store any output the command generates
-as a UTF-8 encoded, Null-terminated string.
-On success, this output will be sent to the connected client as an INFO message.
-On failure, this output will be sent to the connected client as a FAIL message.
+A pointer to the most recent download data.
 
-**Note:** GBL is the only expected caller for any method of
-`GBL_EFI_FASTBOOT_PROTOCOL`, including `RunOemFunction()`.
-For a non-zero `BufSize`, GBL and all other callers are required to set the
-first byte of `Buf` to `0`. GBL and all other callers are responsible for
-parsing `Buf` until the first Null-terminator or for `Buf + BufSize` bytes,
-whichever occurs first.
+*DownloadDataLen*
 
-*BufSize*
+The size of the download data in `DownloadData`.
 
-On entry, the size in bytes of `Buf`.
-On exit, the size in bytes of the UTF-8 encoded string describing the value,
-excluding any Null-terminator.
+`DownloadData` and `DownloadDataLen` can be used to implement OEM commands that
+process platform specific payload. i.e.
+`fastboot stage <data> && fastboot oem process-data`,
+
+*Sender*
+
+A pointer to a function of type `FASTBOOT_MESSAGE_SENDER`. The function is used
+by the implementation to send custom fastboot OKAY/FAIL/INFO messages. For input
+arguments, it takes the `SenderContext` pointer passed to this function, the
+message type, a pointer to a UTF8 string and the string length.
+
+OKAY/FAIL messages should only be sent once. Sending it multiple times in
+a single command may break fastboot exahcange sequence. Caller that provides
+`FASTBOOT_MESSAGE_SENDER` should check this situation and return
+`EFI_PROTOCOL_ERROR` if implementation attempts to send a OKAY/FAIL more than
+once.
+
+Likewise if implementation returns without sending any OKAY/FAIL message, caller
+should send a default one based on the return value of this API.
+
+*SenderContext*
+
+A pointer to the context data for `Sender`.
 
 ### Description
 
@@ -324,15 +339,60 @@ All parsing and verification is the responsibility of the method
 implementation. Oem functions can display power or battery information, print
 or iterate over UEFI variables, or conduct arbitrary other operations.
 
+Implementation may choose not to return from the function and take over the
+control flow. This can be the case for oem commands that implements platform
+specific reboot or side loading/booting of platform specific payload. However,
+in this case, implementation should make sure to send a OKAY or FAIL message
+using `Sender` to prevent host from hanging waiting for reply.
+
+### Related Definitions
+
+```c
+typedef enum EFI_FASTBOOT_MESSAGE_TYPE {
+  OKAY,
+  FAIL,
+  INFO,
+} EFI_FASTBOOT_MESSAGE_TYPE;
+
+typedef
+EFI_STATUS (*FASTBOOT_MESSAGE_SENDER) (
+    IN VOID*                      Context,
+    IN EFI_FASTBOOT_MESSAGE_TYPE  MsgType
+    IN CONST CHAR8*               Msg,
+    IN UINTN                      Len,
+);
+```
+*Context*
+
+The pointer to the context passed to `RunOemFunction()`.
+
+*MsgType*
+
+A `EFI_FASTBOOT_MESSAGE_TYPE` value indicating message type.
+
+*Msg*
+
+A pointer to a UTF8 string. The string does not need to be NULL terminated.
+
+*Len*
+
+The length of `Msg`.
+
+Note: The max allowed length of a message depends on the transport. For
+example, for Fastboot over USB, it is the native packet size. Implementation
+should consider the transport setup it provides when passing the string.
+Oversized message may be truncated by the caller when sent to the host.
+
+
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                                                                                                                                       |
-|:------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `EFI_SUCCESS`           | The call completed successfully.                                                                                                                                                |
-| `EFI_INVALID_PARAMETER` | One of *This*, *Command*, *CommandLen*, *Buf*, or *BufSize* is `NULL` or improperly aligned.                                                                                    |
-| `EFI_BUFFER_TOO_SMALL`  | The provided buffer is too small to store the serialized representation of the command output. The value of `BufSize` is modified to contain the minimum necessary buffer size. |
-| `EFI_UNSUPPORTED`       | The command is not supported or is nonsensical.                                                                                                                                 |
-| `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state.                                                                                                                       |
+| Return Code             | Semantics
+|:------------------------|:---------------------------------------------------------|
+| `EFI_SUCCESS`           | The call completed successfully.                         |
+| `EFI_INVALID_PARAMETER` | Any of *This*, *Command*, *Sender* is `NULL`.            |
+| `EFI_NOT_FOUND`         | The command is not supported.                            |
+| `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state.|
+
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.GetPolicy()`
 

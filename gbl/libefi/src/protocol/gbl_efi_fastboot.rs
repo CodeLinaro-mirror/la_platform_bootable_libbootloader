@@ -24,8 +24,10 @@ use core::{
     slice::from_raw_parts,
     str::from_utf8,
 };
-use efi_types::{EfiGuid, GblEfiFastbootPolicy, GblEfiFastbootProtocol};
-use liberror::{Error, Result};
+use efi_types::{
+    EfiFastbootMessageType, EfiGuid, EfiStatus, GblEfiFastbootPolicy, GblEfiFastbootProtocol,
+};
+use liberror::{result_to_efi_status, Error, Result};
 
 /// GBL_EFI_FASTBOOT_PROTOCOL
 pub struct GblFastbootProtocol;
@@ -136,29 +138,58 @@ impl Protocol<'_, GblFastbootProtocol> {
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.run_oem_function()`
-    pub fn run_oem_function(&self, cmd: &str, buffer: &mut [u8]) -> Result<usize> {
-        let mut bufsize = buffer.len();
-        if !buffer.is_empty() {
-            buffer[0] = 0;
+    pub fn run_oem_function(
+        &self,
+        cmd: &str,
+        download: &mut [u8],
+        mut sender: impl FnMut(EfiFastbootMessageType, &str) -> Result<()>,
+    ) -> Result<()> {
+        struct SenderCtx<'a>(&'a mut dyn FnMut(EfiFastbootMessageType, &str) -> Result<()>);
+
+        /// Callback function to be passed to the `run_oem_function` interface.
+        ///
+        /// # Safety
+        ///
+        /// * Caller must guarantee that `ctx` points to a valid instance of `SenderCtx`, outlives
+        ///   the call, and is not referenced elsewhere.
+        /// * Caller must guarantee that `msg` points to a valid initialized buffer with length
+        ///   'msg_len' and outlives the call.
+        unsafe extern "efiapi" fn message_sender(
+            context: *mut core::ffi::c_void,
+            msg_type: EfiFastbootMessageType,
+            msg: *const core::ffi::c_char,
+            msg_len: usize,
+        ) -> EfiStatus {
+            // SAFETY: By safety requirement of this function, `ctx` points to a `SenderCtx`.
+            let cb = unsafe { (context as *mut SenderCtx).as_mut() }.unwrap();
+            result_to_efi_status((cb.0)(
+                msg_type,
+                // SAFETY: By safety requirement of this function, `msg` point to a valid
+                // initialized buffer of length `msg_len`;
+                from_utf8(unsafe { from_raw_parts(msg as _, msg_len) }).unwrap(),
+            ))
         }
 
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // No parameter is retained, all parameters outlive the call,
-        // and no pointers are Null.
+        // *`self.interface()?` guarantees self.interface is non-null and points to a valid object
+        // * established by `Protocol::new()`.
+        // * `cmd` and `download` are for input only. They outlive the call and won't be retained.
+        // * The `ctx` parameter is a valid `SenderCtx` object, outlives the call and not being
+        //   referenced elsewhere(declared inline at the parameter site).
+        // * By UEFI interface requirement, vendor firmware passes valid ASCII string and provides
+        //   the correct string length to the callback function.
         unsafe {
             efi_call!(
-                @bufsize bufsize,
                 self.interface()?.run_oem_function,
                 self.interface,
-                cmd.as_ptr(),
+                cmd.as_ptr() as _,
                 cmd.len(),
-                buffer.as_mut_ptr(),
-                &mut bufsize,
-            )?
-        };
-        Ok(core::cmp::min(bufsize, buffer.iter().position(|c| *c == 0).unwrap_or(buffer.len())))
+                download.as_mut_ptr(),
+                download.len(),
+                Some(message_sender),
+                &mut SenderCtx(&mut sender) as *mut _ as _,
+            )
+        }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_policy()`
