@@ -231,6 +231,8 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         Ok(ops.fixup_os_commandline(current, out)?.map(|fixup| fixup.len()).unwrap_or(0))
     })?;
     gbl_println!(ops, "final cmdline: \"{}\"", commandline_builder.as_str());
+    let cmd_len = commandline_builder.as_str().len();
+    final_commandline_buffer[cmd_len..].fill(0);
 
     gbl_println!(ops, "Applying {} overlays", overlays.len());
     fdt.multioverlay_apply(overlays)?;
