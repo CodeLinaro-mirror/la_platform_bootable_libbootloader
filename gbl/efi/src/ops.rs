@@ -46,10 +46,12 @@ use efi::{
 use efi_types::{
     GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootReason,
     GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    EFI_FASTBOOT_MESSAGE_TYPE_FAIL, EFI_FASTBOOT_MESSAGE_TYPE_INFO, EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
     GBL_EFI_BOOT_REASON_BOOTLOADER, GBL_EFI_BOOT_REASON_COLD, GBL_EFI_BOOT_REASON_FASTBOOTD,
     GBL_EFI_BOOT_REASON_RECOVERY,
 };
 use fdt::Fdt;
+use gbl_async::block_on;
 use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::{Error, Result};
 use libgbl::{
@@ -60,8 +62,8 @@ use libgbl::{
     },
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
     ops::{
-        AvbIoError, AvbIoResult, CertPermanentAttributes, ImageBuffer, RebootReason, Slot,
-        SlotsMetadata, SHA256_DIGEST_SIZE,
+        AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, ImageBuffer, InfoSender,
+        OkaySender, RebootReason, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -687,6 +689,32 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             Err(Error::NotFound) => Ok(()),
             Err(e) => Err(e),
         }
+    }
+
+    fn fastboot_run_oem(
+        &mut self,
+        cmd: &str,
+        download: &mut [u8],
+        sender: impl InfoSender + OkaySender + FailSender,
+    ) -> Result<()> {
+        let protocol = self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()?;
+        let sender = &mut Some(sender);
+        protocol.run_oem_function(cmd, download, |msg_type, msg| match msg_type as _ {
+            EFI_FASTBOOT_MESSAGE_TYPE_INFO => {
+                block_on(sender.as_mut().ok_or(Error::ProtocolError)?.send_info(msg))
+            }
+            EFI_FASTBOOT_MESSAGE_TYPE_OKAY => {
+                block_on(sender.take().ok_or(Error::ProtocolError)?.send_okay(msg))
+            }
+            EFI_FASTBOOT_MESSAGE_TYPE_FAIL => {
+                block_on(sender.take().ok_or(Error::ProtocolError)?.send_fail(msg))
+            }
+            _ => Err(Error::InvalidInput),
+        })
     }
 
     fn get_current_slot(&mut self) -> Result<Slot> {

@@ -36,6 +36,7 @@ use libutils::aligned_subslice;
 pub use avb::{
     CertPermanentAttributes, IoError as AvbIoError, IoResult as AvbIoResult, SHA256_DIGEST_SIZE,
 };
+pub use fastboot::{FailSender, InfoSender, OkaySender};
 pub use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
 pub use slots::{Slot, SlotsMetadata};
@@ -418,6 +419,26 @@ pub trait GblOps<'a, 'd> {
     fn fastboot_visit_all_variables(
         &mut self,
         cb: impl FnMut(&[&CStr], &CStr),
+    ) -> Result<(), Error>;
+
+    /// Executes a fastboot oem command.
+    ///
+    /// # Args
+    ///
+    /// * `cmd`: The oem command string.
+    /// * `download`: The most recent download data.
+    /// * `sender`: An implementation that provides APIs for sending fastboot OKAY/FAIL/INFO
+    ///   messages.
+    ///
+    /// * If implementation does not attempt to return, it should send an OKAY or FAIL message via
+    /// sender to prevent the host from waiting for device response.
+    /// * If implementation returns without sending OKAY/FAIL message, GBL fastboot will send the
+    ///   message depending on the return result.
+    fn fastboot_run_oem(
+        &mut self,
+        cmd: &str,
+        download: &mut [u8],
+        sender: impl InfoSender + OkaySender + FailSender,
     ) -> Result<(), Error>;
 
     /// Returns a [SlotsMetadata] for the platform.
@@ -824,6 +845,16 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
+    fn fastboot_run_oem(
+        &mut self,
+        _: &str,
+        _: &mut [u8],
+        _: impl InfoSender + OkaySender + FailSender,
+    ) -> Result<(), Error> {
+        // Ramboot should not need this.
+        unreachable!();
+    }
+
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         self.ops.get_profiling_backend()
     }
@@ -991,6 +1022,9 @@ pub(crate) mod test {
 
         /// For returned by `avf_is_supported`
         pub avf_is_supported: bool,
+
+        /// Download data seen by the most recent oem command
+        pub oem_cmd_download: Vec<u8>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1014,6 +1048,7 @@ pub(crate) mod test {
         pub const GBL_TEST_AVF_VENDOR_DICE_HANDOVER: &'static [u8] = b"fake_handover_always_fail";
         pub const GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY: &'static [u8] =
             b"secret_keeper_public_key";
+        pub const GBL_OEM_CMD_INFO_MSG: &'static str = "oem-info";
 
         pub fn new(partitions: &'a [TestGblDisk]) -> Self {
             let mut res = Self {
@@ -1339,6 +1374,19 @@ pub(crate) mod test {
                 CString::new(format!("{}:2", Self::GBL_TEST_VAR_VAL)).unwrap().as_c_str(),
             );
             Ok(())
+        }
+
+        fn fastboot_run_oem(
+            &mut self,
+            cmd: &str,
+            download: &mut [u8],
+            mut sender: impl InfoSender + OkaySender + FailSender,
+        ) -> Result<(), Error> {
+            self.oem_cmd_download = download.to_vec();
+            match cmd {
+                "test-oem" => block_on(sender.send_info(Self::GBL_OEM_CMD_INFO_MSG)),
+                _ => Err(Error::NotFound),
+            }
         }
 
         fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {

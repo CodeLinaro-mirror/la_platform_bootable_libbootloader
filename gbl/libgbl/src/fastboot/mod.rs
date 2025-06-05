@@ -31,8 +31,8 @@ use core::{
 };
 use fastboot::{
     local_session::LocalSession, next_arg, next_arg_u64, process_next_command, run_tcp_session,
-    CommandError, CommandResult, FastbootImplementation, InfoSender, OkaySender, RebootMode,
-    UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
+    CommandError, CommandResult, FailSender, FastbootImplementation, InfoSender, OkaySender,
+    RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
 };
 use gbl_async::{join, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
@@ -530,13 +530,13 @@ where
     }
 
     /// Implementation for "fastboot oem gbl-sync-tasks".
-    async fn oem_sync_tasks<'s>(
+    async fn oem_sync_tasks(
         &self,
         mut _responder: impl InfoSender,
-        _res: &'s mut [u8],
-    ) -> CommandResult<&'s [u8]> {
+        _res: &mut [u8],
+    ) -> CommandResult<()> {
         self.sync_all_blocks().await?;
-        Ok(b"")
+        Ok(())
     }
 
     /// Syncs all storage devices and reboots.
@@ -818,27 +818,27 @@ where
         Ok(())
     }
 
-    async fn oem<'s>(
+    async fn oem(
         &mut self,
-        cmd: &str,
-        mut responder: impl InfoSender,
-        res: &'s mut [u8],
-    ) -> CommandResult<&'s [u8]> {
-        let mut args = cmd.split(' ');
+        cmd_str: &str,
+        mut responder: impl InfoSender + OkaySender + FailSender,
+        res: &mut [u8],
+    ) -> CommandResult<()> {
+        let mut args = cmd_str.split(' ');
         let cmd = args.next().ok_or("Missing command")?;
         match cmd {
             "gbl-sync-tasks" => self.oem_sync_tasks(responder, res).await,
             "gbl-enable-async-task" => {
                 self.enable_async_task = true;
-                Ok(b"")
+                Ok(())
             }
             "gbl-disable-async-task" => {
                 self.enable_async_task = false;
-                Ok(b"")
+                Ok(())
             }
             "gbl-unset-default-block" => {
                 self.default_block = None;
-                Ok(b"")
+                Ok(())
             }
             "gbl-set-default-block" => {
                 let id = next_arg_u64(&mut args)?.ok_or("Missing block device ID")?;
@@ -848,19 +848,23 @@ where
                 responder
                     .send_formatted_info(|f| write!(f, "Default block device: {id:#x}").unwrap())
                     .await?;
-                Ok(b"")
+                Ok(())
             }
             "add-staged-bootloader-file" => {
                 let file_name = next_arg(&mut args).ok_or("Missing file name")?;
                 self.add_staged_bootloader_file(file_name).await?;
-                Ok(b"")
+                Ok(())
             }
             #[cfg(feature = "gbl_dev")]
             "stack-smash-demo" => {
                 smash::stack_smash_demo(self.gbl_ops);
                 Err("Stack smash demo failed to restart system".into())
             }
-            _ => Err("Unknown oem command".into()),
+            _ => {
+                let mut dl = self.take_download();
+                let dl = dl.as_mut().map(|(v, sz)| &mut v[..*sz]).unwrap_or(&mut [][..]);
+                Ok(self.gbl_ops.fastboot_run_oem(cmd_str, dl, responder)?)
+            }
         }
     }
 
@@ -1087,7 +1091,6 @@ pub(crate) mod test {
     use core::{
         mem::size_of,
         pin::{pin, Pin},
-        str::from_utf8,
     };
     use fastboot::{test_utils::TestUploadBuilder, MAX_RESPONSE_SIZE};
     use gbl_async::{block_on, poll, poll_n_times};
@@ -1118,9 +1121,14 @@ pub(crate) mod test {
     }
 
     impl OkaySender for &TestResponder {
-        /// Sends a Fastboot "INFO<`msg`>" packet.
         async fn send_formatted_okay<F: FnOnce(&mut dyn Write)>(self, _: F) -> Result<(), Error> {
             *self.okay_sent.try_lock().unwrap() = true;
+            Ok(())
+        }
+    }
+
+    impl FailSender for &TestResponder {
+        async fn send_formatted_fail<F: FnOnce(&mut dyn Write)>(self, _: F) -> Result<(), Error> {
             Ok(())
         }
     }
@@ -1516,11 +1524,11 @@ pub(crate) mod test {
     async fn oem(
         fb: &mut impl FastbootImplementation,
         oem_cmd: &str,
-        resp: impl InfoSender,
-    ) -> CommandResult<String> {
+        resp: impl InfoSender + OkaySender + FailSender,
+    ) -> CommandResult<()> {
         let mut res = [0u8; MAX_RESPONSE_SIZE];
         fb.oem(oem_cmd, resp, &mut res[..]).await?;
-        Ok(from_utf8(&mut res[..]).unwrap().into())
+        Ok(())
     }
 
     #[test]
@@ -2271,6 +2279,45 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn test_oem_vendor_cmd() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(128)]; 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+
+        listener.add_usb_input(b"download:0x1000");
+        listener.add_usb_input(&[0x55u8; 0x1000]);
+        listener.add_usb_input(b"oem test-oem");
+        listener.add_usb_input(b"continue");
+
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"DATA00001000",
+                b"OKAY",
+                format!("INFO{}", FakeGblOps::GBL_OEM_CMD_INFO_MSG).as_bytes(),
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        assert_eq!(gbl_ops.oem_cmd_download, vec![0x55u8; 0x1000]);
+    }
+
+    #[test]
     fn test_fuchsia_fastboot_mdns_packet() {
         let expected = [
             0x00, 0x00, 0x84, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x09, 0x5f,
@@ -2305,7 +2352,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt() {
+    fn test_update_gpt() {
         let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         // Erase the primary and secondary header.
         let mut disk = disk_orig.to_vec();
@@ -2411,7 +2458,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_resize() {
+    fn test_update_gpt_resize() {
         let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut disk = disk_orig.to_vec();
         // Doubles the size of the disk
@@ -2467,7 +2514,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_no_downloaded_gpt() {
+    fn test_update_gpt_no_downloaded_gpt() {
         let disk = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(&disk);
@@ -2497,7 +2544,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_bad_gpt() {
+    fn test_update_gpt_bad_gpt() {
         let disk = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(&disk);
@@ -2538,7 +2585,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_invalid_input() {
+    fn test_update_gpt_invalid_input() {
         let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(&disk_orig);
@@ -2584,7 +2631,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_fail_on_raw_blk() {
+    fn test_update_gpt_fail_on_raw_blk() {
         let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"raw_0", [0u8; KiB!(1024)]);
