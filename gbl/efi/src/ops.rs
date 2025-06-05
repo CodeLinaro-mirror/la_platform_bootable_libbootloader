@@ -717,6 +717,19 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         })
     }
 
+    fn fastboot_get_staged(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
+        match self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()
+        {
+            Ok(v) => v.get_staged(out),
+            Err(Error::NotFound) => Ok((0, 0)),
+            Err(e) => Err(e),
+        }
+    }
+
     fn get_current_slot(&mut self) -> Result<Slot> {
         self.open_slot_protocol()?.get_current_slot()?.try_into()
     }

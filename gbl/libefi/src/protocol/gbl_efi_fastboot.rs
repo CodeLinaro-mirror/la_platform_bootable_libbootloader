@@ -192,6 +192,28 @@ impl Protocol<'_, GblFastbootProtocol> {
         }
     }
 
+    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_staged()`
+    pub fn get_staged(&self, out: &mut [u8]) -> Result<(usize, usize)> {
+        let mut out_size = out.len();
+        let mut out_remains = 0;
+
+        // SAFETY:
+        // *`self.interface()?` guarantees self.interface is non-null and points to a valid object
+        // * established by `Protocol::new()`.
+        // * `out`, `out_size` and `out_remains` are for input/output only. They outlive the call
+        //   and won't be retained.
+        unsafe {
+            efi_call!(
+                self.interface()?.get_staged,
+                self.interface,
+                out.as_mut_ptr(),
+                &mut out_size,
+                &mut out_remains,
+            )?;
+        }
+        Ok((out_size, out_remains))
+    }
+
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_policy()`
     pub fn get_policy(&self) -> Result<GblEfiFastbootPolicy> {
         let mut policy: GblEfiFastbootPolicy = Default::default();

@@ -461,6 +461,10 @@ mod test {
             unimplemented!()
         }
 
+        fn fastboot_get_staged(&mut self, _: &mut [u8]) -> Result<(usize, usize)> {
+            unimplemented!()
+        }
+
         fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
             unimplemented!();
         }

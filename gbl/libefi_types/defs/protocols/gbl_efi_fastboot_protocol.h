@@ -90,6 +90,10 @@ typedef struct GblEfiFastbootProtocol {
                                 size_t download_data_size,
                                 FastbootMessageSender sender, void* ctx);
 
+  // Fastboot get_staged backend
+  EfiStatus (*get_staged)(struct GblEfiFastbootProtocol* this, uint8_t* out,
+                          size_t* out_size, size_t* out_remain);
+
   // Device lock methods
   EfiStatus (*get_policy)(struct GblEfiFastbootProtocol* this,
                           GblEfiFastbootPolicy* policy);

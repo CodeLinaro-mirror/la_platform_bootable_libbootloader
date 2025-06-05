@@ -181,9 +181,11 @@ impl CommandError {
     pub fn to_str(&self) -> &str {
         self.0.to_str()
     }
+}
 
+impl Clone for CommandError {
     /// Clones the error.
-    pub fn clone(&self) -> Self {
+    fn clone(&self) -> Self {
         self.to_str().into()
     }
 }

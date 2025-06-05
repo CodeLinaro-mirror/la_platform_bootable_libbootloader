@@ -441,6 +441,17 @@ pub trait GblOps<'a, 'd> {
         sender: impl InfoSender + OkaySender + FailSender,
     ) -> Result<(), Error>;
 
+    /// Reads out data staged by the platform to upload to the host during `fastboot get_staged`.
+    ///
+    /// # Args
+    ///
+    /// * `out`: The output buffer.
+    ///
+    /// # Returns
+    ///
+    /// * On success, returns the size of the actual read data and size of remaining data.
+    fn fastboot_get_staged(&mut self, _out: &mut [u8]) -> Result<(usize, usize), Error>;
+
     /// Returns a [SlotsMetadata] for the platform.
     fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error>;
 
@@ -855,6 +866,11 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
+    fn fastboot_get_staged(&mut self, _: &mut [u8]) -> Result<(usize, usize), Error> {
+        // Ramboot should not need this.
+        unreachable!();
+    }
+
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         self.ops.get_profiling_backend()
     }
@@ -1025,6 +1041,10 @@ pub(crate) mod test {
 
         /// Download data seen by the most recent oem command
         pub oem_cmd_download: Vec<u8>,
+
+        /// Handler of `fastboot_get_staged`
+        pub get_staged_handler:
+            Option<&'a mut dyn FnMut(&mut [u8]) -> Result<(usize, usize), Error>>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1387,6 +1407,10 @@ pub(crate) mod test {
                 "test-oem" => block_on(sender.send_info(Self::GBL_OEM_CMD_INFO_MSG)),
                 _ => Err(Error::NotFound),
             }
+        }
+
+        fn fastboot_get_staged(&mut self, out: &mut [u8]) -> Result<(usize, usize), Error> {
+            (self.get_staged_handler.as_mut().unwrap())(out)
         }
 
         fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {

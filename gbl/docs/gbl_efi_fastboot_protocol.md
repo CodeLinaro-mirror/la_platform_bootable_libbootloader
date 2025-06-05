@@ -83,6 +83,12 @@ See [`GBL_EFI_FASTBOOT_PROTOCOL.GetVarAll()`](#gbl_efi_fastboot_protocolgetvaral
 Runs an OEM-defined command on the device.
 See [`GBL_EFI_FASTBOOT_PROTOCOL.RunOemFunction()`](#gbl_efi_fastboot_protocolrunoemfunction).
 
+**GetStaged**
+
+Read OEM provided payload for uploading to fastboot host by command
+`fastboot get_staged`. See
+[`GBL_EFI_FASTBOOT_PROTOCOL.GetStaged()`](#gbl_efi_fastboot_protocolgetstaged).
+
 **GetPolicy**
 
 Querys device policy including device lock state, whether the device firmware
@@ -391,6 +397,70 @@ Oversized message may be truncated by the caller when sent to the host.
 | `EFI_SUCCESS`           | The call completed successfully.                         |
 | `EFI_INVALID_PARAMETER` | Any of *This*, *Command*, *Sender* is `NULL`.            |
 | `EFI_NOT_FOUND`         | The command is not supported.                            |
+| `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state.|
+
+
+## `GBL_EFI_FASTBOOT_PROTOCOL.GetStaged()`
+
+### Summary
+
+Read OEM provided payload for uploading to the host during command
+`fastboot get_staged`.
+
+### Prototype
+
+```c
+typedef
+EFI_STATUS
+(EFIAPI * GBL_EFI_FASTBOOT_GET_STAGED)(
+    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
+    IN UINT8*                     Out,
+    IN OUT UINTN*                 OutLen,
+    OUT UINTN*                    RemainingSize,
+);
+```
+
+### Parameters
+
+*This*
+
+A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
+
+*Out*
+
+Pointer to the output buffer.
+
+*OutLen*
+
+On input, stores the size of the output buffer `Out`. On output, stores the
+actual number of bytes read to `Out`.
+
+*RemainingSize*
+
+On output, stores the number of remaining bytes left to read.
+
+### Description
+
+`GetStaged()` reads OEM defined data for uploading to fastboot host during
+command `fastboot get_staged`. The function may be called multiple times to
+read out the whole payload in chunks to accommodate callers with limited buffer.
+Implementation should internally track read progress and avoid changing the
+backing data when caller starts reading. However, outside the session of
+`fastboot get_staged`, i.e. when in `RunOemFunction`, implementation can change
+or update the backing data.
+
+Caller may pass a 0-length input buffer for peeking the total via
+`RemainingSize`. This should be expected by the implementation.
+
+The typical usage is to for vendor to provide an OEM command that sets up the
+payload and then retrieve the payload via `fastboot get_staged` from the host.
+
+### Status Codes Returned
+
+| Return Code             | Semantics
+|:------------------------|:---------------------------------------------------------|
+| `EFI_SUCCESS`           | The call completed successfully.                         |
+| `EFI_INVALID_PARAMETER` | Any of *Out*, *OutLen*, *RemainingSize* is `NULL`.       |
 | `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state.|
 
 
