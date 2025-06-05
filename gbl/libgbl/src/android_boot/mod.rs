@@ -210,9 +210,16 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     gbl_println!(ops, "linux,initrd-start: {:#x}", ramdisk_addr);
     gbl_println!(ops, "linux,initrd-end: {:#x}", ramdisk_end);
 
-    // Fixes up commnadline in FDT.
+    gbl_println!(ops, "Applying {} overlays", overlays.len());
+    fdt.multioverlay_apply(overlays)?;
+    gbl_println!(ops, "Overlays applied");
+    // `DeviceTreeComponentsRegistry` internally uses ArrayVec which causes it to have a default
+    // life time equal to the scope it lives in. This is unnecessarily strict and prevents us from
+    // accessing `load` buffer.
+    drop(components);
 
     // Updates the FDT commandline.
+
     let device_tree_commandline_length = match fdt.get_property("chosen", BOOTARGS_PROP) {
         Ok(val) => CStr::from_bytes_until_nul(val).map_err(Error::from)?.to_bytes().len(),
         Err(_) => 0,
@@ -233,11 +240,6 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     commandline_builder.add(images.boot_cmdline)?;
     commandline_builder.add(images.vendor_cmdline)?;
 
-    // TODO(b/353272981): Handle buffer too small
-    commandline_builder.add_with(|current, out| {
-        // TODO(b/353272981): Verify provided command line and fail here.
-        Ok(ops.fixup_os_commandline(current, out)?.map(|fixup| fixup.len()).unwrap_or(0))
-    })?;
     // Add bootconfig to command line if it is not supported
     if !bootconfig_supported {
         for v in from_utf8(&bootconfig[..bootconfig_str_len])
@@ -254,17 +256,9 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
             commandline_builder.add(v)?;
         }
     }
-    gbl_println!(ops, "final cmdline: \"{}\"", commandline_builder.as_str());
+
     let cmd_len = commandline_builder.as_str().len();
     final_commandline_buffer[cmd_len..].fill(0);
-
-    gbl_println!(ops, "Applying {} overlays", overlays.len());
-    fdt.multioverlay_apply(overlays)?;
-    gbl_println!(ops, "Overlays applied");
-    // `DeviceTreeComponentsRegistry` internally uses ArrayVec which causes it to have a default
-    // life time equal to the scope it lives in. This is unnecessarily strict and prevents us from
-    // accessing `load` buffer.
-    drop(components);
 
     // Place pvmfw binary into reserved memory
     if images.pvmfw.len() > 0 {
@@ -280,6 +274,10 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     // TODO(b/353272981): Handle buffer too small
     ops.fixup_device_tree(fdt.as_mut())?;
     fdt.shrink_to_fit()?;
+
+    let final_command_line = CStr::from_bytes_until_nul(fdt.get_property("chosen", BOOTARGS_PROP)?)
+        .map_err(Error::from)?;
+    gbl_println!(ops, "final cmdline: \"{}\"", final_command_line.to_str().unwrap());
 
     // Moves the kernel forward to reserve as much space as possible. This is in case there is not
     // enough memory after `load`, i.e. the memory after it is not mapped or is reserved.
@@ -863,7 +861,7 @@ androidboot.veritymode=enforcing
         test_common(true, BootStateColor::Orange, 3);
     }
 
-    const EXPECTED_V2_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2";
+    const EXPECTED_V2_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2 fixup";
 
     /// Helper for testing `android_load_verify_fixup` for v2 boot image or lower.
     fn test_android_load_verify_fixup_v2_or_lower(
@@ -1002,7 +1000,7 @@ androidboot.veritymode=enforcing
         .concat()
     }
 
-    const EXPECTED_V3_V4_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2 cmd_vendor_key_1=cmd_vendor_val_1,cmd_vendor_key_2=cmd_vendor_val_2";
+    const EXPECTED_V3_V4_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2 cmd_vendor_key_1=cmd_vendor_val_1,cmd_vendor_key_2=cmd_vendor_val_2 fixup";
 
     /// Common helper for testing `android_load_verify_fixup` for v3/v4 boot image.
     fn test_android_load_verify_fixup_v3_or_v4(

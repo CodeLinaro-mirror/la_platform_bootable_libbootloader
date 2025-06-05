@@ -351,17 +351,6 @@ pub trait GblOps<'a, 'd> {
     /// data cannot be verified with libavb.
     fn get_custom_device_tree(&mut self) -> Option<&'a [u8]>;
 
-    /// Requests an OS command line to be used alongside the one built by GBL.
-    ///
-    /// The returned command line will be verified and appended on top of the command line
-    /// built by GBL. Refer to the behavior specified for the corresponding UEFI interface:
-    /// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
-    fn fixup_os_commandline<'c>(
-        &mut self,
-        commandline: &CStr,
-        fixup_buffer: &'c mut [u8],
-    ) -> Result<Option<&'c str>, Error>;
-
     /// Requests an OS bootconfig to be used alongside the one built by GBL.
     ///
     /// The returned bootconfig will be verified and appended on top of the bootconfig
@@ -691,14 +680,6 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.get_custom_device_tree()
     }
 
-    fn fixup_os_commandline<'c>(
-        &mut self,
-        commandline: &CStr,
-        fixup_buffer: &'c mut [u8],
-    ) -> Result<Option<&'c str>, Error> {
-        self.ops.fixup_os_commandline(commandline, fixup_buffer)
-    }
-
     fn fixup_bootconfig<'c>(
         &mut self,
         bootconfig: &[u8],
@@ -879,12 +860,14 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
+    use crate::android_boot::BOOTARGS_PROP;
     use crate::device_tree::DeviceTreeComponentType;
     use crate::error::IntegrationError;
     use crate::partition::GblDisk;
     use abr::{get_and_clear_one_shot_bootloader, get_boot_slot};
     use avb::{CertOps, Ops};
     use avb_test::TestOps as AvbTestOps;
+    use bootparams::commandline::CommandlineBuilder;
     use core::{
         fmt::Write,
         ops::{Deref, DerefMut},
@@ -1329,14 +1312,6 @@ pub(crate) mod test {
             self.custom_device_tree
         }
 
-        fn fixup_os_commandline<'c>(
-            &mut self,
-            _commandline: &CStr,
-            _fixup_buffer: &'c mut [u8],
-        ) -> Result<Option<&'c str>, Error> {
-            Ok(None)
-        }
-
         fn fixup_bootconfig<'c>(
             &mut self,
             _bootconfig: &[u8],
@@ -1348,8 +1323,19 @@ pub(crate) mod test {
         }
 
         fn fixup_device_tree(&mut self, fdt: &mut [u8]) -> Result<(), Error> {
-            Fdt::new_mut(fdt).unwrap().set_property("chosen", c"fixup", &[1])?;
-            Ok(())
+            let mut fdt = Fdt::new_mut(fdt).unwrap();
+
+            // Update kernel command line with fixup value.
+            let cmd_prop_len = fdt.get_property("chosen", BOOTARGS_PROP)?.len();
+
+            // GBL guaranties kernel command line has some extra space reserved to append.
+            let cmd_prop_buffer =
+                fdt.set_property_placeholder("chosen", BOOTARGS_PROP, cmd_prop_len)?;
+            let mut commandline = CommandlineBuilder::new_from_prefix(cmd_prop_buffer)?;
+            commandline.add("fixup")?;
+
+            // Update DT with fixup value.
+            fdt.set_property("chosen", c"fixup", &[1])
         }
 
         fn select_device_trees(

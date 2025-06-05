@@ -79,11 +79,6 @@ typedef struct {
 typedef struct GblEfiOsConfigurationProtocol {
   uint64_t revision;
 
-  // Generates fixups for the kernel command line built by GBL.
-  EfiStatus (*fixup_kernel_commandline)(
-      struct GblEfiOsConfigurationProtocol* self, const char8_t* command_line,
-      char8_t* fixup, size_t* fixup_buffer_size);
-
   // Generates fixups for the bootconfig built by GBL.
   EfiStatus (*fixup_bootconfig)(struct GblEfiOsConfigurationProtocol* self,
                                 const char8_t* bootconfig, size_t size,

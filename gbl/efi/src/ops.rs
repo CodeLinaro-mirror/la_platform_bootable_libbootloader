@@ -566,27 +566,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         Some(get_efi_fdt(&self.efi_entry)?.1)
     }
 
-    fn fixup_os_commandline<'c>(
-        &mut self,
-        commandline: &CStr,
-        fixup_buffer: &'c mut [u8],
-    ) -> Result<Option<&'c str>> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblOsConfigurationProtocol>()
-        {
-            Ok(protocol) => {
-                protocol.fixup_kernel_commandline(commandline, fixup_buffer)?;
-                Ok(Some(CStr::from_bytes_until_nul(&fixup_buffer[..])?.to_str()?))
-            }
-            // Protocol is optional.
-            Err(Error::NotFound) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
     fn fixup_bootconfig<'c>(
         &mut self,
         bootconfig: &[u8],
@@ -598,10 +577,11 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .boot_services()
             .find_first_and_open::<GblOsConfigurationProtocol>()
         {
-            Ok(protocol) => {
-                let fixup_size = protocol.fixup_bootconfig(bootconfig, fixup_buffer)?;
-                Ok(Some(&fixup_buffer[..fixup_size]))
-            }
+            Ok(protocol) => match protocol.fixup_bootconfig(bootconfig, fixup_buffer) {
+                Ok(fixup_size) => Ok(Some(&fixup_buffer[..fixup_size])),
+                Err(Error::NotImplemented) => Ok(None),
+                Err(e) => Err(e),
+            },
             // Protocol is optional.
             Err(Error::NotFound) => Ok(None),
             Err(e) => Err(e),
@@ -1471,165 +1451,6 @@ mod test {
         assert!(ops.fastboot_visit_all_variables(|_, _| {}).is_err());
     }
 
-    /// Helper for testing `GblOsConfigurationProtocol.fixup_os_commandline`
-    fn test_fixup_os_commandline<'a>(
-        expected_base: &'static CStr,
-        fixup_buffer: &'a mut [u8],
-        fixup_to_apply: &'static [u8],
-        protocol_lookup_error: Option<Error>,
-        protocol_result: Result<()>,
-    ) -> Result<Option<&'a str>> {
-        let mut mock_efi = MockEfi::new();
-        mock_efi
-            .boot_services
-            .expect_find_first_and_open::<GblOsConfigurationProtocol>()
-            .return_once(move || {
-                if let Some(error) = protocol_lookup_error {
-                    return Err(error);
-                }
-
-                let mut os_configuration = GblOsConfigurationProtocol::default();
-
-                os_configuration.expect_fixup_kernel_commandline().return_once(
-                    move |base, buffer| {
-                        assert_eq!(base, expected_base);
-                        buffer[..fixup_to_apply.len()].copy_from_slice(fixup_to_apply);
-                        protocol_result
-                    },
-                );
-
-                Ok(os_configuration)
-            });
-
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
-
-        ops.fixup_os_commandline(expected_base, fixup_buffer)
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_success() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-        const FIXUP: &CStr = c"fixup1=value1 fixup2=value2";
-
-        let mut fixup_buffer = [0x0; FIXUP.to_bytes_with_nul().len()];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                FIXUP.to_bytes_with_nul(),
-                // No protocol lookup error.
-                None,
-                // No protocol call error.
-                Ok(()),
-            ),
-            // Expects fixup applied.
-            Ok(Some(FIXUP.to_str().unwrap()))
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_success_empty_result() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        let mut fixup_buffer = [0x0; 1];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                // Passes empty fixup to apply.
-                &[],
-                // No protocol lookup error.
-                None,
-                // No protocol call error.
-                Ok(()),
-            ),
-            // Expected empty fixup.
-            Ok(Some("")),
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_wrong_fixup() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        // Have no space for null terminator.
-        let mut fixup_buffer = [0x0; BASE.to_bytes().len()];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                BASE.to_bytes(),
-                // No protocol lookup error.
-                None,
-                // No protocol call error.
-                Ok(()),
-            ),
-            // Expected error, cannot build c string.
-            Err(Error::InvalidInput),
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_protocol_error() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        let mut fixup_buffer = [0x0; 0];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                &[],
-                // No protocol lookup error.
-                None,
-                // Protocol returns error.
-                Err(Error::BufferTooSmall(Some(100))),
-            ),
-            // Expected to be catched.
-            Err(Error::BufferTooSmall(Some(100))),
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_protocol_not_found() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        let mut fixup_buffer = [0x0; 0];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                &[],
-                // Protocol not found.
-                Some(Error::NotFound),
-                // No protocol call error.
-                Ok(()),
-            ),
-            // No fixup in case protocol not found.
-            Ok(None),
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_protocol_lookup_failed() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        let mut fixup_buffer = [0x0; 0];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                &[],
-                // Protocol lookup failed.
-                Some(Error::AccessDenied),
-                // No protocol call error.
-                Ok(()),
-            ),
-            // Error catched.
-            Err(Error::AccessDenied),
-        );
-    }
-
     /// Helper for testing `GblOsConfigurationProtocol.fixup_bootconfig`
     fn test_fixup_bootconfig<'a>(
         expected_base: &'static [u8],
@@ -1680,7 +1501,7 @@ mod test {
                 BASE,
                 &mut fixup_buffer,
                 FIXUP,
-                // No protocol lookup error.
+                // Protocol is provided.
                 None,
                 // No protocol call error.
                 None,
@@ -1701,13 +1522,34 @@ mod test {
                 BASE,
                 &mut fixup_buffer,
                 FIXUP,
-                // No protocol lookup error.
+                // Protocol is provided.
                 None,
                 // Protocol returns error.
                 Some(Error::BufferTooSmall(Some(100))),
             ),
             // Expected to be catched.
             Err(Error::BufferTooSmall(Some(100))),
+        );
+    }
+
+    #[test]
+    fn test_fixup_bootconfig_not_implemented() {
+        const BASE: &[u8] = b"key1=value1\nkey2=value2";
+        const FIXUP: &[u8] = b"fixup1=value1\nfixup2=value2";
+
+        let mut fixup_buffer = [0x0; FIXUP.len()];
+        assert_eq!(
+            test_fixup_bootconfig(
+                BASE,
+                &mut fixup_buffer,
+                FIXUP,
+                // Protocol is provided.
+                None,
+                // Implementation isn't provided.
+                Some(Error::NotImplemented),
+            ),
+            // Treated as no fixup is provided.
+            Ok(None),
         );
     }
 

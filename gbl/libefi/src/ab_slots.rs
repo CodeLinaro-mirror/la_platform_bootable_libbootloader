@@ -412,14 +412,6 @@ mod test {
             unimplemented!();
         }
 
-        fn fixup_os_commandline<'c>(
-            &mut self,
-            _commandline: &CStr,
-            _fixup_buffer: &'c mut [u8],
-        ) -> Result<Option<&'c str>> {
-            unimplemented!();
-        }
-
         fn fixup_bootconfig<'c>(
             &mut self,
             _bootconfig: &[u8],

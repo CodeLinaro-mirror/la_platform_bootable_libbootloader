@@ -11,15 +11,16 @@ This protocol provides a mechanism for the EFI firmware to build and update OS
 configuration data:
 
 * device tree (select components to build the final one)
-* kernel commandline (append fixups)
 * bootconfig (append fixups)
 
-GBL will load and verify the base data from disk, and then call these protocol
-functions to give the firmware a chance to construct and adjust the data as needed
-for the particular device. Device tree fixup is handled by `EFI_DT_FIXUP` protocol.
+GBL will load and verify the data provided by boot partitions, and then call
+these protocol functions to give the firmware a chance to construct and adjust
+the data as needed for the particular device. Device tree fixup (including
+kernel command line) is handled by `DT_FIXUP` protocol.
 
 If no runtime modifications are necessary, this protocol may be left
-unimplemented.
+unimplemented, so GBL autoselection logic will be used. Refer to
+[`SelectDeviceTrees()`][select] description for more details.
 
 ### GUID
 
@@ -47,7 +48,6 @@ backwards-incompatible ways.
 ```c
 typedef struct _GBL_EFI_OS_CONFIGURATION_PROTOCOL {
   UINT64                            Revision;
-  GBL_EFI_FIXUP_KERNEL_COMMAND_LINE FixupKernelCommandline;
   GBL_EFI_FIXUP_BOOTCONFIG          FixupBootConfig;
   GBL_EFI_SELECT_DEVICE_TREES       SelectDeviceTrees;
   GBL_EFI_FIXUP_ZBI                 FixupZbi;
@@ -57,109 +57,25 @@ typedef struct _GBL_EFI_OS_CONFIGURATION_PROTOCOL {
 ### Parameters
 
 #### Revision
+
 The revision to which the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` adheres. All
 future revisions must be backwards compatible. If a future version is not
 backwards compatible, a different GUID must be used.
 
-#### FixupKernelCommandline
-Applies kernel commandline fixups. See
-[`FixupKernelCommandline()`](#FixupKernelCommandline).
-
 #### FixupBootConfig
-Applies bootconfig fixups. See [`FixupBootConfig()`](#FixupBootConfig).
+
+Applies bootconfig fixups. See [`FixupBootConfig()`][bootconfig_fixup].
 
 #### SelectDeviceTrees
-Select components such as base device tree, overlays to build the final device tree.
-See [`SelectDeviceTrees()`](#SelectDeviceTrees).
+
+Select components such as base device tree, overlays to build the final device
+tree. See [`SelectDeviceTrees()`][select].
 
 #### FixupZbi
-Applies ZBI fixups (Fuchsia kernels only). See [`FixupZbi()`](#FixupZbi).
 
-## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupKernelCommandline() {#FixupKernelCommandline}
+Applies ZBI fixups (Fuchsia kernels only). See [`FixupZbi()`][fixup_zbi].
 
-### Summary
-
-Provides runtime fixups to the kernel command line.
-
-### Prototype
-
-```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_FIXUP_KERNEL_COMMAND_LINE)(
-  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *This,
-  IN CONST CHAR8                       *CommandLine,
-  OUT CHAR8                            *Fixup,
-  IN OUT UINTN                         *FixupBufferSize
-  );
-```
-
-### Parameters
-
-Ownership of all the parameters is loaned only for the duration of the function call, and
-must not be retained by the protocol after returning.
-
-#### This
-A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
-
-#### CommandLine [in]
-A pointer to the ASCII nul-terminated command line built by GBL.
-
-#### Fixup [out]
-Pointer to a pre-allocated buffer to store the generated command line fixup.
-GBL verifies and appends provided data into the final command line. FW may
-leave this unchanged if no fixup is required.
-
-The FW implementation can generate a fixup with the following restrictions:
-* on return, the data must be valid ASCII encoding with nul termination
-* the data and termination byte must never exceed the provided `FixupBufferSize`
-* no libavb arguments may be provided (see Security below)
-
-#### FixupBufferSize [in, out]
-On function call, this points to the fixup buffer size provided by `Fixup`. The
-implementation is free to provide fixup data up to this size, including the
-termination byte.
-
-If the buffer is not large enough to fit the fixups, the function should update
-`FixupBufferSize` with the required size and return `EFI_BUFFER_TOO_SMALL`;
-GBL will then allocate a larger buffer, discard all modifications and repeat
-the `FixupKernelCommandline` call.
-
-`FixupBufferSize` does not need to be updated on success, GBL will determine the
-fixup command line data size via the nul terminator.
-
-### Description
-
-GBL will call this function after loading and verifying the base kernel command
-line, to give the device an opportunity to supply some of the runtime fixups.
-
-Since the device tree selection affects the base kernel command line, GBL will
-call `SelectDeviceTrees` first before calling `FixupKernelCommandline`.
-
-#### Security
-
-To ensure the integrity of verified boot data, this protocol will not be
-allowed to append any command line parameters provided by
-[libavb](https://source.android.com/docs/security/features/verifiedboot/avb).
-If any of these parameters are provided, GBL will treat this as a failed boot
-attempt:
-* `androidboot.veritymode*`
-* `androidboot.vbmeta*`
-* `dm`
-* `root`
-
-Additionally, all data used to apply fixups to the command line must be trusted.
-In particular, if the protocol loads any data from non-secure storage, it should
-verify that data before use.
-
-#### Status Codes Returned
-
-|                         |                                                                                     |
-| ----------------------- | ----------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`           | Command line fixup provided.                                                        |
-| `EFI_INVALID_PARAMETER` | A parameter is invalid.                                                             |
-| `EFI_BUFFER_TOO_SMALL`  | The buffer is too small; `FixupBufferSize` has been updated with the required size. |
-| `EFI_DEVICE_ERROR`      | Internal error while providing the command line fixup.                              |
-
-## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupBootConfig() {#FixupBootConfig}
+## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupBootConfig()
 
 ### Summary
 
@@ -179,61 +95,81 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_FIXUP_BOOTCONFIG)(
 
 ### Parameters
 
-Ownership of all the parameters is loaned only for the duration of the function call, and
-must not be retained by the protocol after returning.
+Ownership of all the parameters is loaned only for the duration of the function
+call, and must not be retained by the protocol after returning.
 
 #### This
+
 A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
 
 #### BootConfig [in]
+
 Pointer to the bootconfig built by GBL. Trailing data isn't provided.
 
 #### BootConfigSize [in]
+
 Size of the bootconfig built by GBL.
 
 #### Fixup [out]
-Pointer to a pre-allocated buffer to store the generated bootconfig fixup.
-GBL verifies and appends provided data into the final bootconfig. FW may
-leave this unchanged if no fixup is required. `FixupBufferSize` must be
-updated to `0` in this case.
+
+Pointer to a pre-allocated buffer to store the generated bootconfig fixup. GBL
+verifies and appends provided data into the final bootconfig. FW may either
+return `EFI_UNSUPPORTED`, or leave the buffer unchanged and set
+`FixupBufferSize` to `0` to indicate that no fixup is required.
 
 The FW implementation can generate a fixup with the following restrictions:
+
 * on return, the data must be valid bootconfig (trailer is optional)
-* the data must never exceed the provided `FixupBufferSize`
+* provided data must never exceed the provided `FixupBufferSize`
 * no libavb arguments may be provided (see Security below)
 
 #### FixupBufferSize [in, out]
+
 On function call, this points to the fixup buffer size provided by `Fixup`. The
 implementation is free to provide fixup data up to this size.
 
-If the buffer is not large enough to fit the fixups, the function should update
-`FixupBufferSize` with the required size and return `EFI_BUFFER_TOO_SMALL`;
-GBL will then allocate a larger buffer, discard all modifications and repeat
-the `FixupBootConfig` call.
+If the buffer is not large enough to fit the fixup, implementation must update
+`FixupBufferSize` with the required size and return `EFI_BUFFER_TOO_SMALL`; GBL
+will then allocate a larger buffer, discard all modifications and repeat the
+`FixupBootConfig` call.
 
-`FixupBufferSize` must be updated on success to let GBL determine the bootconfig fixup size.
+`FixupBufferSize` must be updated on success to let GBL determine the provided
+bootconfig fixup size.
 
 ### Description
 
-[Bootconfig](https://source.android.com/docs/core/architecture/bootloader/implementing-bootconfig)
-is very similar to the kernel command line, but the format is slightly
-different, and the contents are intended for user space consumption rather than
-kernel.
+[Bootconfig][bootconfig] as a format is similar to the kernel command line, but
+intended for user space consumption rather than kernel.
 
-This protocol only needs to provide the bootconfig parameters, GBL will automatically update
-the bootconfig trailer metadata afterwards.
+Implementation should only append the bootconfig parameters, GBL will
+automatically update the bootconfig trailer metadata afterwards. Override
+bootconfig operator `:=` may be used to re-define some of the values provided by
+GBL.
 
 #### Security
 
-This function's security guidelines are exactly identical to
-[`FixupKernelCommandline`](#FixupKernelCommandline); see those docs for details.
+To ensure the integrity of verified boot data, this protocol will not be
+allowed to append any bootconfig provided by [libavb][libavb]. If any of these
+parameters are provided, GBL will treat this as a failed boot attempt:
+
+* `androidboot.veritymode*`
+* `androidboot.vbmeta*`
+* `:=` may be only used to re-define `androidboot.mode`
+
+Additionally, all data used to apply fixups to the bootconfig must be trusted.
+In particular, if the protocol loads any data from non-secure storage, it must
+verify that data before use.
 
 #### Status Codes Returned
 
-This function's status return codes are exactly identical to
-[`FixupKernelCommandline`](#FixupKernelCommandline); see those docs for details.
+|                         |                                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`           | Bootconfig fixup provided.                                                              |
+| `EFI_UNSUPPORTED`       | No fixup is provided; the bootconfig generated by GBL will be used as-is.               |
+| `EFI_BUFFER_TOO_SMALL`  | `Fixup` buffer is too small; `FixupBufferSize` has been updated with the required size. |
+| `EFI_INVALID_PARAMETER` | Unexpected input; GBL will refuse to boot.                                                |
 
-## GBL_EFI_OS_CONFIGURATION_PROTOCOL.SelectDeviceTrees() {#SelectDeviceTrees}
+## GBL_EFI_OS_CONFIGURATION_PROTOCOL.SelectDeviceTrees()
 
 ### Summary
 
@@ -285,17 +221,19 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_SELECT_DEVICE_TREES)(
 
 ### Parameters
 
-Ownership of all the parameters is loaned only for the duration of the function call, and
-must not be retained by the protocol after returning.
+Ownership of all the parameters is loaned only for the duration of the function
+call, and must not be retained by the protocol after returning.
 
 #### This
+
 A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
 
 #### DeviceTrees [in, out]
 
-Pointer to an array containing loaded device tree components along with associated
-metadata to distinguish device tree component types (`GBL_EFI_DEVICE_TREE_METADATA.Type`)
-and identify source it's loaded from (`GBL_EFI_DEVICE_TREE_METADATA.Source`).
+Pointer to an array containing loaded device tree components along with
+associated metadata to distinguish device tree component types
+(`GBL_EFI_DEVICE_TREE_METADATA.Type`) and identify source it's loaded from
+(`GBL_EFI_DEVICE_TREE_METADATA.Source`).
 
 #### NumDeviceTrees [in]
 
@@ -303,11 +241,11 @@ The number of device tree components in the provided `DeviceTrees` array.
 
 ### Description
 
-A single set of Android build artifacts may include multiple device tree components
-distributed across Android boot partitions such as `boot`, `vendor_boot`, `dtb`,
-`dtbo`, etc. It is common practice to leverage this capability to support multiple
-SoCs using the same set of artifacts, with the appropriate device tree selected
-dynamically at the bootloader stage.
+A single set of Android build artifacts may include multiple device tree
+components distributed across Android boot partitions such as `boot`,
+`vendor_boot`, `dtb`, `dtbo`, etc. It is common practice to leverage this
+capability to support multiple SoCs using the same set of artifacts, with the
+appropriate device tree selected dynamically at the bootloader stage.
 
 To support this use case, GBL loads all available device tree components and
 provides them to the firmware along with associated metadata, enabling selection
@@ -317,18 +255,22 @@ Firmware can use the `GBL_EFI_DEVICE_TREE_METADATA.Type` metadata field to
 distinguish between different types of device tree components:
 
 1. Device trees (`DEVICE_TREE`) — Base device tree.
-2. Device tree overlays (`OVERLAY`) — Overlays to be applied to a base device tree.
-3. Device assignment overlays (`PVM_DA_OVERLAY`) — Overlays to be applied to pVMs
-   managed by [AVF][avf]. Device assignment overlay is distingueshed from the regular
-   host overlay by 31st bit of `dttable` `entry.id`:
-   ```
+2. Device tree overlays (`OVERLAY`) — Overlays to be applied to a base device
+   tree.
+3. Device assignment overlays (`PVM_DA_OVERLAY`) — Overlays to be applied to
+   pVMs managed by [AVF][avf]. Device assignment overlay is distingueshed from
+   the regular host overlay by 31st bit of `dttable` `entry.id`:
+
+   ```c
    bool entry_is_vm = (entry.id >> 31) & 0x1;
    ```
-   It also affects the exposed `GBL_EFI_DEVICE_TREE_METADATA.Id` value since it's
-   a pure copy of coresponding `entry.id`.
+
+   It also affects the exposed `GBL_EFI_DEVICE_TREE_METADATA.Id` value since
+   it's a pure copy of coresponding `entry.id`.
 
 The `GBL_EFI_DEVICE_TREE_METADATA.Source` field identifies the origin partition
-of each loaded device tree component (`BOOT`, `VENDOR_BOOT`, `DTBO`, `DTB`, `FIT`).
+of each loaded device tree component (`BOOT`, `VENDOR_BOOT`, `DTBO`, `DTB`,
+`FIT`).
 
 Selection is performed by setting `GBL_EFI_VERIFIED_DEVICE_TREE.Selected` to
 `TRUE` on the firmware side, following these rules:
@@ -339,15 +281,26 @@ Selection is performed by setting `GBL_EFI_VERIFIED_DEVICE_TREE.Selected` to
 3. At most one pVM device assignment overlay can be selected. If multiple such
    overlays are selected, GBL will refuse to boot.
 
+`EFI_UNSUPPORTED` may be returned to indicate that firmware-specific selection
+isn't required. GBL will use its default autoselection logic, which selects the
+single provided base device tree without applying any overlays. GBL will fail to
+boot if more than one base device tree is provided by the boot partitions.
+
 ### Status Codes Returned
 
 |                         |                                                                         |
 | ----------------------- | ----------------------------------------------------------------------- |
-| `EFI_SUCCESS`           | Base device tree, overlays has been selected.                           |
-| `EFI_INVALID_PARAMETER` | A parameter is invalid. For example, incorrect device trees, alignment. |
+| `EFI_SUCCESS`           | Base device tree, overlays, DA overlays have been selected.             |
+| `EFI_UNSUPPORTED`       | No components been selected; GBL will use autoselection.                |
+| `EFI_INVALID_PARAMETER` | Unexpected input; GBL will refuse to boot.                              |
 
-## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupZbi() {#FixupZbi}
+## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupZbi()
 
 TODO(b/353272981)
 
-[avf]:https://source.android.com/docs/core/virtualization
+[select]: #gbl_efi_os_configuration_protocolselectdevicetrees
+[bootconfig_fixup]: #gbl_efi_os_configuration_protocolfixupbootconfig
+[fixup_zbi]: #gbl_efi_os_configuration_protocolfixupzbi
+[avf]: https://source.android.com/docs/core/virtualization
+[bootconfig]: https://source.android.com/docs/core/architecture/bootloader/implementing-bootconfig
+[libavb]: https://source.android.com/docs/security/features/verifiedboot/avb
