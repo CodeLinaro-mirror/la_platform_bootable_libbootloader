@@ -182,3 +182,12 @@ configurations:
 ## EFI Protocols
 
 List of EFI protocols used by GBL and a brief description of each [here](./docs/efi_protocols.md).
+
+## Licesing
+
+Unless stated otherwise, all GBL source files are licensed under the Apache License, Version 2.0.
+
+GBL-specific protocols headers `libefi_types/defs/protocols/gbl_*.h` may alternatively be used under
+BSD-2-Clause-Patent license.
+
+See `../LICENSES/Apache-2.0.txt` and `../LICENSES/BSD-2-Clause-Patents.txt` for the full texts.
