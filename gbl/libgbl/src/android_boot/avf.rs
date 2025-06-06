@@ -250,7 +250,6 @@ mod test {
         tests::AlignedBuffer,
     };
     use core::mem::MaybeUninit;
-    use gbl_storage::as_uninit_mut;
     use std::collections::{HashMap, LinkedList};
 
     fn dummy_pvmfw_partition(fill_value: u8) -> Vec<u8> {
@@ -275,8 +274,11 @@ mod test {
         partition
     }
 
-    fn add_image_buffer<'a, 'b: 'a>(ops: &mut FakeGblOps<'_, 'a>, buf: &'b mut AlignedBuffer) {
-        let buf_image = ImageBuffer::new(as_uninit_mut(buf.as_mut()));
+    fn add_image_buffer<'a, 'b: 'a>(
+        ops: &mut FakeGblOps<'_, 'a>,
+        buf: &'b mut AlignedBuffer<MaybeUninit<u8>>,
+    ) {
+        let buf_image = ImageBuffer::new(buf.as_mut());
         let mut list = LinkedList::<ImageBuffer>::new();
         list.push_back(buf_image);
         ops.image_buffers = HashMap::new();
@@ -285,7 +287,7 @@ mod test {
 
     #[test]
     fn test_pvmfw_place_in_memory() {
-        let mut pvmfw_buf_aligned = AlignedBuffer::new(0x100000, 0x1000);
+        let mut pvmfw_buf_aligned = AlignedBuffer::new_uninit(0x100000, 0x1000);
         let storage = FakeGblOpsStorage::default();
         let mut ops = FakeGblOps::new(&storage);
         add_image_buffer(&mut ops, &mut pvmfw_buf_aligned);
@@ -303,7 +305,7 @@ mod test {
 
     #[test]
     fn test_pvmfw_place_in_memory_bad_header() {
-        let mut pvmfw_buf_aligned = AlignedBuffer::new(0x100000, 0x1000);
+        let mut pvmfw_buf_aligned = AlignedBuffer::new_uninit(0x100000, 0x1000);
         let storage = FakeGblOpsStorage::default();
         let mut ops = FakeGblOps::new(&storage);
         add_image_buffer(&mut ops, &mut pvmfw_buf_aligned);

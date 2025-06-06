@@ -578,7 +578,7 @@ impl SliceMaybeUninit for [MaybeUninit<u8>] {
 }
 
 /// Present initialized `&mut [u8]` buffer as `&mut [MaybeUninit<u8>]`
-pub fn as_uninit_mut(buf: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+fn as_uninit_mut(buf: &mut [u8]) -> &mut [MaybeUninit<u8>] {
     // SAFETY:
     // MaybeUninit<u8> has same size and alignment as u8.
     // `data` is valid pointer to initialised u8 slice of size `buf.len()`
@@ -586,7 +586,7 @@ pub fn as_uninit_mut(buf: &mut [u8]) -> &mut [MaybeUninit<u8>] {
 }
 
 /// Present initialized `&mut [u8]` buffer as `&mut [MaybeUninit<u8>]`
-pub fn as_uninit(buf: &[u8]) -> &[MaybeUninit<u8>] {
+pub(crate) fn as_uninit(buf: &[u8]) -> &[MaybeUninit<u8>] {
     // SAFETY:
     // MaybeUninit<u8> has same size and alignment as u8.
     // `data` is valid pointer to initialised u8 slice of size `buf.len()`
