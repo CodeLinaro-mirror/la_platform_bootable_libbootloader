@@ -783,6 +783,9 @@ androidboot.veritymode=enforcing
             (ramdisk.as_ptr() as usize + ramdisk.len()).to_be_bytes(),
         );
 
+        // Fixup is appended by TestOps.
+        let expected_bootargs = format!("{expected_bootargs} fixup");
+
         // Commandlines are updated.
         assert_eq!(
             CStr::from_bytes_until_nul(fdt.get_property("/chosen", c"bootargs").unwrap()).unwrap(),
@@ -861,7 +864,7 @@ androidboot.veritymode=enforcing
         test_common(true, BootStateColor::Orange, 3);
     }
 
-    const EXPECTED_V2_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2 fixup";
+    const EXPECTED_V2_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2";
 
     /// Helper for testing `android_load_verify_fixup` for v2 boot image or lower.
     fn test_android_load_verify_fixup_v2_or_lower(
@@ -1000,7 +1003,7 @@ androidboot.veritymode=enforcing
         .concat()
     }
 
-    const EXPECTED_V3_V4_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2 cmd_vendor_key_1=cmd_vendor_val_1,cmd_vendor_key_2=cmd_vendor_val_2 fixup";
+    const EXPECTED_V3_V4_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2 cmd_vendor_key_1=cmd_vendor_val_1,cmd_vendor_key_2=cmd_vendor_val_2";
 
     /// Common helper for testing `android_load_verify_fixup` for v3/v4 boot image.
     fn test_android_load_verify_fixup_v3_or_v4(
