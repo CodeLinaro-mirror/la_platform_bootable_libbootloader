@@ -17,6 +17,7 @@ load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_C_INCLUDE")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
+load(":license.bzl", "spdx_license_test")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -94,4 +95,13 @@ rust_test(
     name = "libefi_types_test",
     crate = ":libefi_types",
     rustc_flags = ANDROID_RUST_LINTS,
+)
+
+# GBL protocols require to be published under both Apache-2.0 and BDS-2-Clause-Patent licenses.
+# Refer to top-level README.md "Licesing" section.
+spdx_license_test(
+    name = "gbl_protocols_license_test",
+    # Must cover all GBL-specific protocols headers.
+    srcs = glob(["**/gbl_efi_*_protocol.h"]),
+    expected_spdx_identifier = "Apache-2.0 OR BSD-2-Clause-Patent",
 )
