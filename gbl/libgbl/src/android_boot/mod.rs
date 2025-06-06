@@ -30,7 +30,7 @@ use crate::{
 use bootparams::{
     bootconfig::BootConfigBuilder, commandline::CommandlineBuilder, entry::CommandlineParser,
 };
-use core::{array::from_fn, ffi::CStr, fmt::Write};
+use core::{array::from_fn, ffi::CStr, fmt::Write, str::from_utf8};
 use dttable::DtTableImage;
 use fastboot::local_session::LocalSession;
 use fdt::{Fdt, FdtHeader};
@@ -124,12 +124,14 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
             .clone_from_slice(images.vendor_bootconfig);
         Ok(images.vendor_bootconfig.len())
     })?;
+    let bootconfig_str_len = bootconfig_builder.config_str().len();
     let bootconfig_sz = bootconfig_builder.config_bytes().len();
+    let bootconfig_supported = images.bootconfig_supported();
 
     // Fixes up FDT.
 
     let mut components = DeviceTreeComponentsRegistry::new();
-    let (_, fdt_load) = split(images.unused, bootconfig_sz)?;
+    let (bootconfig, fdt_load) = split(images.unused, bootconfig_sz)?;
     // TODO(b/353272981): Remove get_custom_device_tree
     let (fdt_load, base, overlays) = match ops.get_custom_device_tree() {
         Some(v) => (fdt_load, v, &[][..]),
@@ -199,6 +201,9 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     let mut fdt = Fdt::new_from_init(&mut fdt_load[..], base)?;
 
     let ramdisk_addr: u64 = (images.ramdisk.as_ptr() as usize).try_into().map_err(Error::from)?;
+    // Notes: We keep bootconfig in the ramdisk regardless of whether it is supported for simplicity
+    // and in case device is using boot v3+vendor_boot v4 combination where Android 11 and
+    // Android 12+ are indistinguishable.
     let ramdisk_end = ramdisk_addr + u64::try_from(images.ramdisk.len() + bootconfig_sz)?;
     fdt.set_property("chosen", c"linux,initrd-start", &ramdisk_addr.to_be_bytes())?;
     fdt.set_property("chosen", c"linux,initrd-end", &ramdisk_end.to_be_bytes())?;
@@ -214,10 +219,13 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     };
 
     // Reserves 1024 bytes for separators and fixup
-    let final_commandline_len = device_tree_commandline_length
+    let mut final_commandline_len = device_tree_commandline_length
         + images.boot_cmdline.len()
         + images.vendor_cmdline.len()
         + 1024;
+    if !bootconfig_supported {
+        final_commandline_len += bootconfig_str_len;
+    }
     let final_commandline_buffer =
         fdt.set_property_placeholder("chosen", BOOTARGS_PROP, final_commandline_len)?;
     let mut commandline_builder =
@@ -230,6 +238,22 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         // TODO(b/353272981): Verify provided command line and fail here.
         Ok(ops.fixup_os_commandline(current, out)?.map(|fixup| fixup.len()).unwrap_or(0))
     })?;
+    // Add bootconfig to command line if it is not supported
+    if !bootconfig_supported {
+        for v in from_utf8(&bootconfig[..bootconfig_str_len])
+            .map_err(Error::from)?
+            .split('\n')
+            .filter(|v| !v.is_empty())
+        {
+            // Bootconfig supports ":=" overriding assignment but cmdline may not. However if
+            // bootconfig is not supported, platform most likely doesn't use this. Emit a warning
+            // just in case.
+            if v.find(":=").is_some() {
+                gbl_println!(ops, "{v},  \":=\" assignment may not be supported");
+            }
+            commandline_builder.add(v)?;
+        }
+    }
     gbl_println!(ops, "final cmdline: \"{}\"", commandline_builder.as_str());
     let cmd_len = commandline_builder.as_str().len();
     final_commandline_buffer[cmd_len..].fill(0);
@@ -701,6 +725,12 @@ androidboot.veritymode=enforcing
         builder.build()
     }
 
+    /// Converts bootconfig to bootargs
+    fn bootconfig_to_bootarg(bootconfig: &[u8]) -> String {
+        let s = bootconfig.split_last_chunk::<BOOTCONFIG_TRAILER_SIZE>().unwrap().0;
+        from_utf8(s).unwrap().split('\n').filter(|v| !v.is_empty()).collect::<Vec<_>>().join(" ")
+    }
+
     /// Helper for testing `android_load_verify_fixup` given a partition layout, target slot.
     fn test_android_load_verify_fixup(
         slot_nr: u8,
@@ -785,10 +815,23 @@ androidboot.veritymode=enforcing
         expected_vendor_bootconfig: &str,
         expected_bootargs: &str,
         expected_fdt_property: &[(&str, &CStr, Option<&[u8]>)],
+        bootconfig_supported: bool,
     ) {
         let mut partitions = partitions.to_vec();
         partitions.push((format!("vbmeta_{slot}"), vbmeta.into()));
         let test_common = |unlock, color, rollback_idx| {
+            let expected_bootconfig = make_expected_bootconfig(
+                &partitions,
+                vbmeta,
+                unlock,
+                color,
+                slot,
+                expected_vendor_bootconfig,
+            );
+            let expected_bootargs = match &bootconfig_supported {
+                true => expected_bootargs.to_string(),
+                _ => format!("{expected_bootargs} {}", bootconfig_to_bootarg(&expected_bootconfig)),
+            };
             test_android_load_verify_fixup(
                 (u64::from(slot) - ('a' as u64)).try_into().unwrap(),
                 &partitions,
@@ -804,7 +847,7 @@ androidboot.veritymode=enforcing
                     slot,
                     expected_vendor_bootconfig,
                 ),
-                expected_bootargs,
+                &expected_bootargs,
                 expected_fdt_property,
             )
         };
@@ -843,6 +886,7 @@ androidboot.veritymode=enforcing
             "",
             EXPECTED_V2_CMDLINE,
             additional_expected_fdt_properties,
+            false,
         )
     }
 
@@ -967,6 +1011,7 @@ androidboot.veritymode=enforcing
         vbmeta_file: &str,
         expected_vendor_bootconfig: &str,
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
+        bootconfig_supported: bool,
     ) {
         test_android_load_verify_fixup_success(
             slot,
@@ -977,6 +1022,7 @@ androidboot.veritymode=enforcing
             expected_vendor_bootconfig,
             EXPECTED_V3_V4_CMDLINE,
             additional_expected_fdt_properties,
+            bootconfig_supported,
         )
     }
 
@@ -1001,6 +1047,7 @@ androidboot.veritymode=enforcing
             &vbmeta,
             expected_vendor_bootconfig,
             additional_expected_fdt_properties,
+            boot_ver > 3 || vendor_ver > 3,
         );
     }
 
@@ -1159,6 +1206,7 @@ androidboot.veritymode=enforcing
             &vbmeta,
             expected_vendor_bootconfig,
             additional_expected_fdt_properties,
+            true,
         );
     }
 
@@ -1198,6 +1246,7 @@ androidboot.veritymode=enforcing
             &vbmeta,
             expected_vendor_bootconfig,
             additional_expected_fdt_properties,
+            true, // init_boot implies Android 13+.
         );
     }
 
@@ -1435,6 +1484,7 @@ androidboot.veritymode=enforcing
             TEST_VENDOR_BOOTCONFIG,
             EXPECTED_V3_V4_CMDLINE,
             &[("/chosen", c"vendor_kernel", Some(b"1\0"))],
+            true,
         );
     }
 

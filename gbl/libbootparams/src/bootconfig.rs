@@ -16,6 +16,7 @@
 //!
 //! https://source.android.com/docs/core/architecture/bootloader/implementing-bootconfig#bootloader-changes
 
+use core::str::from_utf8;
 use liberror::{Error, Result};
 
 /// A class for constructing bootconfig section.
@@ -116,6 +117,11 @@ impl<'a> BootConfigBuilder<'a> {
             .map(|v| *v as u32)
             .reduce(|acc, v| acc.overflowing_add(v).0)
             .unwrap_or(0)
+    }
+
+    /// Returns the bootcofnig string, excluding the trailer.
+    pub fn config_str(&self) -> &str {
+        from_utf8(&self.buffer[..self.current_size]).unwrap()
     }
 }
 
