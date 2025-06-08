@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Contains util APIs for EFI.
+
 use crate::{efi, ops::get_buffer_from_protocol};
 use ::efi::{efi_println, EfiMemoryAttributesTable};
 use core::{slice::from_raw_parts_mut, str::from_utf8, time::Duration};
@@ -30,7 +32,7 @@ use fdt::FdtHeader;
 use liberror::Error;
 use libgbl::Result;
 
-pub const EFI_DTB_TABLE_GUID: EfiGuid =
+pub(crate) const EFI_DTB_TABLE_GUID: EfiGuid =
     EfiGuid::new(0xb1b621d5, 0xf19c, 0x41a5, [0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0]);
 
 /// Helper function to get the `DevicePathText` from a `DeviceHandle`.
@@ -56,6 +58,17 @@ pub fn loaded_image_path(entry: &EfiEntry) -> Result<DevicePathText> {
     )
 }
 
+/// Helper function to get the loaded image base address.
+pub fn image_base(entry: &EfiEntry) -> Result<usize> {
+    Ok(entry
+        .system_table()
+        .boot_services()
+        .open_protocol::<LoadedImageProtocol>(entry.image_handle())
+        .inspect_err(|e| efi_println!(entry, "Failed to open LoadedImageProtocol: {e}"))?
+        .image_base()
+        .inspect_err(|e| efi_println!(entry, "Can't get image base address: {e}"))?)
+}
+
 /// Find FDT from EFI configuration table.
 pub fn get_efi_fdt(entry: &EfiEntry) -> Option<(&FdtHeader, &[u8])> {
     if let Some(config_tables) = entry.system_table().configuration_table() {
@@ -70,7 +83,7 @@ pub fn get_efi_fdt(entry: &EfiEntry) -> Option<(&FdtHeader, &[u8])> {
 }
 
 #[cfg(any(target_arch = "x86_64"))]
-pub fn efi_to_e820_mem_type(efi_mem_type: u32) -> u32 {
+pub(crate) fn efi_to_e820_mem_type(efi_mem_type: u32) -> u32 {
     match efi_mem_type as _ {
         efi_types::EFI_MEMORY_TYPE_LOADER_CODE
         | efi_types::EFI_MEMORY_TYPE_LOADER_DATA
@@ -139,7 +152,7 @@ pub fn wait_key_stroke(
 }
 
 // Converts an EFI memory type to a zbi_mem_range_t type.
-pub fn efi_to_zbi_mem_range_type(efi_mem_type: u32) -> u32 {
+pub(crate) fn efi_to_zbi_mem_range_type(efi_mem_type: u32) -> u32 {
     match efi_mem_type as _ {
         efi_types::EFI_MEMORY_TYPE_LOADER_CODE
         | efi_types::EFI_MEMORY_TYPE_LOADER_DATA
@@ -152,7 +165,9 @@ pub fn efi_to_zbi_mem_range_type(efi_mem_type: u32) -> u32 {
 
 /// Find Memory attributes from EFI configuration_table
 #[allow(unused)]
-pub fn get_efi_mem_attr<'a>(entry: &'a EfiEntry) -> Option<EfiMemoryAttributesTable<'static>> {
+pub(crate) fn get_efi_mem_attr<'a>(
+    entry: &'a EfiEntry,
+) -> Option<EfiMemoryAttributesTable<'static>> {
     entry.system_table().configuration_table().and_then(|config_tables| {
         config_tables
             .iter()
