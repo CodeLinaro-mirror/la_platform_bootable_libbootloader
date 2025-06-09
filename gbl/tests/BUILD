@@ -45,6 +45,7 @@ build_and_run_tests(
         "@gbl//libdttable:libdttable_test",
         "@gbl//libefi:libefi_test",
         "@gbl//libefi:mocks_test",
+        "@gbl//libefi_types:gbl_protocols_license_test",
         "@gbl//libefi_types:libefi_types_test",
         "@gbl//libelf:relocation_test",
         "@gbl//liberror:liberror_test",

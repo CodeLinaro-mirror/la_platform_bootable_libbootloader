@@ -105,6 +105,7 @@ touch $OUTPUT
         outputs = [out_file],
         arguments = [args],
         command = shell_script,
+        mnemonic = "ReadmeTest",
     )
     return [DefaultInfo(executable = out_file)]
 
