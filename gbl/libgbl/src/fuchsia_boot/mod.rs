@@ -268,7 +268,6 @@ pub(crate) mod test {
         mark_slot_active, mark_slot_unbootable, set_one_shot_bootloader, ABR_MAX_TRIES_REMAINING,
     };
     use avb_bindgen::{AVB_CERT_PIK_VERSION_LOCATION, AVB_CERT_PSK_VERSION_LOCATION};
-    use gbl_storage::as_uninit_mut;
     use std::{
         collections::{BTreeSet, HashMap, LinkedList},
         fs,
@@ -433,7 +432,7 @@ pub(crate) mod test {
     //
     // Tests should make sure to provide enough buffers for all `get_image_buffer()` calls.
     //
-    struct ImageBuffersPool(LinkedList<(String, Vec<AlignedBuffer>)>);
+    struct ImageBuffersPool(LinkedList<(String, Vec<AlignedBuffer<MaybeUninit<u8>>>)>);
 
     impl ImageBuffersPool {
         pub fn builder() -> ImageBuffersBuilder {
@@ -445,11 +444,11 @@ pub(crate) mod test {
         //
         // size - size for the buffers
         fn new(number: usize, size: usize) -> Self {
-            let mut zbi_items_buffer_vec = Vec::<AlignedBuffer>::new();
-            let mut zbi_zircon_buffer_vec = Vec::<AlignedBuffer>::new();
+            let mut zbi_items_buffer_vec = Vec::new();
+            let mut zbi_zircon_buffer_vec = Vec::new();
             for _ in 0..number {
-                zbi_zircon_buffer_vec.push(AlignedBuffer::new(size, ZIRCON_KERNEL_ALIGN));
-                zbi_items_buffer_vec.push(AlignedBuffer::new(size, ZBI_ALIGNMENT_USIZE));
+                zbi_zircon_buffer_vec.push(AlignedBuffer::new_uninit(size, ZIRCON_KERNEL_ALIGN));
+                zbi_items_buffer_vec.push(AlignedBuffer::new_uninit(size, ZBI_ALIGNMENT_USIZE));
             }
 
             Self(
@@ -467,10 +466,7 @@ pub(crate) mod test {
                 .map(|(key, val_vec)| {
                     (
                         key.clone(),
-                        val_vec
-                            .iter_mut()
-                            .map(|e| ImageBuffer::new(as_uninit_mut(e.as_mut())))
-                            .collect(),
+                        val_vec.iter_mut().map(|e| ImageBuffer::new(e.as_mut())).collect(),
                     )
                 })
                 .collect()
