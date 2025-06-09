@@ -355,7 +355,7 @@ pub trait GblOps<'a, 'd> {
     ///
     /// The returned bootconfig will be verified and appended on top of the bootconfig
     /// built by GBL. Refer to the behavior specified for the corresponding UEFI interface:
-    /// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
+    /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
     fn fixup_bootconfig<'c>(
         &mut self,
         bootconfig: &[u8],
@@ -367,7 +367,7 @@ pub trait GblOps<'a, 'd> {
     /// Provided components registry must be used to select one device tree (none is not allowed),
     /// and any number of overlays. Refer to the behavior specified for the corresponding UEFI
     /// interface:
-    /// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
+    /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
     fn select_device_trees(
         &mut self,
         components: &mut device_tree::DeviceTreeComponentsRegistry,
@@ -377,8 +377,7 @@ pub trait GblOps<'a, 'd> {
     ///
     /// Modified device tree will be verified and used to boot a device. Refer to the behavior
     /// specified for the corresponding UEFI interface:
-    /// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/efi_protocols.md
-    /// https://github.com/U-Boot-EFI/EFI_DT_FIXUP_PROTOCOL
+    /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/efi_protocols.md
     fn fixup_device_tree(&mut self, device_tree: &mut [u8]) -> Result<(), Error>;
 
     /// Gets platform-specific fastboot variable.

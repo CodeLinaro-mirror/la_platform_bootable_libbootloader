@@ -75,7 +75,7 @@ typedef struct {
 
 // Warning: API is UNSTABLE
 // Documentation:
-// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
+// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
 typedef struct GblEfiOsConfigurationProtocol {
   uint64_t revision;
 
