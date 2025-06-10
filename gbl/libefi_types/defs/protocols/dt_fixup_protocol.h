@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2024-2025 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
  *
  */
 
-// This is a protocol proposed by U-boot and being used by Kernel UEFI stub.
+// This is a protocol proposed by Heinrich Schuchardt and already being used by
+// the Kernel UEFI stub.
 // https://github.com/U-Boot-EFI/EFI_DT_FIXUP_PROTOCOL
-// https://github.com/u-boot/u-boot/blob/master/include/efi_dt_fixup.h
 
 #ifndef __EFI_DT_FIXUP_PROTOCOL_H__
 #define __EFI_DT_FIXUP_PROTOCOL_H__
