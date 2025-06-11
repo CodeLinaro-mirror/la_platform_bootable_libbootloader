@@ -16,7 +16,9 @@
 
 use crate::{gbl_println, image_buffer::ImageBuffer, GblOps, Result as GblResult};
 pub use abr::{get_and_clear_one_shot_bootloader, get_boot_slot, Ops as AbrOps, SlotIndex};
+use bytes::buf::UninitSlice;
 use core::{fmt::Write, mem::MaybeUninit, num::NonZeroUsize};
+use gbl_storage::CheckedGet;
 use liberror::{Error, Result};
 use safemath::SafeNum;
 use zbi::{ZbiContainer, ZbiFlags, ZbiHeader, ZbiType};
@@ -103,10 +105,10 @@ fn slot_cmd_line(slot: SlotIndex) -> &'static str {
 }
 
 /// Helper for reading zircon image from disk.
-pub(crate) fn read_zircon_image<'a, 'b>(
+pub(crate) fn read_zircon_image<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
     slot: Option<SlotIndex>,
-    out: &mut (impl gbl_storage::SliceMaybeUninit + ?Sized),
+    out: impl Into<&'c mut UninitSlice>,
 ) -> GblResult<usize> {
     let zircon_part = find_part_aliases(ops, zircon_part_name_aliases(slot))?;
     // Reads ZBI header to computes the total size of kernel.
@@ -116,7 +118,7 @@ pub(crate) fn read_zircon_image<'a, 'b>(
         usize::try_from(SafeNum::from(zbi_header.as_bytes_mut().len()) + zbi_header.length)
             .map_err(Error::from)?;
     // Reads the entire kernel
-    let buf = out.get_mut(..image_length)?;
+    let buf = out.into().get_mut(..image_length)?;
     ops.read_from_partition_sync(zircon_part, 0, buf)?;
     Ok(image_length)
 }

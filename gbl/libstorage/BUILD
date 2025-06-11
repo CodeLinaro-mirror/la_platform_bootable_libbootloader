@@ -31,6 +31,7 @@ rust_library(
     edition = "2021",
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
+        "@bytes",
         "@crc32fast",
         "@gbl//libasync",
         "@gbl//liberror",

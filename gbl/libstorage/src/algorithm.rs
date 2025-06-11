@@ -12,36 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    as_uninit, check_range, is_aligned, is_buffer_aligned, BlockInfo, BlockIo, SliceMaybeUninit,
-};
+use crate::{check_range, is_aligned, is_buffer_aligned, BlockInfo, BlockIo, CheckedGet};
+use bytes::buf::UninitSlice;
 use core::cmp::min;
 use liberror::Result;
 use libutils::aligned_subslice;
 use safemath::SafeNum;
 
 /// Reads from a range at block boundary to an aligned buffer.
-async fn read_aligned_all(
+async fn read_aligned_all<'a>(
     io: &mut impl BlockIo,
     offset: u64,
-    out: &mut (impl SliceMaybeUninit + ?Sized),
+    out: impl Into<&'a mut UninitSlice>,
 ) -> Result<()> {
-    let blk_offset = check_range(io.info(), offset, out.as_ref())?.try_into()?;
+    let out = out.into();
+    let blk_offset = check_range(io.info(), offset, &mut *out)?.try_into()?;
     Ok(io.read_blocks(blk_offset, out).await?)
 }
 
 /// Read with block-aligned offset and aligned buffer. Size don't need to be block aligned.
 ///   |~~~~~~~~~read~~~~~~~~~|
 ///   |---------|---------|---------|
-async fn read_aligned_offset_and_buffer(
+async fn read_aligned_offset_and_buffer<'a>(
     io: &mut impl BlockIo,
     offset: u64,
-    out: &mut (impl SliceMaybeUninit + ?Sized),
+    out: impl Into<&'a mut UninitSlice>,
     scratch: &mut [u8],
 ) -> Result<()> {
+    let out = out.into();
     let block_size = SafeNum::from(io.info().block_size);
     debug_assert!(is_aligned(offset, block_size)?);
-    debug_assert!(is_buffer_aligned(out.as_ref(), io.info().alignment)?);
+    debug_assert!(is_buffer_aligned(&mut *out, io.info().alignment)?);
 
     let aligned_read: usize = SafeNum::from(out.len()).round_down(block_size).try_into()?;
 
@@ -49,14 +50,14 @@ async fn read_aligned_offset_and_buffer(
         read_aligned_all(io, offset, out.get_mut(..aligned_read)?).await?;
     }
     let unaligned = out.get_mut(aligned_read..)?;
-    if unaligned.is_empty() {
+    if unaligned.len() == 0 {
         return Ok(());
     }
     // Read unalinged part.
     let block_scratch = &mut scratch[..block_size.try_into()?];
     let aligned_offset = SafeNum::from(offset) + aligned_read;
-    read_aligned_all(io, aligned_offset.try_into()?, block_scratch).await?;
-    unaligned.clone_from_slice(as_uninit(&block_scratch[..unaligned.len()]));
+    read_aligned_all(io, aligned_offset.try_into()?, &mut *block_scratch).await?;
+    unaligned.copy_from_slice(&block_scratch[..unaligned.len()]);
     Ok(())
 }
 
@@ -67,13 +68,14 @@ async fn read_aligned_offset_and_buffer(
 /// Case 2:
 ///          |~~~read~~~|
 ///        |---------------|--------------|
-async fn read_aligned_buffer(
+async fn read_aligned_buffer<'a>(
     io: &mut impl BlockIo,
     offset: u64,
-    out: &mut (impl SliceMaybeUninit + ?Sized),
+    out: impl Into<&'a mut UninitSlice>,
     scratch: &mut [u8],
 ) -> Result<()> {
-    debug_assert!(is_buffer_aligned(out.as_ref(), io.info().alignment)?);
+    let out = out.into();
+    debug_assert!(is_buffer_aligned(&mut *out, io.info().alignment)?);
 
     if is_aligned(offset, io.info().block_size)? {
         return read_aligned_offset_and_buffer(io, offset, out, scratch).await;
@@ -84,7 +86,7 @@ async fn read_aligned_buffer(
 
     let aligned_relative_offset: usize = (SafeNum::from(aligned_start) - offset).try_into()?;
     if aligned_relative_offset < out.len() {
-        if is_buffer_aligned(&out.get(aligned_relative_offset..)?, io.info().alignment)? {
+        if is_buffer_aligned(out.get_mut(aligned_relative_offset..)?, io.info().alignment)? {
             // If new output address is aligned, read directly.
             read_aligned_offset_and_buffer(
                 io,
@@ -100,20 +102,22 @@ async fn read_aligned_buffer(
                 (SafeNum::from(out.len()) - aligned_relative_offset).try_into()?;
             read_aligned_offset_and_buffer(io, aligned_start, out.get_mut(..read_len)?, scratch)
                 .await?;
-            out.as_mut().copy_within(..read_len, aligned_relative_offset);
+            // SAFETY: we just initialized the buffer up to `read_len`, so
+            // copying this data only reads and writes initialized bytes.
+            unsafe { out.as_uninit_slice_mut() }.copy_within(..read_len, aligned_relative_offset);
         }
     }
 
     // Now read the unaligned part
     let block_scratch = &mut scratch[..SafeNum::from(io.info().block_size).try_into()?];
     let round_down_offset = offset.round_down(io.info().block_size);
-    read_aligned_all(io, round_down_offset.try_into()?, block_scratch).await?;
+    read_aligned_all(io, round_down_offset.try_into()?, &mut *block_scratch).await?;
     let offset_relative = offset - round_down_offset;
     let unaligned = out.get_mut(..aligned_relative_offset)?;
-    unaligned.clone_from_slice(as_uninit(
+    unaligned.copy_from_slice(
         &block_scratch
             [offset_relative.try_into()?..(offset_relative + unaligned.len()).try_into()?],
-    ));
+    );
     Ok(())
 }
 
@@ -134,15 +138,16 @@ fn split_scratch<'a>(
 }
 
 /// Read with no alignment requirement.
-pub async fn read_async(
+pub async fn read_async<'a>(
     io: &mut impl BlockIo,
     offset: u64,
-    out: &mut (impl SliceMaybeUninit + ?Sized),
+    out: impl Into<&'a mut UninitSlice>,
     scratch: &mut [u8],
 ) -> Result<()> {
+    let out = out.into();
     let (buffer_alignment_scratch, block_alignment_scratch) = split_scratch(io.info(), scratch)?;
 
-    if is_buffer_aligned(out.as_ref(), io.info().alignment)? {
+    if is_buffer_aligned(&mut *out, io.info().alignment)? {
         return read_aligned_buffer(io, offset, out, block_alignment_scratch).await;
     }
 
@@ -157,14 +162,14 @@ pub async fn read_async(
     //  |----------------------|---------------------|
     //     io.info().alignment
 
-    let out_addr_value = SafeNum::from(out.as_mut().as_ptr() as usize);
+    let out_addr_value = SafeNum::from(out.as_mut_ptr() as usize);
     let unaligned_read: usize =
         min((out_addr_value.round_up(io.info().alignment) - out_addr_value).try_into()?, out.len());
 
     // Read unaligned part
     let unaligned_out = &mut buffer_alignment_scratch[..unaligned_read];
-    read_aligned_buffer(io, offset, unaligned_out, block_alignment_scratch).await?;
-    out.get_mut(..unaligned_read)?.clone_from_slice(as_uninit(unaligned_out));
+    read_aligned_buffer(io, offset, &mut *unaligned_out, block_alignment_scratch).await?;
+    out.get_mut(..unaligned_read)?.copy_from_slice(unaligned_out);
 
     if unaligned_read == out.len() {
         return Ok(());
@@ -181,7 +186,7 @@ pub async fn read_async(
 
 /// Write bytes from aligned buffer to a block boundary range.
 async fn write_aligned_all(io: &mut impl BlockIo, offset: u64, data: &mut [u8]) -> Result<()> {
-    let blk_offset = check_range(io.info(), offset, data)?.try_into()?;
+    let blk_offset = check_range(io.info(), offset, &mut *data)?.try_into()?;
     Ok(io.write_blocks(blk_offset, data).await?)
 }
 
@@ -195,7 +200,7 @@ async fn write_aligned_offset_and_buffer(
     scratch: &mut [u8],
 ) -> Result<()> {
     debug_assert!(is_aligned(offset, io.info().block_size)?);
-    debug_assert!(is_buffer_aligned(data, io.info().alignment)?);
+    debug_assert!(is_buffer_aligned(&mut *data, io.info().alignment)?);
 
     let aligned_write: usize =
         SafeNum::from(data.len()).round_down(io.info().block_size).try_into()?;
@@ -210,7 +215,7 @@ async fn write_aligned_offset_and_buffer(
     // Perform read-modify-write for the unaligned part
     let unaligned_start: u64 = (SafeNum::from(offset) + aligned_write).try_into()?;
     let block_scratch = &mut scratch[..SafeNum::from(io.info().block_size).try_into()?];
-    read_aligned_all(io, unaligned_start, block_scratch).await?;
+    read_aligned_all(io, unaligned_start, &mut *block_scratch).await?;
     block_scratch[..unaligned.len()].clone_from_slice(unaligned);
     write_aligned_all(io, unaligned_start, block_scratch).await
 }
@@ -244,7 +249,7 @@ async fn write_aligned_buffer(
     data: &mut [u8],
     scratch: &mut [u8],
 ) -> Result<()> {
-    debug_assert!(is_buffer_aligned(data, io.info().alignment)?);
+    debug_assert!(is_buffer_aligned(&mut *data, io.info().alignment)?);
 
     let offset = SafeNum::from(offset);
     if is_aligned(offset, io.info().block_size)? {
@@ -255,7 +260,7 @@ async fn write_aligned_buffer(
         min(offset.round_up(io.info().block_size).try_into()?, (offset + data.len()).try_into()?);
     let aligned_relative_offset: usize = (SafeNum::from(aligned_start) - offset).try_into()?;
     if aligned_relative_offset < data.len() {
-        if is_buffer_aligned(&data[aligned_relative_offset..], io.info().alignment)? {
+        if is_buffer_aligned(&mut data[aligned_relative_offset..], io.info().alignment)? {
             // If new address is aligned, write directly.
             write_aligned_offset_and_buffer(
                 io,
@@ -281,7 +286,7 @@ async fn write_aligned_buffer(
     // perform read-modify-write for the unaligned part.
     let block_scratch = &mut scratch[..SafeNum::from(io.info().block_size).try_into()?];
     let round_down_offset: u64 = offset.round_down(io.info().block_size).try_into()?;
-    read_aligned_all(io, round_down_offset, block_scratch).await?;
+    read_aligned_all(io, round_down_offset, &mut *block_scratch).await?;
     let offset_relative = offset - round_down_offset;
     block_scratch
         [offset_relative.try_into()?..(offset_relative + aligned_relative_offset).try_into()?]
@@ -299,7 +304,7 @@ pub async fn write_async(
     scratch: &mut [u8],
 ) -> Result<()> {
     let (buffer_alignment_scratch, block_alignment_scratch) = split_scratch(io.info(), scratch)?;
-    if is_buffer_aligned(data, io.info().alignment)? {
+    if is_buffer_aligned(&mut *data, io.info().alignment)? {
         return write_aligned_buffer(io, offset, data, block_alignment_scratch).await;
     }
 

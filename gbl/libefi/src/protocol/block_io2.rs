@@ -19,6 +19,7 @@ use crate::{
     protocol::{Protocol, ProtocolInfo},
     EventNotify, EventType, Tpl,
 };
+use bytes::buf::UninitSlice;
 use core::{
     ptr::null_mut,
     sync::atomic::{AtomicBool, Ordering},
@@ -27,7 +28,6 @@ use efi_types::{
     EfiBlockIo2Protocol, EfiBlockIo2Token, EfiBlockIoMedia, EfiGuid, EFI_STATUS_NOT_READY,
 };
 use gbl_async::{assert_return, yield_now};
-use gbl_storage::SliceMaybeUninit;
 use liberror::{efi_status_to_result, Error, Result};
 
 /// EFI_BLOCK_IO2_PROTOCOL
@@ -61,10 +61,10 @@ impl Protocol<'_, BlockIo2Protocol> {
     }
 
     /// Wraps `EfiBlockIo2Protocol.read_blocks_ex`.
-    pub async fn read_blocks_ex(
+    pub async fn read_blocks_ex<'a>(
         &self,
         lba: u64,
-        buffer: &mut (impl SliceMaybeUninit + ?Sized),
+        buffer: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
         let bs = self.efi_entry().system_table().boot_services();
         let complete = AtomicBool::new(false);
@@ -75,10 +75,13 @@ impl Protocol<'_, BlockIo2Protocol> {
             unsafe { bs.create_event_with_notification(EventType::NotifySignal, &mut notify) }?;
         let mut token =
             EfiBlockIo2Token { event: event.efi_event, transaction_status: EFI_STATUS_NOT_READY };
+        let buffer = buffer.into();
         // SAFETY:
         // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
         //    established by `Protocol::new()`.
         // * `self.interface` is input parameter and will not be retained. It outlives the call.
+        // *  `EfiBlockIo2Protocol.read_blocks_ex()` will only initialize the data, never reading
+        //    or uininitializing it.
         // * The function waits until `complete` is marked true by the event notification function,
         //   which guarantees that `buffer` and `token` are not being retained by the UEFI firmware
         //   anymore.
@@ -93,7 +96,7 @@ impl Protocol<'_, BlockIo2Protocol> {
                 lba,
                 &mut token,
                 buffer.len(),
-                buffer.as_mut().as_mut_ptr() as _
+                buffer.as_mut_ptr() as _
             )?;
         }
         assert_return(self.wait_completion(&complete)).await;
