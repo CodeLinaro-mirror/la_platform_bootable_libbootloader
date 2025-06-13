@@ -23,6 +23,7 @@
 #![feature(extended_varargs_abi_support)]
 #![cfg_attr(not(test), no_std)]
 
+#[rustfmt::skip]
 pub mod defs;
 pub mod status;
 
