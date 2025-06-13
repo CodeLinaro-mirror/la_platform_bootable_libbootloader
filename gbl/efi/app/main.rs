@@ -81,6 +81,43 @@ fn generate_canary(entry: &EfiEntry) -> usize {
     }
 }
 
+/// The function implements a simple handshake protocol between GBL and GDB for the initial
+/// execution break and passing of GBL load address in memory, which is needed for GDB to load
+/// symbols.
+#[cfg(feature = "gdb_debug")]
+fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
+    // Our debug script `qemu_gdb_example/load_gbl_debug_bin.py` looks for this magic to determine
+    // if GBL is ready for debug. Must be kept in sync with
+    // `qemu_gdb_example/load_gbl_debug_bin.py`.
+    const GDB_MAGIC: u64 = 0x166eb3328561cfe7;
+    use core::arch::asm;
+    let image_base = gbl_efi::utils::image_base(entry)?;
+    efi_println!(entry, "Image base: {:#x}", image_base);
+    #[cfg(target_arch = "x86_64")]
+    {
+        efi_println!(entry, "Please run load_gbl_debug_bin.py or set $rax=0 from gdb to continue.");
+        // Sets $rax to `GDB_MAGIC` and $rcx to the image load address which will be retrieved by
+        // the debug script for loading debug symbols. Loops until $rax is set 0 either by the
+        // debug script or manually from gdb.
+
+        // SAFETY: The assembly code only sets $rax and $rcx reigster. It explicitly marks them as
+        // clobbered and does not modify any memory.
+        unsafe {
+            asm!(
+                "2:",
+                "cmp rax, 0",
+                "jne 2b",
+                in("rax") GDB_MAGIC,
+                in("rcx") image_base,
+                clobber_abi("C"),
+            );
+        }
+        efi_println!(entry, "gdb connected!");
+    }
+
+    Ok(())
+}
+
 /// EFI application entry point. Does not return.
 ///
 /// # Safety
@@ -104,6 +141,10 @@ pub unsafe extern "C" fn efi_main(image_handle: *mut c_void, systab_ptr: *mut Ef
     unsafe {
         initialize_canary(systab_ptr, usize::to_le(canary & !0xFFFF));
     }
+
+    #[cfg(feature = "gdb_debug")]
+    let _ = wait_gdb(&entry).inspect_err(|_| efi_println!(entry, "Failed to wait gdb connection."));
+
     app_main(entry).unwrap();
     loop {}
 }

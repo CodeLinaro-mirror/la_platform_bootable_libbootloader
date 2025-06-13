@@ -110,8 +110,6 @@ rust_library(
         "OUT_DIR": ".",
     },
     rustc_flags = [
-        # Always compile this crate in release mode. Otherwise it is too slow.
-        "-O",
         "-A",
         "unused_imports",
         "-A",

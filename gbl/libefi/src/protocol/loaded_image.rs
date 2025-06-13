@@ -34,4 +34,9 @@ impl<'a> Protocol<'a, LoadedImageProtocol> {
     pub fn device_handle(&self) -> Result<DeviceHandle> {
         Ok(DeviceHandle(self.interface()?.device_handle))
     }
+
+    /// Returns the `EFI_LOADED_IMAGE_PROTOCOL.image_base` field.
+    pub fn image_base(&self) -> Result<usize> {
+        Ok(self.interface()?.image_base as _)
+    }
 }

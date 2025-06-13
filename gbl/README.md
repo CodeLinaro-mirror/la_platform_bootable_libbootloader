@@ -145,6 +145,24 @@ configurations:
        -drive format=raw,file=fat:rw:/tmp/esp
    ```
 
+### Debug with GDB on QEMU
+
+[qemu_gdb_example/](./qemu_gdb_example/) provides an example for
+debugging x86_64 GBL EFI app on QEMU using rust-gdb. To try the example:
+
+1. Install necessary dependencies:
+   ```
+   sudo apt-get install qemu-system ovmf
+   ```
+
+2. Runs the following script:
+   ```
+   ./qemu_gdb_example/launch_qemu_gdb.sh
+   ```
+
+   The above command builds a debug x86_64 GBL EFI app, launches it in QEMU
+   and starts `rust-gdb` in a separate terminal for debugging.
+
 ### Boot Fuchsia on emulator
 
 1. Make sure Fuchsia target pass control to GBL.
