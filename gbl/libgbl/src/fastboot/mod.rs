@@ -2950,7 +2950,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
+        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -2989,7 +2989,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
+        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 

@@ -262,7 +262,7 @@ pub(crate) mod test {
     use crate::{
         ops::{
             test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
-            CertPermanentAttributes, RebootReason,
+            CertPermanentAttributes, RebootMode,
         },
         tests::AlignedBuffer,
     };
@@ -358,7 +358,7 @@ pub(crate) mod test {
         );
         ops.avb_ops.cert_permanent_attributes_hash =
             Some(read_test_data("cert_permanent_attributes.hash").try_into().unwrap());
-        ops.reboot_reason = Some(Ok(RebootReason::Normal));
+        ops.reboot_mode = Some(Ok(RebootMode::Normal));
         ops
     }
 

@@ -40,8 +40,6 @@ use core::ffi::CStr;
 use core::marker::PhantomData;
 
 pub mod android_boot;
-pub mod boot_mode;
-pub mod boot_reason;
 pub mod constants;
 pub mod decompress;
 pub mod device_tree;
@@ -61,8 +59,6 @@ mod image_buffer;
 use slots::{BootTarget, BootToken, Cursor, SuffixBytes};
 
 pub use avb::Descriptor;
-pub use boot_mode::BootMode;
-pub use boot_reason::KnownBootReason;
 pub use error::{IntegrationError, Result};
 use liberror::Error;
 pub use ops::{GblOps, Os};
