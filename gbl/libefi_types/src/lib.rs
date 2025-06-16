@@ -16,6 +16,13 @@
 //!
 //! This crate aims to have as few dependencies as possible so that it can be
 //! used in GBL or ported to different UEFI implementations.
+//!
+//! # Features
+//!
+//! ## mocks
+//!
+//! Enabling the `mocks` feature adds the `#[mockall::automock]` attribute
+//! to the protocol traits if desired for testing.
 
 // This is both safe and stable but is being tweaked due to the "system" abi variant
 // potentially not supporting varargs.
@@ -25,6 +32,7 @@
 
 #[rustfmt::skip]
 pub mod defs;
+pub mod protocol;
 pub mod status;
 
 pub use defs::*;
@@ -34,6 +42,12 @@ impl EfiGuid {
     pub const fn new(data1: u32, data2: u16, data3: u16, data4: [u8; 8usize]) -> Self {
         EfiGuid { data1, data2, data3, data4 }
     }
+}
+
+/// Any object that can be identified by a GUID.
+pub trait Identified {
+    /// The UEFI GUID.
+    const GUID: EfiGuid;
 }
 
 impl GblEfiImageInfo {
