@@ -24,7 +24,7 @@ use crate::{
         GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
     },
     gbl_println,
-    ops::RebootReason,
+    ops::RebootMode,
     GblOps, Result,
 };
 use bootparams::{
@@ -448,17 +448,17 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     }
 
     // Checks platform reboot reason.
-    let reboot_reason = ops
-        .get_reboot_reason()
+    let reboot_mode = ops
+        .get_reboot_mode()
         .inspect_err(|e| {
             gbl_println!(ops, "Failed to get reboot reason from platform: {e}. Ignored.")
         })
-        .unwrap_or(RebootReason::Normal);
-    gbl_println!(ops, "Reboot reason from platform: {reboot_reason:?}");
+        .unwrap_or(RebootMode::Normal);
+    gbl_println!(ops, "Reboot reason from platform: {reboot_mode:?}");
 
     // Checks and enters fastboot.
     let result = &mut Default::default();
-    if matches!(reboot_reason, RebootReason::Bootloader)
+    if matches!(reboot_mode, RebootMode::Bootloader)
         || matches!(boot_mode, AndroidBootMode::BootloaderBootOnce)
         || ops
             .should_stop_in_fastboot()
@@ -497,7 +497,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     // back to char by the API. Consider passing in the char bytes directly.
     let slot_idx = (u64::from(slot_suffix) - u64::from('a')).try_into().unwrap();
 
-    let is_recovery = matches!(reboot_reason, RebootReason::Recovery)
+    let is_recovery = matches!(reboot_mode, RebootMode::Recovery)
         || matches!(boot_mode, AndroidBootMode::Recovery);
     android_load_verify_fixup(ops, slot_idx, is_recovery, load)
 }
@@ -1529,7 +1529,7 @@ androidboot.veritymode=enforcing
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
         ops.current_slot = Some(Ok(slot('a')));
-        ops.reboot_reason = Some(Ok(RebootReason::Normal));
+        ops.reboot_mode = Some(Ok(RebootMode::Normal));
         ops
     }
 
@@ -1584,7 +1584,7 @@ androidboot.veritymode=enforcing
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
-        ops.reboot_reason = Some(Ok(RebootReason::Recovery));
+        ops.reboot_mode = Some(Ok(RebootMode::Recovery));
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let (ramdisk, _, kernel, _) = android_main(&mut ops, &mut load_buffer, |_| {}).unwrap();
         checks_loaded_v2_slot_a_recovery_mode(ramdisk, kernel)
@@ -1748,7 +1748,7 @@ androidboot.veritymode=enforcing
         storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
-        ops.reboot_reason = Some(Ok(RebootReason::Bootloader));
+        ops.reboot_mode = Some(Ok(RebootMode::Bootloader));
         test_fastboot_is_triggered(&mut ops);
     }
 

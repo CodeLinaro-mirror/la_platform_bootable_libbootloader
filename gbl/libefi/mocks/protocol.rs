@@ -366,7 +366,7 @@ pub mod gbl_efi_fastboot {
 pub mod gbl_efi_ab_slot {
     use super::*;
     use efi::protocol::gbl_efi_ab_slot::GblSlot;
-    use efi_types::{GblEfiBootReason, GblEfiSlotMetadataBlock};
+    use efi_types::{GblEfiBootMode, GblEfiSlotMetadataBlock};
 
     mock! {
         /// Mock of [GblSlotProtocol]
@@ -383,11 +383,11 @@ pub mod gbl_efi_ab_slot {
             /// Mock of GblSlotProtocol::set_active_slot.
             pub fn set_active_slot(&self, idx: u8) -> Result<()>;
 
-            /// Mock of GblSlotProtocol::set_boot_reason.
-            pub fn set_boot_reason(&self, reason: GblEfiBootReason, subreason: &[u8]) -> Result<()>;
+            /// Mock of GblSlotProtocol::set_boot_mode.
+            pub fn set_boot_mode(&self, mode: GblEfiBootMode) -> Result<()>;
 
-            /// Mock of GblSlotProtocol::get_boot_reason.
-            pub fn get_boot_reason(&self, subreason: &mut [u8]) -> Result<(GblEfiBootReason, usize)>;
+            /// Mock of GblSlotProtocol::get_boot_mode.
+            pub fn get_boot_mode(&self) -> Result<GblEfiBootMode>;
         }
     }
 

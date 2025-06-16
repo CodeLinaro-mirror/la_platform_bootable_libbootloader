@@ -15,22 +15,16 @@
 extern crate gbl_storage;
 extern crate libgbl as gbl;
 
+use crate::protocol::{gbl_efi_ab_slot as ab_slot, Protocol};
 use core::convert::TryInto;
+use efi_types::{
+    GBL_EFI_BOOT_MODE_BOOTLOADER as MODE_BOOTLOADER, GBL_EFI_BOOT_MODE_RECOVERY as MODE_RECOVERY,
+};
 use gbl::slots::{
     BootTarget, BootToken, Manager, OneShot, RecoveryTarget, Slot, SlotIterator, Suffix, Tries,
     UnbootableReason,
 };
 use liberror::{Error, Result};
-
-use efi_types::{
-    GBL_EFI_BOOT_REASON_BOOTLOADER as REASON_BOOTLOADER,
-    GBL_EFI_BOOT_REASON_EMPTY_BOOT_REASON as REASON_EMPTY,
-    GBL_EFI_BOOT_REASON_RECOVERY as REASON_RECOVERY,
-};
-
-use crate::protocol::{gbl_efi_ab_slot as ab_slot, Protocol};
-
-const SUBREASON_BUF_LEN: usize = 64;
 
 /// Implementation for A/B slot manager based on custom EFI protocol.
 pub struct ABManager<'a> {
@@ -57,12 +51,9 @@ impl gbl::slots::private::SlotGet for ABManager<'_> {
 impl Manager for ABManager<'_> {
     fn get_boot_target(&self) -> Result<BootTarget> {
         let slot = self.get_slot_last_set_active()?;
-        let mut subreason = [0u8; SUBREASON_BUF_LEN];
-        let (reason, _) = self.protocol.get_boot_reason(subreason.as_mut_slice())?;
-        // Don't currently care about the subreason
-        // CStr::from_bytes_until_nul(&subreason[..strlen])?
-        let target = match reason {
-            REASON_RECOVERY => BootTarget::Recovery(RecoveryTarget::Slotted(slot)),
+        let mode = self.protocol.get_boot_mode()?;
+        let target = match mode {
+            MODE_RECOVERY => BootTarget::Recovery(RecoveryTarget::Slotted(slot)),
             _ => BootTarget::NormalBoot(slot),
         };
         Ok(target)
@@ -118,36 +109,23 @@ impl Manager for ABManager<'_> {
     }
 
     fn get_oneshot_status(&self) -> Option<OneShot> {
-        let mut subreason = [0u8; SUBREASON_BUF_LEN];
-        let (reason, _) = self.protocol.get_boot_reason(subreason.as_mut_slice()).ok()?;
-        // Currently we only care if the primary boot reason is BOOTLOADER.
-        // CStr::from_bytes_until_nul(&subreason[..strlen]).ok()?
-        match reason {
-            REASON_BOOTLOADER => Some(OneShot::Bootloader),
+        match self.protocol.get_boot_mode() {
+            Ok(MODE_BOOTLOADER) => Some(OneShot::Bootloader),
             _ => None,
         }
     }
 
     fn set_oneshot_status(&mut self, os: OneShot) -> Result<()> {
-        // Android doesn't have a concept of OneShot to recovery,
-        // and the subreason shouldn't matter.
+        // Android doesn't have a concept of OneShot to recovery.
         match os {
             OneShot::Bootloader => {
-                self.protocol.set_boot_reason(REASON_BOOTLOADER, &[]).or(Err(Error::Other(None)))
+                self.protocol.set_boot_mode(MODE_BOOTLOADER).or(Err(Error::Other(None)))
             }
             _ => Err(Error::OperationProhibited),
         }
     }
 
-    fn clear_oneshot_status(&mut self) {
-        let mut subreason = [0u8; SUBREASON_BUF_LEN];
-        // Only clear if the boot reason is the one we care about.
-        // CStr::from_bytes_until_nul(&subreason[..strlen]).or(Err(Error::Other))?
-        if let Ok((REASON_BOOTLOADER, _)) = self.protocol.get_boot_reason(subreason.as_mut_slice())
-        {
-            let _ = self.protocol.set_boot_reason(REASON_EMPTY, &[]);
-        }
-    }
+    fn clear_oneshot_status(&mut self) {}
 
     fn write_back(&mut self, _: &mut dyn FnMut(&mut [u8]) -> Result<()>) {
         // Note: `expect` instead of swallowing the error.
@@ -167,14 +145,11 @@ mod test {
     use core::{ops::DerefMut, time::Duration};
     use efi_types::{
         EfiStatus, GblEfiABSlotProtocol, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
-        EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS,
-        GBL_EFI_BOOT_REASON_EMPTY_BOOT_REASON as REASON_EMPTY,
-        GBL_EFI_BOOT_REASON_RECOVERY as REASON_RECOVERY,
-        GBL_EFI_BOOT_REASON_WATCHDOG as REASON_WATCHDOG,
+        EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS, GBL_EFI_BOOT_MODE_NORMAL as MODE_NORMAL,
     };
     use gbl::{
         ops::{
-            AvbIoResult, CertPermanentAttributes, RebootReason, SlotsMetadata, SHA256_DIGEST_SIZE,
+            AvbIoResult, CertPermanentAttributes, RebootMode, SlotsMetadata, SHA256_DIGEST_SIZE,
         },
         partition::GblDisk,
         slots::{Bootability, Cursor, RecoveryTarget, UnbootableReason},
@@ -206,7 +181,7 @@ mod test {
     }
 
     thread_local! {
-        static BOOT_REASON: AtomicU32 = AtomicU32::new(REASON_EMPTY);
+        static BOOT_MODE: AtomicU32 = AtomicU32::new(MODE_NORMAL);
     }
 
     // This provides reasonable defaults for all tests that need to get slot info.
@@ -473,11 +448,11 @@ mod test {
             unimplemented!()
         }
 
-        fn set_reboot_reason(&mut self, _: RebootReason) -> Result<()> {
+        fn set_reboot_mode(&mut self, _: RebootMode) -> Result<()> {
             unimplemented!()
         }
 
-        fn get_reboot_reason(&mut self) -> Result<RebootReason> {
+        fn get_reboot_mode(&mut self) -> Result<RebootMode> {
             unimplemented!()
         }
 
@@ -571,35 +546,28 @@ mod test {
             EFI_STATUS_SUCCESS
         }
 
-        // SAFETY: verifies that `reason` and `subreason_size` are aligned and not null.
-        // It is the caller's responsibility to make sure that `reason`
-        // and `subreason_size` point to valid output parameters.
-        unsafe extern "efiapi" fn get_boot_reason(
+        // SAFETY:
+        // `mode` must point to non-null u32 buffer available to write.
+        unsafe extern "efiapi" fn get_boot_mode(
             _: *mut GblEfiABSlotProtocol,
-            reason: *mut u32,
-            subreason_size: *mut usize,
-            _subreason: *mut u8,
+            mode: *mut u32,
         ) -> EfiStatus {
-            if reason.is_null()
-                || subreason_size.is_null()
-                || !reason.is_aligned()
-                || !subreason_size.is_aligned()
-            {
+            if mode.is_null() || !mode.is_aligned() {
                 return EFI_STATUS_INVALID_PARAMETER;
             }
 
+            // SAFETY:
+            // `mode` is non null and points to a u32 buffer available to write.
             unsafe {
-                *reason = BOOT_REASON.with(|r| r.load(Ordering::Relaxed));
-                *subreason_size = 0;
+                *mode = BOOT_MODE.with(|r| r.load(Ordering::Relaxed));
             }
             EFI_STATUS_SUCCESS
         }
 
-        BOOT_REASON.with(|r| r.store(REASON_EMPTY, Ordering::Relaxed));
         run_test(|image_handle, systab_ptr| {
             let mut ab = GblEfiABSlotProtocol {
                 get_current_slot: Some(get_current_slot),
-                get_boot_reason: Some(get_boot_reason),
+                get_boot_mode: Some(get_boot_mode),
                 flush: Some(flush),
                 ..Default::default()
             };
@@ -618,7 +586,7 @@ mod test {
             assert_eq!(cursor.ctx.get_boot_target().unwrap(), BootTarget::NormalBoot(slot));
             assert_eq!(cursor.ctx.get_slot_last_set_active().unwrap(), slot);
 
-            BOOT_REASON.with(|r| r.store(REASON_RECOVERY, Ordering::Relaxed));
+            BOOT_MODE.with(|r| r.store(MODE_RECOVERY, Ordering::Relaxed));
 
             assert_eq!(
                 cursor.ctx.get_boot_target().unwrap(),
@@ -763,38 +731,30 @@ mod test {
 
     #[test]
     fn test_oneshot() {
-        // SAFETY: checks that `reason` is not null and is properly aligned.
-        // Caller must make sure reason points to a valid u32.
-        unsafe extern "efiapi" fn get_boot_reason(
+        // SAFETY:
+        // `mode` must point to non-null u32 buffer available to write.
+        unsafe extern "efiapi" fn get_boot_mode(
             _: *mut GblEfiABSlotProtocol,
-            reason: *mut u32,
-            _: *mut usize,
-            _: *mut u8,
+            mode: *mut u32,
         ) -> EfiStatus {
-            if reason.is_null() || !reason.is_aligned() {
+            if mode.is_null() || !mode.is_aligned() {
                 return EFI_STATUS_INVALID_PARAMETER;
             }
 
-            unsafe { *reason = BOOT_REASON.with(|r| r.load(Ordering::Relaxed)) };
+            unsafe { *mode = BOOT_MODE.with(|r| r.load(Ordering::Relaxed)) };
 
             EFI_STATUS_SUCCESS
         }
 
-        extern "efiapi" fn set_boot_reason(
-            _: *mut GblEfiABSlotProtocol,
-            reason: u32,
-            _: usize,
-            _: *const u8,
-        ) -> EfiStatus {
-            BOOT_REASON.with(|r| r.store(reason, Ordering::Relaxed));
+        extern "efiapi" fn set_boot_mode(_: *mut GblEfiABSlotProtocol, mode: u32) -> EfiStatus {
+            BOOT_MODE.with(|r| r.store(mode, Ordering::Relaxed));
             EFI_STATUS_SUCCESS
         }
 
-        BOOT_REASON.with(|r| r.store(REASON_EMPTY, Ordering::Relaxed));
         run_test(|image_handle, systab_ptr| {
             let mut ab = GblEfiABSlotProtocol {
-                get_boot_reason: Some(get_boot_reason),
-                set_boot_reason: Some(set_boot_reason),
+                get_boot_mode: Some(get_boot_mode),
+                set_boot_mode: Some(set_boot_mode),
                 flush: Some(flush),
                 ..Default::default()
             };
@@ -805,21 +765,12 @@ mod test {
             let mut gbl = Gbl::<TestGblOps>::new(&mut test_ops);
             let cursor = gbl.load_slot_interface(&mut persist).unwrap();
 
-            assert_eq!(cursor.ctx.get_oneshot_status(), None);
             assert_eq!(
                 cursor.ctx.set_oneshot_status(OneShot::Continue(RecoveryTarget::Dedicated)),
                 Err(Error::OperationProhibited)
             );
             assert_eq!(cursor.ctx.set_oneshot_status(OneShot::Bootloader), Ok(()));
             assert_eq!(cursor.ctx.get_oneshot_status(), Some(OneShot::Bootloader));
-
-            cursor.ctx.clear_oneshot_status();
-            assert_eq!(cursor.ctx.get_oneshot_status(), None);
-
-            BOOT_REASON.with(|r| r.store(REASON_WATCHDOG, Ordering::Relaxed));
-            assert_eq!(cursor.ctx.get_oneshot_status(), None);
-            cursor.ctx.clear_oneshot_status();
-            assert_eq!(BOOT_REASON.with(|r| r.load(Ordering::Relaxed)), REASON_WATCHDOG);
         });
     }
 }

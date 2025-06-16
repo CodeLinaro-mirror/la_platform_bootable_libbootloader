@@ -19,6 +19,15 @@ This protocol provides interfaces for platform specific boot slot operations,
 such as determining the number of slots and the current target slot,
 changing the current target boot slot, marking boot attempts, and more.
 
+This protocol is optional. When implemented, GBL will use it to manage boot
+slots and modes. Otherwise, GBL will fully rely on [BCB][bcb] (Bootloader
+Control Block) from the `misc` partition for that.
+
+### Glossary
+
+In the context of this protocol, persistent storage refers to storage that is
+preserved across warm reboots, but may not survive a cold reboot of the device.
+
 ### GUID
 
 ```c
@@ -32,6 +41,7 @@ changing the current target boot slot, marking boot attempts, and more.
 ```
 
 ### Protocol Version
+
 ```c
 #define GBL_EFI_AB_SLOT_PROTOCOL_VERSION 0x00010000
 ```
@@ -50,8 +60,8 @@ typedef struct GBL_EFI_AB_SLOT_PROTOCOL {
   GBL_EFI_AB_SLOT_SET_SLOT_UNBOOTABLE SetSlotUnbootable;
   GBL_EFI_AB_SLOT_MARK_BOOT_ATTEMPT   MarkBootAttempt;
   GBL_EFI_AB_SLOT_REINITIALIZE        Reinitialize;
-  GBL_EFI_AB_SLOT_GET_BOOT_REASON     GetBootReason;
-  GBL_EFI_AB_SLOT_SET_BOOT_REASON     SetBootReason;
+  GBL_EFI_AB_SLOT_GET_BOOT_MODE       GetBootMode;
+  GBL_EFI_AB_SLOT_SET_BOOT_MODE       SetBootMode;
   GBL_EFI_AB_SLOT_FLUSH               Flush;
 } GBL_EFI_AB_SLOT_PROTOCOL;
 ```
@@ -83,7 +93,7 @@ See [`GBL_EFI_AB_SLOT_PROTOCOL.GetCurrentSlot()`](#gbl_efi_ab_slot_protocolgetcu
 **GetNextSlot**
 
 Returns the slot information of the next slot decision.
-See [`GBL_EFI_AB_SLOT_PROTOCOL.GetNextSlot()`](#gbl_efi_ab_slot_protocolgetcurrentslot).
+See [`GBL_EFI_AB_SLOT_PROTOCOL.GetNextSlot()`](#gbl_efi_ab_slot_protocolgetnextslot).
 
 **SetActiveSlot**
 
@@ -100,15 +110,15 @@ See [`GBL_EFI_AB_SLOT_PROTOCOL.SetSlotUnbootable()`](#gbl_efi_ab_slot_protocolse
 Resets slot metadata to a default, initial state.
 See [`GBL_EFI_AB_SLOT_PROTOCOL.Reinitialize()`](#gbl_efi_ab_slot_protocolreinitialize).
 
-**GetBootReason**
+**GetBootMode**
 
-Gets the boot reason.
-See [`GBL_EFI_AB_SLOT_PROTOCOL.GetBootReason()`](#gbl_efi_ab_slot_protocolgetbootreason).
+Gets the boot mode.
+See [`GBL_EFI_AB_SLOT_PROTOCOL.GetBootMode()`][get_boot_mode].
 
-**SetBootReason**
+**SetBootMode**
 
-Sets the boot reason.
-See [`GBL_EFI_AB_SLOT_PROTOCOL.SetBootReason()`](#gbl_efi_ab_slot_protocolsetbootreason).
+Sets the boot mode.
+See [`GBL_EFI_AB_SLOT_PROTOCOL.SetBootMode()`][set_boot_mode].
 
 **Flush**
 
@@ -494,6 +504,7 @@ EFI_STATUS
     IN GBL_EFI_AB_SLOT_PROTOCOL* This,
 );
 ```
+
 ### Parameters
 
 *This*
@@ -550,10 +561,12 @@ instance.
 
 In particular, all slots should have the following fields cleared and set to
 device-specific defaults:
+
 * *Priority*
 * *Tries*
 
 and have the following fields set to `0`:
+
 * *UnbootableReason*
 * *Successful*
 
@@ -567,42 +580,32 @@ This may change the next target boot slot.
 | `EFI_INVALID_PARAMETER` | *This* is `NULL` or improperly aligned.                |
 | `EFI_ACCESS_DENIED`     | Device policy prohibited resetting boot slot metadata. |
 
-## `GBL_EFI_AB_SLOT_PROTOCOL.GetBootReason()`
+## `GBL_EFI_AB_SLOT_PROTOCOL.GetBootMode()`
 
 ### Summary
 
-Gets the current boot reason and subreason.
+Gets the current boot mode.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_AB_SLOT_GET_BOOT_REASON)(
+(EFIAPI * GBL_EFI_AB_SLOT_GET_BOOT_MODE)(
     IN GBL_EFI_AB_SLOT_PROTOCOL* This,
-    OUT UINT32*                  Reason,
-    IN OUT UINTN*                SubreasonLength;
-    OUT UINT8*                   Subreason;
+    OUT UINT32*                  Mode,
 );
 ```
 
-### Related Definitions
+### Related Definitions {#gbl_efi_ab_slot_boot_mode_definitions}
 
 ```c
-typedef enum _GBL_EFI_AB_SLOT_BOOT_REASON {
-    EMPTY = 0,
-    UNKNOWN = 1,
-    WATCHDOG = 14,
-    KERNEL_PANIC = 15,
-    RECOVERY = 3,
-    BOOTLOADER = 55,
-    COLD = 56,
-    HARD = 57,
-    WARM = 58,
-    SHUTDOWN = 59,
-    REBOOT = 18,
-    FASTBOOTD = 196,
-} GBL_EFI_AB_SLOT_BOOT_REASON;
+typedef enum _GBL_EFI_AB_SLOT_BOOT_MODE {
+    NORMAL = 0,
+    RECOVERY,
+    FASTBOOTD,
+    BOOTLOADER,
+} GBL_EFI_BOOT_MODE;
 ```
 
 ### Parameters
@@ -612,58 +615,73 @@ typedef enum _GBL_EFI_AB_SLOT_BOOT_REASON {
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
 
-*Reason*
+*Mode*
 
-On exit, the boot reason code. See [Related Definitions](#related-definitions-2)
-for the list of valid codes.
-
-*SubreasonLength*
-
-On entry, the length of *Subreason* in bytes.
-On exit, the length of the UTF-8 encoded string pointed to by *Subreason*,
-ignoring any Null-terminator.
-
-*Subreason*
-
-On exit, the boot subreason as a UTF-8 encoded, Null-terminated string.
+On exit, the boot mode code. See
+[related definitions](#gbl_efi_ab_slot_boot_mode_definitions) for the list of
+valid codes.
 
 ### Description
 
-The boot reason is an Android mechanism for communicating between the running
-system and the bootloader. For example, if the boot reason is 'recovery', the
-bootloader should load the recovery RAM disk and command line. This information
-is stored in a device specific location and format.
+The boot mode is an Android mechanism for communicating between the running
+system and the bootloader to determine a boot target. GBL calls this method
+strictly once per boot to obtain current boot mode and handle it following:
 
-**Note:** The boot reason should ONLY be determined by checking persistent storage.
-In particular, if a device supports [`GBL_EFI_FASTBOOT_PROTOCOL`](./gbl_efi_fastboot_protocol.md),
-the return value of `GBL_EFI_FASTBOOT_PROTOCOL.ShouldStopInFastboot()` should NOT
-affect whether the boot reason returned by `GetBootReason()` is `BOOTLOADER`.
+| Mode         | GBL Semantics                                     | Bootconfig `androidboot.mode` |
+|:-------------|:--------------------------------------------------|:------------------------------|
+| `NORMAL`     | Boots into Android userspace.                     | `normal`                      |
+| `RECOVERY`   | Boots into Android recovery.                      | `recovery`                    |
+| `FASTBOOTD`  | Boots into Android recovery to start `fastbootd`. | `recovery`                    |
+| `BOOTLOADER` | Starts GBL fastboot.                              | None                          |
+
+Related configuration:
+
+1. The `androidboot.mode` bootconfig property is used to communicate the current
+   mode to Android userspace. It's provided by GBL based on the values from the
+   table above but can be overridden by the firmware using
+   [GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupBootConfig][fixup_bootconfig]
+   with the `:=` bootconfig operator.
+
+2. `androidboot.reason` is an optional bootconfig property
+   [used][bootreason_doc] to pass additional context to help userspace determine
+   the reason device was booted or rebooted. It is not provided by GBL, but can
+   be set by the firmware using
+   [GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupBootConfig][fixup_bootconfig].
+
+This function may be called multiple times during a single GBL boot session. The
+implementation must guarantee that it returns the same value each time, unless
+the boot mode has been explicitly changed by GBL via
+[`SetBootMode`](set_boot_mode).
+
+**Note:** The boot mode should ONLY be determined by checking persistent
+storage. In particular, if a device supports
+[`GBL_EFI_FASTBOOT_PROTOCOL`](./gbl_efi_fastboot_protocol.md), the return value
+of `GBL_EFI_FASTBOOT_PROTOCOL.ShouldStopInFastboot()` — which checks for
+user-activated physical hardware triggers (e.g. holding down a button) — should
+NOT affect whether the boot mode returned by [`GetBootMode()`][get_boot_mode]
+is `BOOTLOADER`.
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                                                                                                                   |
-|:------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `EFI_SUCCESS`           | The call completed successfully.                                                                                                                            |
-| `EFI_INVALID_PARAMETER` | One of *This*, *Reason*, *SubreasonLength*, or *Subreason* is `NULL` or improperly aligned.                                                                 |
-| `EFI_BUFFER_TOO_SMALL`  | *Subreason* is too small to store the serialized subreason string. The value of *SubreasonLength* is modified to contain the minimum necessary buffer size. |
-| `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions.                                               |
+| Return Code             | Semantics                                                                                                     |
+|:------------------------|:--------------------------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`           | The call completed successfully.                                                                              |
+| `EFI_INVALID_PARAMETER` | One of *This*, *Mode*, is `NULL`, improperly aligned, or has unexpected value.                                |
 
-## `GBL_EFI_AB_SLOT_PROTOCOL.SetBootReason()`
+## `GBL_EFI_AB_SLOT_PROTOCOL.SetBootMode()`
 
 ### Summary
 
-Sets the current boot reason.
+Sets the current boot mode.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_AB_SLOT_SET_BOOT_REASON)(
+(EFIAPI * GBL_EFI_AB_SLOT_SET_BOOT_MODE)(
     IN GBL_EFI_AB_SLOT_PROTOCOL* This,
-    IN UINT32                    Reason,
-    IN UINTN                     SubreasonLength,
-    IN UINT8*                    Subreason,
+    IN UINT32                    Mode,
 );
 ```
 
@@ -674,35 +692,29 @@ EFI_STATUS
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
 
-*Reason*
+*Mode*
 
-The desired boot reason to set. See [here](#related-definitions-2) for the list
-of valid boot reasons.
-
-*SubreasonLength*
-
-The length of the *Subreason* string.
-
-*Subreason*
-
-The desired boot subreason as a UTF-8 encoded, Null-terminated string.
+The desired boot mode to set. See
+[related definitions](#gbl_efi_ab_slot_boot_mode_definitions) for the list of
+valid boot modes.
 
 ### Description
 
-Sets the Android boot reason and subreason.
-This is usually used by the bootloader to clear the boot reason.
-See [`GetBootReason()`](#gbl_efi_ab_slot_protocolgetbootreason) for more
-information about boot reasons.
+Sets the Android boot mode. See [`GetBootMode()`][get_boot_mode] for more
+information.
+
+The implementation must guarantee that a following[`GetBootMode()`][get_boot_mode] call returns the previously set value, even
+after a warm reset, so it must be persisted.
+
+Used by GBL's fastboot implementation to handle `fastboot reboot <mode>` like
+commands.
 
 ### Status Codes Returned
 
 | Return Code             | Semantics                                                                               |
 |:------------------------|:----------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                                                        |
-| `EFI_INVALID_PARAMETER` | One of *This*, *Reason*, or *Subreason* is `NULL` or improperly aligned.                |
-| `EFI_INVALID_PARAMETER` | *Reason* is not a valid reason code or *Subreason* is not a valid UTF-8 encoded string. |
-| `EFI_UNSUPPORTED`       | The platform does not support setting the boot reason.                                  |
-| `EFI_BAD_BUFFER_SIZE`   | *Subreason* is too large  to be written to persistent storage.                          |
+| `EFI_INVALID_PARAMETER` | One of *This* or *Mode* is `NULL`, improperly aligned, or has unexpected value.         |
 
 ## `GBL_EFI_AB_SLOT_PROTOCOL.Flush()`
 
@@ -745,3 +757,9 @@ as a no-op.
 |:-------------------|:----------------------------------------------------------|
 | `EFI_SUCCESS`      | The call completed successfully.                          |
 | `EFI_DEVICE_ERROR` | The device reported a write error during synchronization. |
+
+[set_boot_mode]: #gbl_efi_ab_slot_protocolsetbootmode
+[get_boot_mode]: #gbl_efi_ab_slot_protocolgetbootmode
+[bootreason_doc]: https://source.android.com/docs/core/architecture/bootloader/boot-reason
+[fixup_bootconfig]: ./gbl_os_configuration_protocol.md#FixupBootConfig
+[bcb]: https://android.googlesource.com/platform/bootable/recovery/+/main/bootloader_message/include/bootloader_message/bootloader_message.h
