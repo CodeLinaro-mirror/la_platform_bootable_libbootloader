@@ -26,6 +26,23 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
+aarch64_asm_sources = [
+    "gen/bcm/sha1-armv8-win.S",
+    "gen/bcm/sha256-armv8-win.S",
+    "gen/bcm/sha512-armv8-win.S",
+    "crypto/cpu_aarch64_sysreg.cc",
+    "@gbl//libboringssl:crypto.cpp",
+]
+
+x86_64_asm_sources = [
+    # TODO(b/425395210): define minimum extension support, fix x86_64 assembly build
+    # "gen/bcm/sha1-x86_64-win.asm",
+    # "gen/bcm/sha256-x86_64-win.asm",
+    # "gen/bcm/sha512-x86_64-win.asm",
+]
+
+riscv64_asm_sources = []
+
 crypto_sources = [
     "@gbl//libboringssl:bcm.cpp",
     "crypto/sha/sha1.cc",
@@ -35,33 +52,63 @@ crypto_sources = [
     "crypto/thread_none.cc",
 ]
 
+aarch64_flags = [
+    "-DOPENSSL_AARCH64",
+]
+
+x86_64_flags = [
+    # TODO(b/425395210): define minimum extension support.
+    "-DOPENSSL_X86_64",
+    "-DOPENSSL_NO_ASM",
+]
+
+riscv64_flags = [
+    "-DOPENSSL_NO_ASM",
+]
+
 cc_library(
     name = "libcrypto_c_baremetal",
-    srcs = crypto_sources,
+    srcs = crypto_sources + select(
+        {
+            "@platforms//cpu:aarch64": aarch64_asm_sources,
+            "@platforms//cpu:x86_64": x86_64_asm_sources,
+            "@platforms//cpu:riscv64": riscv64_asm_sources,
+            "//conditions:default": [],
+        },
+    ),
     hdrs = crypto_internal_headers + crypto_headers + bcm_internal_headers,
     copts = [
         "-Werror",
         "-Wno-unused-parameter",
+        "-Wno-unused-command-line-argument",
         "-Wno-error=format",
         "-Xclang -target-feature",
         "-Xclang -sve",
         "-fvisibility=hidden",
         "-fno-lto",
         "-DOPENSSL_SMALL",
-        "-DOPENSSL_NO_ASM",
         "-DANDROID_BAREMETAL",
         "-DBORINGSSL_IMPLEMENTATION",
         "-DBORINGSSL_SHARED_LIBRARY",
         "-DBORINGSSL_NO_STATIC_INITIALIZER",
-    ],
+    ] + select(
+        {
+            "@platforms//cpu:aarch64": aarch64_flags,
+            "@platforms//cpu:x86_64": x86_64_flags,
+            "@platforms//cpu:riscv64": riscv64_flags,
+            "//conditions:default": [
+                "-DOPENSSL_NO_ASM",
+            ],
+        },
+    ),
     cxxopts = [
         "-Wall",
         "-Werror",
         "-std=c++17",
     ],
     includes = [
+        "crypto",
         "include",
-        "src/include",
     ],
     deps = [
         "@gbl//libc:headers",
