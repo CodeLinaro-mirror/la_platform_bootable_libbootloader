@@ -67,6 +67,8 @@
 //! be implemented manually for new protocols or if users want to define a
 //! different Rust API to wrap an existing protocol.
 
+pub mod block_io;
+
 use crate::Identified;
 
 /// A UEFI protocol client.
@@ -81,7 +83,6 @@ use crate::Identified;
 /// 3. Make calls on the [Client] API
 /// 4. Drop the [Client]
 /// 5. Close the protocol
-#[allow(dead_code)] // .0 is test-only for now, will be used shortly.
 pub struct Client<C: 'static + Identified>(&'static mut C);
 
 impl<C: 'static + Identified> Client<C> {
@@ -220,7 +221,6 @@ impl<'a, C: 'a + Identified, R> Provider<'a, C, R> {
     ///
     /// Most commonly this condition will be satisfied by using the first
     /// argument of a UEFI protocol function, which is the C interface pointer.
-    #[cfg(test)] // Test-only for now, will be used elsewhere shortly.
     pub(crate) unsafe fn to_rust(this: *mut C) -> &'a mut R {
         // `repr(C)` lets us cast between the struct and its first item.
         let this = this as *mut Self;
