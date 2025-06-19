@@ -54,6 +54,8 @@ crypto_sources = [
 
 aarch64_flags = [
     "-DOPENSSL_AARCH64",
+    "-Xclang -target-feature",
+    "-Xclang -sve",
 ]
 
 x86_64_flags = [
@@ -82,8 +84,6 @@ cc_library(
         "-Wno-unused-parameter",
         "-Wno-unused-command-line-argument",
         "-Wno-error=format",
-        "-Xclang -target-feature",
-        "-Xclang -sve",
         "-fvisibility=hidden",
         "-fno-lto",
         "-DOPENSSL_SMALL",

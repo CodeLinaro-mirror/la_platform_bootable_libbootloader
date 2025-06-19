@@ -329,6 +329,7 @@ gbl_clang_cc_toolchain(
     builtin_includes = builtin_includes_uefi_common,
     cc_flags = cc_flags_uefi_common + [
         "-mbranch-protection=standard",
+        "-march=armv8-a",
     ],
     ld_flags = uefi_ld_flags_common,
     target_cpu = "aarch64",
@@ -659,6 +660,8 @@ rust_toolchain(
     #
     #   1. "relocation-model" config entry changed from "static" to "pic".
     #   2. Added "position-independent-executables": true.
+    #   3. Added "os": "none" config. Otherwise bazel uses the wrong library naming convention
+    #      during linking.
     #
     # The original spec can be obtained by:
     #
@@ -669,21 +672,28 @@ rust_toolchain(
                     "arch": "riscv64",
                     "code-model": "medium",
                     "cpu": "generic-rv64",
+                    "crt-objects-fallback": "false",
                     "data-layout": "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128",
                     "eh-frame-header": false,
                     "emit-debug-gdb-scripts": false,
-                    "features": "+m,+a,+f,+d,+c",
-                    "is-builtin": false,
+                    "features": "+m,+a,+f,+d,+c,+zicsr,+zifencei",
                     "linker": "rust-lld",
-                    "linker-flavor": "ld.lld",
+                    "linker-flavor": "gnu-lld",
                     "llvm-abiname": "lp64d",
-                    "llvm-target": "riscv64-unknown-linux",
+                    "llvm-target": "riscv64",
                     "max-atomic-width": 64,
                     "os": "none",
+                    "metadata": {
+                        "description": "Bare RISC-V (RV64IMAFDC ISA)",
+                        "host_tools": false,
+                        "std": false,
+                        "tier": 2
+                    },
                     "panic-strategy": "abort",
                     "relocation-model": "pic",
                     "position-independent-executables": true,
                     "supported-sanitizers": [
+                        "shadow-call-stack",
                         "kernel-address"
                     ],
                     "target-pointer-width": "64"
