@@ -66,24 +66,56 @@
 //! This will be provided for protocols supported by this library, but can also
 //! be implemented manually for new protocols or if users want to define a
 //! different Rust API to wrap an existing protocol.
+//!
+//! # Ownership
+//!
+//! In UEFI, protocols can be opened by multiple clients. For Rust, this means
+//! that we must use non-mutable references to avoid violating single-owner
+//! mutability requirements. If a protocol backend needs to modify state, it
+//! must use interior mutability to safely do so.
+//!
+//! For [Client]s, this means that the protocol methods all take a const
+//! `&self`, but may still change internal state. For example, Block I/O
+//! Protocol calls to read/write may end up modifying the associated `Media`
+//! state. Ensuring safe shared access is normally the responsibility of the
+//! protocol backend, whether implemented in Rust or C, though there are a
+//! few exceptions. See [Client] docs for details.
+//!
+//! For this library's [Provider] backend, the [Provider] documentation has
+//! details on how to safely meet these requirements.
 
 pub mod block_io;
 
 use crate::Identified;
+use core::{marker::PhantomPinned, pin::Pin};
 
 /// A UEFI protocol client.
 ///
 /// This wraps the protocol C struct and exposes the Rust API, so that the
 /// protocol can be used with as little unsafe code as possible.
 ///
-/// Usage:
+/// # Ownership and concurrency
+///
+/// In most cases it's the protocol implementation's responsibility to ensure
+/// proper ownership and concurrency protection to protect against data races,
+/// but when a protocol struct has a raw pointer to mutable data, the backend
+/// can't know when this data is being accessed.
+///
+/// In these cases, to ensure safe usage the client must protect against data
+/// races itself. These functions will be marked `unsafe` with guidance on how
+/// to properly access the data; in UEFI environments this generally means
+/// raising the TPL to the protocol's maximum supported level according to the
+/// [spec](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#tpl-restrictions)
+/// which ensures no other client can concurrently modify the data.
+///
+/// # Usage
 ///
 /// 1. Open a protocol to get the C struct
 /// 2. Call [Client::new] to wrap the C struct
 /// 3. Make calls on the [Client] API
 /// 4. Drop the [Client]
 /// 5. Close the protocol
-pub struct Client<C: 'static + Identified>(&'static mut C);
+pub struct Client<C: 'static + Identified>(&'static C);
 
 impl<C: 'static + Identified> Client<C> {
     /// Creates a new protocol client.
@@ -100,15 +132,16 @@ impl<C: 'static + Identified> Client<C> {
     ///
     /// * `c_interface` must be a valid object adhering to the UEFI spec
     /// * `c_interface` must outlive the returned [Client]
-    /// * the caller must pass ownership of `c_interface` and not retain a copy
     ///
-    /// In a UEFI application, this means the returned [Client] must be dropped
-    /// before calling `CloseProtocol()` or `ExitBootServices()`
-    pub unsafe fn new(c_interface: *mut C) -> Self {
-        // SAFETY:
-        // * function safety requires a valid `c_interface` which outlives us
-        // * function safety requires we own the only copy
-        let c_interface = unsafe { c_interface.as_mut() }.unwrap();
+    /// In UEFI environments, this means the returned [Client] must be dropped
+    /// before calling `CloseProtocol()` or `ExitBootServices()`.
+    ///
+    /// Additionally, in UEFI the caller must only use the returned [Client]
+    /// within the protocol's
+    /// [supported TPL range](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#tpl-restrictions)
+    pub unsafe fn new(c_interface: *const C) -> Self {
+        // SAFETY: function safety requires a valid pointer which outlives us.
+        let c_interface = unsafe { c_interface.as_ref() }.unwrap();
         Self(c_interface)
     }
 }
@@ -118,7 +151,80 @@ impl<C: 'static + Identified> Client<C> {
 /// This wraps the Rust API and exposes the protocol C struct, so that calls on
 /// the struct route back to the Rust implementation.
 ///
-/// Usage:
+/// # Ownership and concurrency
+///
+/// In UEFI, protocols can be opened by multiple clients, so we use interior
+/// mutability techniques if any state needs to be changed in a protocol call.
+///
+/// UEFI also supports limited concurrency in the form of
+/// [task priority levels (TPLs)](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#event-timer-and-task-priority-services).
+/// Higher priority levels will interrupt lower levels, which leads to a few
+/// complications:
+///
+/// * There is no priority inversion support, which means something like a
+///   standard mutex will not work here; if lower-priority code holds a mutex
+///   when higher-priority code tries to grab it, the system will deadlock
+///
+/// * Rust `Cell`-type classes are not thread-safe, so could cause data races
+///   and undefined behavior if used directly from multiple TPLs
+///
+/// Each protocol has unique requirements, but a general approach might look
+/// like:
+///
+/// ```
+/// use core::cell::Cell;
+/// use efi_types::status::{EfiError, EfiResult};
+///
+/// // A simple protocol API.
+/// trait FooProtocol {
+///     // Saves the given `arg` in the protocol state.
+///     fn save_state(&self, arg: u32) -> EfiResult<()>;
+/// }
+///
+/// // The protocol provider backend.
+/// struct FooProvider {
+///     state: Cell<u32>
+/// }
+///
+/// // We need some way to raise and restore TPL. Up to the implementation
+/// // what this looks like.
+/// fn raise_tpl(level: usize) {}
+/// fn restore_tpl() {}
+///
+/// // The maximum allowed TPL for this protocol.
+/// const MAX_FOO_PROTOCOL_TPL: usize = 8;
+///
+/// impl FooProtocol for FooProvider {
+///     fn save_state(&self, arg: u32) -> EfiResult<()> {
+///         // 1. Perform any non-state-dependent operations first outside of the
+///         //    critical section, e.g. argument validation.
+///         if (arg > 100) {
+///             return Err(EfiError::InvalidParameter);
+///         }
+///
+///         // 2. Enter the critical section by raising the TPL to the maximum
+///         //    supported level for this protocol.
+///         //
+///         //    Depending on the firmware implementation, you may also need
+///         //    additional guards here, e.g. if there is threading internally
+///         //    this may also need to lock a mutex, but the TPL should be
+///         //    updated first to prevent deadlock.
+///         raise_tpl(MAX_FOO_PROTOCOL_TPL);
+///
+///         // 3. Now it's safe to get mutability on the `Cell`.
+///         self.state.set(arg);
+///
+///         // 4. Restore the TPL to leave the critical section. Ideally this
+///         //    should be handled automatically by returning an object from
+///         //    `raise_tpl()` which restores the TPL on drop.
+///         restore_tpl();
+///
+///         Ok(())
+///     }
+/// }
+/// ```
+///
+/// # Usage
 ///
 /// 1. Implement a Rust protocol trait
 /// 2. Call [Provider::new] to wrap the Rust implementation
@@ -129,16 +235,19 @@ pub struct Provider<'a, C: Identified, R> {
     // This must come first, so that with `repr(C)` we can cast between this
     // `c_interface` pointer and the overall `Provider` pointer.
     c_interface: C,
-    rust_impl: &'a mut R,
+    rust_impl: &'a R,
+    // Clients use our `c_interface` pointer directly, so pinning is critical
+    // to ensure those pointers stay valid.
+    _pin: PhantomPinned,
 }
 
 impl<'a, C: 'a + Identified + BridgeToRust<R>, R> Provider<'a, C, R> {
     /// Creates a new [Provider] backed by the given Rust implementation.
-    pub fn new(rust_impl: &'a mut R) -> Self {
+    pub fn new(rust_impl: &'a R) -> Self {
         // SAFETY: we hold a borrow of `rust_impl` so we know it will not be
         // moved or destroyed while we exist.
         let c_interface = unsafe { C::create_bridge(rust_impl) };
-        Self { c_interface, rust_impl }
+        Self { c_interface, rust_impl, _pin: PhantomPinned }
     }
 }
 
@@ -147,30 +256,9 @@ impl<'a, C: 'a + Identified, R> Provider<'a, C, R> {
     ///
     /// # Arguments
     ///
-    /// * `self`: the [Provider] reference
-    ///
-    /// ## Lifetimes
-    ///
-    /// The `self` borrow lifetime `'a` here is the same as our capture of the
-    /// Rust backend, which means that this function borrows `self` for the
-    /// remainder of its lifetime. The purpose of this is to get compile-time
-    /// enforcement that `self` won't be used or moved after this call:
-    ///
-    /// ```compile_fail
-    /// # use efi_types::{Identified, protocol::Provider};
-    ///
-    /// fn to_ptr_twice<'a, C: 'a + Identified, R>(provider: &'a mut Provider<'a, C, R>) {
-    ///   unsafe { provider.to_ptr() };
-    ///
-    ///   // The second call will fail since `provider` was permanently
-    ///   // borrowed the first time.
-    ///   unsafe { provider.to_ptr() };
-    /// }
-    /// ```
-    ///
-    /// However, this lifetime does not prevent `self` from being dropped,
-    /// so it's still up to the caller to keep it alive while the pointer
-    /// exists. See the safety docs for more details.
+    /// * `self`: a pinned reference to `self`. The pin is critical for safe
+    ///           functionality so that the pointer given to clients stays
+    ///           valid and can be used to route calls back into `self`.
     ///
     /// # Returns
     ///
@@ -178,59 +266,45 @@ impl<'a, C: 'a + Identified, R> Provider<'a, C, R> {
     /// handed out to clients. When clients make C calls on this struct, it
     /// will automatically route back into the Rust backing implementation.
     ///
+    /// The returned pointer is mutable because the UEFI C interface requires
+    /// it, but protocol pointers are shared and clients are not allowed to
+    /// write to them directly which we represent in Rust as a const ref with
+    /// interior mutability.
+    ///
     /// # Safety
     ///
-    /// The returned pointer must be treated as a mutable borrow of `self`.
-    /// In particular:
+    /// `self` must outlive the returned pointer.
     ///
-    /// * `self` must outlive the returned pointer
-    /// * there must be only one copy of the pointer in use at a time
+    /// Any client calling into the returned pointer must also adhere to the
+    /// protocol definitions and requirements, such as:
     ///
-    /// For UEFI this means the resulting protocol pointer cannot be given out
-    /// to multiple clients. This is because when a client calls into the
-    /// protocol, it converts back to a `&mut` reference, and having multiple
-    /// `&mut` to the same backing provider would violate the Rust ownership
-    /// model and cause undefined behavior.
+    /// * not writing directly to the pointer (shared non-mutable)
+    /// * only using the pointer within the supported TPL range
     ///
-    /// It is OK to give the pointer to clients at different times, e.g. if the
-    /// first client closes the protocol the pointer can then be handed out to
-    /// another client. But if multiple clients might open a protocol
-    /// concurrently, there must be a unique provider object for each client
-    /// (though the providers may potentially then use interior mutability or
-    /// synchronization techniques to share a common backend). If this becomes
-    /// burdensome, it might be possible to integrate interior mutability into
-    /// this library, but for now we're keeping it simple.
-    ///
-    /// Lastly, this also requires any client calling into the returned pointer
-    /// to adhere to the protocol definitions and requirements. Clients using
-    /// this Rust library to call into the protocols have pretty strong safety
-    /// guarantees, with the only unsafe code being the Rust <-> C <-> Rust
-    /// bridge layer. Other clients, particulary those written in C, could cause
-    /// undefined behavior if they violate the protocol requirements.
-    pub unsafe fn to_ptr(&'a mut self) -> *mut C {
-        &mut self.c_interface as *mut C
+    /// This library's [Client] classes enforce proper usage, but other clients,
+    /// particulary those written in C, could cause undefined behavior if they
+    /// violate the protocol requirements.
+    pub unsafe fn to_ptr(self: Pin<&Self>) -> *mut C {
+        &self.c_interface as *const C as *mut C
     }
 
     /// Converts the raw C interface pointer back to our Rust implementation.
     ///
     /// # Safety
     ///
-    /// `this` must be the C interface pointer returned by [to_ptr()], which
-    /// guarantees by its safety requirements that the object will exist for
-    /// `'a` and we have exclusive access to it.
-    ///
-    /// Most commonly this condition will be satisfied by using the first
-    /// argument of a UEFI protocol function, which is the C interface pointer.
-    pub(crate) unsafe fn to_rust(this: *mut C) -> &'a mut R {
+    /// * `this` must be the C interface pointer returned by [to_ptr()]
+    ///   * most commonly this condition will be satisfied by using the first
+    ///     argument of a UEFI protocol function
+    /// * all usage of the returned `Self` must properly protect shared data,
+    ///   e.g. via the techniques described in the [Protocol] struct docs
+    pub(crate) unsafe fn to_rust(this: *const C) -> &'a R {
         // `repr(C)` lets us cast between the struct and its first item.
-        let this = this as *mut Self;
+        let this = this as *const Self;
         // SAFETY:
-        // Function safety requires `this` is the `to_ptr()` pointer. By
-        // `to_ptr()` safety docs and implementation, we know:
-        // * `this` points to a valid non-null `Provider`
-        // * `this` represents exclusive access of the `Provider`, so we can
-        //   safety convert it to `&mut`
-        unsafe { this.as_mut() }.unwrap().rust_impl
+        // * function safety requires `this` is the `to_ptr()` pointer
+        // * by `to_ptr()` safety docs and implementation, we know `this` points
+        //   to a valid non-null `Self` which lives for at least `'a`
+        unsafe { this.as_ref() }.unwrap().rust_impl
     }
 }
 
@@ -262,7 +336,7 @@ impl<'a, C: 'a + Identified, R> Provider<'a, C, R> {
 ///
 /// // The corresponding Rust API.
 /// trait FooRust {
-///   fn data(&mut self) -> &mut [u8];
+///   fn data(&self) -> &[u8];
 /// }
 ///
 /// struct FooImpl {
@@ -276,8 +350,8 @@ impl<'a, C: 'a + Identified, R> Provider<'a, C, R> {
 /// }
 ///
 /// impl FooRust for FooImpl {
-///   fn data(&mut self) -> &mut [u8] {
-///     &mut self.data
+///   fn data(&self) -> &[u8] {
+///     &self.data
 ///   }
 /// }
 ///
@@ -285,8 +359,8 @@ impl<'a, C: 'a + Identified, R> Provider<'a, C, R> {
 /// // is guaranteed to stay valid an unmoved while the bridge exists, and the
 /// // data lives inside `rust_impl`.
 /// unsafe impl BridgeToRust<FooImpl> for FooC {
-///   unsafe fn create_bridge(rust_impl: &mut FooImpl) -> Self {
-///     Self { data: rust_impl.data().as_mut_ptr() as *mut _ }
+///   unsafe fn create_bridge(rust_impl: &FooImpl) -> Self {
+///     Self { data: rust_impl.data().as_ptr() as *mut _ }
 ///   }
 /// }
 /// ```
@@ -302,7 +376,7 @@ pub unsafe trait BridgeToRust<R> {
     /// This function may create pointers from `self` into `rust_impl`, so to
     /// ensure those pointers stay valid, `rust_impl` must remain valid and
     /// unmoved until `self` is dropped.
-    unsafe fn create_bridge(rust_impl: &mut R) -> Self;
+    unsafe fn create_bridge(rust_impl: &R) -> Self;
 }
 
 #[cfg(test)]
@@ -313,7 +387,7 @@ pub(crate) mod test {
         status::{EfiError, EfiResult},
     };
     use mockall::automock;
-    use std::{ffi::c_void, marker::PhantomData, ops::Range, slice};
+    use std::{ffi::c_void, ops::Range, slice};
 
     /// Returns a buffer pointer ranges.
     ///
@@ -401,18 +475,18 @@ pub(crate) mod test {
     #[automock]
     unsafe trait RustInterface {
         /// Returns `value`.
-        fn value(&mut self) -> u64;
+        fn value(&self) -> u64;
 
         /// Returns `external_data` as a const ref.
         // The explicit lifetimes are required for `automock`, if we try to
         // elide them it gives a compile error.
-        fn external_data<'a>(&'a mut self) -> EfiResult<&'a [u8; 8]>;
+        fn external_data<'a>(&'a self) -> EfiResult<&'a [u8; 8]>;
 
         /// Rust API for `send_buffer`.
-        fn send_buffer(&mut self, buffer: &[u8]) -> EfiResult<()>;
+        fn send_buffer(&self, buffer: &[u8]) -> EfiResult<()>;
 
         /// Rust API for `send_buffer_mut`.
-        fn send_buffer_mut(&mut self, buffer: &mut [u8]) -> EfiResult<()>;
+        fn send_buffer_mut(&self, buffer: &mut [u8]) -> EfiResult<()>;
     }
 
     /// SAFETY:
@@ -420,7 +494,7 @@ pub(crate) mod test {
     /// * [RustInterface] safety guarantees the [external_data] pointer stays
     ///   valid
     unsafe impl<R: RustInterface> BridgeToRust<R> for CInterface {
-        unsafe fn create_bridge(rust_impl: &mut R) -> Self {
+        unsafe fn create_bridge(rust_impl: &R) -> Self {
             CInterface {
                 value: rust_impl.value(),
                 external_data: rust_impl.external_data().unwrap() as *const _ as *mut _,
@@ -461,34 +535,37 @@ pub(crate) mod test {
     ///
     /// SAFETY: the [external_data] returned reference is never invalidated.
     unsafe impl RustInterface for Client<CInterface> {
-        fn value(&mut self) -> u64 {
+        fn value(&self) -> u64 {
             self.0.value
         }
 
-        fn external_data(&mut self) -> EfiResult<&[u8; 8]> {
+        fn external_data(&self) -> EfiResult<&[u8; 8]> {
             // SAFETY:
             // * protocol spec guarantees `external_data` pointer is valid
-            // * by [Client::new] safety, we are currently the sole owner
             let data = unsafe { self.0.external_data.as_ref() };
             Ok(data.unwrap())
         }
 
-        fn send_buffer(&mut self, buffer: &[u8]) -> EfiResult<()> {
+        fn send_buffer(&self, buffer: &[u8]) -> EfiResult<()> {
             let func = self.0.send_buffer.unwrap();
             // SAFETY:
             // * `self.0` is only borrowed for the duration of the call
             // * `buffer` will only be read up to `buffer.len()` and is only
             //   borrowed for the duration of the call
-            unsafe { func(self.0 as *mut _, buffer.len(), buffer.as_ptr() as *const _) }.into()
+            unsafe { func(self.0 as *const _ as *mut _, buffer.len(), buffer.as_ptr() as *const _) }
+                .into()
         }
 
-        fn send_buffer_mut(&mut self, buffer: &mut [u8]) -> EfiResult<()> {
+        fn send_buffer_mut(&self, buffer: &mut [u8]) -> EfiResult<()> {
             let func = self.0.send_buffer_mut.unwrap();
             // SAFETY:
             // * `self.0` is only borrowed for the duration of the call
             // * `buffer` will only be written up to `buffer.len()` and is
             //   only borrowed for the duration of the call
-            unsafe { func(self.0 as *mut _, buffer.len(), buffer.as_mut_ptr() as *mut _) }.into()
+            unsafe {
+                func(self.0 as *const _ as *mut _, buffer.len(), buffer.as_mut_ptr() as *mut _)
+            }
+            .into()
         }
     }
 
@@ -509,49 +586,50 @@ pub(crate) mod test {
     /// This properly handles lifetimes and ownership when we control both the
     /// [Client] and [Provider] Rust objects, which lets us omit some `unsafe`
     /// blocks in each test.
-    pub(super) struct TestProtocolTunnel<'a, C: 'static + Identified, R> {
+    pub(super) struct TestProtocolTunnel<'a, C: 'static + Identified + BridgeToRust<R>, R> {
+        // Struct fields are dropped in declaration order
+        // (https://doc.rust-lang.org/reference/destructors.html), so `client`
+        // must come first so that provider outlives it.
         client: Client<C>,
-        // This provides compile-time enforcement that the backing [Provider]
-        // outlives us. We can't borrow the [Provider] directly because the
-        // `to_ptr()` function borrows it instead.
-        _phantom_data: PhantomData<&'a mut Provider<'a, C, R>>,
+        // The provider is called through the raw C interface, but the
+        // compiler doesn't know this so throws a dead-code error unless
+        // we give it the underscore prefix.
+        _provider: Pin<Box<Provider<'a, C, R>>>,
     }
 
-    impl<'a, C: Identified, R> TestProtocolTunnel<'a, C, R> {
-        pub(super) fn new(provider: &'a mut Provider<'a, C, R>) -> Self {
-            // SAFETY:
-            // * `provider` will outlive us due to our `_phantom_data` lifetime
-            // * `client` becomes the sole owner of the returned pointer
-            let c_interface = unsafe { provider.to_ptr() };
+    impl<'a, C: Identified + BridgeToRust<R>, R> TestProtocolTunnel<'a, C, R> {
+        pub(super) fn new(backend: &'a R) -> Self {
+            let provider = Box::pin(Provider::<'a, C, R>::new(backend));
+
+            // SAFETY: `provider` outlives `c_interface`.
+            let c_interface = unsafe { provider.as_ref().to_ptr() };
 
             // SAFETY:
             // * `c_interface` points to a valid UEFI protocol interface
-            //   backed by the `provider` implementation
-            // * we give exclusive access to the pointer, no copies exist
+            //   backed by `provider`
+            // * `provider` outlives `client` due to struct declaration order
             let client = unsafe { Client::new(c_interface) };
 
-            Self { client, _phantom_data: PhantomData }
+            Self { client, _provider: provider }
         }
 
-        pub(super) fn client(&mut self) -> &mut Client<C> {
-            &mut self.client
+        pub(super) fn client(&self) -> &Client<C> {
+            &self.client
         }
     }
 
     #[test]
     fn value_success() {
-        let mut mock = create_mock();
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let mock = create_mock();
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().value(), VALUE);
     }
 
     #[test]
     fn external_data_success() {
-        let mut mock = create_mock();
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let mock = create_mock();
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().external_data(), Ok(&EXTERNAL_DATA));
     }
@@ -567,8 +645,7 @@ pub(crate) mod test {
             assert_eq!(buffer_range(buffer), test_buffer_range);
             Ok(())
         });
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().send_buffer(test_buffer), Ok(()));
     }
@@ -577,8 +654,7 @@ pub(crate) mod test {
     fn send_buffer_failure() {
         let mut mock = create_mock();
         mock.expect_send_buffer().returning(|_| Err(EfiError::NoMedia));
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().send_buffer(&[]), Err(EfiError::NoMedia));
     }
@@ -596,8 +672,7 @@ pub(crate) mod test {
             buffer.fill(0);
             Ok(())
         });
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().send_buffer_mut(test_buffer), Ok(()));
         assert_eq!(test_buffer, &[0, 0, 0, 0, 0, 0, 0, 0]);
@@ -607,8 +682,7 @@ pub(crate) mod test {
     fn send_buffer_mut_failure() {
         let mut mock = create_mock();
         mock.expect_send_buffer_mut().returning(|_| Err(EfiError::NoMedia));
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().send_buffer_mut(&mut []), Err(EfiError::NoMedia));
     }
