@@ -31,16 +31,22 @@
 
 #include "types.h"
 
-typedef struct GblEfiFastbootUsbProtocol {
+typedef enum GBL_EFI_FASTBOOT_RX_MODE {
+  SINGLE_PACKET = 0,
+  FIXED_LENGTH,
+} GblEfiFastbootRxMode;
+
+typedef struct GblEfiFastbootTransportProtocol {
   uint64_t revision;
-  EfiStatus (*fastboot_usb_interface_start)(struct GblEfiFastbootUsbProtocol* self,
-                                            size_t* max_packet_size);
-  EfiStatus (*fastboot_usb_interface_stop)(struct GblEfiFastbootUsbProtocol* self);
-  EfiStatus (*fastboot_usb_receive)(struct GblEfiFastbootUsbProtocol* self,
-                                    size_t* buffer_size, void* buffer);
-  EfiStatus (*fastboot_usb_send)(struct GblEfiFastbootUsbProtocol* self,
-                                 size_t* buffer_size, const void* buffer);
-  EfiEvent wait_for_send_completion;
-} GblEfiFastbootUsbProtocol;
+  const char *description;
+  EfiStatus (*start)(struct GblEfiFastbootTransportProtocol* self);
+  EfiStatus (*stop)(struct GblEfiFastbootTransportProtocol* self);
+  EfiStatus (*receive)(struct GblEfiFastbootTransportProtocol* self,
+                       size_t* buffer_size, void* buffer,
+                       GblEfiFastbootRxMode mode);
+  EfiStatus (*send)(struct GblEfiFastbootTransportProtocol* self,
+                    size_t* buffer_size, const void* buffer);
+  EfiStatus (*flush)(struct GblEfiFastbootTransportProtocol* self);
+} GblEfiFastbootTransportProtocol;
 
 #endif  //__GBL_EFI_FASTBOOT_USB_H__

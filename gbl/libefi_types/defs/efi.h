@@ -32,7 +32,7 @@
 #include "protocols/gbl_efi_avb_protocol.h"
 #include "protocols/gbl_efi_avf_protocol.h"
 #include "protocols/gbl_efi_fastboot_protocol.h"
-#include "protocols/gbl_efi_fastboot_usb.h"
+#include "protocols/gbl_efi_fastboot_transport.h"
 #include "protocols/gbl_efi_image_loading_protocol.h"
 #include "protocols/gbl_efi_os_configuration_protocol.h"
 #include "protocols/loaded_image_protocol.h"

@@ -188,13 +188,12 @@ Used to provide an interface for
 * Lock-contingent partition permission information
 * User data erasure
 
-### GblFastbootUsbProtocol
+### GblFastbootTransportProtocol
 
-* [`GBL_EFI_FASTBOOT_USB_PROTOCOL`](./GBL_EFI_FASTBOOT_USB_PROTOCOL.md)
-* optional: enables fastboot over USB
+* [`GblFastbootTransportProtocol`](./gbl_efi_fastboot_transport.md)
+* optional: enables fastboot over platform defined channels such as USB.
 
-Used to provide fastboot over USB. This can be enabled by itself, or in
-addition to fastboot over TCP.
+This can be enabled by itself, or in addition to fastboot over TCP.
 
 ### GblOsConfigurationProtocol
 
