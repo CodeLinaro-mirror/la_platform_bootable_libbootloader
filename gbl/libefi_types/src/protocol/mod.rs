@@ -187,7 +187,8 @@ impl<C: 'static + Identified> Client<C> {
 /// }
 ///
 /// // We need some way to raise and restore TPL. Up to the implementation
-/// // what this looks like.
+/// // what this looks like; see `TplScope` for a helper that automatically
+/// // restores the TPL on drop.
 /// fn raise_tpl(level: usize) {}
 /// fn restore_tpl() {}
 ///
@@ -214,9 +215,7 @@ impl<C: 'static + Identified> Client<C> {
 ///         // 3. Now it's safe to get mutability on the `Cell`.
 ///         self.state.set(arg);
 ///
-///         // 4. Restore the TPL to leave the critical section. Ideally this
-///         //    should be handled automatically by returning an object from
-///         //    `raise_tpl()` which restores the TPL on drop.
+///         // 4. Restore the TPL to leave the critical section.
 ///         restore_tpl();
 ///
 ///         Ok(())

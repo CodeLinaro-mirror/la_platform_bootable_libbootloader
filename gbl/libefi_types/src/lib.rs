@@ -34,6 +34,7 @@
 pub mod defs;
 pub mod protocol;
 pub mod status;
+pub mod tpl;
 
 pub use defs::*;
 
