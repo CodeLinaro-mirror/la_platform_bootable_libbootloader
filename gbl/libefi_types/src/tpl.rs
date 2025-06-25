@@ -206,6 +206,94 @@ impl<T: TplControl> Drop for TplScope<T> {
     }
 }
 
+/// A trait to represent objects that can be "locked" by raising the TPL to a
+/// certain level.
+///
+/// This applies to most protocols, which have a maximum TPL level indicated
+/// by the UEFI spec. A few protocols have individual functions with different
+/// maximum TPLs, which cannot be represented by [TplLocked] and need more
+/// fine-grained manual control of the TPL.
+///
+/// # Safety
+///
+/// The assigned `MAX_TPL` must match the UEFI spec for this object.
+pub unsafe trait TplLocked {
+    /// The maximum TPL level supported by this object.
+    const MAX_TPL: EfiTpl;
+
+    /// Executes a function while the TPL is raised to [MAX_TPL].
+    ///
+    /// In UEFI environments, this guarantees that the provided function cannot
+    /// be preempted by other users of this object so that the caller has
+    /// exclusive access.
+    ///
+    /// The `M` const generic value must be set to the maximum possible TPL
+    /// that the calling code will ever execute at. This is a const generic
+    /// rather than an argument because the caller should always know this
+    /// at compile time, and this allows us to provide compile-time checking
+    /// that TPL levels are properly used so that violations become build
+    /// failures rather than runtime panics. For example, this will fail to
+    /// compile:
+    ///
+    /// ```compile_fail
+    /// # use efi_types::{
+    /// #     defs::{EfiBootService, EfiTpl, EFI_TPL_APPLICATION, EFI_TPL_CALLBACK},
+    /// #     tpl::{TplControl, TplLocked},
+    /// # };
+    ///
+    /// struct MyProtocol {}
+    ///
+    /// unsafe impl TplLocked for MyProtocol {
+    ///     // This protocol cannot be used above APPLICATION level.
+    ///     const MAX_TPL: EfiTpl = EFI_TPL_APPLICATION;
+    /// }
+    ///
+    /// // Real code would use an actual `EfiBootService` object, but for
+    /// // simplicity here we just create a zeroed struct.
+    /// let boot_services = EfiBootService::default();
+    /// let protocol = MyProtocol {};
+    ///
+    /// // This call fails to compile, because we're saying that we might be
+    /// // locking from as high as `EFI_TPL_CALLBACK`, but the protocol only
+    /// // supports up to `EFI_TPL_APPLICATION`.
+    /// unsafe { protocol.with_lock::<EFI_TPL_CALLBACK, _>(&boot_services, || {}) }
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `tpl_control`: the [TplControl] object to use
+    /// * `func`: the function to execute while locked
+    ///
+    /// # Returns
+    ///
+    /// The return value of `func`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must not be executing at a higher level than the given `M`,
+    /// or it will cause undefined behavior.
+    ///
+    /// It is safe to further raise the TPL within `func`, but all changes must
+    /// be restored before returning. No other TPL modifications are allowed.
+    unsafe fn with_lock<const M: EfiTpl, R>(
+        &self,
+        tpl_control: impl TplControl,
+        func: impl FnOnce() -> R,
+    ) -> R {
+        const {
+            assert!(M <= Self::MAX_TPL, "The caller's max TPL is too high to call this object");
+        }
+
+        // SAFETY:
+        // * by function safety, current_tpl <= `M`
+        // * we asserted above that `M` <= `MAX_TPL`
+        // * by transitive property, current_tpl <= `MAX_TPL`
+        let _scope = unsafe { TplScope::new(tpl_control, Self::MAX_TPL) };
+
+        func()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -379,5 +467,39 @@ mod test {
             assert_eq!(stack.borrow().get_tpl(), EFI_TPL_CALLBACK);
         }
         assert_eq!(stack.borrow().get_tpl(), EFI_TPL_APPLICATION);
+    }
+
+    struct FakeProtocol {}
+
+    // SAFETY: for our fake protocol we can define any `MAX_TPL` value.
+    unsafe impl TplLocked for FakeProtocol {
+        const MAX_TPL: EfiTpl = EFI_TPL_CALLBACK;
+    }
+
+    impl FakeProtocol {
+        fn get_42(&self) -> u32 {
+            42
+        }
+    }
+
+    #[test]
+    fn tpl_locked() {
+        let fake_protocol = FakeProtocol {};
+        let (stack, mock) = create_tpl_stack_and_mock();
+
+        // SAFETY:
+        // * `TplStack` is currently at `EFI_TPL_APPLICATION`
+        // * we don't change the TPL within the function
+        let ret = unsafe {
+            fake_protocol.with_lock::<EFI_TPL_APPLICATION, _>(&mock, || {
+                // Locking `fake_protocol` should raise the TPL to its max level.
+                assert_eq!(stack.borrow().get_tpl(), FakeProtocol::MAX_TPL);
+
+                // Return values should be propagated by `with_lock()`.
+                fake_protocol.get_42()
+            })
+        };
+        assert_eq!(stack.borrow().get_tpl(), EFI_TPL_APPLICATION);
+        assert_eq!(ret, 42);
     }
 }
