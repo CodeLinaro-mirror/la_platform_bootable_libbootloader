@@ -13,6 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
+ * SPDX-License-Identifier: Apache-2.0 OR BSD-2-Clause-Patent
+ *
+ * You may choose to use or redistribute this file under
+ *  (a) the Apache License, Version 2.0, or
+ *  (b) the BSD 2-Clause Patent license.
+ *
+ * Unless you expressly elect the BSD-2-Clause-Patent terms, the Apache-2.0
+ * terms apply by default.
  */
 
 // This is a custom protocol introduced by GBL.
@@ -67,14 +75,9 @@ typedef struct {
 
 // Warning: API is UNSTABLE
 // Documentation:
-// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
+// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
 typedef struct GblEfiOsConfigurationProtocol {
   uint64_t revision;
-
-  // Generates fixups for the kernel command line built by GBL.
-  EfiStatus (*fixup_kernel_commandline)(
-      struct GblEfiOsConfigurationProtocol* self, const char8_t* command_line,
-      char8_t* fixup, size_t* fixup_buffer_size);
 
   // Generates fixups for the bootconfig built by GBL.
   EfiStatus (*fixup_bootconfig)(struct GblEfiOsConfigurationProtocol* self,

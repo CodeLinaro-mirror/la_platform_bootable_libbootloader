@@ -181,9 +181,11 @@ impl CommandError {
     pub fn to_str(&self) -> &str {
         self.0.to_str()
     }
+}
 
+impl Clone for CommandError {
     /// Clones the error.
-    pub fn clone(&self) -> Self {
+    fn clone(&self) -> Self {
         self.to_str().into()
     }
 }
@@ -354,7 +356,7 @@ pub trait FastbootImplementation {
         &mut self,
         part: &str,
         offset: u64,
-        size: u64,
+        size: u32,
         responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()>;
 
@@ -409,19 +411,23 @@ pub trait FastbootImplementation {
     /// # Args
     ///
     /// * `cmd`: The OEM command string that comes after "oem ".
-    /// * `responder`: An instance of `InfoSender`.
-    /// * `res`: The responder buffer. Upon success, implementation can use the buffer to
-    ///   construct a valid UTF8 string which will be sent as "OKAY<string>"
+    /// * `responder`: An instance of `InfoSender + OkaySender + FailSender`.
+    /// * `res`: A buffer for backend to construct messages. The buffer is guaranteed large enough
+    ///   for a fastboot OKAY/FAIL/INFO message.
     ///
-    /// # Returns
-    ///
-    /// On success, returns the portion of `res` used by the construction of string message.
-    async fn oem<'a>(
+    /// * If backend does not plan to return from the function, or wants to construct custom result
+    ///   message, it should send either a OKAY or FAIL messgae with `responder`, otherwise host
+    ///   may hang waiting for reply.
+    /// * If implementation returns Ok(()) without sending a OKAY message via `responder`,
+    ///   an empty OKAY message will be sent by `process_next_command()`.
+    /// * If implementation returns Err(e) without sending a FAIL message via `responder`,
+    ///   a FAIL message of `e` will be sent.
+    async fn oem(
         &mut self,
         cmd: &str,
-        responder: impl InfoSender,
-        res: &'a mut [u8],
-    ) -> CommandResult<&'a [u8]>;
+        responder: impl InfoSender + OkaySender + FailSender,
+        res: &mut [u8],
+    ) -> CommandResult<()>;
 
     // TODO(b/322540167): Add methods for other commands.
 }
@@ -502,13 +508,30 @@ pub trait OkaySender {
     }
 }
 
+/// Provides an API for sending fastboot FAIL messages.
+pub trait FailSender {
+    /// Sends formatted FAIL message.
+    ///
+    /// # Args:
+    ///
+    /// * `cb`: A closure provided by the caller for constructing the formatted messagae.
+    async fn send_formatted_fail<F: FnOnce(&mut dyn Write)>(self, cb: F) -> Result<()>;
+
+    /// Sends a fastboot FAIL<msg> packet. `Self` is consumed.
+    async fn send_fail(self, msg: &str) -> Result<()>
+    where
+        Self: Sized,
+    {
+        self.send_formatted_fail(|w| write!(w, "{}", msg).unwrap()).await
+    }
+}
 /// `UploadBuilder` provides API for initiating a fastboot upload.
 pub trait UploadBuilder {
     /// Starts the upload.
     ///
     /// In a real fastboot context, the method should send `DATA0xXXXXXXXX` to the remote host to
     /// start the download. An `Uploader` implementation should be returned for uploading payload.
-    async fn initiate_upload(self, data_size: u64) -> Result<impl Uploader>;
+    async fn initiate_upload(self, data_size: u32) -> Result<impl Uploader>;
 }
 
 /// `UploadBuilder` provides API for uploading payload.
@@ -519,6 +542,7 @@ pub trait Uploader {
 
 /// `Responder` implements APIs for fastboot backend to send fastboot messages and uploading data.
 struct Responder<'a, T: Transport> {
+    result_message_sent: bool,
     buffer: [u8; MAX_RESPONSE_SIZE],
     transport: &'a mut T,
     transport_error: Result<()>,
@@ -528,6 +552,7 @@ struct Responder<'a, T: Transport> {
 impl<'a, T: Transport> Responder<'a, T> {
     fn new(transport: &'a mut T) -> Self {
         Self {
+            result_message_sent: false,
             buffer: [0u8; MAX_RESPONSE_SIZE],
             transport,
             transport_error: Ok(()),
@@ -561,7 +586,7 @@ impl<'a, T: Transport> Responder<'a, T> {
     }
 
     /// Sends a fastboot DATA message.
-    async fn send_data_message(&mut self, data_size: u64) -> Result<()> {
+    async fn send_data_message(&mut self, data_size: u32) -> Result<()> {
         self.send_formatted_msg("DATA", |v| write!(v, "{:08x}", data_size).unwrap()).await
     }
 }
@@ -612,14 +637,22 @@ impl<T: Transport> InfoSender for &mut Responder<'_, T> {
 
 impl<T: Transport> OkaySender for &mut Responder<'_, T> {
     async fn send_formatted_okay<F: FnOnce(&mut dyn Write)>(self, cb: F) -> Result<()> {
+        self.result_message_sent = true;
         Ok(self.send_formatted_msg("OKAY", cb).await?)
     }
 }
 
+impl<T: Transport> FailSender for &mut Responder<'_, T> {
+    async fn send_formatted_fail<F: FnOnce(&mut dyn Write)>(self, cb: F) -> Result<()> {
+        self.result_message_sent = true;
+        Ok(self.send_formatted_msg("FAIL", cb).await?)
+    }
+}
+
 impl<'a, T: Transport> UploadBuilder for &mut Responder<'a, T> {
-    async fn initiate_upload(self, data_size: u64) -> Result<impl Uploader> {
+    async fn initiate_upload(self, data_size: u32) -> Result<impl Uploader> {
         self.send_data_message(data_size).await?;
-        self.remaining_upload = data_size;
+        self.remaining_upload = data_size.into();
         Ok(self)
     }
 }
@@ -652,7 +685,7 @@ pub mod test_utils {
     pub struct TestUploadBuilder<'a>(pub &'a mut [u8]);
 
     impl<'a> UploadBuilder for TestUploadBuilder<'a> {
-        async fn initiate_upload(self, _: u64) -> Result<impl Uploader, Error> {
+        async fn initiate_upload(self, _: u32) -> Result<impl Uploader, Error> {
             Ok(TestUploader(0, self.0))
         }
     }
@@ -751,8 +784,11 @@ async fn download(
 ) -> Result<()> {
     let mut resp = Responder::new(transport);
     let total_download_size = match (|| -> CommandResult<usize> {
-        usize::try_from(next_arg_u64(&mut args)?.ok_or("Not enough argument")?)
-            .map_err(|_| "Download size overflow".into())
+        usize::try_from(
+            u32::try_from(next_arg_u64(&mut args)?.ok_or("Not enough argument")?)
+                .map_err(|_| "Download size overflows u32 (can't fit DATA message)")?,
+        )
+        .map_err(|_| "Download size overflow usize".into())
     })() {
         Err(e) => return reply_fail!(resp, "{}", e.to_str()),
         Ok(v) => v,
@@ -766,8 +802,8 @@ async fn download(
 
     // Starts the download
     let download_buffer = &mut download_buffer[..total_download_size];
-    // `total_download_size` is parsed from `next_arg_u64` and thus should fit into u64.
-    resp.send_data_message(u64::try_from(total_download_size).unwrap()).await?;
+    // `total_download_size` already checked to be no more than u32 max.
+    resp.send_data_message(total_download_size.try_into().unwrap()).await?;
     let mut downloaded = 0;
     while downloaded < total_download_size {
         let (_, remains) = &mut download_buffer.split_at_mut(downloaded);
@@ -856,10 +892,11 @@ async fn fetch(
         // Parses backward. Parses size, offset first and treats the remaining string as
         // partition name. This allows ":" in partition name.
         let mut rev = args.clone().rev();
-        let sz = next_arg(&mut rev).ok_or("Missing size")?;
+        let sz_arg = next_arg(&mut rev).ok_or("Missing size")?;
+        let sz = u32::try_from(hex_to_u64(sz_arg)?).map_err(|_| "Size overflows u32")?;
         let off = next_arg(&mut rev).ok_or("Invalid offset")?;
-        let part = &cmd[..cmd.len() - (off.len() + sz.len() + 2)];
-        fb_impl.fetch(part, hex_to_u64(off)?, hex_to_u64(sz)?, &mut resp).await
+        let part = &cmd[..cmd.len() - (off.len() + sz_arg.len() + 2)];
+        fb_impl.fetch(part, hex_to_u64(off)?, sz, &mut resp).await
     }
     .await;
     match resp.remaining_upload > 0 {
@@ -935,10 +972,8 @@ async fn oem(
     let mut oem_out = [0u8; MAX_RESPONSE_SIZE - 4];
     let oem_res = fb_impl.oem(cmd, &mut resp, &mut oem_out[..]).await;
     match oem_res {
-        Ok(msg) => match from_utf8(msg) {
-            Ok(s) => reply_okay!(resp, "{}", s),
-            Err(e) => reply_fail!(resp, "Invalid return string {}", e),
-        },
+        _ if resp.result_message_sent => Ok(()), // Assumes backend has handled the error.
+        Ok(()) => reply_okay!(resp, ""),
         Err(e) => reply_fail!(resp, "{}", e.to_str()),
     }
 }
@@ -1055,6 +1090,11 @@ mod test {
     use core::cmp::min;
     use std::collections::{BTreeMap, VecDeque};
 
+    enum OemResponse {
+        Okay(String),
+        Fail(String),
+    }
+
     #[derive(Default)]
     struct FastbootTest {
         // A mapping from (variable name, argument) to variable value.
@@ -1064,11 +1104,11 @@ mod test {
         // The partition arg from Fastboot erase command
         erase_partition: String,
         // Upload size, batches of data to upload,
-        upload_config: (u64, Vec<Vec<u8>>),
+        upload_config: (u32, Vec<Vec<u8>>),
         // A map from partition name to (upload size override, partition data)
-        fetch_data: BTreeMap<&'static str, (u64, Vec<u8>)>,
-        // result string, INFO strings.
-        oem_output: (String, Vec<String>),
+        fetch_data: BTreeMap<&'static str, (u32, Vec<u8>)>,
+        // OKAY/FAIL messages, INFO messages, result.
+        oem_output: (Option<OemResponse>, Vec<String>, Option<CommandResult<()>>),
         oem_command: String,
         download_buffer: Vec<u8>,
         downloaded_size: usize,
@@ -1138,7 +1178,7 @@ mod test {
             &mut self,
             part: &str,
             offset: u64,
-            size: u64,
+            size: u32,
             responder: impl UploadBuilder + InfoSender,
         ) -> CommandResult<()> {
             let (size_override, data) = self.fetch_data.get(part).ok_or("Not Found")?;
@@ -1171,18 +1211,23 @@ mod test {
             Ok(())
         }
 
-        async fn oem<'b>(
+        async fn oem(
             &mut self,
             cmd: &str,
-            mut responder: impl InfoSender,
-            res: &'b mut [u8],
-        ) -> CommandResult<&'b [u8]> {
-            let (res_str, infos) = &mut self.oem_output;
+            mut responder: impl InfoSender + OkaySender + FailSender,
+            _: &mut [u8],
+        ) -> CommandResult<()> {
+            let (resp, infos, res) = &mut self.oem_output;
             self.oem_command = cmd.into();
             for ele in infos {
                 responder.send_info(ele.as_str()).await?;
             }
-            Ok(snprintf!(res, "{}", *res_str).as_bytes())
+            match resp {
+                Some(OemResponse::Okay(v)) => responder.send_okay(v as _).await.unwrap(),
+                Some(OemResponse::Fail(v)) => responder.send_fail(v as _).await.unwrap(),
+                _ => {}
+            }
+            res.take().unwrap_or(Ok(()))
         }
     }
 
@@ -1455,13 +1500,30 @@ mod test {
     }
 
     #[test]
-    fn test_oem_cmd() {
+    fn test_download_size_overflows_u32() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        let mut transport = TestTransport::new();
+        transport.add_input(b"download:100000000");
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"FAILDownload size overflows u32 (can't fit DATA message)".into(),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_oem_cmd_oem_send_okay_info() {
         let mut fastboot_impl: FastbootTest = Default::default();
         fastboot_impl.download_buffer = vec![0u8; 2048];
         let mut transport = TestTransport::new();
         transport.add_input(b"oem oem-command");
-        fastboot_impl.oem_output =
-            ("oem-return".into(), vec!["oem-info-1".into(), "oem-info-2".into()]);
+        fastboot_impl.oem_output = (
+            Some(OemResponse::Okay("oem-return".into())),
+            vec!["oem-info-1".into(), "oem-info-2".into()],
+            None,
+        );
         let _ = block_on(run(&mut transport, &mut fastboot_impl));
         assert_eq!(fastboot_impl.oem_command, "oem-command");
         assert_eq!(
@@ -1470,6 +1532,68 @@ mod test {
                 b"INFOoem-info-1".into(),
                 b"INFOoem-info-2".into(),
                 b"OKAYoem-return".into(),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_oem_cmd_send_default_okay_info() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        fastboot_impl.download_buffer = vec![0u8; 2048];
+        let mut transport = TestTransport::new();
+        transport.add_input(b"oem oem-command");
+        fastboot_impl.oem_output = (None, vec!["oem-info-1".into(), "oem-info-2".into()], None);
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
+        assert_eq!(fastboot_impl.oem_command, "oem-command");
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"INFOoem-info-1".into(),
+                b"INFOoem-info-2".into(),
+                b"OKAY".into(),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_oem_cmd_oem_send_fail_info() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        fastboot_impl.download_buffer = vec![0u8; 2048];
+        let mut transport = TestTransport::new();
+        transport.add_input(b"oem oem-command");
+        fastboot_impl.oem_output = (
+            Some(OemResponse::Fail("oem-return".into())),
+            vec!["oem-info-1".into(), "oem-info-2".into()],
+            None,
+        );
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
+        assert_eq!(fastboot_impl.oem_command, "oem-command");
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"INFOoem-info-1".into(),
+                b"INFOoem-info-2".into(),
+                b"FAILoem-return".into(),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_oem_cmd_oem_send_default_fail_info() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        fastboot_impl.download_buffer = vec![0u8; 2048];
+        let mut transport = TestTransport::new();
+        transport.add_input(b"oem oem-command");
+        fastboot_impl.oem_output =
+            (None, vec!["oem-info-1".into(), "oem-info-2".into()], Some(Err("error".into())));
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
+        assert_eq!(fastboot_impl.oem_command, "oem-command");
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"INFOoem-info-1".into(),
+                b"INFOoem-info-2".into(),
+                b"FAILerror".into(),
             ])
         );
     }
@@ -1616,8 +1740,22 @@ mod test {
         transport.add_input(b"fetch:boot_a::");
         transport.add_input(b"fetch:boot_a:xxx:400");
         transport.add_input(b"fetch:boot_a:200:xxx");
+        transport.add_input(b"fetch:boot_a:0:100000000"); // u32 overflows
         let _ = block_on(run(&mut transport, &mut fastboot_impl));
-        assert!(transport.out_queue.iter().all(|v| v.starts_with(b"FAIL")));
+        assert_eq!(
+            transport.out_queue,
+            VecDeque::<Vec<u8>>::from([
+                b"FAILMissing arguments".into(),
+                b"FAILNot enough argments".into(),
+                b"FAILNot enough argments".into(),
+                b"FAILNot enough argments".into(),
+                b"FAILInvalid offset".into(),
+                b"FAILMissing size".into(),
+                b"FAILinvalid digit found in string".into(),
+                b"FAILinvalid digit found in string".into(),
+                b"FAILSize overflows u32".into(),
+            ])
+        );
     }
 
     #[test]

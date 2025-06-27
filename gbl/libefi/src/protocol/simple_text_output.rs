@@ -16,7 +16,7 @@
 
 use crate::efi_call;
 use crate::protocol::{Protocol, ProtocolInfo};
-use core::fmt::Write;
+use core::fmt::{Error, Write};
 use efi_types::{char16_t, EfiGuid, EfiSimpleTextOutputProtocol};
 use liberror::Result;
 
@@ -32,12 +32,13 @@ impl ProtocolInfo for SimpleTextOutputProtocol {
 
 impl Protocol<'_, SimpleTextOutputProtocol> {
     /// Wrapper of `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL.OutputString()`
-    pub fn output_string(&self, msg: *mut char16_t) -> Result<()> {
+    pub fn output_string(&self, msg: &mut [char16_t]) -> Result<()> {
         // SAFETY:
         // `self.interface()?` guarantees `self.interface` is non-null and points to a valid object
         // established by `Protocol::new()`.
         // `self.interface` is input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.output_string, self.interface, msg) }
+        // `msg` is for input only and will not be retained.
+        unsafe { efi_call!(self.interface()?.output_string, self.interface, msg.as_mut_ptr()) }
     }
 }
 
@@ -50,11 +51,16 @@ impl Protocol<'_, SimpleTextOutputProtocol> {
 /// ```
 impl Write for Protocol<'_, SimpleTextOutputProtocol> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let mut prev: char = '\0';
         for ch in s.chars() {
             // 2 is enough for encode_utf16(). Add an additional one as NULL.
             let mut buffer = [0u16; 3];
             let char16_msg = ch.encode_utf16(&mut buffer[..]);
-            self.output_string(char16_msg.as_mut_ptr()).map_err(|_| core::fmt::Error {})?;
+            if ch == '\n' && prev != '\r' {
+                self.output_string(&mut [b'\r' as _, 0u16]).map_err(|_| Error {})?;
+            }
+            self.output_string(char16_msg).map_err(|_| Error {})?;
+            prev = ch;
         }
         Ok(())
     }

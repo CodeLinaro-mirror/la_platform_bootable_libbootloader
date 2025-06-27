@@ -28,11 +28,12 @@ use core::{
     ffi::CStr, fmt::Write, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut, ptr::null,
     slice::from_raw_parts_mut, time::Duration,
 };
-use efi::protocol::gbl_efi_ab_slot::GblSlotProtocol;
 use efi::{
     efi_print, efi_println,
+    profiling::EfiProfileBackend,
     protocol::{
         dt_fixup::DtFixupProtocol,
+        gbl_efi_ab_slot::GblSlotProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
@@ -43,12 +44,12 @@ use efi::{
     EfiEntry,
 };
 use efi_types::{
-    GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootReason,
+    GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootMode,
     GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
-    GBL_EFI_BOOT_REASON_BOOTLOADER, GBL_EFI_BOOT_REASON_COLD, GBL_EFI_BOOT_REASON_FASTBOOTD,
-    GBL_EFI_BOOT_REASON_RECOVERY,
+    EFI_FASTBOOT_MESSAGE_TYPE_FAIL, EFI_FASTBOOT_MESSAGE_TYPE_INFO, EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
 };
 use fdt::Fdt;
+use gbl_async::block_on;
 use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::{Error, Result};
 use libgbl::{
@@ -59,13 +60,14 @@ use libgbl::{
     },
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
     ops::{
-        AvbIoError, AvbIoResult, CertPermanentAttributes, ImageBuffer, RebootReason, Slot,
-        SlotsMetadata, SHA256_DIGEST_SIZE,
+        AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, ImageBuffer, InfoSender,
+        OkaySender, RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
     GblOps, Os, Result as GblResult,
 };
+use libprofile::ProfileBackend;
 use safemath::SafeNum;
 use zbi::ZbiContainer;
 use zerocopy::IntoBytes;
@@ -293,7 +295,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     }
 
     fn should_stop_in_fastboot(&mut self) -> Result<bool> {
-        // TODO(b/349829690): also query GblSlotProtocol.get_boot_reason() for board-specific
+        // TODO(b/349829690): also query GblSlotProtocol.get_boot_mode() for board-specific
         // fastboot triggers.
 
         // TODO(b/366520234): Switch to use GblSlotProtocol.should_stop_in_fastboot once available.
@@ -360,6 +362,14 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         _: BootToken,
     ) -> GblResult<Cursor<'c>> {
         unimplemented!();
+    }
+
+    fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
+        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
+        {
+            Ok(protocol) => protocol.read_is_dm_verity_error().map_err(efi_error_to_avb_error),
+            Err(_) => Err(AvbIoError::NotImplemented),
+        }
     }
 
     fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
@@ -554,27 +564,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         Some(get_efi_fdt(&self.efi_entry)?.1)
     }
 
-    fn fixup_os_commandline<'c>(
-        &mut self,
-        commandline: &CStr,
-        fixup_buffer: &'c mut [u8],
-    ) -> Result<Option<&'c str>> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblOsConfigurationProtocol>()
-        {
-            Ok(protocol) => {
-                protocol.fixup_kernel_commandline(commandline, fixup_buffer)?;
-                Ok(Some(CStr::from_bytes_until_nul(&fixup_buffer[..])?.to_str()?))
-            }
-            // Protocol is optional.
-            Err(Error::NotFound) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
     fn fixup_bootconfig<'c>(
         &mut self,
         bootconfig: &[u8],
@@ -586,10 +575,11 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .boot_services()
             .find_first_and_open::<GblOsConfigurationProtocol>()
         {
-            Ok(protocol) => {
-                let fixup_size = protocol.fixup_bootconfig(bootconfig, fixup_buffer)?;
-                Ok(Some(&fixup_buffer[..fixup_size]))
-            }
+            Ok(protocol) => match protocol.fixup_bootconfig(bootconfig, fixup_buffer) {
+                Ok(fixup_size) => Ok(Some(&fixup_buffer[..fixup_size])),
+                Err(Error::NotImplemented) => Ok(None),
+                Err(e) => Err(e),
+            },
             // Protocol is optional.
             Err(Error::NotFound) => Ok(None),
             Err(e) => Err(e),
@@ -679,6 +669,45 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
+    fn fastboot_run_oem(
+        &mut self,
+        cmd: &str,
+        download: &mut [u8],
+        sender: impl InfoSender + OkaySender + FailSender,
+    ) -> Result<()> {
+        let protocol = self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()?;
+        let sender = &mut Some(sender);
+        protocol.run_oem_function(cmd, download, |msg_type, msg| match msg_type as _ {
+            EFI_FASTBOOT_MESSAGE_TYPE_INFO => {
+                block_on(sender.as_mut().ok_or(Error::ProtocolError)?.send_info(msg))
+            }
+            EFI_FASTBOOT_MESSAGE_TYPE_OKAY => {
+                block_on(sender.take().ok_or(Error::ProtocolError)?.send_okay(msg))
+            }
+            EFI_FASTBOOT_MESSAGE_TYPE_FAIL => {
+                block_on(sender.take().ok_or(Error::ProtocolError)?.send_fail(msg))
+            }
+            _ => Err(Error::InvalidInput),
+        })
+    }
+
+    fn fastboot_get_staged(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
+        match self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()
+        {
+            Ok(v) => v.get_staged(out),
+            Err(Error::NotFound) => Ok((0, 0)),
+            Err(e) => Err(e),
+        }
+    }
+
     fn get_current_slot(&mut self) -> Result<Slot> {
         self.open_slot_protocol()?.get_current_slot()?.try_into()
     }
@@ -691,15 +720,12 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         self.open_slot_protocol()?.set_active_slot(slot)
     }
 
-    fn set_reboot_reason(&mut self, reason: RebootReason) -> Result<()> {
-        self.open_slot_protocol()?.set_boot_reason(gbl_to_efi_boot_reason(reason), b"")
+    fn set_reboot_mode(&mut self, mode: RebootMode) -> Result<()> {
+        self.open_slot_protocol()?.set_boot_mode(gbl_to_efi_boot_mode(mode))
     }
 
-    fn get_reboot_reason(&mut self) -> Result<RebootReason> {
-        let mut subreason = [0u8; 128];
-        self.open_slot_protocol()?
-            .get_boot_reason(&mut subreason[..])
-            .map(|(v, _)| efi_to_gbl_boot_reason(v))
+    fn get_reboot_mode(&mut self) -> Result<RebootMode> {
+        self.open_slot_protocol()?.get_boot_mode().map(|v| efi_to_gbl_boot_mode(v))
     }
 
     fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
@@ -711,29 +737,30 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     fn get_base_sp(&mut self) -> Option<usize> {
         Some(self.base_sp)
     }
-}
 
-/// Converts a [GblEfiBootReason] to [RebootReason].
-// TODO(b/383620444): Remove the attribute once all boards picks up the stable Slot protocol.
-#[allow(dead_code)]
-fn efi_to_gbl_boot_reason(reason: GblEfiBootReason) -> RebootReason {
-    match reason {
-        GBL_EFI_BOOT_REASON_RECOVERY => RebootReason::Recovery,
-        GBL_EFI_BOOT_REASON_BOOTLOADER => RebootReason::Bootloader,
-        GBL_EFI_BOOT_REASON_FASTBOOTD => RebootReason::FastbootD,
-        _ => RebootReason::Normal,
+    fn get_profiling_backend(&self) -> impl ProfileBackend {
+        EfiProfileBackend::new(self.efi_entry)
     }
 }
 
-/// Converts a [RebootReason] to [GblEfiBootReason].
-// TODO(b/383620444): Remove the attribute once all boards picks up the stable Slot protocol.
-#[allow(dead_code)]
-fn gbl_to_efi_boot_reason(reason: RebootReason) -> GblEfiBootReason {
-    match reason {
-        RebootReason::Recovery => GBL_EFI_BOOT_REASON_RECOVERY,
-        RebootReason::Bootloader => GBL_EFI_BOOT_REASON_BOOTLOADER,
-        RebootReason::FastbootD => GBL_EFI_BOOT_REASON_FASTBOOTD,
-        RebootReason::Normal => GBL_EFI_BOOT_REASON_COLD,
+/// Converts a [GblEfiBootMode] to [RebootMode].
+fn efi_to_gbl_boot_mode(mode: GblEfiBootMode) -> RebootMode {
+    match mode {
+        efi_types::GBL_EFI_BOOT_MODE_NORMAL => RebootMode::Normal,
+        efi_types::GBL_EFI_BOOT_MODE_RECOVERY => RebootMode::Recovery,
+        efi_types::GBL_EFI_BOOT_MODE_FASTBOOTD => RebootMode::FastbootD,
+        efi_types::GBL_EFI_BOOT_MODE_BOOTLOADER => RebootMode::Bootloader,
+        _ => panic!("Unexpected boot mode"),
+    }
+}
+
+/// Converts a [RebootMode] to [GblEfiBootMode].
+fn gbl_to_efi_boot_mode(mode: RebootMode) -> GblEfiBootMode {
+    match mode {
+        RebootMode::Normal => efi_types::GBL_EFI_BOOT_MODE_NORMAL,
+        RebootMode::Recovery => efi_types::GBL_EFI_BOOT_MODE_RECOVERY,
+        RebootMode::FastbootD => efi_types::GBL_EFI_BOOT_MODE_FASTBOOTD,
+        RebootMode::Bootloader => efi_types::GBL_EFI_BOOT_MODE_BOOTLOADER,
     }
 }
 
@@ -744,7 +771,7 @@ mod test {
         protocol::{gbl_efi_ab_slot::GblSlotProtocol, gbl_efi_avb::GblAvbProtocol},
         MockEfi,
     };
-    use efi_types::GBL_EFI_BOOT_REASON;
+    use efi_types::GBL_EFI_BOOT_MODE;
     use mockall::predicate::eq;
     use std::slice;
 
@@ -769,6 +796,48 @@ mod test {
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert!(write!(&mut ops, "{} {}", "foo", "bar").is_ok());
+    }
+
+    #[test]
+    fn ops_avb_read_is_dm_verity_error_returns_true() {
+        let mut mock_efi = MockEfi::new();
+        let mut avb = GblAvbProtocol::default();
+        avb.read_is_dm_verity_error_result = Some(Ok(true));
+
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+
+        assert_eq!(ops.avb_read_is_dm_verity_error(), Ok(true));
+    }
+
+    #[test]
+    fn ops_avb_read_is_dm_verity_error_returns_false() {
+        let mut mock_efi = MockEfi::new();
+        let mut avb = GblAvbProtocol::default();
+        avb.read_is_dm_verity_error_result = Some(Ok(false));
+
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+
+        assert_eq!(ops.avb_read_is_dm_verity_error(), Ok(false));
+    }
+
+    #[test]
+    fn ops_avb_read_is_dm_verity_error_protocol_not_found() {
+        let mut mock_efi = MockEfi::new();
+        mock_efi
+            .boot_services
+            .expect_find_first_and_open::<GblAvbProtocol>()
+            .return_const(Err(Error::NotFound));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+
+        assert_eq!(ops.avb_read_is_dm_verity_error(), Err(AvbIoError::NotImplemented));
     }
 
     #[test]
@@ -1277,14 +1346,14 @@ mod test {
         );
     }
 
-    /// Helper for testing `set_boot_reason`
-    fn test_set_reboot_reason(input: RebootReason, expect: GBL_EFI_BOOT_REASON) {
+    /// Helper for testing `set_boot_mode`
+    fn test_set_reboot_mode(input: RebootMode, expect: GBL_EFI_BOOT_MODE) {
         let mut mock_efi = MockEfi::new();
         mock_efi.boot_services.expect_find_first_and_open::<GblSlotProtocol>().return_once(
             move || {
                 let mut slot = GblSlotProtocol::default();
-                slot.expect_set_boot_reason().return_once(move |reason, _| {
-                    assert_eq!(reason, expect);
+                slot.expect_set_boot_mode().return_once(move |mode| {
+                    assert_eq!(mode, expect);
                     Ok(())
                 });
                 Ok(slot)
@@ -1292,62 +1361,62 @@ mod test {
         );
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        assert_eq!(ops.set_reboot_reason(input), Ok(()));
+        assert_eq!(ops.set_reboot_mode(input), Ok(()));
     }
 
     #[test]
-    fn test_set_reboot_reason_normal() {
-        test_set_reboot_reason(RebootReason::Normal, GBL_EFI_BOOT_REASON_COLD);
+    fn test_set_reboot_mode_normal() {
+        test_set_reboot_mode(RebootMode::Normal, efi_types::GBL_EFI_BOOT_MODE_NORMAL);
     }
 
     #[test]
-    fn test_set_reboot_reason_recovery() {
-        test_set_reboot_reason(RebootReason::Recovery, GBL_EFI_BOOT_REASON_RECOVERY);
+    fn test_set_reboot_mode_recovery() {
+        test_set_reboot_mode(RebootMode::Recovery, efi_types::GBL_EFI_BOOT_MODE_RECOVERY);
     }
 
     #[test]
-    fn test_set_reboot_reason_bootloader() {
-        test_set_reboot_reason(RebootReason::Bootloader, GBL_EFI_BOOT_REASON_BOOTLOADER);
+    fn test_set_reboot_mode_bootloader() {
+        test_set_reboot_mode(RebootMode::Bootloader, efi_types::GBL_EFI_BOOT_MODE_BOOTLOADER);
     }
 
     #[test]
-    fn test_set_reboot_reason_fastbootd() {
-        test_set_reboot_reason(RebootReason::FastbootD, GBL_EFI_BOOT_REASON_FASTBOOTD);
+    fn test_set_reboot_mode_fastbootd() {
+        test_set_reboot_mode(RebootMode::FastbootD, efi_types::GBL_EFI_BOOT_MODE_FASTBOOTD);
     }
 
-    /// Helper for testing `get_boot_reason`
-    fn test_get_reboot_reason(input: GBL_EFI_BOOT_REASON, expect: RebootReason) {
+    /// Helper for testing `get_boot_mode`
+    fn test_get_reboot_mode(input: GBL_EFI_BOOT_MODE, expect: RebootMode) {
         let mut mock_efi = MockEfi::new();
         mock_efi.boot_services.expect_find_first_and_open::<GblSlotProtocol>().return_once(
             move || {
                 let mut slot = GblSlotProtocol::default();
-                slot.expect_get_boot_reason().return_once(move |_| Ok((input, 0)));
+                slot.expect_get_boot_mode().return_once(move || Ok(input));
                 Ok(slot)
             },
         );
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        assert_eq!(ops.get_reboot_reason().unwrap(), expect)
+        assert_eq!(ops.get_reboot_mode().unwrap(), expect)
     }
 
     #[test]
-    fn test_get_reboot_reason_normal() {
-        test_get_reboot_reason(GBL_EFI_BOOT_REASON_COLD, RebootReason::Normal);
+    fn test_get_reboot_mode_normal() {
+        test_get_reboot_mode(efi_types::GBL_EFI_BOOT_MODE_NORMAL, RebootMode::Normal);
     }
 
     #[test]
-    fn test_get_reboot_reason_recovery() {
-        test_get_reboot_reason(GBL_EFI_BOOT_REASON_RECOVERY, RebootReason::Recovery);
+    fn test_get_reboot_mode_recovery() {
+        test_get_reboot_mode(efi_types::GBL_EFI_BOOT_MODE_RECOVERY, RebootMode::Recovery);
     }
 
     #[test]
-    fn test_get_reboot_reason_bootloader() {
-        test_get_reboot_reason(GBL_EFI_BOOT_REASON_BOOTLOADER, RebootReason::Bootloader);
+    fn test_get_reboot_mode_bootloader() {
+        test_get_reboot_mode(efi_types::GBL_EFI_BOOT_MODE_BOOTLOADER, RebootMode::Bootloader);
     }
 
     #[test]
-    fn test_get_reboot_reason_fastbootd() {
-        test_get_reboot_reason(GBL_EFI_BOOT_REASON_FASTBOOTD, RebootReason::FastbootD);
+    fn test_get_reboot_mode_fastbootd() {
+        test_get_reboot_mode(efi_types::GBL_EFI_BOOT_MODE_FASTBOOTD, RebootMode::FastbootD);
     }
 
     #[test]
@@ -1372,165 +1441,6 @@ mod test {
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
         assert!(ops.fastboot_visit_all_variables(|_, _| {}).is_err());
-    }
-
-    /// Helper for testing `GblOsConfigurationProtocol.fixup_os_commandline`
-    fn test_fixup_os_commandline<'a>(
-        expected_base: &'static CStr,
-        fixup_buffer: &'a mut [u8],
-        fixup_to_apply: &'static [u8],
-        protocol_lookup_error: Option<Error>,
-        protocol_result: Result<()>,
-    ) -> Result<Option<&'a str>> {
-        let mut mock_efi = MockEfi::new();
-        mock_efi
-            .boot_services
-            .expect_find_first_and_open::<GblOsConfigurationProtocol>()
-            .return_once(move || {
-                if let Some(error) = protocol_lookup_error {
-                    return Err(error);
-                }
-
-                let mut os_configuration = GblOsConfigurationProtocol::default();
-
-                os_configuration.expect_fixup_kernel_commandline().return_once(
-                    move |base, buffer| {
-                        assert_eq!(base, expected_base);
-                        buffer[..fixup_to_apply.len()].copy_from_slice(fixup_to_apply);
-                        protocol_result
-                    },
-                );
-
-                Ok(os_configuration)
-            });
-
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
-
-        ops.fixup_os_commandline(expected_base, fixup_buffer)
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_success() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-        const FIXUP: &CStr = c"fixup1=value1 fixup2=value2";
-
-        let mut fixup_buffer = [0x0; FIXUP.to_bytes_with_nul().len()];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                FIXUP.to_bytes_with_nul(),
-                // No protocol lookup error.
-                None,
-                // No protocol call error.
-                Ok(()),
-            ),
-            // Expects fixup applied.
-            Ok(Some(FIXUP.to_str().unwrap()))
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_success_empty_result() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        let mut fixup_buffer = [0x0; 1];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                // Passes empty fixup to apply.
-                &[],
-                // No protocol lookup error.
-                None,
-                // No protocol call error.
-                Ok(()),
-            ),
-            // Expected empty fixup.
-            Ok(Some("")),
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_wrong_fixup() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        // Have no space for null terminator.
-        let mut fixup_buffer = [0x0; BASE.to_bytes().len()];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                BASE.to_bytes(),
-                // No protocol lookup error.
-                None,
-                // No protocol call error.
-                Ok(()),
-            ),
-            // Expected error, cannot build c string.
-            Err(Error::InvalidInput),
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_protocol_error() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        let mut fixup_buffer = [0x0; 0];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                &[],
-                // No protocol lookup error.
-                None,
-                // Protocol returns error.
-                Err(Error::BufferTooSmall(Some(100))),
-            ),
-            // Expected to be catched.
-            Err(Error::BufferTooSmall(Some(100))),
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_protocol_not_found() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        let mut fixup_buffer = [0x0; 0];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                &[],
-                // Protocol not found.
-                Some(Error::NotFound),
-                // No protocol call error.
-                Ok(()),
-            ),
-            // No fixup in case protocol not found.
-            Ok(None),
-        );
-    }
-
-    #[test]
-    fn test_fixup_os_commandline_protocol_lookup_failed() {
-        const BASE: &CStr = c"key1=value1 key2=value2";
-
-        let mut fixup_buffer = [0x0; 0];
-        assert_eq!(
-            test_fixup_os_commandline(
-                BASE,
-                &mut fixup_buffer,
-                &[],
-                // Protocol lookup failed.
-                Some(Error::AccessDenied),
-                // No protocol call error.
-                Ok(()),
-            ),
-            // Error catched.
-            Err(Error::AccessDenied),
-        );
     }
 
     /// Helper for testing `GblOsConfigurationProtocol.fixup_bootconfig`
@@ -1583,7 +1493,7 @@ mod test {
                 BASE,
                 &mut fixup_buffer,
                 FIXUP,
-                // No protocol lookup error.
+                // Protocol is provided.
                 None,
                 // No protocol call error.
                 None,
@@ -1604,13 +1514,34 @@ mod test {
                 BASE,
                 &mut fixup_buffer,
                 FIXUP,
-                // No protocol lookup error.
+                // Protocol is provided.
                 None,
                 // Protocol returns error.
                 Some(Error::BufferTooSmall(Some(100))),
             ),
             // Expected to be catched.
             Err(Error::BufferTooSmall(Some(100))),
+        );
+    }
+
+    #[test]
+    fn test_fixup_bootconfig_not_implemented() {
+        const BASE: &[u8] = b"key1=value1\nkey2=value2";
+        const FIXUP: &[u8] = b"fixup1=value1\nfixup2=value2";
+
+        let mut fixup_buffer = [0x0; FIXUP.len()];
+        assert_eq!(
+            test_fixup_bootconfig(
+                BASE,
+                &mut fixup_buffer,
+                FIXUP,
+                // Protocol is provided.
+                None,
+                // Implementation isn't provided.
+                Some(Error::NotImplemented),
+            ),
+            // Treated as no fixup is provided.
+            Ok(None),
         );
     }
 

@@ -52,6 +52,9 @@ pub fn current_el() -> ExceptionLevel {
 extern "C" {
     /// Clean and invalidate data cache by address range. The function is from ATF library.
     fn flush_dcache_range(addr: usize, len: usize);
+
+    /// Performs cache operations by set/way.
+    fn dcsw_op_all(op: usize);
 }
 
 /// Flush all data cache for the given buffer.
@@ -59,6 +62,12 @@ fn flush_dcache_buffer(buf: &[u8]) {
     unsafe { flush_dcache_range(buf.as_ptr() as usize, buf.len()) }
     // SAFETY: Assembly code for instruction synchronization.
     unsafe { asm!("isb") };
+}
+
+/// Flush all data cache by set/way.
+fn flush_cache_by_set_way() {
+    // SAFETY: Aarch64 instructions for flushing all cache by set way.
+    unsafe { dcsw_op_all(1) };
 }
 
 /// Disable cache, MMU and jump to the given kernel address with arguments.
@@ -107,9 +116,23 @@ pub unsafe fn jump_linux_el2_or_lower(kernel: &[u8], ramdisk: &[u8], fdt: &[u8])
     // https://www.kernel.org/doc/html/v5.11/arm64/booting.html that may need to be performed
     // explicitly for other platforms.
 
+    // Note: `flush_dcache_buffer()` flushes by VA and guarantees to always work for all levels of
+    // cache, although it can only flush a particular memory range. flush_cache_by_set_way() flushes
+    // all cache and is more effecitve on larger memory blocks. But it only works on local CPU. When
+    // platform is already in multiprocessor mode, this may not work. In addition, system cache may
+    // not implement set/way. Therefore, for `kernel`/`ramdisk`/`fdt` we still use
+    // `flush_dcache_buffer()` for guarantee. `flush_cache_by_set_way()` is used for best-effort
+    // and additional cleaning.
+    //
+    // References:
+    //
+    // * https://community.arm.com/support-forums/f/architectures-and-processors-forum/11287/armv7-a-cache-maintenance-operation-by-va-performance
+    // * https://events.static.linuxfound.org/sites/events/files/slides/slides_10.pdf
     flush_dcache_buffer(kernel);
     flush_dcache_buffer(ramdisk);
     flush_dcache_buffer(fdt);
+    flush_cache_by_set_way();
+
     // SAFETY:
     // * `kernel`, `ramdisk` and `fdt` have been flushed.
     // * By requirement of this function, `kernel` is a valid kernel entry point.
@@ -127,6 +150,7 @@ pub unsafe fn jump_zircon_el2_or_lower(kernel: &[u8], zbi_item: &[u8]) -> ! {
         ZbiContainer::parse(kernel).unwrap().get_kernel_entry_and_reserved_memory_size().unwrap();
     flush_dcache_buffer(kernel);
     flush_dcache_buffer(zbi_item);
+    flush_cache_by_set_way();
     let addr = (kernel.as_ptr() as usize).checked_add(usize::try_from(entry).unwrap()).unwrap();
     // SAFETY:
     // * `zbi_kernel` and `zbi_item` have been flushed.

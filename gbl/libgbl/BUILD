@@ -23,11 +23,12 @@ package(
 rust_library(
     name = "libgbl",
     srcs = glob(
-        ["**/*.rs"],
+        ["src/**/*.rs"],
         exclude = ["tests/**/*.rs"],
     ),
     aliases = {"@itertools_noalloc": "itertools_noalloc"},
     edition = "2021",
+    proc_macro_deps = ["@gbl//libprofile:libprofile_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
     visibility = ["//visibility:public"],
     deps = [
@@ -35,6 +36,7 @@ rust_library(
         "@avb",
         "@avb//:avb_bindgen",
         "@bitflags",
+        "@bytes",
         "@crc32fast",
         "@gbl//libabr",
         "@gbl//libasync",
@@ -48,6 +50,7 @@ rust_library(
         "@gbl//libfdt",
         "@gbl//libmisc",
         "@gbl//libopendice",
+        "@gbl//libprofile",
         "@gbl//libsafemath",
         "@gbl//libstorage",
         "@gbl//libutils",

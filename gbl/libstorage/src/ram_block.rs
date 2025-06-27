@@ -14,7 +14,8 @@
 
 //! This module provides an implementation of [BlockIo] backed by RAM.
 
-use crate::{is_aligned, is_buffer_aligned, BlockInfo, BlockIo, SliceMaybeUninit};
+use crate::{is_aligned, is_buffer_aligned, BlockInfo, BlockIo};
+use bytes::buf::UninitSlice;
 use core::ops::DerefMut;
 use gbl_async::yield_now;
 use liberror::Error;
@@ -56,12 +57,13 @@ impl<T: DerefMut<Target = [u8]>> RamBlockIo<T> {
 
     /// Checks injected error, simulates async waiting, checks read/write parameters and returns the
     /// offset in number of bytes.
-    async fn checks(
+    async fn checks<'a>(
         &mut self,
         blk_offset: u64,
-        buf: &(impl SliceMaybeUninit + ?Sized),
+        buf: impl Into<&'a mut UninitSlice>,
     ) -> Result<usize, Error> {
-        assert!(is_buffer_aligned(buf.as_ref(), self.alignment).unwrap_or(false));
+        let buf = buf.into();
+        assert!(is_buffer_aligned(&mut *buf, self.alignment).unwrap_or(false));
         assert!(is_aligned(buf.len(), self.block_size).unwrap_or(false));
         yield_now().await;
         self.error.take().map(|e| Err(e)).unwrap_or(Ok(()))?;
@@ -80,18 +82,19 @@ unsafe impl<T: DerefMut<Target = [u8]>> BlockIo for RamBlockIo<T> {
         }
     }
 
-    async fn read_blocks(
+    async fn read_blocks<'a>(
         &mut self,
         blk_offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<(), Error> {
-        let offset = self.checks(blk_offset, out).await?;
+        let out = out.into();
+        let offset = self.checks(blk_offset, &mut *out).await?;
         let out_len = out.len();
-        Ok(out.clone_from_slice(&self.storage[offset..][..out_len]))
+        Ok(out.copy_from_slice(&self.storage[offset..][..out_len]))
     }
 
     async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
         let offset = self.checks(blk_offset, &mut *data).await?;
-        Ok(self.storage[offset..][..data.len()].clone_from_slice(data))
+        Ok(self.storage[offset..][..data.len()].copy_from_slice(data))
     }
 }

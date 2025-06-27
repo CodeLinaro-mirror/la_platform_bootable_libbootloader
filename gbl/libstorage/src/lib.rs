@@ -18,12 +18,11 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(async_fn_in_trait)]
 
+use bytes::buf::UninitSlice;
 use core::{
     cell::RefMut,
     cmp::{max, min},
-    mem::{size_of_val, MaybeUninit},
-    ops::DerefMut,
-    slice::SliceIndex,
+    ops::{Bound, DerefMut, Index, IndexMut, RangeBounds},
 };
 use gbl_async::block_on;
 use liberror::{Error, Result};
@@ -43,6 +42,67 @@ pub use algorithm::{read_async, write_async};
 
 pub mod ram_block;
 pub use ram_block::RamBlockIo;
+
+/// Provides checked indexing for a type which only has `[]`-style indexing.
+///
+/// This allows us to handle errors on index overflow rather than panicking.
+pub trait CheckedGet<T>: Index<T> + IndexMut<T>
+where
+    T: RangeBounds<usize>,
+{
+    /// Returns the buffer length.
+    fn len(&self) -> usize;
+
+    /// Returns the slice or [Error].
+    fn get(&self, index: T) -> Result<&Self::Output> {
+        self.check_index(&index)?;
+        Ok(&self[index])
+    }
+
+    /// Returns the slice or [Error].
+    fn get_mut(&mut self, index: T) -> Result<&mut Self::Output> {
+        self.check_index(&index)?;
+        Ok(&mut self[index])
+    }
+
+    /// Returns [Error] if the index is out-of-bounds.
+    fn check_index(&self, index: &T) -> Result<()> {
+        let required_index = match index.end_bound() {
+            Bound::Included(x) => *x,            // [_..=x]
+            Bound::Excluded(0) => return Ok(()), // [_..0]
+            Bound::Excluded(x) => x - 1,         // [_..x]
+            Bound::Unbounded => {
+                // When the end bound is unbounded (e.g. [x..]), we need to
+                // check the start bound for validity instead.
+                //
+                // The expected behavior here is that starting just past the end
+                // of the object is fine - it produces the empty list - but
+                // going past that is an error.
+                match index.start_bound() {
+                    Bound::Included(0) => return Ok(()), // [0..]
+                    Bound::Included(x) => x - 1,         // [x..]
+                    Bound::Excluded(x) => *x,            // Non-standard
+                    Bound::Unbounded => return Ok(()),   // [..]
+                }
+            }
+        };
+
+        if self.len() > required_index {
+            return Ok(());
+        }
+        Err(Error::BufferTooSmall(Some(required_index + 1)))
+    }
+}
+
+impl<T> CheckedGet<T> for UninitSlice
+where
+    UninitSlice: Index<T> + IndexMut<T>,
+    T: RangeBounds<usize>,
+{
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
 
 /// `BlockInfo` contains information for a block device.
 #[derive(Copy, Clone, Debug)]
@@ -69,8 +129,9 @@ impl BlockInfo {
 /// SAFETY:
 /// `read_blocks` method must guarantee `out` to be fully initialized on success. Otherwise error
 /// must be returned.
-/// This is necessary because unsafe code that uses BlockIo assumes `out` to be fully initialized to
-/// work with it as with `&mut [u8]`.
+///
+/// This is necessary because callers are guaranteed that the [UninitSlice] buffer has been fully
+/// initialized on success and can safely be converted to a `&[u8]` and read normally.
 pub unsafe trait BlockIo {
     /// Returns the `BlockInfo` for this block device.
     fn info(&mut self) -> BlockInfo;
@@ -84,13 +145,57 @@ pub unsafe trait BlockIo {
     /// * `out`: Buffer to store the read data. Callers of this method ensure that it is
     ///   aligned according to alignment() and `out.len()` is multiples of `block_size()`.
     ///
+    /// ## `out` buffer type
+    ///
+    /// The `out` type is a bit odd in that `UninitSlice` doesn't borrow but instead consumes
+    /// a reference and transforms it into its own reference. One consequence of this is that if
+    /// the caller only has a reference and needs to retain it to use it again, it needs to be
+    /// "reborrowed" at the call site:
+    ///
+    /// ```
+    /// # use gbl_storage::BlockIo;
+    ///
+    /// fn read_twice<'a>(io: &mut impl BlockIo, out: &mut [u8]) {
+    ///     // `&mut *` re-borrows so that a temporary copy of the reference is consumed, not
+    ///     // the reference itself.
+    ///     io.read_blocks(0, &mut *out);
+    ///
+    ///     // If we hadn't re-borrowed earlier, this would be a use-after-move error.
+    ///     io.read_blocks(0, out);
+    /// }
+    /// ```
+    ///
+    /// It is possible to avoid this, but the function gets significantly more complicated:
+    ///
+    /// ```
+    /// # use bytes::buf::UninitSlice;
+    ///
+    /// // 1. The type now requires this "where" clause:
+    /// fn foo<'a, T>(buffer: &'a mut T)
+    /// where
+    ///     T: ?Sized,
+    ///     &'a mut UninitSlice: From<&'a mut T>
+    /// {
+    ///     // 2. Calling `.into()` no longer deduces types automatically - this does not compile:
+    ///     // let len = buffer.into().len();
+    ///
+    ///     // We have to do this instead to convert:
+    ///     let len = <&mut UninitSlice>::from(buffer).len();
+    /// }
+    /// ```
+    ///
+    /// Currently we have about the same number of functions that use this parameter as we do call
+    /// sites that need to re-borrow, so for now we keep the simpler the one-line reborrow.
+    ///
     /// # Returns
     ///
-    /// Returns true if exactly out.len() number of bytes are read. Otherwise false.
-    async fn read_blocks(
+    /// Returns `Ok` if exactly out.len() number of bytes are read. In this case only, if the
+    /// backing buffer for `out` is [MaybeUninit], then it's safe to convert it to a `&[u8]` and
+    /// read the now-initialized data.
+    async fn read_blocks<'a>(
         &mut self,
         blk_offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()>;
 
     /// Write blocks of data to the block device
@@ -113,10 +218,10 @@ pub unsafe trait BlockIo {
     /// In some cases however, non-blocking IO may have non-trivial overhead and platform may prefer
     /// to have separate and optimized implementation for blocking IO use case. This can be provided
     /// by overriding this API.
-    fn read_blocks_sync(
+    fn read_blocks_sync<'a>(
         &mut self,
         blk_offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
         block_on(self.read_blocks(blk_offset, out))
     }
@@ -140,10 +245,10 @@ unsafe impl<T: BlockIo> BlockIo for BlockIoSync<T> {
         self.0.info()
     }
 
-    async fn read_blocks(
+    async fn read_blocks<'a>(
         &mut self,
         blk_offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
         self.0.read_blocks_sync(blk_offset, out)
     }
@@ -164,10 +269,10 @@ where
         self.deref_mut().info()
     }
 
-    async fn read_blocks(
+    async fn read_blocks<'a>(
         &mut self,
         blk_offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
         self.deref_mut().read_blocks(blk_offset, out).await
     }
@@ -176,10 +281,10 @@ where
         self.deref_mut().write_blocks(blk_offset, data).await
     }
 
-    fn read_blocks_sync(
+    fn read_blocks_sync<'a>(
         &mut self,
         blk_offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
         self.deref_mut().read_blocks_sync(blk_offset, out)
     }
@@ -199,11 +304,7 @@ unsafe impl BlockIo for BlockIoNull {
         unimplemented!();
     }
 
-    async fn read_blocks(
-        &mut self,
-        _: u64,
-        _: &mut (impl SliceMaybeUninit + ?Sized),
-    ) -> Result<()> {
+    async fn read_blocks<'a>(&mut self, _: u64, _: impl Into<&'a mut UninitSlice>) -> Result<()> {
         unimplemented!();
     }
 
@@ -214,25 +315,34 @@ unsafe impl BlockIo for BlockIoNull {
 
 /// Check if `value` is aligned to (multiples of) `alignment`
 /// It can fail if the remainider calculation fails overflow check.
-pub fn is_aligned(value: impl Into<SafeNum>, alignment: impl Into<SafeNum>) -> Result<bool> {
+fn is_aligned(value: impl Into<SafeNum>, alignment: impl Into<SafeNum>) -> Result<bool> {
     Ok(u64::try_from(value.into() % alignment.into())? == 0)
 }
 
 /// Check if `buffer` address is aligned to `alignment`
 /// It can fail if the remainider calculation fails overflow check.
-pub fn is_buffer_aligned<T>(buffer: &[T], alignment: u64) -> Result<bool> {
-    is_aligned(buffer.as_ptr() as usize, alignment)
+///
+/// `buffer` needs to be `mut&` here because there's no way with [UninitSlice]
+/// to get the underlying pointer from a const, but this function will not
+/// modify `buffer`. This is OK for us because we always have mutable buffers.
+fn is_buffer_aligned<'a>(buffer: impl Into<&'a mut UninitSlice>, alignment: u64) -> Result<bool> {
+    is_aligned(buffer.into().as_mut_ptr() as usize, alignment)
 }
 
 /// Check read/write range and calculate offset in number of blocks.
-fn check_range<T>(info: BlockInfo, offset: u64, buffer: &[T]) -> Result<SafeNum> {
+fn check_range<'a>(
+    info: BlockInfo,
+    offset: u64,
+    buffer: impl Into<&'a mut UninitSlice>,
+) -> Result<SafeNum> {
     let offset: SafeNum = offset.into();
     let block_size: SafeNum = info.block_size.into();
+    let buffer = buffer.into();
     debug_assert!(is_aligned(offset, block_size)?, "{:?}, {:?}", offset, block_size);
-    debug_assert!(is_aligned(size_of_val(buffer), block_size)?);
-    debug_assert!(is_buffer_aligned(buffer, info.alignment)?);
+    debug_assert!(is_aligned(buffer.len(), block_size)?);
+    debug_assert!(is_buffer_aligned(&mut *buffer, info.alignment)?);
     let blk_offset = offset / block_size;
-    let blk_count = SafeNum::from(size_of_val(buffer)) / block_size;
+    let blk_count = SafeNum::from(buffer.len()) / block_size;
     let end: u64 = (blk_offset + blk_count).try_into()?;
     match end <= info.num_blocks {
         true => Ok(blk_offset),
@@ -317,10 +427,10 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
     /// * `offset`: Offset in number of bytes.
     /// * `out`: Buffer to store the read data.
     /// * Returns success when exactly `out.len()` number of bytes are read.
-    pub async fn read(
+    pub async fn read<'a>(
         &mut self,
         offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
         read_async(&mut self.io, offset, out, &mut self.scratch).await
     }
@@ -441,13 +551,14 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
     /// # Returns
     ///
     /// Returns success when exactly `out.len()` of bytes are read successfully.
-    pub async fn read_gpt_partition(
+    pub async fn read_gpt_partition<'a>(
         &mut self,
         gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
         part_name: &str,
         offset: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
+        let out = out.into();
         let offset = gpt.check_range(part_name, offset, out.len())?;
         self.read(offset, out).await
     }
@@ -513,91 +624,12 @@ where
     }
 }
 
-/// Helper trait to implement common logic working with MaybeUninit slices.
-/// Implemented for [u8] and [MaybeUninit<u8>].
-///
-/// Read functions treats buffer as not initialized using this trait.
-// AsRef,AsMut implementation added here. Since it is not possible to implement trait from other
-// crate for trait in this trait. It is possible to implement other trait for `dyn` object of local
-// trait. But it introduces other issues with lifetime and casting boilerplate.
-//
-// Alternatively we considered using wrapper type, which works but requires `into()` call either on
-// function call. Or inside functions if they accept `impl Into<Wrapper>`.
-// Using traits seems to be cleaner and potentially more effective.
-pub trait SliceMaybeUninit {
-    /// Get `&[MaybeUninit<u8>]` representation
-    fn as_ref(&self) -> &[MaybeUninit<u8>];
-
-    // AsMut implementation
-    /// Get `&mut [MaybeUninit<u8>]` representation
-    fn as_mut(&mut self) -> &mut [MaybeUninit<u8>];
-
-    /// Get slice length
-    fn len(&self) -> usize {
-        self.as_ref().len()
-    }
-
-    /// Returns reference to element or subslice, or Error if index is out of bounds
-    fn get<I>(&mut self, index: I) -> Result<&<I>::Output>
-    where
-        I: SliceIndex<[MaybeUninit<u8>]>,
-    {
-        self.as_ref().get(index).ok_or(Error::BufferTooSmall(None))
-    }
-
-    /// Returns mutable reference to element or subslice, or Error if index is out of bounds
-    fn get_mut<I>(&mut self, index: I) -> Result<&mut <I>::Output>
-    where
-        I: SliceIndex<[MaybeUninit<u8>]>,
-    {
-        self.as_mut().get_mut(index).ok_or(Error::BufferTooSmall(None))
-    }
-
-    /// Clone from slice
-    fn clone_from_slice(&mut self, src: &[u8]) {
-        self.as_mut().clone_from_slice(as_uninit(src))
-    }
-}
-
-impl SliceMaybeUninit for [u8] {
-    fn as_ref(&self) -> &[MaybeUninit<u8>] {
-        as_uninit(self)
-    }
-    fn as_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        as_uninit_mut(self)
-    }
-}
-
-impl SliceMaybeUninit for [MaybeUninit<u8>] {
-    fn as_ref(&self) -> &[MaybeUninit<u8>] {
-        self
-    }
-    fn as_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        self
-    }
-}
-
-/// Present initialized `&mut [u8]` buffer as `&mut [MaybeUninit<u8>]`
-pub fn as_uninit_mut(buf: &mut [u8]) -> &mut [MaybeUninit<u8>] {
-    // SAFETY:
-    // MaybeUninit<u8> has same size and alignment as u8.
-    // `data` is valid pointer to initialised u8 slice of size `buf.len()`
-    unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut MaybeUninit<u8>, buf.len()) }
-}
-
-/// Present initialized `&mut [u8]` buffer as `&mut [MaybeUninit<u8>]`
-pub fn as_uninit(buf: &[u8]) -> &[MaybeUninit<u8>] {
-    // SAFETY:
-    // MaybeUninit<u8> has same size and alignment as u8.
-    // `data` is valid pointer to initialised u8 slice of size `buf.len()`
-    unsafe { core::slice::from_raw_parts(buf.as_ptr() as *const MaybeUninit<u8>, buf.len()) }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
     use gbl_async::block_on;
     use safemath::SafeNum;
+    use std::slice::SliceIndex;
 
     #[derive(Debug)]
     struct TestCase {
@@ -659,6 +691,75 @@ mod test {
     // Type alias of the [Disk] type used by unittests.
     pub(crate) type TestDisk = Disk<RamBlockIo<Vec<u8>>, Vec<u8>>;
 
+    /// Helper to test the [CheckedGet] trait on [UninitSlice].
+    ///
+    /// # Arguments
+    ///
+    /// * `index`: a slice index that should work on an 8-element [UninitSlice]
+    ///            and [u8]
+    fn test_checked_get<T>(index: T)
+    where
+        // These traits are a little hairy, but it's basically just saying that
+        // the index should be able to slice both `UninitSlice` and `&[u8]`, and
+        // produce the same type as output.
+        UninitSlice: Index<T, Output = UninitSlice> + IndexMut<T>,
+        T: RangeBounds<usize> + SliceIndex<[u8], Output = [u8]> + Clone,
+    {
+        // Backing data starts as zeroes.
+        let mut data = [0u8; 8];
+        let slice = UninitSlice::new(&mut data);
+
+        // Set up different expected data that we will copy in and then verify.
+        let expected: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+        let expected = &expected[index.clone()];
+
+        // Non-mutable `UninitSlice` is kind of useless, all you can do is slice
+        // it and check the length, so that's all we can test for.
+        assert_eq!(slice.get(index.clone()).unwrap().len(), expected.len());
+
+        // Mutable slice is more interesting, but the only safe operation is to
+        // copy a &[u8] slice. So our test uses this to modify the underlying
+        // bytes, and then verify that they were in fact modified as expected.
+        slice.get_mut(index.clone()).unwrap().copy_from_slice(expected);
+        assert_eq!(&data[index], expected);
+    }
+
+    #[test]
+    fn checked_get_exclusive_bounds() {
+        test_checked_get(0..8);
+        test_checked_get(0..1);
+        test_checked_get(7..8);
+        test_checked_get(8..8);
+    }
+
+    #[test]
+    fn checked_get_inclusive_bounds() {
+        test_checked_get(0..=7);
+        test_checked_get(0..=1);
+        test_checked_get(6..=7);
+        test_checked_get(7..=7);
+    }
+
+    #[test]
+    fn checked_get_unbound() {
+        test_checked_get(0..);
+        test_checked_get(7..);
+        test_checked_get(8..);
+        test_checked_get(..1);
+        test_checked_get(..7);
+        test_checked_get(..);
+    }
+
+    #[test]
+    fn checked_get_out_of_bounds() {
+        let mut data = [0u8; 8];
+        let slice = UninitSlice::new(&mut data);
+
+        assert_eq!(slice.get(8..10).unwrap_err(), Error::BufferTooSmall(Some(10)));
+        assert_eq!(slice.get(9..).unwrap_err(), Error::BufferTooSmall(Some(9)));
+        assert_eq!(slice.get(..15).unwrap_err(), Error::BufferTooSmall(Some(15)));
+    }
+
     fn read_test_helper(case: &TestCase) {
         let data = (0..case.storage_size).map(|v| v as u8).collect::<Vec<_>>();
         let mut disk = TestDisk::new_ram_alloc(case.alignment, case.block_size, data).unwrap();
@@ -669,7 +770,7 @@ mod test {
         let misalignment = usize::try_from(case.misalignment).unwrap();
         let rw_sz = usize::try_from(case.rw_size).unwrap();
         let out = &mut aligned_buf.get()[misalignment..][..rw_sz];
-        block_on(disk.read(case.rw_offset, out)).unwrap();
+        block_on(disk.read(case.rw_offset, &mut *out)).unwrap();
         let rw_off = usize::try_from(case.rw_offset).unwrap();
         assert_eq!(out, &disk.io().storage()[rw_off..][..rw_sz], "Failed. Test case {:?}", case);
         assert!(disk.io().num_reads <= READ_WRITE_BLOCKS_UPPER_BOUND);

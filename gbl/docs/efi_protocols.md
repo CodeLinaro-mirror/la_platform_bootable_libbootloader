@@ -37,6 +37,7 @@ as a "Hello world" proof-of-concept that GBL is running and can interact with
 the UEFI protocols.
 
 This logging requires all three of:
+
 * Device Path Protocol
 * Device Path to Text Protocol
 * Loaded Image Protocol
@@ -51,6 +52,7 @@ as a "Hello world" proof-of-concept that GBL is running and can interact with
 the UEFI protocols.
 
 This logging requires all three of:
+
 * Device Path Protocol
 * Device Path to Text Protocol
 * Loaded Image Protocol
@@ -65,6 +67,7 @@ as a "Hello world" proof-of-concept that GBL is running and can interact with
 the UEFI protocols.
 
 This logging requires all three of:
+
 * Device Path Protocol
 * Device Path to Text Protocol
 * Loaded Image Protocol
@@ -146,19 +149,18 @@ part of the UEFI specification. None of these protocols are required.
 ### DtFixupProtocol
 
 * original [proposal](https://github.com/U-Boot-EFI/EFI_DT_FIXUP_PROTOCOL)
-* [upstream](https://github.com/u-boot/u-boot/blob/master/include/efi_dt_fixup.h)
+* [u-boot](https://github.com/u-boot/u-boot/blob/master/include/efi_dt_fixup.h)
 * optional: allows FW to modify the final device tree
 
-This protocol allows the firmware (FW) to inspect the final device tree and apply
-necessary fixups.
+This protocol allows the firmware (FW) to inspect the final device tree and
+apply necessary fixups.
 
-GBL will validate the applied changes and prevent booting if any of the security
-limitations (listed below) are violated. Any errors will be reported through the
-UEFI log.
+Proposed to be used by FW to inspect and update device tree including Kernel
+command line. GBL will validate the applied changes and prevent booting if any
+of the security limitations (listed below) are violated. Error details will be
+reported through the UEFI log.
 
 TODO (b/353272981): Add limitations
-
-This protocol was proposed by U-Boot and is currently used by the Kernel UEFI stub.
 
 ## GBL Custom Protocols
 
@@ -179,28 +181,27 @@ boards will need to implement them.
 * optional: enables custom fastboot functionality.
 
 Used to provide an interface for
+
 * Custom variables
 * OEM commands
 * Device lock/unlock controls
 * Lock-contingent partition permission information
 * User data erasure
 
-### GblFastbootUsbProtocol
+### GblFastbootTransportProtocol
 
-* [`GBL_EFI_FASTBOOT_USB_PROTOCOL`](./GBL_EFI_FASTBOOT_USB_PROTOCOL.md)
-* optional: enables fastboot over USB
+* [`GblFastbootTransportProtocol`](./gbl_efi_fastboot_transport.md)
+* optional: enables fastboot over platform defined channels such as USB.
 
-Used to provide fastboot over USB. This can be enabled by itself, or in
-addition to fastboot over TCP.
+This can be enabled by itself, or in addition to fastboot over TCP.
 
 ### GblOsConfigurationProtocol
 
 * [`GBL_EFI_OS_CONFIGURATION_PROTOCOL`](./gbl_os_configuration_protocol.md)
 * optional: enables runtime fixups of OS data
 
-Used for runtime fixups of data provided to the OS such as command line and
-device tree. If not provided, the data in the OS images loaded from disk will
-be used without modification.
+Used for device tree selection and bootconfig fixup. If not provided, the data
+from boot partitions will be used without FW-specific modifications.
 
 ### GblSlotProtocol
 

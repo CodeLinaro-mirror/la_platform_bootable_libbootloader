@@ -16,7 +16,9 @@
 
 use crate::{gbl_println, image_buffer::ImageBuffer, GblOps, Result as GblResult};
 pub use abr::{get_and_clear_one_shot_bootloader, get_boot_slot, Ops as AbrOps, SlotIndex};
+use bytes::buf::UninitSlice;
 use core::{fmt::Write, mem::MaybeUninit, num::NonZeroUsize};
+use gbl_storage::CheckedGet;
 use liberror::{Error, Result};
 use safemath::SafeNum;
 use zbi::{ZbiContainer, ZbiFlags, ZbiHeader, ZbiType};
@@ -103,10 +105,10 @@ fn slot_cmd_line(slot: SlotIndex) -> &'static str {
 }
 
 /// Helper for reading zircon image from disk.
-pub(crate) fn read_zircon_image<'a, 'b>(
+pub(crate) fn read_zircon_image<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
     slot: Option<SlotIndex>,
-    out: &mut (impl gbl_storage::SliceMaybeUninit + ?Sized),
+    out: impl Into<&'c mut UninitSlice>,
 ) -> GblResult<usize> {
     let zircon_part = find_part_aliases(ops, zircon_part_name_aliases(slot))?;
     // Reads ZBI header to computes the total size of kernel.
@@ -116,7 +118,7 @@ pub(crate) fn read_zircon_image<'a, 'b>(
         usize::try_from(SafeNum::from(zbi_header.as_bytes_mut().len()) + zbi_header.length)
             .map_err(Error::from)?;
     // Reads the entire kernel
-    let buf = out.get_mut(..image_length)?;
+    let buf = out.into().get_mut(..image_length)?;
     ops.read_from_partition_sync(zircon_part, 0, buf)?;
     Ok(image_length)
 }
@@ -260,7 +262,7 @@ pub(crate) mod test {
     use crate::{
         ops::{
             test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
-            CertPermanentAttributes, RebootReason,
+            CertPermanentAttributes, RebootMode,
         },
         tests::AlignedBuffer,
     };
@@ -268,7 +270,6 @@ pub(crate) mod test {
         mark_slot_active, mark_slot_unbootable, set_one_shot_bootloader, ABR_MAX_TRIES_REMAINING,
     };
     use avb_bindgen::{AVB_CERT_PIK_VERSION_LOCATION, AVB_CERT_PSK_VERSION_LOCATION};
-    use gbl_storage::as_uninit_mut;
     use std::{
         collections::{BTreeSet, HashMap, LinkedList},
         fs,
@@ -357,7 +358,7 @@ pub(crate) mod test {
         );
         ops.avb_ops.cert_permanent_attributes_hash =
             Some(read_test_data("cert_permanent_attributes.hash").try_into().unwrap());
-        ops.reboot_reason = Some(Ok(RebootReason::Normal));
+        ops.reboot_mode = Some(Ok(RebootMode::Normal));
         ops
     }
 
@@ -433,7 +434,7 @@ pub(crate) mod test {
     //
     // Tests should make sure to provide enough buffers for all `get_image_buffer()` calls.
     //
-    struct ImageBuffersPool(LinkedList<(String, Vec<AlignedBuffer>)>);
+    struct ImageBuffersPool(LinkedList<(String, Vec<AlignedBuffer<MaybeUninit<u8>>>)>);
 
     impl ImageBuffersPool {
         pub fn builder() -> ImageBuffersBuilder {
@@ -445,11 +446,11 @@ pub(crate) mod test {
         //
         // size - size for the buffers
         fn new(number: usize, size: usize) -> Self {
-            let mut zbi_items_buffer_vec = Vec::<AlignedBuffer>::new();
-            let mut zbi_zircon_buffer_vec = Vec::<AlignedBuffer>::new();
+            let mut zbi_items_buffer_vec = Vec::new();
+            let mut zbi_zircon_buffer_vec = Vec::new();
             for _ in 0..number {
-                zbi_zircon_buffer_vec.push(AlignedBuffer::new(size, ZIRCON_KERNEL_ALIGN));
-                zbi_items_buffer_vec.push(AlignedBuffer::new(size, ZBI_ALIGNMENT_USIZE));
+                zbi_zircon_buffer_vec.push(AlignedBuffer::new_uninit(size, ZIRCON_KERNEL_ALIGN));
+                zbi_items_buffer_vec.push(AlignedBuffer::new_uninit(size, ZBI_ALIGNMENT_USIZE));
             }
 
             Self(
@@ -467,10 +468,7 @@ pub(crate) mod test {
                 .map(|(key, val_vec)| {
                     (
                         key.clone(),
-                        val_vec
-                            .iter_mut()
-                            .map(|e| ImageBuffer::new(as_uninit_mut(e.as_mut())))
-                            .collect(),
+                        val_vec.iter_mut().map(|e| ImageBuffer::new(e.as_mut())).collect(),
                     )
                 })
                 .collect()

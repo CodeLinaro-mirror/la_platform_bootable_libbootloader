@@ -65,8 +65,11 @@ to bazel-output dir, and you are most likely editing source files in
 incorrectly. To fix this, run
 
 ```
-python3 bootable/libbootloader/gbl/rewrite_rust_project_path.py rust-project.json
+python3 bootable/libbootloader/gbl/rewrite_rust_project_path.py rust-project.json --arch <arch>
 ```
+where `<arch>` is the target architecture of interest and should be one of
+`x86_64`, `aarch64`, `riscv64`. `<arch>` affects intellisense on architecture
+specific code.
 
 And reload your IDE.
 
@@ -142,6 +145,24 @@ configurations:
        -drive format=raw,file=fat:rw:/tmp/esp
    ```
 
+### Debug with GDB on QEMU
+
+[qemu_gdb_example/](./qemu_gdb_example/) provides an example for
+debugging x86_64 GBL EFI app on QEMU using rust-gdb. To try the example:
+
+1. Install necessary dependencies:
+   ```
+   sudo apt-get install qemu-system ovmf
+   ```
+
+2. Runs the following script:
+   ```
+   ./qemu_gdb_example/launch_qemu_gdb.sh
+   ```
+
+   The above command builds a debug x86_64 GBL EFI app, launches it in QEMU
+   and starts `rust-gdb` in a separate terminal for debugging.
+
 ### Boot Fuchsia on emulator
 
 1. Make sure Fuchsia target pass control to GBL.
@@ -179,3 +200,12 @@ configurations:
 ## EFI Protocols
 
 List of EFI protocols used by GBL and a brief description of each [here](./docs/efi_protocols.md).
+
+## Licesing
+
+Unless stated otherwise, all GBL source files are licensed under the Apache License, Version 2.0.
+
+GBL-specific protocols headers `libefi_types/defs/protocols/gbl_*.h` may alternatively be used under
+BSD-2-Clause-Patent license.
+
+See `../LICENSES/Apache-2.0.txt` and `../LICENSES/BSD-2-Clause-Patents.txt` for the full texts.

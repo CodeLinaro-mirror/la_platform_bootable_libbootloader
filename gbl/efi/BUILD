@@ -29,10 +29,12 @@ rust_library(
     name = "libgbl_efi",
     srcs = glob(["src/**/*.rs"]),
     crate_name = "gbl_efi",
+    proc_macro_deps = ["@gbl//libprofile:libprofile_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
         "@arrayvec",
         "@avb",
+        "@bytes",
         "@gbl//libasync",
         "@gbl//libasync:cyclic_executor",
         "@gbl//libboot",
@@ -42,6 +44,7 @@ rust_library(
         "@gbl//libfastboot",
         "@gbl//libfdt",
         "@gbl//libgbl",
+        "@gbl//libprofile",
         "@gbl//libsafemath",
         "@gbl//libstorage",
         "@gbl//libutils",
@@ -106,6 +109,7 @@ rust_binary(
         "@gbl//libboringssl:sysdeps",
         "@gbl//libefi",
         "@gbl//libefi_types",
+        "@gbl//libgbl",
         "@gbl//libstack",
     ] + select(
         {
@@ -174,6 +178,20 @@ build_with_platform(
     name = "x86_64_prod",
     platform = "@gbl//toolchain:gbl_uefi_x86_64_prod",
     deps = [":gbl_efi_testkey"],
+)
+
+build_with_platform(
+    name = "x86_64_debug_dev",
+    mode = "dbg",
+    platform = "@gbl//toolchain:gbl_uefi_x86_64_debug_dev",
+    deps = [":gbl_efi"],
+)
+
+build_with_platform(
+    name = "x86_64_debug_prod",
+    mode = "dbg",
+    platform = "@gbl//toolchain:gbl_uefi_x86_64_debug_prod",
+    deps = [":gbl_efi"],
 )
 
 build_with_platform(

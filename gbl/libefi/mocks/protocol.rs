@@ -22,8 +22,8 @@ use core::ffi::CStr;
 use core::fmt::Write;
 pub use efi::protocol::gbl_efi_image_loading::EfiImageBufferInfo;
 use efi_types::{
-    EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiImageInfo,
-    GblEfiPartitionName, GblEfiVerifiedDeviceTree,
+    EfiInputKey, EfiTimestampProperties, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition,
+    GblEfiAvbVerificationResult, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
 };
 use liberror::Result;
 use mockall::mock;
@@ -80,6 +80,9 @@ pub mod loaded_image {
         pub LoadedImageProtocol {
             /// Returns a real [efi::DeviceHandle], which is data-only so isn't mocked.
             pub fn device_handle(&self) -> Result<DeviceHandle>;
+
+            /// Returns the image base address.
+            pub fn image_base(&self) -> Result<usize>;
         }
     }
     /// Map to the libefi name so code under test can just use one name.
@@ -130,6 +133,25 @@ pub mod simple_text_output {
     impl !Send for MockSimpleTextOutputProtocol {}
 }
 
+/// Mock timestamp protocol
+pub mod timestamp {
+    use super::*;
+
+    mock! {
+        /// Mock [efi::TimestampProtocol]
+        pub TimestampProtocol {
+            /// Returns the current timestamp.
+            pub fn get_timestamp(&self)->Result<u64>;
+
+            /// Returns properties of the timestamp protocol.
+            pub fn get_properties(&self)->Result<EfiTimestampProperties>;
+        }
+    }
+
+    /// Map to the libefi name so code under test can just use one name.
+    pub type TimestampProtocol = MockTimestampProtocol;
+}
+
 /// Mock image_loading protocol.
 pub mod gbl_efi_image_loading {
     use super::*;
@@ -141,16 +163,6 @@ pub mod gbl_efi_image_loading {
         pub GblImageLoadingProtocol {
             /// Returns [EfiImageBuffer] matching `gbl_image_info`
             pub fn get_buffer(&self, gbl_image_info: &GblEfiImageInfo) -> Result<EfiImageBufferInfo>;
-
-            /// Returns number of partitions to be provided via `get_verify_partitions()`, and thus
-            /// expected size of `partition_name` slice.
-            pub fn get_verify_partitions_count(&self) -> Result<usize>;
-
-            /// Returns number of partition names written to `partition_name` slice.
-            pub fn get_verify_partitions(
-                &self,
-                partition_names: &mut [GblEfiPartitionName]
-            ) -> Result<usize>;
         }
     }
 
@@ -218,6 +230,10 @@ pub mod gbl_efi_avb {
     /// which is not practical for our use case.
     #[derive(Clone, Default)]
     pub struct GblAvbProtocol {
+        /// Expected return value from `read_partitions_to_verify`.
+        pub read_partitions_to_verify_result: Option<Result<usize>>,
+        /// Expected return value from `read_is_dm_verity_error`.
+        pub read_is_dm_verity_error_result: Option<Result<bool>>,
         /// Expected return value from `validate_vbmeta_public_key`.
         pub validate_vbmeta_public_key_result: Option<Result<GblEfiAvbKeyValidationStatus>>,
         /// Expected return value from `read_is_device_unlocked`.
@@ -233,6 +249,19 @@ pub mod gbl_efi_avb {
     }
 
     impl GblAvbProtocol {
+        /// Wraps `GBL_EFI_AVB_PROTOCOL.read_partitions_to_verify()`.
+        pub fn read_partitions_to_verify(
+            &self,
+            _partitions: &mut [GblEfiAvbPartition],
+        ) -> Result<usize> {
+            self.read_partitions_to_verify_result.unwrap()
+        }
+
+        /// Wraps `GBL_EFI_AVB_PROTOCOL.read_is_dm_verity_error()`.
+        pub fn read_is_dm_verity_error(&self) -> Result<bool> {
+            self.read_is_dm_verity_error_result.unwrap()
+        }
+
         /// Wraps `GBL_EFI_AVB_PROTOCOL.validate_vbmeta_public_key()`.
         pub fn validate_vbmeta_public_key(
             &self,
@@ -312,6 +341,21 @@ pub mod gbl_efi_fastboot {
         pub fn get_var_all(&self, _: impl FnMut(&[&CStr], &CStr)) -> Result<()> {
             unimplemented!()
         }
+
+        /// Protocol<'_, GblFastbootProtocol>::run_oem_function.
+        pub fn run_oem_function(
+            &self,
+            _: &str,
+            _: &mut [u8],
+            _: impl FnMut(i32, &str) -> Result<()>,
+        ) -> Result<()> {
+            unimplemented!()
+        }
+
+        /// Protocol<'_, GblFastbootProtocol>::get_staged.
+        pub fn get_staged(&self, _: &mut [u8]) -> Result<(usize, usize)> {
+            unimplemented!()
+        }
     }
 
     /// Map to the libefi name so code under test can just use one name.
@@ -322,7 +366,7 @@ pub mod gbl_efi_fastboot {
 pub mod gbl_efi_ab_slot {
     use super::*;
     use efi::protocol::gbl_efi_ab_slot::GblSlot;
-    use efi_types::{GblEfiBootReason, GblEfiSlotMetadataBlock};
+    use efi_types::{GblEfiBootMode, GblEfiSlotMetadataBlock};
 
     mock! {
         /// Mock of [GblSlotProtocol]
@@ -339,11 +383,11 @@ pub mod gbl_efi_ab_slot {
             /// Mock of GblSlotProtocol::set_active_slot.
             pub fn set_active_slot(&self, idx: u8) -> Result<()>;
 
-            /// Mock of GblSlotProtocol::set_boot_reason.
-            pub fn set_boot_reason(&self, reason: GblEfiBootReason, subreason: &[u8]) -> Result<()>;
+            /// Mock of GblSlotProtocol::set_boot_mode.
+            pub fn set_boot_mode(&self, mode: GblEfiBootMode) -> Result<()>;
 
-            /// Mock of GblSlotProtocol::get_boot_reason.
-            pub fn get_boot_reason(&self, subreason: &mut [u8]) -> Result<(GblEfiBootReason, usize)>;
+            /// Mock of GblSlotProtocol::get_boot_mode.
+            pub fn get_boot_mode(&self) -> Result<GblEfiBootMode>;
         }
     }
 

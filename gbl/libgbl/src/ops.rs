@@ -26,15 +26,17 @@ use crate::{
     },
 };
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
+use bytes::buf::UninitSlice;
 use core::{ffi::CStr, fmt::Write, num::NonZeroUsize, ops::DerefMut, result::Result};
 use gbl_async::block_on;
-use gbl_storage::SliceMaybeUninit;
+use libprofile::ProfileBackend;
 use libutils::aligned_subslice;
 
 // Re-exports of types from other dependencies that appear in the APIs of this library.
 pub use avb::{
     CertPermanentAttributes, IoError as AvbIoError, IoResult as AvbIoResult, SHA256_DIGEST_SIZE,
 };
+pub use fastboot::{FailSender, InfoSender, OkaySender};
 pub use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
 pub use slots::{Slot, SlotsMetadata};
@@ -52,17 +54,17 @@ pub enum Os {
     Fuchsia,
 }
 
-/// Contains reboot reasons for instructing GBL to boot to different modes.
+/// Contains reboot mode for instructing GBL to boot to different modes.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub enum RebootReason {
+pub enum RebootMode {
     /// Normal boot.
     Normal,
-    /// Bootloader Fastboot mode.
-    Bootloader,
-    /// Userspace Fastboot mode.
-    FastbootD,
     /// Recovery mode.
     Recovery,
+    /// Userspace Fastboot mode.
+    FastbootD,
+    /// Bootloader Fastboot mode.
+    Bootloader,
 }
 
 // https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
@@ -101,7 +103,7 @@ pub trait GblOps<'a, 'd> {
     ///
     /// On success, returns a closure that performs the reboot.
     fn reboot_recovery(&mut self) -> Result<impl FnOnce() + '_, Error> {
-        match self.set_reboot_reason(RebootReason::Recovery) {
+        match self.set_reboot_mode(RebootMode::Recovery) {
             Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => {
                 set_one_shot_recovery(&mut GblAbrOps(self), true)?;
             }
@@ -115,7 +117,7 @@ pub trait GblOps<'a, 'd> {
     ///
     /// On success, returns a closure that performs the reboot.
     fn reboot_bootloader(&mut self) -> Result<impl FnOnce() + '_, Error> {
-        match self.set_reboot_reason(RebootReason::Bootloader) {
+        match self.set_reboot_mode(RebootMode::Bootloader) {
             Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => {
                 set_one_shot_bootloader(&mut GblAbrOps(self), true)?;
             }
@@ -141,21 +143,21 @@ pub trait GblOps<'a, 'd> {
     >];
 
     /// Reads data from a partition.
-    async fn read_from_partition(
+    async fn read_from_partition<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
         read_unique_partition(self.disks(), part, off, out).await
     }
 
     /// Reads data from a partition synchronously.
-    fn read_from_partition_sync(
+    fn read_from_partition_sync<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
         read_unique_partition_sync(self.disks(), part, off, out)
     }
@@ -240,6 +242,9 @@ pub trait GblOps<'a, 'd> {
     // The following is a selective subset of the interfaces in `avb::Ops` and `avb::CertOps` needed
     // by GBL's usage of AVB. The rest of the APIs are either not relevant to or are implemented and
     // managed by GBL APIs.
+
+    /// Returns if device rebooted due to dm_verify error is occurred.
+    fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool>;
 
     /// Returns if device is in an unlocked state.
     ///
@@ -346,22 +351,11 @@ pub trait GblOps<'a, 'd> {
     /// data cannot be verified with libavb.
     fn get_custom_device_tree(&mut self) -> Option<&'a [u8]>;
 
-    /// Requests an OS command line to be used alongside the one built by GBL.
-    ///
-    /// The returned command line will be verified and appended on top of the command line
-    /// built by GBL. Refer to the behavior specified for the corresponding UEFI interface:
-    /// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
-    fn fixup_os_commandline<'c>(
-        &mut self,
-        commandline: &CStr,
-        fixup_buffer: &'c mut [u8],
-    ) -> Result<Option<&'c str>, Error>;
-
     /// Requests an OS bootconfig to be used alongside the one built by GBL.
     ///
     /// The returned bootconfig will be verified and appended on top of the bootconfig
     /// built by GBL. Refer to the behavior specified for the corresponding UEFI interface:
-    /// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
+    /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
     fn fixup_bootconfig<'c>(
         &mut self,
         bootconfig: &[u8],
@@ -373,7 +367,7 @@ pub trait GblOps<'a, 'd> {
     /// Provided components registry must be used to select one device tree (none is not allowed),
     /// and any number of overlays. Refer to the behavior specified for the corresponding UEFI
     /// interface:
-    /// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
+    /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
     fn select_device_trees(
         &mut self,
         components: &mut device_tree::DeviceTreeComponentsRegistry,
@@ -383,8 +377,7 @@ pub trait GblOps<'a, 'd> {
     ///
     /// Modified device tree will be verified and used to boot a device. Refer to the behavior
     /// specified for the corresponding UEFI interface:
-    /// https://cs.android.com/android/platform/superproject/main/+/main:bootable/libbootloader/gbl/docs/efi_protocols.md
-    /// https://github.com/U-Boot-EFI/EFI_DT_FIXUP_PROTOCOL
+    /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/efi_protocols.md
     fn fixup_device_tree(&mut self, device_tree: &mut [u8]) -> Result<(), Error>;
 
     /// Gets platform-specific fastboot variable.
@@ -415,6 +408,37 @@ pub trait GblOps<'a, 'd> {
         &mut self,
         cb: impl FnMut(&[&CStr], &CStr),
     ) -> Result<(), Error>;
+
+    /// Executes a fastboot oem command.
+    ///
+    /// # Args
+    ///
+    /// * `cmd`: The oem command string.
+    /// * `download`: The most recent download data.
+    /// * `sender`: An implementation that provides APIs for sending fastboot OKAY/FAIL/INFO
+    ///   messages.
+    ///
+    /// * If implementation does not attempt to return, it should send an OKAY or FAIL message via
+    /// sender to prevent the host from waiting for device response.
+    /// * If implementation returns without sending OKAY/FAIL message, GBL fastboot will send the
+    ///   message depending on the return result.
+    fn fastboot_run_oem(
+        &mut self,
+        cmd: &str,
+        download: &mut [u8],
+        sender: impl InfoSender + OkaySender + FailSender,
+    ) -> Result<(), Error>;
+
+    /// Reads out data staged by the platform to upload to the host during `fastboot get_staged`.
+    ///
+    /// # Args
+    ///
+    /// * `out`: The output buffer.
+    ///
+    /// # Returns
+    ///
+    /// * On success, returns the size of the actual read data and size of remaining data.
+    fn fastboot_get_staged(&mut self, _out: &mut [u8]) -> Result<(usize, usize), Error>;
 
     /// Returns a [SlotsMetadata] for the platform.
     fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error>;
@@ -455,11 +479,11 @@ pub trait GblOps<'a, 'd> {
     /// * `slot`: The numeric index of the slot.
     fn set_active_slot(&mut self, _slot: u8) -> Result<(), Error>;
 
-    /// Sets the reboot reason for the next reboot.
-    fn set_reboot_reason(&mut self, _reason: RebootReason) -> Result<(), Error>;
+    /// Sets the reboot mode for the next reboot.
+    fn set_reboot_mode(&mut self, _mode: RebootMode) -> Result<(), Error>;
 
-    /// Gets the reboot reason for this boot.
-    fn get_reboot_reason(&mut self) -> Result<RebootReason, Error>;
+    /// Gets the reboot mode for this boot.
+    fn get_reboot_mode(&mut self) -> Result<RebootMode, Error>;
 
     /// Returns the base stack pointer if available
     fn get_base_sp(&mut self) -> Option<usize>;
@@ -485,6 +509,9 @@ pub trait GblOps<'a, 'd> {
         };
         gbl_println!(self, "{s}");
     }
+
+    /// Provides backend specific hooks for profiling.
+    fn get_profiling_backend(&self) -> impl ProfileBackend;
 }
 
 /// Prints the stack usage at the callsite.
@@ -534,19 +561,20 @@ pub(crate) struct RambootOps<'a, T> {
 
 impl<'a, T> RambootOps<'a, T> {
     /// Reads from ram partitions.
-    pub fn read_from_ram_partition(
+    pub fn read_from_ram_partition<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
+        let out = out.into();
         match self.ram_partitions.iter().find(|(name, _)| *name == part) {
             Some((_, data)) => {
                 let buf = data
                     .get(off.try_into()?..)
                     .and_then(|v| v.get(..out.len()))
                     .ok_or(Error::OutOfRange)?;
-                Ok(out.clone_from_slice(buf))
+                Ok(out.copy_from_slice(buf))
             }
             _ => Err(Error::NotFound),
         }
@@ -596,6 +624,10 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         _boot_token: crate::BootToken,
     ) -> GblResult<slots::Cursor<'c>> {
         self.ops.load_slot_interface(_fnmut, _boot_token)
+    }
+
+    fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
+        self.ops.avb_read_is_dm_verity_error()
     }
 
     fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
@@ -648,14 +680,6 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.get_custom_device_tree()
     }
 
-    fn fixup_os_commandline<'c>(
-        &mut self,
-        commandline: &CStr,
-        fixup_buffer: &'c mut [u8],
-    ) -> Result<Option<&'c str>, Error> {
-        self.ops.fixup_os_commandline(commandline, fixup_buffer)
-    }
-
     fn fixup_bootconfig<'c>(
         &mut self,
         bootconfig: &[u8],
@@ -675,25 +699,27 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.select_device_trees(components_registry)
     }
 
-    async fn read_from_partition(
+    async fn read_from_partition<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
-        match self.read_from_ram_partition(part, off, out) {
+        let out = out.into();
+        match self.read_from_ram_partition(part, off, &mut *out) {
             Err(Error::NotFound) => self.ops.read_from_partition(part, off, out).await,
             v => v,
         }
     }
 
-    fn read_from_partition_sync(
+    fn read_from_partition_sync<'b>(
         &mut self,
         part: &str,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
-        match self.read_from_ram_partition(part, off, out) {
+        let out = out.into();
+        match self.read_from_ram_partition(part, off, &mut *out) {
             Err(Error::NotFound) => self.ops.read_from_partition_sync(part, off, out),
             v => v,
         }
@@ -780,15 +806,15 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!()
     }
 
-    fn set_reboot_reason(&mut self, _: RebootReason) -> Result<(), Error> {
+    fn set_reboot_mode(&mut self, _: RebootMode) -> Result<(), Error> {
         // Ramboot is not suppose to call this interface.
         unreachable!()
     }
 
-    fn get_reboot_reason(&mut self) -> Result<RebootReason, Error> {
+    fn get_reboot_mode(&mut self) -> Result<RebootMode, Error> {
         // Assumes that ramboot use normal boot mode. But we might consider supporting recovery
         // if there is a usecase.
-        Ok(RebootReason::Normal)
+        Ok(RebootMode::Normal)
     }
 
     fn get_base_sp(&mut self) -> Option<usize> {
@@ -812,24 +838,47 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         // Ramboot should not need this.
         unreachable!();
     }
+
+    fn fastboot_run_oem(
+        &mut self,
+        _: &str,
+        _: &mut [u8],
+        _: impl InfoSender + OkaySender + FailSender,
+    ) -> Result<(), Error> {
+        // Ramboot should not need this.
+        unreachable!();
+    }
+
+    fn fastboot_get_staged(&mut self, _: &mut [u8]) -> Result<(usize, usize), Error> {
+        // Ramboot should not need this.
+        unreachable!();
+    }
+
+    fn get_profiling_backend(&self) -> impl ProfileBackend {
+        self.ops.get_profiling_backend()
+    }
 }
 
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
+    use crate::android_boot::BOOTARGS_PROP;
     use crate::device_tree::DeviceTreeComponentType;
     use crate::error::IntegrationError;
     use crate::partition::GblDisk;
     use abr::{get_and_clear_one_shot_bootloader, get_boot_slot};
     use avb::{CertOps, Ops};
     use avb_test::TestOps as AvbTestOps;
+    use bootparams::commandline::CommandlineBuilder;
     use core::{
         fmt::Write,
         ops::{Deref, DerefMut},
+        time::Duration,
     };
     use fdt::Fdt;
     use gbl_async::block_on;
     use gbl_storage::{new_gpt_max, Disk, GptMax, RamBlockIo};
+    use libprofile::{ProfileTimer, Reporter};
     use libutils::snprintf;
     use std::{
         collections::{HashMap, LinkedList},
@@ -910,6 +959,9 @@ pub(crate) mod test {
         /// For return by `Self::expected_os()`
         pub os: Option<Os>,
 
+        /// For return by `Self::avb_read_is_dm_verity_error`
+        pub avb_dm_verity_error_status: Option<AvbIoResult<bool>>,
+
         /// For return by `Self::avb_validate_vbmeta_public_key`
         pub avb_key_validation_status: Option<AvbIoResult<KeyValidationStatus>>,
 
@@ -949,11 +1001,11 @@ pub(crate) mod test {
         /// slot index last set active by `set_active()`,
         pub last_set_active_slot: Option<u8>,
 
-        /// For returned by `get_reboot_reason()`
-        pub reboot_reason: Option<Result<RebootReason, Error>>,
+        /// For returned by `get_reboot_mode()`
+        pub reboot_mode: Option<Result<RebootMode, Error>>,
 
-        /// For returned by `set_reboot_reason`
-        pub set_reboot_reason_result: Option<Result<(), Error>>,
+        /// For returned by `set_reboot_mode()`
+        pub set_reboot_mode_result: Option<Result<(), Error>>,
 
         /// For returned by `slot_metadata`
         pub slot_metadata_result: Option<Result<SlotsMetadata, Error>>,
@@ -971,6 +1023,13 @@ pub(crate) mod test {
 
         /// For returned by `avf_is_supported`
         pub avf_is_supported: bool,
+
+        /// Download data seen by the most recent oem command
+        pub oem_cmd_download: Vec<u8>,
+
+        /// Handler of `fastboot_get_staged`
+        pub get_staged_handler:
+            Option<&'a mut dyn FnMut(&mut [u8]) -> Result<(usize, usize), Error>>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -994,6 +1053,7 @@ pub(crate) mod test {
         pub const GBL_TEST_AVF_VENDOR_DICE_HANDOVER: &'static [u8] = b"fake_handover_always_fail";
         pub const GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY: &'static [u8] =
             b"secret_keeper_public_key";
+        pub const GBL_OEM_CMD_INFO_MSG: &'static str = "oem-info";
 
         pub fn new(partitions: &'a [TestGblDisk]) -> Self {
             let mut res = Self {
@@ -1032,6 +1092,29 @@ pub(crate) mod test {
             contents.iter_mut().for_each(|v| *v = !*v);
             self.write_to_partition_sync(name, off, &mut contents[..]).unwrap();
         }
+    }
+
+    #[derive(Copy, Clone)]
+    struct NullProfiler {}
+
+    impl ProfileBackend for NullProfiler {
+        fn new_timer(&self) -> impl ProfileTimer {
+            *self
+        }
+
+        fn reporter(&self) -> impl Reporter {
+            *self
+        }
+    }
+
+    impl ProfileTimer for NullProfiler {
+        fn elapsed(&self) -> Duration {
+            Duration::ZERO
+        }
+    }
+
+    impl Reporter for NullProfiler {
+        fn report(&self, _: &'static str, _: &'static str, _: Duration) {}
     }
 
     impl<'a, 'd> GblOps<'a, 'd> for FakeGblOps<'a, 'd> {
@@ -1085,6 +1168,10 @@ pub(crate) mod test {
             _: slots::BootToken,
         ) -> GblResult<slots::Cursor<'b>> {
             unimplemented!();
+        }
+
+        fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
+            self.avb_dm_verity_error_status.clone().unwrap()
         }
 
         fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
@@ -1189,7 +1276,7 @@ pub(crate) mod test {
             }
 
             let (out, _) = buffer.split_at_mut(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER.len());
-            out.clone_from_slice(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER);
+            out.copy_from_slice(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER);
             Ok(out)
         }
 
@@ -1202,7 +1289,7 @@ pub(crate) mod test {
             }
 
             let (out, _) = buffer.split_at_mut(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY.len());
-            out.clone_from_slice(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY);
+            out.copy_from_slice(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY);
             Ok(Some(out))
         }
 
@@ -1227,27 +1314,30 @@ pub(crate) mod test {
             self.custom_device_tree
         }
 
-        fn fixup_os_commandline<'c>(
-            &mut self,
-            _commandline: &CStr,
-            _fixup_buffer: &'c mut [u8],
-        ) -> Result<Option<&'c str>, Error> {
-            Ok(None)
-        }
-
         fn fixup_bootconfig<'c>(
             &mut self,
             _bootconfig: &[u8],
             fixup_buffer: &'c mut [u8],
         ) -> Result<Option<&'c [u8]>, Error> {
             let (out, _) = fixup_buffer.split_at_mut(Self::GBL_TEST_BOOTCONFIG.len());
-            out.clone_from_slice(Self::GBL_TEST_BOOTCONFIG.as_bytes());
+            out.copy_from_slice(Self::GBL_TEST_BOOTCONFIG.as_bytes());
             Ok(Some(out))
         }
 
         fn fixup_device_tree(&mut self, fdt: &mut [u8]) -> Result<(), Error> {
-            Fdt::new_mut(fdt).unwrap().set_property("chosen", c"fixup", &[1])?;
-            Ok(())
+            let mut fdt = Fdt::new_mut(fdt).unwrap();
+
+            // Update kernel command line with fixup value.
+            let cmd_prop_len = fdt.get_property("chosen", BOOTARGS_PROP)?.len();
+
+            // GBL guaranties kernel command line has some extra space reserved to append.
+            let cmd_prop_buffer =
+                fdt.set_property_placeholder("chosen", BOOTARGS_PROP, cmd_prop_len)?;
+            let mut commandline = CommandlineBuilder::new_from_prefix(cmd_prop_buffer)?;
+            commandline.add("fixup")?;
+
+            // Update DT with fixup value.
+            fdt.set_property("chosen", c"fixup", &[1])
         }
 
         fn select_device_trees(
@@ -1294,6 +1384,23 @@ pub(crate) mod test {
             Ok(())
         }
 
+        fn fastboot_run_oem(
+            &mut self,
+            cmd: &str,
+            download: &mut [u8],
+            mut sender: impl InfoSender + OkaySender + FailSender,
+        ) -> Result<(), Error> {
+            self.oem_cmd_download = download.to_vec();
+            match cmd {
+                "test-oem" => block_on(sender.send_info(Self::GBL_OEM_CMD_INFO_MSG)),
+                _ => Err(Error::NotFound),
+            }
+        }
+
+        fn fastboot_get_staged(&mut self, out: &mut [u8]) -> Result<(usize, usize), Error> {
+            (self.get_staged_handler.as_mut().unwrap())(out)
+        }
+
         fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {
             self.slot_metadata_result.unwrap_or(Err(Error::Unsupported))
         }
@@ -1312,17 +1419,21 @@ pub(crate) mod test {
             Ok(())
         }
 
-        fn set_reboot_reason(&mut self, reason: RebootReason) -> Result<(), Error> {
-            self.reboot_reason = Some(Ok(reason));
-            self.set_reboot_reason_result.unwrap()
+        fn set_reboot_mode(&mut self, mode: RebootMode) -> Result<(), Error> {
+            self.reboot_mode = Some(Ok(mode));
+            self.set_reboot_mode_result.unwrap()
         }
 
-        fn get_reboot_reason(&mut self) -> Result<RebootReason, Error> {
-            self.reboot_reason.unwrap()
+        fn get_reboot_mode(&mut self) -> Result<RebootMode, Error> {
+            self.reboot_mode.unwrap()
         }
 
         fn get_base_sp(&mut self) -> Option<usize> {
             self.base_sp
+        }
+
+        fn get_profiling_backend(&self) -> impl ProfileBackend {
+            NullProfiler {}
         }
     }
 
@@ -1332,22 +1443,22 @@ pub(crate) mod test {
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
+        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
         (gbl_ops.reboot_bootloader().unwrap())();
         assert!(gbl_ops.rebooted);
         assert_eq!(get_and_clear_one_shot_bootloader(&mut GblAbrOps(&mut gbl_ops)), Ok(true));
     }
 
     #[test]
-    fn test_fuchsia_reboot_bootloader_via_set_reboot_reason() {
+    fn test_fuchsia_reboot_bootloader_via_set_reboot_mode() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_reason_result = Some(Ok(()));
+        gbl_ops.set_reboot_mode_result = Some(Ok(()));
         (gbl_ops.reboot_bootloader().unwrap())();
         assert!(gbl_ops.rebooted);
-        assert_eq!(gbl_ops.reboot_reason, Some(Ok(RebootReason::Bootloader)));
+        assert_eq!(gbl_ops.reboot_mode, Some(Ok(RebootMode::Bootloader)));
         assert_eq!(get_and_clear_one_shot_bootloader(&mut GblAbrOps(&mut gbl_ops)), Ok(false));
     }
 
@@ -1355,10 +1466,10 @@ pub(crate) mod test {
     fn test_non_fuchsia_reboot_bootloader() {
         let storage = FakeGblOpsStorage::default();
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.set_reboot_reason_result = Some(Ok(()));
+        gbl_ops.set_reboot_mode_result = Some(Ok(()));
         (gbl_ops.reboot_bootloader().unwrap())();
         assert!(gbl_ops.rebooted);
-        assert_eq!(gbl_ops.reboot_reason, Some(Ok(RebootReason::Bootloader)));
+        assert_eq!(gbl_ops.reboot_mode, Some(Ok(RebootMode::Bootloader)));
     }
 
     #[test]
@@ -1367,7 +1478,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
+        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
         (gbl_ops.reboot_recovery().unwrap())();
         assert!(gbl_ops.rebooted);
         // One shot recovery is set.
@@ -1376,15 +1487,15 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_fuchsia_reboot_recovery_via_set_reboot_reason() {
+    fn test_fuchsia_reboot_recovery_via_set_reboot_mode() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_reason_result = Some(Ok(()));
+        gbl_ops.set_reboot_mode_result = Some(Ok(()));
         (gbl_ops.reboot_recovery().unwrap())();
         assert!(gbl_ops.rebooted);
-        assert_eq!(gbl_ops.reboot_reason, Some(Ok(RebootReason::Recovery)));
+        assert_eq!(gbl_ops.reboot_mode, Some(Ok(RebootMode::Recovery)));
         // One shot recovery not set.
         assert_eq!(get_boot_slot(&mut GblAbrOps(&mut gbl_ops), true), (SlotIndex::A, false));
     }
@@ -1393,10 +1504,10 @@ pub(crate) mod test {
     fn test_non_fuchsia_reboot_recovery() {
         let storage = FakeGblOpsStorage::default();
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.set_reboot_reason_result = Some(Ok(()));
+        gbl_ops.set_reboot_mode_result = Some(Ok(()));
         (gbl_ops.reboot_recovery().unwrap())();
         assert!(gbl_ops.rebooted);
-        assert_eq!(gbl_ops.reboot_reason, Some(Ok(RebootReason::Recovery)));
+        assert_eq!(gbl_ops.reboot_mode, Some(Ok(RebootMode::Recovery)));
     }
 
     /// Helper for creating a slot object.

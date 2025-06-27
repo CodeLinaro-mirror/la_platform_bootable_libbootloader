@@ -26,7 +26,7 @@ extern crate alloc;
 mod efi_blocks;
 mod ops;
 #[macro_use]
-mod utils;
+pub mod utils;
 
 // Currently un-testable modules.
 //

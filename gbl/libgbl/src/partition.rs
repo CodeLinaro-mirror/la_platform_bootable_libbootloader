@@ -15,6 +15,7 @@
 //! This file implements storage and partition logic for libgbl.
 
 use crate::fastboot::sparse::{is_sparse_image, write_sparse_image, SparseRawWriter};
+use bytes::buf::UninitSlice;
 use core::cell::{RefCell, RefMut};
 use core::{
     ffi::CStr,
@@ -23,7 +24,7 @@ use core::{
 use gbl_async::block_on;
 use gbl_storage::{
     BlockInfo, BlockIo, BlockIoSync, Disk, Gpt, GptBuilder, GptSyncResult,
-    Partition as GptPartition, SliceMaybeUninit,
+    Partition as GptPartition,
 };
 use liberror::Error;
 use safemath::SafeNum;
@@ -345,11 +346,12 @@ impl<'a, B: BlockIo> PartitionIo<'a, B> {
     }
 
     /// Reads from the partition.
-    pub async fn read(
+    pub async fn read<'b>(
         &mut self,
         off: u64,
-        out: &mut (impl SliceMaybeUninit + ?Sized),
+        out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
+        let out = out.into();
         self.disk.read(self.check_rw_range(off, out.len())?, out).await
     }
 
@@ -408,27 +410,27 @@ pub fn check_part_unique(
 }
 
 /// Checks that a partition is unique among all block devices and reads from it.
-pub async fn read_unique_partition(
+pub async fn read_unique_partition<'a>(
     devs: &'_ [GblDisk<
         Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
         Gpt<impl DerefMut<Target = [u8]>>,
     >],
     part: &str,
     off: u64,
-    out: &mut (impl SliceMaybeUninit + ?Sized),
+    out: impl Into<&'a mut UninitSlice>,
 ) -> Result<(), Error> {
     devs[check_part_unique(devs, part)?.0].partition_io(Some(part))?.read(off, out).await
 }
 
 /// Same as `read_unique_partition` but IO is blocking.
-pub fn read_unique_partition_sync(
+pub fn read_unique_partition_sync<'a>(
     devs: &'_ [GblDisk<
         Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
         Gpt<impl DerefMut<Target = [u8]>>,
     >],
     part: &str,
     off: u64,
-    out: &mut (impl SliceMaybeUninit + ?Sized),
+    out: impl Into<&'a mut UninitSlice>,
 ) -> Result<(), Error> {
     block_on(
         devs[check_part_unique(devs, part)?.0].as_sync()?.partition_io(Some(part))?.read(off, out),

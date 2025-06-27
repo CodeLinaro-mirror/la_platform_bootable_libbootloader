@@ -19,7 +19,8 @@ use crate::protocol::{Protocol, ProtocolInfo};
 use core::ffi::CStr;
 use core::ptr::null;
 use efi_types::{
-    EfiGuid, GblEfiAvbKeyValidationStatus, GblEfiAvbProtocol, GblEfiAvbVerificationResult,
+    EfiGuid, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition, GblEfiAvbProtocol,
+    GblEfiAvbVerificationResult,
 };
 use liberror::Result;
 
@@ -35,6 +36,64 @@ impl ProtocolInfo for GblAvbProtocol {
 
 // Protocol interface wrappers.
 impl Protocol<'_, GblAvbProtocol> {
+    /// Wrapper of `GBL_EFI_AVB_PROTOCOL.read_partitions_to_verify()`.
+    ///
+    /// # Result
+    /// Err(BufferTooSmall(Some(size))) - when provided `partitions` is less than expected `size`.
+    /// Err(err) - if error occurred.
+    /// Ok(len) - will return number of `GblEfiAvbPartition`s copied to `partitions` slice.
+    ///
+    /// SAFETY:
+    /// * Each `partitions[N].name` must point to non-null writable buffer of at least
+    /// `partitions[N].name_len` bytes.
+    pub unsafe fn read_partitions_to_verify(
+        &self,
+        partitions: &mut [GblEfiAvbPartition],
+    ) -> Result<usize> {
+        let mut num_partitions = partitions.len();
+
+        // SAFETY:
+        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
+        //   established by `Protocol::new()`.
+        // * `self.interface` is input parameter, outlives the call, and will not be retained.
+        // * `num_partitions` is input/output parameter, non-null and points to a valid writtable
+        //   usize buffer.
+        // * `partitions` is input/output parameter, non-null and points to `partitions.len()`
+        //   consecutive `GblEfiAvbPartition`. Each `partitions[N].name` points to writable buffer
+        //   of at least `partitions[N].name_len` bytes.
+        unsafe {
+            efi_call!(
+                @bufsize num_partitions,
+                self.interface()?.read_partitions_to_verify,
+                self.interface,
+                &mut num_partitions,
+                partitions.as_mut_ptr(),
+            )?;
+        }
+
+        Ok(num_partitions)
+    }
+
+    /// Wraps `GBL_EFI_AVB_PROTOCOL.read_is_dm_verity_error()`.
+    pub fn read_is_dm_verity_error(&self) -> Result<bool> {
+        let mut is_dm_verity_error = false;
+
+        // SAFETY:
+        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
+        //   established by `Protocol::new()`
+        // * `is_dm_verity_error` is non-null buffer to a `bool` available to write, must be used
+        //   only within the call
+        unsafe {
+            efi_call!(
+                self.interface()?.read_is_dm_verity_error,
+                self.interface,
+                &mut is_dm_verity_error,
+            )?
+        }
+
+        Ok(is_dm_verity_error)
+    }
+
     /// Wraps `GBL_EFI_AVB_PROTOCOL.validate_vbmeta_public_key()`.
     pub fn validate_vbmeta_public_key(
         &self,
@@ -137,7 +196,7 @@ impl Protocol<'_, GblAvbProtocol> {
                 @bufsize value_buffer_size,
                 self.interface()?.read_persistent_value,
                 self.interface,
-                name.as_ptr(),
+                name.as_ptr() as _,
                 value_ptr,
                 &mut value_buffer_size,
             )?
@@ -163,7 +222,7 @@ impl Protocol<'_, GblAvbProtocol> {
             efi_call!(
                 self.interface()?.write_persistent_value,
                 self.interface,
-                name.as_ptr(),
+                name.as_ptr() as _,
                 value_ptr,
                 value_len,
             )?
@@ -196,7 +255,189 @@ mod test {
     use super::*;
     use crate::{protocol::EFI_STATUS_BUFFER_TOO_SMALL, test::run_test_with_mock_protocol, Error};
     use efi_types::{EfiStatus, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS};
-    use std::{ffi::c_char, ptr, slice};
+    use std::{ptr, slice};
+
+    #[test]
+    fn read_partitions_to_verify_partitions_provided() {
+        const PARTITIONS_NUM: usize = 3;
+        const PARTITION_MAX_LEN: usize = 29;
+        const FIRST_PROVIDED_PARTITION: &[u8] = b"first_partition";
+        const SECOND_PROVIDED_PARTITION: &[u8] = b"second_partition";
+
+        const EXPECTED_PROVIDED_PARTITIONS_NUM: usize = 2;
+
+        /// C callback implementation that provides EXPECTED_PROVIDED_PARTITIONS_NUM partitions.
+        unsafe extern "efiapi" fn read_partitions_to_verify(
+            _: *mut GblEfiAvbProtocol,
+            num_partitions: *mut usize,
+            partitions: *mut GblEfiAvbPartition,
+        ) -> EfiStatus {
+            // SAFETY:
+            // * `num_partitions` points to non-null writtable usize buffer.
+            // * `partitions` points to writtable buffer with `num_partitions` amount of
+            //   `GblEfiAvbPartition`.
+            // * Each `partitions[N].name` points to writable buffer of at least
+            //   `partitions[N].name_len` bytes.
+            unsafe {
+                let partitions = core::slice::from_raw_parts_mut(partitions, *num_partitions);
+                let first =
+                    core::slice::from_raw_parts_mut(partitions[0].name, partitions[0].name_len);
+                let second =
+                    core::slice::from_raw_parts_mut(partitions[1].name, partitions[1].name_len);
+
+                first[..FIRST_PROVIDED_PARTITION.len()].copy_from_slice(FIRST_PROVIDED_PARTITION);
+                second[..SECOND_PROVIDED_PARTITION.len()]
+                    .copy_from_slice(SECOND_PROVIDED_PARTITION);
+
+                partitions[0].name_len = FIRST_PROVIDED_PARTITION.len();
+                partitions[1].name_len = SECOND_PROVIDED_PARTITION.len();
+
+                *num_partitions = EXPECTED_PROVIDED_PARTITIONS_NUM
+            }
+
+            EFI_STATUS_SUCCESS
+        }
+
+        let c_interface = GblEfiAvbProtocol {
+            read_partitions_to_verify: Some(read_partitions_to_verify),
+            ..Default::default()
+        };
+
+        run_test_with_mock_protocol(c_interface, |avb_protocol| {
+            let mut partitions = [GblEfiAvbPartition::default(); PARTITIONS_NUM];
+
+            let first_name = &mut [0u8; PARTITION_MAX_LEN];
+            let second_name = &mut [0u8; PARTITION_MAX_LEN];
+            let third_name = &mut [0u8; PARTITION_MAX_LEN];
+
+            partitions[0].name_len = PARTITION_MAX_LEN;
+            partitions[0].name = first_name.as_mut_ptr();
+            partitions[1].name_len = PARTITION_MAX_LEN;
+            partitions[1].name = second_name.as_mut_ptr();
+            partitions[2].name_len = PARTITION_MAX_LEN;
+            partitions[2].name = third_name.as_mut_ptr();
+
+            // SAFETY:
+            // * Each `partitions[N].name` points to writable buffer of at least
+            // `partitions[N].name_len` bytes.
+            let result = unsafe { avb_protocol.read_partitions_to_verify(&mut partitions) };
+            assert_eq!(result, Ok(EXPECTED_PROVIDED_PARTITIONS_NUM));
+
+            // SAFETY:
+            // * Each `partitions[N].name` points to writable buffer of at least
+            // `partitions[N].name_len` bytes.
+            let (first_name, second_name) = unsafe {
+                (
+                    core::slice::from_raw_parts(partitions[0].name, partitions[0].name_len),
+                    core::slice::from_raw_parts(partitions[1].name, partitions[1].name_len),
+                )
+            };
+            assert_eq!(
+                [first_name, second_name],
+                [FIRST_PROVIDED_PARTITION, SECOND_PROVIDED_PARTITION],
+            );
+        });
+    }
+
+    #[test]
+    fn read_partitions_to_verify_buffer_too_small() {
+        const EXPECTED_PARTITIONS_NUM: usize = 2;
+
+        /// C callback implementation that requests a larger buffer.
+        unsafe extern "efiapi" fn read_partitions_to_verify(
+            _: *mut GblEfiAvbProtocol,
+            num_partitions: *mut usize,
+            _: *mut GblEfiAvbPartition,
+        ) -> EfiStatus {
+            // SAFETY: `num_partitions` is non-null pointer to writable usize buffer.
+            unsafe { *num_partitions = EXPECTED_PARTITIONS_NUM };
+            EFI_STATUS_BUFFER_TOO_SMALL
+        }
+
+        let c_interface = GblEfiAvbProtocol {
+            read_partitions_to_verify: Some(read_partitions_to_verify),
+            ..Default::default()
+        };
+
+        run_test_with_mock_protocol(c_interface, |avb_protocol| {
+            let mut partitions: [GblEfiAvbPartition; 0] = [];
+
+            // SAFETY:
+            // * Each `partitions[N].name` points to writable buffer of at least
+            // `partitions[N].name_len` bytes.
+            let result = unsafe { avb_protocol.read_partitions_to_verify(&mut partitions) };
+            assert_eq!(result, Err(Error::BufferTooSmall(Some(EXPECTED_PARTITIONS_NUM))));
+        });
+    }
+
+    #[test]
+    fn read_partitions_to_verify_error() {
+        /// C callback implementation that returns an error.
+        unsafe extern "efiapi" fn read_partitions_to_verify(
+            _: *mut GblEfiAvbProtocol,
+            _: *mut usize,
+            _: *mut GblEfiAvbPartition,
+        ) -> EfiStatus {
+            EFI_STATUS_INVALID_PARAMETER
+        }
+
+        let c_interface = GblEfiAvbProtocol {
+            read_partitions_to_verify: Some(read_partitions_to_verify),
+            ..Default::default()
+        };
+
+        run_test_with_mock_protocol(c_interface, |avb_protocol| {
+            let mut partitions: [GblEfiAvbPartition; 0] = [];
+
+            // SAFETY:
+            // * Each `partitions[N].name` points to writable buffer of at least
+            // `partitions[N].name_len` bytes.
+            let result = unsafe { avb_protocol.read_partitions_to_verify(&mut partitions) };
+            assert_eq!(result, Err(Error::InvalidInput));
+        });
+    }
+
+    #[test]
+    fn read_is_dm_verity_error_returns_false() {
+        /// C callback implementation that sets is_dm_verity_error to false.
+        unsafe extern "efiapi" fn c_return_false(
+            _: *mut GblEfiAvbProtocol,
+            is_dm_verity_error_ptr: *mut bool,
+        ) -> EfiStatus {
+            // SAFETY: is_dm_verity_error_ptr is a valid bool pointer available to write.
+            unsafe { *is_dm_verity_error_ptr = false };
+            EFI_STATUS_SUCCESS
+        }
+
+        let c_interface = GblEfiAvbProtocol {
+            read_is_dm_verity_error: Some(c_return_false),
+            ..Default::default()
+        };
+
+        run_test_with_mock_protocol(c_interface, |avb_protocol| {
+            assert_eq!(avb_protocol.read_is_dm_verity_error(), Ok(false));
+        });
+    }
+
+    #[test]
+    fn read_is_dm_verity_error_error_handled() {
+        /// C callback implementation that returns an error.
+        unsafe extern "efiapi" fn c_return_error(
+            _: *mut GblEfiAvbProtocol,
+            _: *mut bool,
+        ) -> EfiStatus {
+            EFI_STATUS_INVALID_PARAMETER
+        }
+
+        let c_interface = GblEfiAvbProtocol {
+            read_is_dm_verity_error: Some(c_return_error),
+            ..Default::default()
+        };
+
+        run_test_with_mock_protocol(c_interface, |avb_protocol| {
+            assert_eq!(avb_protocol.read_is_dm_verity_error(), Err(Error::InvalidInput));
+        });
+    }
 
     #[test]
     fn validate_vbmeta_public_key_status_provided() {
@@ -503,14 +744,14 @@ mod test {
         ///   value buffer.
         unsafe extern "efiapi" fn c_read_persistent_value_success(
             _: *mut GblEfiAvbProtocol,
-            name: *const c_char,
+            name: *const u8,
             value: *mut u8,
             value_size: *mut usize,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
                 // * `name` is a valid pointer to null-terminated string.
-                unsafe { CStr::from_ptr(name) },
+                unsafe { CStr::from_ptr(name as _) },
                 EXPECTED_NAME
             );
             assert_eq!(
@@ -555,7 +796,7 @@ mod test {
         ///   value buffer.
         unsafe extern "efiapi" fn c_read_persistent_value_buffer_too_small(
             _: *mut GblEfiAvbProtocol,
-            _: *const c_char,
+            _: *const u8,
             _: *mut u8,
             value_size: *mut usize,
         ) -> EfiStatus {
@@ -593,14 +834,14 @@ mod test {
         /// * Caller must guarantee that `value` points to a valid `value_size` sized bytes buffer.
         unsafe extern "efiapi" fn c_write_persistent_value_success(
             _: *mut GblEfiAvbProtocol,
-            name: *const c_char,
+            name: *const u8,
             value: *const u8,
             value_size: usize,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
                 // * `name` is a valid pointer to null-terminated string.
-                unsafe { CStr::from_ptr(name) },
+                unsafe { CStr::from_ptr(name as _) },
                 EXPECTED_NAME
             );
             assert_eq!(value_size, EXPECTED_VALUE.len());
@@ -636,14 +877,14 @@ mod test {
         /// * Caller must guarantee that `name` points to a valid null-terminated string.
         unsafe extern "efiapi" fn c_write_persistent_value_delete(
             _: *mut GblEfiAvbProtocol,
-            name: *const c_char,
+            name: *const u8,
             value: *const u8,
             value_size: usize,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
                 // * `name` is a valid pointer to null-terminated string.
-                unsafe { CStr::from_ptr(name) },
+                unsafe { CStr::from_ptr(name as _) },
                 EXPECTED_NAME
             );
             assert!(value.is_null());
@@ -673,14 +914,14 @@ mod test {
         /// * Caller must guarantee that `name` points to a valid null-terminated string.
         unsafe extern "efiapi" fn c_write_persistent_value_error(
             _: *mut GblEfiAvbProtocol,
-            name: *const c_char,
+            name: *const u8,
             _: *const u8,
             _: usize,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
                 // * `name` is a valid pointer to null-terminated string.
-                unsafe { CStr::from_ptr(name) },
+                unsafe { CStr::from_ptr(name as _) },
                 EXPECTED_NAME
             );
 

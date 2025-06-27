@@ -18,6 +18,7 @@ use crate::{
     gbl_println, GblOps, Result as GblResult,
 };
 use avb::{slot_verify, Descriptor, HashtreeErrorMode, Ops as _, SlotVerifyError, SlotVerifyFlags};
+use libprofile_macros::profile_expr;
 use zbi::{merge_within, ZbiContainer};
 use zerocopy::SplitByteSliceMut;
 
@@ -41,7 +42,10 @@ pub(crate) fn zircon_verify_kernel<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>
     // older ones.
     // TODO(b/379778252) It is not as efficient as moving kernel since ZBI items would contain file
     // system and be bigger than kernel.
-    copy_items_after_kernel(zbi_kernel, zbi_items)?;
+    profile_expr!(
+        backend = gbl_ops.get_profiling_backend(),
+        copy_items_after_kernel(zbi_kernel, zbi_items)?
+    );
     let (kernel, _) = zbi_split_unused_buffer_mut(&mut zbi_kernel[..])?;
     zircon_verify_kernel_internal(gbl_ops, slot, slot_booted_successfully, kernel, zbi_items)
 }

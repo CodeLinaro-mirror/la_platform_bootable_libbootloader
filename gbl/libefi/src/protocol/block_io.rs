@@ -16,8 +16,8 @@
 
 use crate::efi_call;
 use crate::protocol::{Protocol, ProtocolInfo};
+use bytes::buf::UninitSlice;
 use efi_types::{EfiBlockIoMedia, EfiBlockIoProtocol, EfiGuid};
-use gbl_storage::SliceMaybeUninit;
 use liberror::{Error, Result};
 
 /// EFI_BLOCK_IO_PROTOCOL
@@ -33,16 +33,14 @@ impl ProtocolInfo for BlockIoProtocol {
 // Protocol interface wrappers.
 impl Protocol<'_, BlockIoProtocol> {
     /// Wrapper of `EFI_BLOCK_IO_PROTOCOL.read_blocks()`
-    pub fn read_blocks(
-        &self,
-        lba: u64,
-        buffer: &mut (impl SliceMaybeUninit + ?Sized),
-    ) -> Result<()> {
+    pub fn read_blocks<'a>(&self, lba: u64, buffer: impl Into<&'a mut UninitSlice>) -> Result<()> {
+        let buffer = buffer.into();
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
         // established by `Protocol::new()`.
         // `self.interface` is input parameter and will not be retained. It outlives the call.
-        // `buffer` remains valid during the call.
+        // `buffer` remains valid during the call, and `EFI_BLOCK_IO_PROTOCOL.read_blocks()` will
+        // only initialize the data, never reading or uininitializing it.
         unsafe {
             efi_call!(
                 self.interface()?.read_blocks,
@@ -50,7 +48,7 @@ impl Protocol<'_, BlockIoProtocol> {
                 self.media()?.media_id,
                 lba,
                 buffer.len(),
-                buffer.as_mut().as_mut_ptr() as *mut _
+                buffer.as_mut_ptr() as *mut _
             )
         }
     }

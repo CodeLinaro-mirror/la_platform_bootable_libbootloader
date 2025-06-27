@@ -31,8 +31,8 @@ use core::{
 };
 use fastboot::{
     local_session::LocalSession, next_arg, next_arg_u64, process_next_command, run_tcp_session,
-    CommandError, CommandResult, FastbootImplementation, InfoSender, OkaySender, RebootMode,
-    UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
+    CommandError, CommandResult, FailSender, FastbootImplementation, InfoSender, OkaySender,
+    RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
 };
 use gbl_async::{join, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
@@ -530,13 +530,13 @@ where
     }
 
     /// Implementation for "fastboot oem gbl-sync-tasks".
-    async fn oem_sync_tasks<'s>(
+    async fn oem_sync_tasks(
         &self,
         mut _responder: impl InfoSender,
-        _res: &'s mut [u8],
-    ) -> CommandResult<&'s [u8]> {
+        _res: &mut [u8],
+    ) -> CommandResult<()> {
         self.sync_all_blocks().await?;
-        Ok(b"")
+        Ok(())
     }
 
     /// Syncs all storage devices and reboots.
@@ -763,15 +763,53 @@ where
         Ok(self.schedule_task(task, &mut responder).await?)
     }
 
-    async fn upload(&mut self, _: impl UploadBuilder) -> CommandResult<()> {
-        Err("Unimplemented".into())
+    async fn upload(
+        &mut self,
+        mut responder: impl UploadBuilder + InfoSender,
+    ) -> CommandResult<()> {
+        // Makes sure a download buffer can be allocated.
+        if let Some(_) = self.take_download() {
+            responder.send_info("A previous download is discarded.").await?;
+        }
+        self.get_download_buffer().await;
+        let mut buffer = self.current_download_buffer.take().unwrap();
+        let (_, total) = self.gbl_ops.fastboot_get_staged(&mut [][..])?;
+        if total == 0 {
+            return Err("No data staged.".into());
+        } else if total >= 0x7fffffff {
+            return Err("Cannot upload more than 0x7fffffff bytes of data".into());
+        }
+
+        responder
+            .send_formatted_info(|v| write!(v, "Uploading {} bytes...", total).unwrap())
+            .await?;
+        // `total` already checked to be no more than 0x7fffffff.
+        let mut uploader = responder.initiate_upload(total.try_into().unwrap()).await?;
+        let mut left = total;
+        let mut read_len: CommandResult<usize> = Ok(0);
+        while left > 0 {
+            read_len = read_len
+                .and_then(|_| Ok(self.gbl_ops.fastboot_get_staged(&mut buffer)?))
+                .and_then(|(read, remains)| match left >= remains && left - remains == read {
+                    true => Ok(read),
+                    _ => Err("Staged data size changed when uploading".into()),
+                });
+            // On success, upload the actual amount of read data. On any failure, continue to upload
+            // arbitrary data until we pass the data phase, so that we can send the error message
+            // and process future fastboot commands.
+            let to_upload = read_len.as_ref().cloned().unwrap_or(min(left, buffer.len()));
+            uploader.upload(&mut buffer[..to_upload]).await?;
+            left -= to_upload
+        }
+        read_len?;
+        Ok(())
     }
 
     async fn fetch(
         &mut self,
         part: &str,
         offset: u64,
-        size: u64,
+        size: u32,
         mut responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()> {
         let (_, mut part_io) = self.parse_and_get_partition_io(part).await?;
@@ -818,27 +856,27 @@ where
         Ok(())
     }
 
-    async fn oem<'s>(
+    async fn oem(
         &mut self,
-        cmd: &str,
-        mut responder: impl InfoSender,
-        res: &'s mut [u8],
-    ) -> CommandResult<&'s [u8]> {
-        let mut args = cmd.split(' ');
+        cmd_str: &str,
+        mut responder: impl InfoSender + OkaySender + FailSender,
+        res: &mut [u8],
+    ) -> CommandResult<()> {
+        let mut args = cmd_str.split(' ');
         let cmd = args.next().ok_or("Missing command")?;
         match cmd {
             "gbl-sync-tasks" => self.oem_sync_tasks(responder, res).await,
             "gbl-enable-async-task" => {
                 self.enable_async_task = true;
-                Ok(b"")
+                Ok(())
             }
             "gbl-disable-async-task" => {
                 self.enable_async_task = false;
-                Ok(b"")
+                Ok(())
             }
             "gbl-unset-default-block" => {
                 self.default_block = None;
-                Ok(b"")
+                Ok(())
             }
             "gbl-set-default-block" => {
                 let id = next_arg_u64(&mut args)?.ok_or("Missing block device ID")?;
@@ -848,19 +886,23 @@ where
                 responder
                     .send_formatted_info(|f| write!(f, "Default block device: {id:#x}").unwrap())
                     .await?;
-                Ok(b"")
+                Ok(())
             }
             "add-staged-bootloader-file" => {
                 let file_name = next_arg(&mut args).ok_or("Missing file name")?;
                 self.add_staged_bootloader_file(file_name).await?;
-                Ok(b"")
+                Ok(())
             }
             #[cfg(feature = "gbl_dev")]
             "stack-smash-demo" => {
                 smash::stack_smash_demo(self.gbl_ops);
                 Err("Stack smash demo failed to restart system".into())
             }
-            _ => Err("Unknown oem command".into()),
+            _ => {
+                let mut dl = self.take_download();
+                let dl = dl.as_mut().map(|(v, sz)| &mut v[..*sz]).unwrap_or(&mut [][..]);
+                Ok(self.gbl_ops.fastboot_run_oem(cmd_str, dl, responder)?)
+            }
         }
     }
 
@@ -1087,7 +1129,6 @@ pub(crate) mod test {
     use core::{
         mem::size_of,
         pin::{pin, Pin},
-        str::from_utf8,
     };
     use fastboot::{test_utils::TestUploadBuilder, MAX_RESPONSE_SIZE};
     use gbl_async::{block_on, poll, poll_n_times};
@@ -1118,9 +1159,14 @@ pub(crate) mod test {
     }
 
     impl OkaySender for &TestResponder {
-        /// Sends a Fastboot "INFO<`msg`>" packet.
         async fn send_formatted_okay<F: FnOnce(&mut dyn Write)>(self, _: F) -> Result<(), Error> {
             *self.okay_sent.try_lock().unwrap() = true;
+            Ok(())
+        }
+    }
+
+    impl FailSender for &TestResponder {
+        async fn send_formatted_fail<F: FnOnce(&mut dyn Write)>(self, _: F) -> Result<(), Error> {
             Ok(())
         }
     }
@@ -1255,7 +1301,7 @@ pub(crate) mod test {
             [
                 "version-bootloader:: 1.0",
                 "slot-count:: 0",
-                "max-fetch-size:: 0xffffffffffffffff",
+                "max-fetch-size:: 0x7fffffff",
                 "block-device:0:total-blocks: 0x80",
                 "block-device:0:block-size: 0x200",
                 "block-device:0:status: idle",
@@ -1294,7 +1340,7 @@ pub(crate) mod test {
         fb: &mut impl FastbootImplementation,
         part: String,
         off: impl TryInto<u64, Error = EOff>,
-        size: impl TryInto<u64, Error = ESz>,
+        size: impl TryInto<u32, Error = ESz>,
     ) -> CommandResult<Vec<u8>> {
         let off = off.try_into().unwrap();
         let size = size.try_into().unwrap();
@@ -1516,11 +1562,11 @@ pub(crate) mod test {
     async fn oem(
         fb: &mut impl FastbootImplementation,
         oem_cmd: &str,
-        resp: impl InfoSender,
-    ) -> CommandResult<String> {
+        resp: impl InfoSender + OkaySender + FailSender,
+    ) -> CommandResult<()> {
         let mut res = [0u8; MAX_RESPONSE_SIZE];
         fb.oem(oem_cmd, resp, &mut res[..]).await?;
-        Ok(from_utf8(&mut res[..]).unwrap().into())
+        Ok(())
     }
 
     #[test]
@@ -2162,10 +2208,7 @@ pub(crate) mod test {
             listener.dump_tcp_out_queue()
         );
 
-        assert_eq!(
-            local.outgoing_packets,
-            VecDeque::from(vec![Vec::from(b"OKAY0xffffffffffffffff"),])
-        );
+        assert_eq!(local.outgoing_packets, VecDeque::from(vec![Vec::from(b"OKAY0x7fffffff"),]));
 
         // Verifies flashed image on raw_0.
         assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0x55u8; KiB!(4)]);
@@ -2274,6 +2317,45 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn test_oem_vendor_cmd() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(128)]; 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+
+        listener.add_usb_input(b"download:0x1000");
+        listener.add_usb_input(&[0x55u8; 0x1000]);
+        listener.add_usb_input(b"oem test-oem");
+        listener.add_usb_input(b"continue");
+
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"DATA00001000",
+                b"OKAY",
+                format!("INFO{}", FakeGblOps::GBL_OEM_CMD_INFO_MSG).as_bytes(),
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        assert_eq!(gbl_ops.oem_cmd_download, vec![0x55u8; 0x1000]);
+    }
+
+    #[test]
     fn test_fuchsia_fastboot_mdns_packet() {
         let expected = [
             0x00, 0x00, 0x84, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x09, 0x5f,
@@ -2308,7 +2390,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt() {
+    fn test_update_gpt() {
         let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         // Erase the primary and secondary header.
         let mut disk = disk_orig.to_vec();
@@ -2358,7 +2440,7 @@ pub(crate) mod test {
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
                 b"INFOslot-count: 0",
-                b"INFOmax-fetch-size: 0xffffffffffffffff",
+                b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
                 b"INFOblock-device:0:status: idle",
@@ -2384,7 +2466,7 @@ pub(crate) mod test {
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
                 b"INFOslot-count: 0",
-                b"INFOmax-fetch-size: 0xffffffffffffffff",
+                b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
                 b"INFOblock-device:0:status: idle",
@@ -2414,7 +2496,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_resize() {
+    fn test_update_gpt_resize() {
         let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut disk = disk_orig.to_vec();
         // Doubles the size of the disk
@@ -2470,7 +2552,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_no_downloaded_gpt() {
+    fn test_update_gpt_no_downloaded_gpt() {
         let disk = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(&disk);
@@ -2500,7 +2582,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_bad_gpt() {
+    fn test_update_gpt_bad_gpt() {
         let disk = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(&disk);
@@ -2541,7 +2623,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_invalid_input() {
+    fn test_update_gpt_invalid_input() {
         let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(&disk_orig);
@@ -2587,7 +2669,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_oem_update_gpt_fail_on_raw_blk() {
+    fn test_update_gpt_fail_on_raw_blk() {
         let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"raw_0", [0u8; KiB!(1024)]);
@@ -2868,7 +2950,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
+        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -2907,7 +2989,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_reason_result = Some(Err(Error::Unsupported));
+        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -3119,7 +3201,6 @@ pub(crate) mod test {
             &mut [],
         ));
 
-        // The out-of-range errors should be caught before async task is launched.
         assert_eq!(
             listener.usb_out_queue(),
             make_expected_usb_out(&[b"OKAY123", b"INFOSyncing storage...", b"OKAY",]),
@@ -3147,10 +3228,207 @@ pub(crate) mod test {
             &mut [],
         ));
 
-        // The out-of-range errors should be caught before async task is launched.
         assert_eq!(
             listener.usb_out_queue(),
             make_expected_usb_out(&[b"OKAY2", b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_upload() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        // Uploads 2k of data
+        let mut data: &[u8] = &vec![0x55u8; KiB!(2)];
+        let handler = &mut |out: &mut [u8]| {
+            let to_read = min(out.len(), data.len());
+            out[..to_read].clone_from_slice(&data[..to_read]);
+            data = &data[to_read..];
+            Ok((to_read, data.len()))
+        };
+        gbl_ops.get_staged_handler = Some(handler);
+
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"upload");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"INFOUploading 2048 bytes...",
+                b"DATA00000800",
+                &vec![0x55u8; 1024],
+                &vec![0x55u8; 1024],
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_upload_recycle_download_buffer() {
+        let storage = FakeGblOpsStorage::default();
+        // Provides only 1 download buffer to test recycling.
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        // Uploads 2k of data
+        let mut data: &[u8] = &vec![0x55u8; KiB!(2)];
+        let handler = &mut |out: &mut [u8]| {
+            let to_read = min(out.len(), data.len());
+            out[..to_read].clone_from_slice(&data[..to_read]);
+            data = &data[to_read..];
+            Ok((to_read, data.len()))
+        };
+        gbl_ops.get_staged_handler = Some(handler);
+
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"download:0x400");
+        listener.add_usb_input(&[0xaau8; 0x400]);
+        listener.add_usb_input(b"upload");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"DATA00000400",
+                b"OKAY",
+                b"INFOA previous download is discarded.",
+                b"INFOUploading 2048 bytes...",
+                b"DATA00000800",
+                &vec![0x55u8; 1024],
+                &vec![0x55u8; 1024],
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_upload_no_data() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        let handler = &mut |_: &mut [u8]| Ok((0, 0));
+        gbl_ops.get_staged_handler = Some(handler);
+
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"upload");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[b"FAILNo data staged.", b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_upload_size_overflows() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        let handler = &mut |_: &mut [u8]| Ok((0, 0x80000000));
+        gbl_ops.get_staged_handler = Some(handler);
+
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"upload");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"FAILCannot upload more than 0x7fffffff bytes of data",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_upload_inconsistent_data_size() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        // Returns a `remains` that always equals 10.
+        let handler = &mut |_: &mut [u8]| Ok((1, 10));
+        gbl_ops.get_staged_handler = Some(handler);
+
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"upload");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"INFOUploading 10 bytes...",
+                b"DATA0000000a",
+                b"\0\0\0\0\0\0\0\0\0\0",
+                b"FAILStaged data size changed when uploading",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         );

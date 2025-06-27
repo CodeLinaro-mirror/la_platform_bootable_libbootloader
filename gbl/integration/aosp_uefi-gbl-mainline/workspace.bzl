@@ -395,6 +395,15 @@ cc_library(
     )
 
     native.new_local_repository(
+        name = "zeroize",
+        path = "external/rust/android-crates-io/crates/zeroize",
+        build_file_content = rust_crate_build_file(
+            "zeroize",
+            rustc_flags = ["--cap-lints=allow"],
+        ),
+    )
+
+    native.new_local_repository(
         name = "bitflags",
         path = "external/rust/android-crates-io/crates/bitflags",
         build_file_content = rust_crate_build_file("bitflags"),
@@ -490,6 +499,14 @@ cc_library(
         name = "open_dice",
         path = "external/open-dice",
         build_file = "@gbl//libopendice:BUILD.open_dice.bazel",
+    )
+
+    native.new_local_repository(
+        name = "bytes",
+        path = "external/rust/android-crates-io/crates/bytes",
+        build_file_content = rust_crate_build_file(
+            "bytes",
+        ),
     )
 
     # Set up a repo to export LLVM tool/library/header/sysroot paths

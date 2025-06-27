@@ -22,7 +22,7 @@ use crate::{
         ZIRCON_KERNEL_ALIGN,
     },
     gbl_println,
-    ops::RebootReason,
+    ops::RebootMode,
     GblOps, Result as GblResult,
 };
 pub use abr::{get_boot_slot, SlotIndex};
@@ -92,7 +92,7 @@ fn zircon_load_verify_fixup<'a, 'b, 'c>(
 ) -> GblResult<(&'c mut [u8], &'c mut [u8])> {
     // Zircon kernel requires ZBI items address to be page aligned.
     let load = aligned_subslice(load_buffer, PAGE_SIZE)?;
-    read_zircon_image(ops, slot, load)?;
+    read_zircon_image(ops, slot, &mut *load)?;
     // Performs AVB verification.
     zircon_verify_kernel_in_place(ops, slot, slot_booted_successfully, &mut load[..])?;
     // Append additional ZBI items.
@@ -157,18 +157,18 @@ pub fn zircon_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 ) -> GblResult<LoadedVerifiedZircon<'c>> {
     gbl_println!(ops, "Loading and verifying Fuchsia...");
 
-    // Checks platform reboot reason.
-    let reboot_reason = ops
-        .get_reboot_reason()
+    // Checks platform reboot mode.
+    let reboot_mode = ops
+        .get_reboot_mode()
         .inspect_err(|e| {
-            gbl_println!(ops, "Failed to get reboot reason from platform: {e}. Ignored.")
+            gbl_println!(ops, "Failed to get reboot mode from platform: {e}. Ignored.")
         })
-        .unwrap_or(RebootReason::Normal);
-    gbl_println!(ops, "Reboot reason from platform: {reboot_reason:?}");
+        .unwrap_or(RebootMode::Normal);
+    gbl_println!(ops, "Reboot mode from platform: {reboot_mode:?}");
 
     // Checks and enters fastboot.
     let result = &mut Default::default();
-    if matches!(reboot_reason, RebootReason::Bootloader) || zircon_check_enter_fastboot(ops) {
+    if matches!(reboot_mode, RebootMode::Bootloader) || zircon_check_enter_fastboot(ops) {
         gbl_println!(ops, "Entering fastboot mode...");
         run_fastboot(GblFastbootEntry { ops, load: &mut load[..], result });
         gbl_println!(ops, "Leaving fastboot mode...");

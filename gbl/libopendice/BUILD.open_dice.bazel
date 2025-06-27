@@ -28,7 +28,6 @@ cbor_baremetal_ed25519_srcs = [
     "src/boringssl_ed25519_ops.c",
     "src/dice.c",
     "src/utils.c",
-    "src/clear_memory.c",
 ]
 
 cbor_baremetal_ed25519_hdrs = glob(["include/**/*.h"]) + ["@gbl//libopendice:bindgen/dice/dice.h"]

@@ -19,15 +19,15 @@
 
 use crate::utils::{get_platform_buffer_info, BufferInfo, SZ_MB};
 use alloc::{boxed::Box, vec::Vec};
-use core::{cmp::min, future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration};
+use core::{future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration};
 use efi::{
     efi_println,
     local_session::LocalFastbootSession,
-    protocol::{gbl_efi_fastboot_usb::GblFastbootUsbProtocol, Protocol},
+    protocol::{gbl_efi_fastboot_usb::GblFastbootTransportProtocol, Protocol},
     EfiEntry, WatchdogTimerCode,
 };
 use efi_types::GBL_IMAGE_TYPE_FASTBOOT;
-use fastboot::Transport;
+use fastboot::{Transport, MAX_COMMAND_SIZE};
 use gbl_async::{poll, YieldCounter};
 use liberror::{Error, Result};
 use libgbl::{
@@ -36,7 +36,6 @@ use libgbl::{
 };
 
 const FASTBOOT_WATCHDOG_TIMER_CODE: WatchdogTimerCode = WatchdogTimerCode::new(0x10000);
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 // Network fastboot is only allowed on dev boards.
 #[cfg(feature = "gbl_dev")]
@@ -46,6 +45,7 @@ mod network_fastboot {
     pub(super) use core::sync::atomic::AtomicU64;
 
     const FASTBOOT_TCP_PORT: u16 = 5554;
+    const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
     #[derive(PartialEq)]
     /// Represents the connection state resolution done by previous `accept_new` call.
@@ -170,8 +170,7 @@ use network_fastboot::*;
 /// `UsbTransport` implements the `fastboot::Transport` trait using USB interfaces from
 /// GBL_EFI_FASTBOOT_USB_PROTOCOL.
 struct UsbTransport<'a> {
-    max_packet_size: usize,
-    protocol: Protocol<'a, GblFastbootUsbProtocol>,
+    protocol: Protocol<'a, GblFastbootTransportProtocol>,
     io_yield_counter: YieldCounter,
     // Buffer for prefetching an incoming packet in `wait_for_packet()`.
     // Alternatively we can also consider adding an EFI event for packet arrive. But UEFI firmware
@@ -180,12 +179,11 @@ struct UsbTransport<'a> {
 }
 
 impl<'a> UsbTransport<'a> {
-    fn new(max_packet_size: usize, protocol: Protocol<'a, GblFastbootUsbProtocol>) -> Self {
+    fn new(protocol: Protocol<'a, GblFastbootTransportProtocol>) -> Self {
         Self {
-            max_packet_size,
             protocol,
             io_yield_counter: YieldCounter::new(1024 * 1024),
-            prefetched: (vec![0u8; max_packet_size], 0),
+            prefetched: (vec![0u8; MAX_COMMAND_SIZE + 1], 0),
         }
     }
 
@@ -195,7 +193,7 @@ impl<'a> UsbTransport<'a> {
     /// otherwise.
     fn poll_next_packet(&mut self) -> Result<bool> {
         match &mut self.prefetched {
-            (pkt, len) if *len == 0 => match self.protocol.fastboot_usb_receive(pkt) {
+            (pkt, len) if *len == 0 => match self.protocol.receive(pkt, true) {
                 Ok(out_size) => {
                     *len = out_size;
                     return Ok(true);
@@ -217,7 +215,7 @@ impl Transport for UsbTransport<'_> {
                 out.clone_from_slice(src);
                 take(len)
             }
-            _ => self.protocol.receive_packet(out).await?,
+            _ => self.protocol.receive_packet(out, out.len() <= MAX_COMMAND_SIZE).await?,
         };
         // Forces a yield to the executor if the data received/sent reaches a certain
         // threshold. This is to prevent the async code from holding up the CPU for too long
@@ -226,18 +224,9 @@ impl Transport for UsbTransport<'_> {
         Ok(len)
     }
 
+    /// Sends data over the USB channel.
     async fn send_packet(&mut self, packet: &[u8]) -> Result<()> {
-        let mut curr = &packet[..];
-        while !curr.is_empty() {
-            let to_send = min(curr.len(), self.max_packet_size);
-            self.protocol.send_packet(&curr[..to_send], DEFAULT_TIMEOUT).await?;
-            // Forces a yield to the executor if the data received/sent reaches a certain
-            // threshold. This is to prevent the async code from holding up the CPU for too long
-            // in case IO speed is high and the executor uses cooperative scheduling.
-            self.io_yield_counter.increment(to_send.try_into().unwrap()).await;
-            curr = &curr[to_send..];
-        }
-        Ok(())
+        self.protocol.send_all(packet).await
     }
 }
 
@@ -250,13 +239,28 @@ impl GblUsbTransport for UsbTransport<'_> {
     }
 }
 
+impl Drop for UsbTransport<'_> {
+    fn drop(&mut self) {
+        let entry = self.protocol.efi_entry();
+        let _ = self
+            .protocol
+            .stop()
+            .inspect_err(|e| efi_println!(entry, "Fail to stop transport: {e}"));
+    }
+}
+
 /// Initializes the Fastboot USB interface and returns a `UsbTransport`.
 fn init_usb(efi_entry: &EfiEntry) -> Result<UsbTransport> {
-    let protocol =
-        efi_entry.system_table().boot_services().find_first_and_open::<GblFastbootUsbProtocol>()?;
-    match protocol.fastboot_usb_interface_stop() {
+    let protocol = efi_entry
+        .system_table()
+        .boot_services()
+        .find_first_and_open::<GblFastbootTransportProtocol>()?;
+    match protocol.stop() {
         Err(e) if e != Error::NotStarted => Err(e),
-        _ => Ok(UsbTransport::new(protocol.fastboot_usb_interface_start()?, protocol)),
+        _ => {
+            protocol.start()?;
+            Ok(UsbTransport::new(protocol))
+        }
     }
 }
 
@@ -306,7 +310,7 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
         .ok();
 
     let usb = init_usb(entry)
-        .inspect(|_| efi_println!(entry, "Started Fastboot over USB."))
+        .inspect(|v| efi_println!(entry, "Started Fastboot Channel: {}.", v.protocol.description()))
         .inspect_err(|e| efi_println!(entry, "Failed to start Fastboot over USB. {:?}.", e))
         .ok();
 

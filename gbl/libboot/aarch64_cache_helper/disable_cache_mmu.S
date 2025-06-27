@@ -43,6 +43,7 @@ asm_disable_cache_mmu_el1:
     bic x5, x5, #SCTLR_C_BIT
     bic x5, x5, #SCTLR_I_BIT
     msr sctlr_el1, x5
+    tlbi vmalle1is
     b asm_finish
 
 asm_disable_cache_mmu_el2:
@@ -51,15 +52,12 @@ asm_disable_cache_mmu_el2:
     bic x5, x5, #SCTLR_C_BIT
     bic x5, x5, #SCTLR_I_BIT
     msr sctlr_el2, x5
+    tlbi alle2
 
 asm_finish:
     ic  iallu
     isb
-    /*
-     * Invalidate TLB.
-     */
-    tlbi vmalle1
-
+    dsb sy
     br x4
     /*
      * Prevent speculative execution.

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2024-2025 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
  *
  */
 
-// This is a protocol proposed by U-boot and being used by Kernel UEFI stub.
+// This is a protocol proposed by Heinrich Schuchardt and already being used by
+// the Kernel UEFI stub.
 // https://github.com/U-Boot-EFI/EFI_DT_FIXUP_PROTOCOL
-// https://github.com/u-boot/u-boot/blob/master/include/efi_dt_fixup.h
 
 #ifndef __EFI_DT_FIXUP_PROTOCOL_H__
 #define __EFI_DT_FIXUP_PROTOCOL_H__
@@ -31,10 +31,7 @@ const uint32_t EFI_DT_APPLY_FIXUPS = 0x00000001;
 // Reserve memory according to the /reserved-memory node and the memory
 // reservation block
 const uint32_t EFI_DT_RESERVE_MEMORY = 0x00000002;
-// Install the device-tree as configuration table
-const uint32_t EFI_DT_INSTALL_TABLE = 0x00000004;
-const uint32_t EFI_DT_ALL =
-    EFI_DT_APPLY_FIXUPS | EFI_DT_RESERVE_MEMORY | EFI_DT_INSTALL_TABLE;
+const uint32_t EFI_DT_ALL = EFI_DT_APPLY_FIXUPS | EFI_DT_RESERVE_MEMORY;
 
 typedef struct EfiDtFixupProtocol {
   uint64_t revision;

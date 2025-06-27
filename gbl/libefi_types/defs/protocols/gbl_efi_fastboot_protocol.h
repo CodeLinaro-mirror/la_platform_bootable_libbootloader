@@ -13,6 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
+ * SPDX-License-Identifier: Apache-2.0 OR BSD-2-Clause-Patent
+ *
+ * You may choose to use or redistribute this file under
+ *  (a) the Apache License, Version 2.0, or
+ *  (b) the BSD 2-Clause Patent license.
+ *
+ * Unless you expressly elect the BSD-2-Clause-Patent terms, the Apache-2.0
+ * terms apply by default.
  */
 
 // This is a custom protocol introduced by GBL.
@@ -43,6 +51,16 @@ typedef struct GblEfiFastbootPolicy {
 // val: A NULL-terminated string representing the value.
 typedef void (*GetVarAllCallback)(void* context, const char* const* args,
                                   size_t num_args, const char* val);
+
+typedef enum EFI_FASTBOOT_MESSAGE_TYPE {
+  OKAY,
+  FAIL,
+  INFO,
+} EfiFastbootMessageType;
+
+typedef EfiStatus (*FastbootMessageSender)(void* context,
+                                           EfiFastbootMessageType msg_type,
+                                           const char* msg, size_t msg_len);
 
 typedef enum GBL_EFI_FASTBOOT_PARTITION_PERMISSION_FLAGS {
   // Firmware can read the given partition and send its data to fastboot client.
@@ -75,8 +93,14 @@ typedef struct GblEfiFastbootProtocol {
 
   // Fastboot oem function methods
   EfiStatus (*run_oem_function)(struct GblEfiFastbootProtocol* this,
-                                const char8_t* command, size_t command_len,
-                                char8_t* buf, size_t* bufsize);
+                                const char* cmd, size_t len,
+                                uint8_t* download_buffer,
+                                size_t download_data_size,
+                                FastbootMessageSender sender, void* ctx);
+
+  // Fastboot get_staged backend
+  EfiStatus (*get_staged)(struct GblEfiFastbootProtocol* this, uint8_t* out,
+                          size_t* out_size, size_t* out_remain);
 
   // Device lock methods
   EfiStatus (*get_policy)(struct GblEfiFastbootProtocol* this,

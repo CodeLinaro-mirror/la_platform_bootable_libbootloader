@@ -18,7 +18,7 @@ extern crate libgbl;
 use crate::efi_call;
 use crate::protocol::{Protocol, ProtocolInfo};
 use efi_types::{
-    EfiGuid, GblEfiABSlotProtocol, GblEfiBootReason, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
+    EfiGuid, GblEfiABSlotProtocol, GblEfiBootMode, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
     GblEfiUnbootableReason, GBL_EFI_UNBOOTABLE_REASON_GBL_EFI_NO_MORE_TRIES as NO_MORE_TRIES,
     GBL_EFI_UNBOOTABLE_REASON_GBL_EFI_SYSTEM_UPDATE as SYSTEM_UPDATE,
     GBL_EFI_UNBOOTABLE_REASON_GBL_EFI_USER_REQUESTED as USER_REQUESTED,
@@ -159,46 +159,30 @@ impl<'a> Protocol<'a, GblSlotProtocol> {
         unsafe { efi_call!(self.interface()?.reinitialize, self.interface) }
     }
 
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.get_boot_reason()`
-    pub fn get_boot_reason(&self, subreason: &mut [u8]) -> Result<(GblEfiBootReason, usize)> {
-        let mut reason: u32 = 0;
-        let mut subreason_size = subreason.len();
+    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.get_boot_mode()`
+    pub fn get_boot_mode(&self) -> Result<GblEfiBootMode> {
+        let mut mode: u32 = 0;
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
         // established by `Protocol::new()`.
         // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        // `reason` is an output parameter. It is not retained, and it outlives the call.
-        // `subreason_size` is an in-out parameter. It is not retained, and it outlives the call.
-        // `subreason` remains valid during the call.
-        unsafe {
-            efi_call!(
-                @bufsize subreason_size,
-                self.interface()?.get_boot_reason,
-                self.interface,
-                &mut reason,
-                &mut subreason_size,
-                subreason.as_mut_ptr(),
-            )?
-        }
+        // `mode` is an output parameter. It is not retained, and it outlives the call.
+        unsafe { efi_call!(self.interface()?.get_boot_mode, self.interface, &mut mode)? }
 
-        let reason: GblEfiBootReason = reason.try_into().or(Err(Error::InvalidInput))?;
-        Ok((reason, subreason_size))
+        Ok(mode.try_into().or(Err(Error::InvalidInput))?)
     }
 
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_boot_reason()`
-    pub fn set_boot_reason(&self, reason: GblEfiBootReason, subreason: &[u8]) -> Result<()> {
+    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_boot_mode()`
+    pub fn set_boot_mode(&self, mode: GblEfiBootMode) -> Result<()> {
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
         // established by `Protocol::new()`.
         // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        // `subreason` is not modified or retained. It outlives the call.
         unsafe {
             efi_call!(
-                self.interface()?.set_boot_reason,
+                self.interface()?.set_boot_mode,
                 self.interface,
-                reason.try_into().or(Err(Error::InvalidInput))?,
-                subreason.len(),
-                subreason.as_ptr(),
+                mode.try_into().or(Err(Error::InvalidInput))?,
             )
         }
     }

@@ -16,7 +16,6 @@
 
 use crate::efi_call;
 use crate::protocol::{Protocol, ProtocolInfo};
-use core::ffi::CStr;
 use efi_types::{EfiGuid, GblEfiOsConfigurationProtocol, GblEfiVerifiedDeviceTree};
 use liberror::{Error, Result};
 
@@ -32,34 +31,6 @@ impl ProtocolInfo for GblOsConfigurationProtocol {
 
 // Protocol interface wrappers.
 impl Protocol<'_, GblOsConfigurationProtocol> {
-    /// Wraps `GBL_EFI_OS_CONFIGURATION_PROTOCOL.fixup_kernel_commandline()`.
-    pub fn fixup_kernel_commandline(&self, commandline: &CStr, fixup: &mut [u8]) -> Result<()> {
-        if fixup.is_empty() {
-            return Err(Error::InvalidInput);
-        }
-
-        let mut fixup_size = fixup.len();
-        fixup[0] = 0;
-        // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`.
-        // * `commandline` is a valid pointer to null-terminated string used only within the call.
-        // * `fixup` is non-null buffer available for write, used only within the call.
-        // * `fixup_size` is non-null buffer available for write, used only within the call.
-        unsafe {
-            efi_call!(
-                @bufsize fixup_size,
-                self.interface()?.fixup_kernel_commandline,
-                self.interface,
-                commandline.as_ptr() as _,
-                fixup.as_mut_ptr(),
-                &mut fixup_size
-            )?;
-        }
-
-        Ok(())
-    }
-
     /// Wraps `GBL_EFI_OS_CONFIGURATION_PROTOCOL.fixup_bootconfig()`.
     pub fn fixup_bootconfig(&self, bootconfig: &[u8], fixup: &mut [u8]) -> Result<usize> {
         if fixup.is_empty() {
@@ -116,146 +87,7 @@ mod test {
     use efi_types::{
         EfiStatus, EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS,
     };
-    use std::{ffi::CStr, slice};
-
-    #[test]
-    fn fixup_kernel_commandline_no_op() {
-        // No-op C callback implementation.
-        unsafe extern "efiapi" fn c_return_success(
-            _: *mut GblEfiOsConfigurationProtocol,
-            _: *const u8,
-            _: *mut u8,
-            _: *mut usize,
-        ) -> EfiStatus {
-            EFI_STATUS_SUCCESS
-        }
-
-        let c_interface = GblEfiOsConfigurationProtocol {
-            fixup_kernel_commandline: Some(c_return_success),
-            ..Default::default()
-        };
-
-        run_test_with_mock_protocol(c_interface, |os_config_protocol| {
-            let mut fixup_buffer = [0x0; 128];
-            let commandline = c"foo=bar baz";
-
-            assert!(os_config_protocol
-                .fixup_kernel_commandline(commandline, &mut fixup_buffer)
-                .is_ok());
-            assert_eq!(
-                CStr::from_bytes_until_nul(&fixup_buffer[..]).unwrap().to_str().unwrap(),
-                ""
-            );
-        });
-    }
-
-    #[test]
-    fn fixup_kernel_commandline_provided() {
-        const EXPECTED_COMMANDLINE: &CStr = c"a=b";
-        const EXPECTED_FIXUP: &[u8] = b"hello=world\0";
-        const EXPECTED_FIXUP_STR: &str = "hello=world";
-
-        // C callback implementation to add "hello=world" to the given command line.
-        unsafe extern "efiapi" fn c_add_hello_world(
-            _: *mut GblEfiOsConfigurationProtocol,
-            command_line: *const u8,
-            fixup: *mut u8,
-            _: *mut usize,
-        ) -> EfiStatus {
-            assert_eq!(
-                // SAFETY:
-                // * `command_line` is valid pointer to null terminated string.
-                unsafe { CStr::from_ptr(command_line as _) },
-                EXPECTED_COMMANDLINE
-            );
-
-            // SAFETY:
-            // * `fixup` is valid writtable buffer with enough space for test data.
-            let fixup_buffer = unsafe { slice::from_raw_parts_mut(fixup, EXPECTED_FIXUP.len()) };
-            fixup_buffer.copy_from_slice(EXPECTED_FIXUP);
-
-            EFI_STATUS_SUCCESS
-        }
-
-        let c_interface = GblEfiOsConfigurationProtocol {
-            fixup_kernel_commandline: Some(c_add_hello_world),
-            ..Default::default()
-        };
-
-        run_test_with_mock_protocol(c_interface, |os_config_protocol| {
-            let mut fixup_buffer = [0x0; 128];
-
-            assert!(os_config_protocol
-                .fixup_kernel_commandline(EXPECTED_COMMANDLINE, &mut fixup_buffer)
-                .is_ok());
-            assert_eq!(
-                CStr::from_bytes_until_nul(&fixup_buffer[..]).unwrap().to_str().unwrap(),
-                EXPECTED_FIXUP_STR,
-            );
-        });
-    }
-
-    #[test]
-    fn fixup_kernel_commandline_error() {
-        // C callback implementation to return an error.
-        unsafe extern "efiapi" fn c_error(
-            _: *mut GblEfiOsConfigurationProtocol,
-            _: *const u8,
-            _: *mut u8,
-            _: *mut usize,
-        ) -> EfiStatus {
-            EFI_STATUS_INVALID_PARAMETER
-        }
-
-        let c_interface = GblEfiOsConfigurationProtocol {
-            fixup_kernel_commandline: Some(c_error),
-            ..Default::default()
-        };
-
-        run_test_with_mock_protocol(c_interface, |os_config_protocol| {
-            let mut fixup_buffer = [0x0; 128];
-            let commandline = c"foo=bar baz";
-
-            assert_eq!(
-                os_config_protocol.fixup_kernel_commandline(commandline, &mut fixup_buffer),
-                Err(Error::InvalidInput),
-            );
-        });
-    }
-
-    #[test]
-    fn fixup_kernel_commandline_buffer_too_small() {
-        const EXPECTED_REQUESTED_FIXUP_SIZE: usize = 256;
-        // C callback implementation to return an error.
-        unsafe extern "efiapi" fn c_error(
-            _: *mut GblEfiOsConfigurationProtocol,
-            _: *const u8,
-            _: *mut u8,
-            fixup_size: *mut usize,
-        ) -> EfiStatus {
-            // SAFETY:
-            // * `fixup_size` is a valid pointer to writtable usize buffer.
-            unsafe {
-                *fixup_size = EXPECTED_REQUESTED_FIXUP_SIZE;
-            }
-            EFI_STATUS_BUFFER_TOO_SMALL
-        }
-
-        let c_interface = GblEfiOsConfigurationProtocol {
-            fixup_kernel_commandline: Some(c_error),
-            ..Default::default()
-        };
-
-        run_test_with_mock_protocol(c_interface, |os_config_protocol| {
-            let mut fixup_buffer = [0x0; 128];
-            let commandline = c"foo=bar baz";
-
-            assert_eq!(
-                os_config_protocol.fixup_kernel_commandline(commandline, &mut fixup_buffer),
-                Err(Error::BufferTooSmall(Some(EXPECTED_REQUESTED_FIXUP_SIZE))),
-            );
-        });
-    }
+    use std::slice;
 
     #[test]
     fn fixup_bootconfig_no_op() {

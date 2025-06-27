@@ -12,60 +12,57 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Rust wrapper for `GBL_EFI_FASTBOOT_USB_PROTOCOL`.
+//! Rust wrapper for `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`.
 
 use crate::{
+    efi_call,
     protocol::{Protocol, ProtocolInfo},
-    utils::with_timeout,
-    {efi_call, Event},
 };
-use core::time::Duration;
-use efi_types::{EfiGuid, GblEfiFastbootUsbProtocol};
+use efi_types::{
+    EfiGuid, GblEfiFastbootTransportProtocol, GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH,
+    GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
+};
 use gbl_async::yield_now;
 use liberror::{Error, Result};
 
-/// GBL_EFI_FASTBOOT_USB_PROTOCOL
-pub struct GblFastbootUsbProtocol;
+/// GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL
+pub struct GblFastbootTransportProtocol;
 
-impl ProtocolInfo for GblFastbootUsbProtocol {
-    type InterfaceType = GblEfiFastbootUsbProtocol;
+impl ProtocolInfo for GblFastbootTransportProtocol {
+    type InterfaceType = GblEfiFastbootTransportProtocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0x6281a893, 0xac23, 0x4ca7, [0xb2, 0x81, 0x34, 0x0e, 0xf8, 0x16, 0x89, 0x55]);
+        EfiGuid::new(0xedade92c, 0x5c48, 0x440d, [0x84, 0x9c, 0xe2, 0xa0, 0xc7, 0xe5, 0x51, 0x43]);
 }
 
 // Protocol interface wrappers.
-impl Protocol<'_, GblFastbootUsbProtocol> {
-    /// Wrapper of `GBL_EFI_FASTBOOT_USB_PROTOCOL.fastboot_usb_interface_start()`
-    pub fn fastboot_usb_interface_start(&self) -> Result<usize> {
-        let mut max_packet_size = 0;
+impl Protocol<'_, GblFastbootTransportProtocol> {
+    /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.start()`
+    pub fn start(&self) -> Result<()> {
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
         // established by `Protocol::new()`.
         // `self.interface` and `max_packet_size` are input/output parameters, outlive the call and
         // will not be retained.
-        unsafe {
-            efi_call!(
-                self.interface()?.fastboot_usb_interface_start,
-                self.interface,
-                &mut max_packet_size,
-            )?;
-        }
-        Ok(max_packet_size)
+        unsafe { efi_call!(self.interface()?.start, self.interface) }
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_USB_PROTOCOL.fastboot_usb_interface_stop()`
-    pub fn fastboot_usb_interface_stop(&self) -> Result<()> {
+    /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.stop()`
+    pub fn stop(&self) -> Result<()> {
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
         // established by `Protocol::new()`.
         // `self.interface` is input parameter, outlives the call, and will not be retained.
-        unsafe { efi_call!(self.interface()?.fastboot_usb_interface_stop, self.interface,) }
+        unsafe { efi_call!(self.interface()?.stop, self.interface) }
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_USB_PROTOCOL.fastboot_usb_receive()`
-    pub fn fastboot_usb_receive(&self, out: &mut [u8]) -> Result<usize> {
+    /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.receive()`
+    pub fn receive(&self, out: &mut [u8], single_packet: bool) -> Result<usize> {
         let mut out_size = out.len();
+        let phase = match single_packet {
+            true => GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
+            _ => GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH,
+        };
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
         // established by `Protocol::new()`.
@@ -74,18 +71,19 @@ impl Protocol<'_, GblFastbootUsbProtocol> {
         unsafe {
             efi_call!(
                 @bufsize out_size,
-                self.interface()?.fastboot_usb_receive,
+                self.interface()?.receive,
                 self.interface,
                 &mut out_size,
                 out.as_mut_ptr() as _,
+                phase,
             )?;
         }
 
         Ok(out_size)
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_USB_PROTOCOL.fastboot_usb_send()`
-    pub fn fastboot_usb_send(&self, data: &[u8]) -> Result<usize> {
+    /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.send()`
+    pub fn send(&self, data: &[u8]) -> Result<usize> {
         let mut out_size = data.len();
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
@@ -95,7 +93,7 @@ impl Protocol<'_, GblFastbootUsbProtocol> {
         unsafe {
             efi_call!(
                 @bufsize out_size,
-                self.interface()?.fastboot_usb_send,
+                self.interface()?.send,
                 self.interface,
                 &mut out_size,
                 data.as_ptr() as _,
@@ -105,15 +103,25 @@ impl Protocol<'_, GblFastbootUsbProtocol> {
         Ok(out_size)
     }
 
-    /// Returns the `GBL_EFI_FASTBOOT_USB_PROTOCOL.wait_for_send_completion` EFI event.
-    pub fn wait_for_send_completion(&self) -> Result<Event> {
-        Ok(Event::new_unowned(self.interface()?.wait_for_send_completion))
+    /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.flush()`
+    pub fn flush(&self) -> Result<()> {
+        // SAFETY:
+        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
+        // established by `Protocol::new()`.
+        unsafe { efi_call!(self.interface()?.flush, self.interface) }
+    }
+
+    /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.description()`
+    pub fn description(&self) -> &'static str {
+        let Ok(s) = self.interface().map(|v| v.description) else { return "" };
+        // SAFETY: By UEFI spec, `f` returns a static NULL terminated ASCII string.
+        unsafe { core::ffi::CStr::from_ptr(s as _).to_str().unwrap() }
     }
 
     /// Receives the next packet from the USB.
-    pub async fn receive_packet(&self, out: &mut [u8]) -> Result<usize> {
+    pub async fn receive_packet(&self, out: &mut [u8], single_packet: bool) -> Result<usize> {
         loop {
-            match self.fastboot_usb_receive(out) {
+            match self.receive(out, single_packet) {
                 Ok(out_size) => return Ok(out_size),
                 Err(Error::NotReady) => yield_now().await,
                 Err(e) => return Err(e),
@@ -121,18 +129,19 @@ impl Protocol<'_, GblFastbootUsbProtocol> {
         }
     }
 
-    /// A helper to wait for the send event to signal.
-    async fn wait_send(&self) -> Result<()> {
-        let bs = self.efi_entry().system_table().boot_services();
-        while !bs.check_event(&self.wait_for_send_completion()?)? {
-            yield_now().await;
+    /// Sends `data` over the USB
+    ///
+    /// # Args
+    ///
+    /// * `data`: Data to send. Can be more than one packet of data.
+    pub async fn send_all(&self, mut data: &[u8]) -> Result<()> {
+        while !data.is_empty() {
+            match self.send(data) {
+                Err(Error::NotReady) => yield_now().await,
+                Err(e) => return Err(e),
+                Ok(sz) => data = &data[sz..],
+            }
         }
-        Ok(())
-    }
-
-    /// Sends a packet over the USB.
-    pub async fn send_packet(&self, data: &[u8], timeout: Duration) -> Result<()> {
-        self.fastboot_usb_send(data)?;
-        with_timeout(self.efi_entry(), self.wait_send(), timeout).await?.ok_or(Error::Timeout)?
+        self.flush()
     }
 }

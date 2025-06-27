@@ -13,6 +13,16 @@
 // limitations under the License.
 
 //! Rust definitions for EFI types, data structures, and methods.
+//!
+//! This crate aims to have as few dependencies as possible so that it can be
+//! used in GBL or ported to different UEFI implementations.
+//!
+//! # Features
+//!
+//! ## mocks
+//!
+//! Enabling the `mocks` feature adds the `#[mockall::automock]` attribute
+//! to the protocol traits if desired for testing.
 
 // This is both safe and stable but is being tweaked due to the "system" abi variant
 // potentially not supporting varargs.
@@ -22,6 +32,9 @@
 
 #[rustfmt::skip]
 pub mod defs;
+pub mod protocol;
+pub mod status;
+
 pub use defs::*;
 
 impl EfiGuid {
@@ -31,20 +44,27 @@ impl EfiGuid {
     }
 }
 
-impl GblEfiPartitionName {
-    /// Decodes the UCS2 GblEfiPartitionName using buffer, and returns &str of UTF8 representation.
+/// Any object that can be identified by a GUID.
+pub trait Identified {
+    /// The UEFI GUID.
+    const GUID: EfiGuid;
+}
+
+impl GblEfiImageInfo {
+    /// Decodes the UCS2 GblEfiImageInfo.ImageType using buffer, and returns &str of UTF8
+    /// representation.
     ///
-    /// Buffer must be big enough to contain UTF8 representation of the UCS2 partition name.
+    /// Buffer must be big enough to contain UTF8 representation of the UCS2 image type.
     ///
-    /// Maximum partition name as UCS2 is PARTITION_NAME_LEN_U16.
+    /// Maximum image type as UCS2 is PARTITION_NAME_LEN_U16.
     /// And [PARTITION_NAME_LEN_U8] bytes is maximum buffer size needed for UTF8 representation.
     ///
     /// # Result
-    /// Ok(&str) - On success return UTF8 representation of the partition name
+    /// Ok(&str) - On success return UTF8 representation of the image type.
     /// Err(usize) if provided buffer is too small, with the minimum buffer size as the payload.
-    pub fn get_str<'a>(&self, buffer_utf8: &'a mut [u8]) -> Result<&'a str, usize> {
+    pub fn get_type_str<'a>(&self, buffer_utf8: &'a mut [u8]) -> Result<&'a str, usize> {
         let mut index = 0;
-        let chars_iter = char::decode_utf16(self.StrUtf16.iter().copied())
+        let chars_iter = char::decode_utf16(self.ImageType.iter().copied())
             .map(|c_res| c_res.unwrap_or(char::REPLACEMENT_CHARACTER))
             .take_while(|c| *c != '\0');
         for c in chars_iter.clone() {
@@ -59,19 +79,5 @@ impl GblEfiPartitionName {
         // _unchecked should be OK here since we wrote each utf8 byte ourselves,
         // but it's just an optimization, checked version would be fine also.
         unsafe { Ok(core::str::from_utf8_unchecked(&buffer_utf8[..index])) }
-    }
-}
-
-impl From<&[u16]> for GblEfiPartitionName {
-    fn from(value: &[u16]) -> Self {
-        let mut res: GblEfiPartitionName = Default::default();
-        res.StrUtf16[..value.len()].copy_from_slice(value);
-        res
-    }
-}
-
-impl<const N: usize> From<[u16; N]> for GblEfiPartitionName {
-    fn from(value: [u16; N]) -> Self {
-        value[..].into()
     }
 }
