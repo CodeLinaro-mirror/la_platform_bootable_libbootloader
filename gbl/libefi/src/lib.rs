@@ -77,7 +77,7 @@ use core::{fmt::Write, panic::PanicInfo};
 
 use core::{marker::PhantomData, ptr::null_mut, slice::from_raw_parts, time::Duration};
 use efi_types::{
-    EfiBootService, EfiConfigurationTable, EfiEvent, EfiGuid, EfiHandle,
+    EfiAllocatorType, EfiBootService, EfiConfigurationTable, EfiEvent, EfiGuid, EfiHandle,
     EfiMemoryAttributesTableHeader, EfiMemoryDescriptor, EfiMemoryType, EfiRuntimeService,
     EfiSystemTable, EfiTimerDelay, EFI_EVENT_TYPE_NOTIFY_SIGNAL, EFI_EVENT_TYPE_NOTIFY_WAIT,
     EFI_EVENT_TYPE_RUNTIME, EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES,
@@ -300,6 +300,29 @@ impl<'a> BootServices<'a> {
     fn free_pool(&self, buf: *mut core::ffi::c_void) -> Result<()> {
         // SAFETY: `EFI_BOOT_SERVICES` method call.
         unsafe { efi_call!(self.boot_services.free_pool, buf) }
+    }
+
+    /// Wrapper of `EFI_BOOT_SERVICES.AllocatePool()`.
+    pub fn allocate_pages(
+        &self,
+        mem: EfiAllocatorType,
+        pool: EfiMemoryType,
+        pages: usize,
+    ) -> Result<*mut core::ffi::c_void> {
+        let mut out: u64 = 0;
+        // SAFETY: `&mut out` points to a valid data and is for output only. It outlives the call
+        // and will not be retained.
+        unsafe { efi_call!(self.boot_services.allocate_pages, mem, pool, pages, &mut out)? };
+        Ok(out as _)
+    }
+
+    /// Wrapper of `EFI_BOOT_SERVICES.FreePages()`.
+    pub fn free_pages(&self, buf: *mut core::ffi::c_void, pages: usize) -> Result<()> {
+        // SAFETY:
+        // * No memory is retained by the function call.
+        // * By UEFI spec, implementation should return error where `buf` is not a valid or
+        //   associated with any allocated memory.
+        unsafe { efi_call!(self.boot_services.free_pages, buf as _, pages) }
     }
 
     /// Wrapper of `EFI_BOOT_SERVICES.OpenProtocol()`.
