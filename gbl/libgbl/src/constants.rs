@@ -16,9 +16,10 @@
 
 // TODO(b/380392958) Cleanup other used of the constants. Move them here as well.
 
+use arrayvec::ArrayString;
 use core::fmt::{Debug, Display, Formatter};
-use liberror::Error;
 use static_assertions::const_assert_eq;
+use zbi::ZBI_ALIGNMENT_USIZE;
 
 /// Macro for defining Kibibyte-sized constants
 #[macro_export]
@@ -43,6 +44,10 @@ const_assert_eq!(MiB!(5), 5 * 1024 * 1024);
 pub use KiB;
 pub use MiB;
 
+/// Must be synced with the one defined in image loading protocol.
+/// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/GBL_EFI_IMAGE_LOADING_PROTOCOL.md
+pub const IMAGE_NAME_MAX_LEN: usize = 36;
+
 /// Kernel image alignment requirement.
 pub const KERNEL_ALIGNMENT: usize = MiB!(2);
 
@@ -61,10 +66,13 @@ pub const PAGE_SIZE: usize = KiB!(4);
 /// FDT image alignment requirement.
 pub const PVMFW_DATA_ALIGNMENT: usize = PAGE_SIZE;
 
+// Type alias for raw partition image name.
+type PartitionImageName = ArrayString<IMAGE_NAME_MAX_LEN>;
+
 /// Image names list.
 /// Used for identifying what buffer size/alignment is necessary.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ImageName {
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ImageType {
     /// ZBI for Zircon kernel
     ZbiZircon,
     /// ZBI items
@@ -73,47 +81,44 @@ pub enum ImageName {
     Boot,
     /// FDT
     Fdt,
+    /// Ramdisk
+    Ramdisk,
     /// pVM firmware data
     PvmfwData,
+    /// Raw partition
+    Partition(PartitionImageName),
 }
 
-impl ImageName {
-    /// Get alignment required for the [ImageName]
+impl ImageType {
+    /// Get alignment required for the [ImageType]
     pub fn alignment(&self) -> usize {
         match self {
             Self::ZbiZircon => ZIRCON_KERNEL_ALIGNMENT,
-            Self::ZbiItems => PAGE_SIZE,
+            Self::ZbiItems => ZBI_ALIGNMENT_USIZE,
             Self::Boot => KERNEL_ALIGNMENT,
             Self::Fdt => FDT_ALIGNMENT,
+            Self::Ramdisk => PAGE_SIZE,
             Self::PvmfwData => PVMFW_DATA_ALIGNMENT,
+            Self::Partition(_) => PAGE_SIZE,
+        }
+    }
+
+    /// Get image name for the [ImageType]
+    pub fn name(&self) -> &str {
+        match self {
+            ImageType::ZbiZircon => "zbi_zircon",
+            ImageType::ZbiItems => "zbi_items",
+            ImageType::Boot => "boot",
+            ImageType::Fdt => "fdt",
+            ImageType::Ramdisk => "ramdisk",
+            ImageType::PvmfwData => "pvmfw_data",
+            Self::Partition(name) => &name,
         }
     }
 }
 
-impl Display for ImageName {
+impl Display for ImageType {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        let str = match self {
-            ImageName::ZbiZircon => "zbi_zircon",
-            ImageName::ZbiItems => "zbi_items",
-            ImageName::Boot => "boot",
-            ImageName::Fdt => "fdt",
-            ImageName::PvmfwData => "pvmfw_data",
-        };
-        write!(f, "{str}")
-    }
-}
-
-impl TryFrom<&str> for ImageName {
-    type Error = Error;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Ok(match value {
-            "zbi_zircon" => ImageName::ZbiZircon,
-            "zbi_items" => ImageName::ZbiItems,
-            "boot" => ImageName::Boot,
-            "fdt" => ImageName::Fdt,
-            "pvmfw_data" => ImageName::PvmfwData,
-            _ => return Err(Error::InvalidInput),
-        })
+        write!(f, "{}", self.name())
     }
 }

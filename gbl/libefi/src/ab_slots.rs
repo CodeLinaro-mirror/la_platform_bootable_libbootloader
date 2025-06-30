@@ -156,6 +156,7 @@ mod test {
         Gbl, GblOps, Os, Result as GblResult,
     };
     use gbl_storage::{BlockIo, BlockIoNull, Disk, Gpt};
+    use libgbl::constants::ImageType;
     use libgbl::{
         device_tree::DeviceTreeComponentsRegistry,
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
@@ -377,7 +378,7 @@ mod test {
 
         fn get_image_buffer(
             &mut self,
-            _image_name: &str,
+            _image_type: ImageType,
             _size: NonZeroUsize,
         ) -> GblResult<ImageBuffer<'d>> {
             unimplemented!();

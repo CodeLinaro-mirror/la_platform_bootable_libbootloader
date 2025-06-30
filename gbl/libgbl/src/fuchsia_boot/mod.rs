@@ -14,7 +14,9 @@
 
 //! This file provides APIs for loading, verifying and booting Fuchsia/Zircon.
 
-use crate::{gbl_println, image_buffer::ImageBuffer, GblOps, Result as GblResult};
+use crate::{
+    constants::ImageType, gbl_println, image_buffer::ImageBuffer, GblOps, Result as GblResult,
+};
 pub use abr::{get_and_clear_one_shot_bootloader, get_boot_slot, Ops as AbrOps, SlotIndex};
 use bytes::buf::UninitSlice;
 use core::{fmt::Write, mem::MaybeUninit, num::NonZeroUsize};
@@ -169,8 +171,9 @@ fn zircon_load_verify<'a, 'd>(
 ) -> GblResult<(ImageBuffer<'d>, ImageBuffer<'d>)> {
     // TODO(b/379778252): use single `zbi_zircon` buffer for container to store both kernel and
     // arguments/items
-    let mut zbi_items_img =
-        ops.get_image_buffer("zbi_items", NonZeroUsize::new(64 * 1024 * 1024).unwrap()).unwrap();
+    let mut zbi_items_img = ops
+        .get_image_buffer(ImageType::ZbiItems, NonZeroUsize::new(64 * 1024 * 1024).unwrap())
+        .unwrap();
 
     let init_len = zbi_items_img.tail().len();
     // TODO(b/379787423): it is possible to optimize this initialisation by treating
@@ -187,8 +190,9 @@ fn zircon_load_verify<'a, 'd>(
     // TODO(b/379778252): as part of an attempt to use single container for kernel and arguments,
     // it would be necessary to read kernel header first to figure out how much space needed
     // (kernel size + scratch space)
-    let mut kernel_img =
-        ops.get_image_buffer("zbi_zircon", NonZeroUsize::new(128 * 1024 * 1024).unwrap()).unwrap();
+    let mut kernel_img = ops
+        .get_image_buffer(ImageType::ZbiZircon, NonZeroUsize::new(128 * 1024 * 1024).unwrap())
+        .unwrap();
     let image_length = read_zircon_image(ops, slot, kernel_img.as_mut())?;
     // SAFETY: buffer was successfully filled from partition
     unsafe {
@@ -434,7 +438,7 @@ pub(crate) mod test {
     //
     // Tests should make sure to provide enough buffers for all `get_image_buffer()` calls.
     //
-    struct ImageBuffersPool(LinkedList<(String, Vec<AlignedBuffer<MaybeUninit<u8>>>)>);
+    struct ImageBuffersPool(LinkedList<(ImageType, Vec<AlignedBuffer<MaybeUninit<u8>>>)>);
 
     impl ImageBuffersPool {
         pub fn builder() -> ImageBuffersBuilder {
@@ -455,20 +459,23 @@ pub(crate) mod test {
 
             Self(
                 [
-                    (String::from("zbi_zircon"), zbi_zircon_buffer_vec),
-                    (String::from("zbi_items"), zbi_items_buffer_vec),
+                    (ImageType::ZbiZircon, zbi_zircon_buffer_vec),
+                    (ImageType::ZbiItems, zbi_items_buffer_vec),
                 ]
                 .into(),
             )
         }
 
-        pub fn get(&mut self) -> HashMap<String, LinkedList<ImageBuffer>> {
+        pub fn get(&mut self) -> HashMap<ImageType, LinkedList<ImageBuffer>> {
             self.0
                 .iter_mut()
                 .map(|(key, val_vec)| {
                     (
                         key.clone(),
-                        val_vec.iter_mut().map(|e| ImageBuffer::new(e.as_mut())).collect(),
+                        val_vec
+                            .iter_mut()
+                            .map(|e| ImageBuffer::new(key.clone(), e.as_mut()).unwrap())
+                            .collect(),
                     )
                 })
                 .collect()

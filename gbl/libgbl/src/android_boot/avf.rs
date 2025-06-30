@@ -15,7 +15,7 @@
 //! Android virtualization framework support for GBL
 
 use super::load::BootImageV3Info;
-use crate::constants::PAGE_SIZE;
+use crate::constants::{ImageType, PAGE_SIZE};
 use crate::image_buffer::ImageBuffer;
 use crate::{GblOps, KiB, Result};
 use core::ffi::CStr;
@@ -76,8 +76,6 @@ pub fn pvmfw_place_in_memory<'a, 'b>(
     pvmfw_partition_buf: &[u8],
     entries: EntryBufsArray,
 ) -> Result<ImageBuffer<'b>> {
-    const PVMFW_RESVMEM_NAME: &str = "pvmfw_data";
-
     // Parse the partition header an extract the pvmfw binary
     let info = BootImageV3Info::new(pvmfw_partition_buf)?;
     let pvmfw_bin =
@@ -87,13 +85,10 @@ pub fn pvmfw_place_in_memory<'a, 'b>(
 
     // Request buffer
     let image_size = calc_pvmfw_data_image_size(pvmfw_bin_size, &entries)?;
-    let mut target_buf = ops.get_image_buffer(PVMFW_RESVMEM_NAME, image_size.try_into()?)?;
+    let mut target_buf = ops.get_image_buffer(ImageType::PvmfwData, image_size.try_into()?)?;
 
     // SAFETY: the used buffer will be fully initialized by writing pvmfw binary and padding
     unsafe { target_buf.advance_used(pvmfw_bin_size) }?;
-    if target_buf.used().as_ptr().align_offset(PAGE_SIZE) != 0 {
-        return Err(Error::InvalidAlignment.into());
-    }
     target_buf.used_mut().copy_from_slice(pvmfw_bin);
 
     // Append the rest of the configuration
@@ -250,7 +245,7 @@ mod test {
         tests::AlignedBuffer,
     };
     use core::mem::MaybeUninit;
-    use std::collections::{HashMap, LinkedList};
+    use std::collections::LinkedList;
 
     fn dummy_pvmfw_partition(fill_value: u8) -> Vec<u8> {
         const HEADER_SIZE: usize = 4096;
@@ -278,16 +273,16 @@ mod test {
         ops: &mut FakeGblOps<'_, 'a>,
         buf: &'b mut AlignedBuffer<MaybeUninit<u8>>,
     ) {
-        let buf_image = ImageBuffer::new(buf.as_mut());
+        let buf_image = ImageBuffer::new(ImageType::PvmfwData, buf.as_mut()).unwrap();
         let mut list = LinkedList::<ImageBuffer>::new();
         list.push_back(buf_image);
-        ops.image_buffers = HashMap::new();
-        ops.image_buffers.insert("pvmfw_data".into(), list);
+        ops.image_buffers.insert(ImageType::PvmfwData, list);
     }
 
     #[test]
     fn test_pvmfw_place_in_memory() {
-        let mut pvmfw_buf_aligned = AlignedBuffer::new_uninit(0x100000, 0x1000);
+        let mut pvmfw_buf_aligned =
+            AlignedBuffer::new_uninit(0x100000, ImageType::PvmfwData.alignment());
         let storage = FakeGblOpsStorage::default();
         let mut ops = FakeGblOps::new(&storage);
         add_image_buffer(&mut ops, &mut pvmfw_buf_aligned);
@@ -305,7 +300,8 @@ mod test {
 
     #[test]
     fn test_pvmfw_place_in_memory_bad_header() {
-        let mut pvmfw_buf_aligned = AlignedBuffer::new_uninit(0x100000, 0x1000);
+        let mut pvmfw_buf_aligned =
+            AlignedBuffer::new_uninit(0x100000, ImageType::PvmfwData.alignment());
         let storage = FakeGblOpsStorage::default();
         let mut ops = FakeGblOps::new(&storage);
         add_image_buffer(&mut ops, &mut pvmfw_buf_aligned);
@@ -321,8 +317,8 @@ mod test {
 
     #[test]
     fn test_pkvm_describe_pvmfw_resvmem() {
-        let mut buf = [MaybeUninit::new(0u8); 10];
-        let imbuf = ImageBuffer::new(buf.as_mut());
+        let mut buf = AlignedBuffer::new_uninit(10, ImageType::PvmfwData.alignment());
+        let imbuf = ImageBuffer::new(ImageType::PvmfwData, buf.as_mut()).unwrap();
 
         let init = include_bytes!("../../../libfdt/test/data/res_mem_min_dt.dtb").to_vec();
         let mut fdt_buf = vec![0u8; init.len() + 512];
@@ -354,14 +350,10 @@ mod test {
         assert_eq!(&reg_prop[8..], imbuf.capacity().to_be_bytes());
     }
 
-    #[repr(align(4096))] // pvmfw config data alignment requirement
-    struct ConfBuffer([MaybeUninit<u8>; 1000]);
-
     #[test]
     fn test_write_pvmfw_config() {
-        let mut buf = ConfBuffer([MaybeUninit::uninit(); 1000]);
-        let buf_uninit = &mut buf.0[..];
-        let mut imbuf = ImageBuffer::new(buf_uninit);
+        let mut buf = AlignedBuffer::new_uninit(1000, ImageType::PvmfwData.alignment());
+        let mut imbuf = ImageBuffer::new(ImageType::PvmfwData, buf.as_mut()).unwrap();
 
         const DATA_LEN: usize = 10;
         let data_len_padded = align_up(DATA_LEN, 8).unwrap();
@@ -406,9 +398,8 @@ mod test {
 
     #[test]
     fn test_write_empty_pvmfw_config() {
-        let mut buf = ConfBuffer([MaybeUninit::uninit(); 1000]);
-        let buf_uninit = &mut buf.0[..];
-        let mut imbuf = ImageBuffer::new(buf_uninit);
+        let mut buf = AlignedBuffer::new_uninit(1000, ImageType::PvmfwData.alignment());
+        let mut imbuf = ImageBuffer::new(ImageType::PvmfwData, buf.as_mut()).unwrap();
 
         write_pvmfw_config(&mut imbuf, [&[]; NUM_PVMFW_CONFIG_ENTRIES]).unwrap();
 
