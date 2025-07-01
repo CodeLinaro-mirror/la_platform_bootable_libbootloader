@@ -54,6 +54,7 @@ cc_library(
         "include/features.h",
         "include/gbl/defs.h",
         "include/gbl/print.h",
+        "include/intrin.h",
         "include/inttypes.h",
         "include/limits.h",
         "include/stdio.h",
