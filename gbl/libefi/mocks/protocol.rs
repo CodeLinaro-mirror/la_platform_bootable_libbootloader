@@ -356,6 +356,11 @@ pub mod gbl_efi_fastboot {
         pub fn get_staged(&self, _: &mut [u8]) -> Result<(usize, usize)> {
             unimplemented!()
         }
+
+        /// Protocol<'_, GblFastbootProtocol>::should_stop_in_fastboot.
+        pub fn should_stop_in_fastboot(&self) -> bool {
+            unimplemented!()
+        }
     }
 
     /// Map to the libefi name so code under test can just use one name.

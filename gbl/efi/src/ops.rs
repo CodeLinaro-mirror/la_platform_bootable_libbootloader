@@ -44,7 +44,7 @@ use efi::{
     EfiEntry,
 };
 use efi_types::{
-    GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootMode,
+    EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootMode,
     GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
     EFI_FASTBOOT_MESSAGE_TYPE_FAIL, EFI_FASTBOOT_MESSAGE_TYPE_INFO, EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
 };
@@ -295,26 +295,32 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     }
 
     fn should_stop_in_fastboot(&mut self) -> Result<bool> {
-        // TODO(b/349829690): also query GblSlotProtocol.get_boot_mode() for board-specific
-        // fastboot triggers.
-
-        // TODO(b/366520234): Switch to use GblSlotProtocol.should_stop_in_fastboot once available.
-        match self.get_efi_fdt_prop("gbl", c"stop-in-fastboot") {
-            Some(v) => return Ok(*v.get(0).unwrap_or(&0) == 1),
-            _ => {}
+        match self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()
+            .map(|v| v.should_stop_in_fastboot())
+        {
+            // If protocol is not implemented or unsupported, provides a built-in mechanism of
+            // stopping in fastboot by pressing f key from the console.
+            Err(Error::NotFound) | Err(Error::Unsupported) => {
+                efi_println!(self.efi_entry, "Press 'f' to enter fastboot");
+                let pred = |key: EfiInputKey| key.unicode_char == b'f' as _;
+                let res = wait_key_stroke(self.efi_entry, pred, Duration::from_secs(2))
+                    .inspect_err(|e| efi_println!(self.efi_entry, "Failed to wait for key: {e}"));
+                res.is_ok_and(|v| v).then(|| efi_println!(self.efi_entry, "'f' pressed"));
+                res
+            }
+            Err(e) => {
+                efi_println!(
+                    self.efi_entry,
+                    "Error when checking should_stop_in_fastboot: {e}, Continues."
+                );
+                Ok(false)
+            }
+            v => return v,
         }
-
-        efi_println!(self.efi_entry, "Press Backspace to enter fastboot");
-        let found = wait_key_stroke(
-            self.efi_entry,
-            |key| key.unicode_char == 0x08 || (key.unicode_char == 0x0 && key.scan_code == 0x08),
-            Duration::from_secs(2),
-        );
-        if matches!(found, Ok(true)) {
-            efi_println!(self.efi_entry, "Backspace pressed, entering fastboot");
-        }
-        // TODO(b/358377120): pass the UEFI error when liberror::Error support lands.
-        found.or(Err(Error::Other(Some("wait for key stroke error"))))
     }
 
     /// Reboots the system into the last set boot mode.

@@ -30,7 +30,8 @@ use efi::{
 use efi_types::{EfiGuid, EfiInputKey, GBL_IMAGE_TYPE_OS_LOAD};
 use fdt::FdtHeader;
 use liberror::Error;
-use libgbl::Result;
+
+type Result<T> = core::result::Result<T, Error>;
 
 pub(crate) const EFI_DTB_TABLE_GUID: EfiGuid =
     EfiGuid::new(0xb1b621d5, 0xf19c, 0x41a5, [0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0]);
