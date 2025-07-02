@@ -61,7 +61,7 @@ use libgbl::{
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, ImageBuffer, InfoSender,
-        OkaySender, RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
+        LockState, LockType, OkaySender, RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -673,6 +673,28 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             Err(Error::NotFound) => Ok(()),
             Err(e) => Err(e),
         }
+    }
+
+    fn fastboot_set_lock(&mut self, lock_type: LockType, lock_state: LockState) -> Result<()> {
+        self.efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()?
+            .set_lock(
+                matches!(lock_type, LockType::Critical),
+                matches!(lock_state, LockState::Locked),
+            )
+    }
+
+    fn fastboot_get_lock(&mut self, lock_type: LockType) -> Result<LockState> {
+        Ok(self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()?
+            .get_lock(matches!(lock_type, LockType::Critical))?
+            .then_some(LockState::Locked)
+            .unwrap_or(LockState::Unlocked))
     }
 
     fn fastboot_run_oem(

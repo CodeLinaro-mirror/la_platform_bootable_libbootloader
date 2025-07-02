@@ -159,7 +159,7 @@ mod test {
     use libgbl::{
         device_tree::DeviceTreeComponentsRegistry,
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
-        ops::{FailSender, ImageBuffer, InfoSender, OkaySender},
+        ops::{FailSender, ImageBuffer, InfoSender, LockState, LockType, OkaySender},
     };
     use libprofile::{ProfileBackend, ProfileTimer, Reporter};
     use std::{
@@ -430,6 +430,14 @@ mod test {
 
         fn fastboot_get_staged(&mut self, _: &mut [u8]) -> Result<(usize, usize)> {
             unimplemented!()
+        }
+
+        fn fastboot_set_lock(&mut self, _: LockType, _: LockState) -> Result<()> {
+            unreachable!();
+        }
+
+        fn fastboot_get_lock(&mut self, _: LockType) -> Result<LockState> {
+            unreachable!();
         }
 
         fn slots_metadata(&mut self) -> Result<SlotsMetadata> {

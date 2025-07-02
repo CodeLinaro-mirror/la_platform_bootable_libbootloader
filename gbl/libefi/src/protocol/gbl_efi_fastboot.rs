@@ -228,21 +228,24 @@ impl Protocol<'_, GblFastbootProtocol> {
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.set_lock()`
-    pub fn set_lock(&self, flags: u64) -> Result<()> {
+    pub fn set_lock(&self, is_critical: bool, is_lock: bool) -> Result<()> {
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
         // established by `Protocol::new()`.
         // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.set_lock, self.interface, flags) }
+        unsafe { efi_call!(self.interface()?.set_lock, self.interface, is_critical, is_lock) }
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.clear_lock()`
-    pub fn clear_lock(&self, flags: u64) -> Result<()> {
+    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_lock()`
+    pub fn get_lock(&self, is_critical: bool) -> Result<bool> {
+        let mut out: bool = false;
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
         // established by `Protocol::new()`.
         // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.clear_lock, self.interface, flags) }
+        // `out` is for output only and will not be retained. It outlives the call.
+        unsafe { efi_call!(self.interface()?.get_lock, self.interface, is_critical, &mut out)? };
+        Ok(out)
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_partition_permissions()`

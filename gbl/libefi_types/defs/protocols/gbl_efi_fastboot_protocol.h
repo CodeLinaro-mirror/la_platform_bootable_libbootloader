@@ -71,13 +71,6 @@ typedef enum GBL_EFI_FASTBOOT_PARTITION_PERMISSION_FLAGS {
   GBL_EFI_FASTBOOT_PARTITION_ERASE = 0x1 << 2,
 } GblEfiFastbootPartitionPermissionFlags;
 
-typedef enum GBL_EFI_FASTBOOT_LOCK_FLAGS {
-  // All device partitions are locked.
-  GBL_EFI_FASTBOOT_GBL_EFI_LOCKED = 0x1 << 0,
-  // All 'critical' device partitions are locked.
-  GBL_EFI_FASTBOOT_GBL_EFI_CRITICAL_LOCKED = 0x1 << 1,
-} GblEfiFastbootLockFlags;
-
 typedef struct GblEfiFastbootProtocol {
   // Revision of the protocol supported.
   uint32_t version;
@@ -105,10 +98,10 @@ typedef struct GblEfiFastbootProtocol {
   // Device lock methods
   EfiStatus (*get_policy)(struct GblEfiFastbootProtocol* this,
                           GblEfiFastbootPolicy* policy);
-  EfiStatus (*set_lock)(struct GblEfiFastbootProtocol* this,
-                        uint64_t lock_state);
-  EfiStatus (*clear_lock)(struct GblEfiFastbootProtocol* this,
-                          uint64_t lock_state);
+  EfiStatus (*set_lock)(struct GblEfiFastbootProtocol* this, bool critical,
+                        bool lock);
+  EfiStatus (*get_lock)(struct GblEfiFastbootProtocol* this, bool critical,
+                        bool *out_lock);
 
   // Local session methods
   EfiStatus (*start_local_session)(struct GblEfiFastbootProtocol* this,

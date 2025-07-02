@@ -220,6 +220,24 @@ pub enum RebootMode {
     Recovery,
 }
 
+/// Specifies the type of lock for `FastbootImplementation::flashing_set_lock`.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum LockType {
+    /// Locking or unlocking the device.
+    Device,
+    /// Locking or unlocking the critical partitions
+    Critical,
+}
+
+/// Specifies the state of lock for `FastbootImplementation::flashing_set_lock`.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum LockState {
+    /// locked
+    Locked,
+    /// Unlocked
+    Unlocked,
+}
+
 /// Implementation for Fastboot command backends.
 pub trait FastbootImplementation {
     /// Backend for `fastboot getvar ...`
@@ -427,6 +445,19 @@ pub trait FastbootImplementation {
         cmd: &str,
         responder: impl InfoSender + OkaySender + FailSender,
         res: &mut [u8],
+    ) -> CommandResult<()>;
+
+    /// Handler for `fastboot flashing lock|unlock` and
+    /// `fastboot flashing lock_critical|unlock_critical`.
+    ///
+    /// # Args
+    ///
+    /// * `critical`: Whether the operation is for critical partitions.
+    /// * `lock`: True to lock, false to unlock.
+    async fn flashing_set_lock(
+        &mut self,
+        lock_type: LockType,
+        lock_state: LockState,
     ) -> CommandResult<()>;
 
     // TODO(b/322540167): Add methods for other commands.
@@ -978,6 +1009,29 @@ async fn oem(
     }
 }
 
+/// Handler for "fastboot flashing ..."
+async fn flashing(
+    cmd: &str,
+    transport: &mut impl Transport,
+    fb_impl: &mut impl FastbootImplementation,
+) -> Result<()> {
+    let mut resp = Responder::new(transport);
+    let res = match cmd {
+        "lock" => fb_impl.flashing_set_lock(LockType::Device, LockState::Locked).await,
+        "lock_critical" => fb_impl.flashing_set_lock(LockType::Critical, LockState::Locked).await,
+        "unlock" => fb_impl.flashing_set_lock(LockType::Device, LockState::Unlocked).await,
+        "unlock_critical" => {
+            fb_impl.flashing_set_lock(LockType::Critical, LockState::Unlocked).await
+        }
+        "" => Err("missing argument".into()),
+        _ => Err("Invalid flashing arg".into()),
+    };
+    match res {
+        Ok(()) => reply_okay!(resp, ""),
+        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+    }
+}
+
 /// Process the next Fastboot command from  the transport.
 ///
 /// # Returns
@@ -1019,6 +1073,9 @@ pub async fn process_next_command(
         "reboot-recovery" => reboot(RebootMode::Recovery, transport, fb_impl).await,
         "set_active" => set_active(args, transport, fb_impl).await,
         "upload" => upload(transport, fb_impl).await,
+        _ if cmd_str.starts_with("flashing ") => {
+            flashing(cmd_str.strip_prefix("flashing ").unwrap(), transport, fb_impl).await
+        }
         _ if cmd_str.starts_with("oem ") => oem(&cmd_str[4..], transport, fb_impl).await,
         _ => transport.send_packet(fastboot_fail!(packet, "Command not found")).await,
     }?;
@@ -1115,6 +1172,7 @@ mod test {
         reboot_mode: Option<RebootMode>,
         active_slot: Option<String>,
         boot_result: Option<CommandResult<()>>,
+        last_set_lock_call: Option<(LockType, LockState)>,
     }
 
     impl FastbootImplementation for FastbootTest {
@@ -1228,6 +1286,15 @@ mod test {
                 _ => {}
             }
             res.take().unwrap_or(Ok(()))
+        }
+
+        async fn flashing_set_lock(
+            &mut self,
+            lock_type: LockType,
+            lock_state: LockState,
+        ) -> CommandResult<()> {
+            self.last_set_lock_call = Some((lock_type, lock_state));
+            Ok(())
         }
     }
 
@@ -1905,5 +1972,48 @@ mod test {
         transport.add_input(b"set_active");
         block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
         assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"FAILMissing slot".into()]));
+    }
+
+    #[test]
+    fn test_flashing_lock() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        let mut transport = TestTransport::new();
+        transport.add_input(b"flashing lock");
+        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAY".into()]));
+        assert_eq!(fastboot_impl.last_set_lock_call, Some((LockType::Device, LockState::Locked)));
+    }
+
+    #[test]
+    fn test_flashing_unlock() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        let mut transport = TestTransport::new();
+        transport.add_input(b"flashing unlock");
+        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAY".into()]));
+        assert_eq!(fastboot_impl.last_set_lock_call, Some((LockType::Device, LockState::Unlocked)));
+    }
+
+    #[test]
+    fn test_flashing_lock_critical() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        let mut transport = TestTransport::new();
+        transport.add_input(b"flashing lock_critical");
+        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAY".into()]));
+        assert_eq!(fastboot_impl.last_set_lock_call, Some((LockType::Critical, LockState::Locked)));
+    }
+
+    #[test]
+    fn test_flashing_unlock_critical() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        let mut transport = TestTransport::new();
+        transport.add_input(b"flashing unlock_critical");
+        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAY".into()]));
+        assert_eq!(
+            fastboot_impl.last_set_lock_call,
+            Some((LockType::Critical, LockState::Unlocked))
+        );
     }
 }

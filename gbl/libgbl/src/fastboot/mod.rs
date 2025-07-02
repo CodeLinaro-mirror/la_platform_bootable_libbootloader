@@ -31,8 +31,8 @@ use core::{
 };
 use fastboot::{
     local_session::LocalSession, next_arg, next_arg_u64, process_next_command, run_tcp_session,
-    CommandError, CommandResult, FailSender, FastbootImplementation, InfoSender, OkaySender,
-    RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
+    CommandError, CommandResult, FailSender, FastbootImplementation, InfoSender, LockState,
+    LockType, OkaySender, RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
 };
 use gbl_async::{join, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
@@ -912,6 +912,14 @@ where
             true => self.boot_fuchsia(&img[..sz], resp).await,
             _ => self.boot_android(&img[..sz], resp).await,
         }
+    }
+
+    async fn flashing_set_lock(
+        &mut self,
+        lock_type: LockType,
+        lock_state: LockState,
+    ) -> CommandResult<()> {
+        Ok(self.gbl_ops.fastboot_set_lock(lock_type, lock_state)?)
     }
 }
 
@@ -3432,5 +3440,51 @@ pub(crate) mod test {
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         );
+    }
+
+    #[test]
+    fn test_fastboot_flashing_lock_unlock() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"flashing lock");
+        listener.add_usb_input(b"flashing unlock");
+        listener.add_usb_input(b"flashing lock_critical");
+        listener.add_usb_input(b"flashing unlock_critical");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"OKAY",
+                b"OKAY",
+                b"OKAY",
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        assert_eq!(
+            gbl_ops.set_lock_traces,
+            vec![
+                (LockType::Device, LockState::Locked),
+                (LockType::Device, LockState::Unlocked),
+                (LockType::Critical, LockState::Locked),
+                (LockType::Critical, LockState::Unlocked),
+            ]
+        )
     }
 }

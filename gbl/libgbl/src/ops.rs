@@ -36,7 +36,7 @@ use libutils::aligned_subslice;
 pub use avb::{
     CertPermanentAttributes, IoError as AvbIoError, IoResult as AvbIoResult, SHA256_DIGEST_SIZE,
 };
-pub use fastboot::{FailSender, InfoSender, OkaySender};
+pub use fastboot::{FailSender, InfoSender, LockState, LockType, OkaySender};
 pub use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
 pub use slots::{Slot, SlotsMetadata};
@@ -408,6 +408,30 @@ pub trait GblOps<'a, 'd> {
         &mut self,
         cb: impl FnMut(&[&CStr], &CStr),
     ) -> Result<(), Error>;
+
+    /// Handler for `fastboot flashing lock|unlock` and
+    /// `fastboot flashing lock_critical|unlock_critical`.
+    ///
+    /// # Args
+    ///
+    /// * `lock_type`: The type of lock to set.
+    /// * `lock_state`: The target lock state to set.
+    fn fastboot_set_lock(
+        &mut self,
+        lock_type: LockType,
+        lock_state: LockState,
+    ) -> Result<(), Error>;
+
+    /// Query the current lock state
+    ///
+    /// # Args
+    ///
+    /// * `lock_type`: The type of lock to query.
+    ///
+    /// # Returns
+    ///
+    /// Ok(LockState::Locked) if locked, Ok(LockState::Unlocked) if unlocked.
+    fn fastboot_get_lock(&mut self, lock_type: LockType) -> Result<LockState, Error>;
 
     /// Executes a fastboot oem command.
     ///
@@ -854,6 +878,16 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
+    fn fastboot_set_lock(&mut self, _: LockType, _: LockState) -> Result<(), Error> {
+        // Ramboot should not need this.
+        unreachable!();
+    }
+
+    fn fastboot_get_lock(&mut self, _: LockType) -> Result<LockState, Error> {
+        // Ramboot should not need this.
+        unreachable!();
+    }
+
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         self.ops.get_profiling_backend()
     }
@@ -1030,6 +1064,9 @@ pub(crate) mod test {
         /// Handler of `fastboot_get_staged`
         pub get_staged_handler:
             Option<&'a mut dyn FnMut(&mut [u8]) -> Result<(usize, usize), Error>>,
+
+        /// Stores the inputs of `fastboot_set_lock()` call.
+        pub set_lock_traces: Vec<(LockType, LockState)>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1399,6 +1436,19 @@ pub(crate) mod test {
 
         fn fastboot_get_staged(&mut self, out: &mut [u8]) -> Result<(usize, usize), Error> {
             (self.get_staged_handler.as_mut().unwrap())(out)
+        }
+
+        fn fastboot_set_lock(
+            &mut self,
+            lock_type: LockType,
+            lock_state: LockState,
+        ) -> Result<(), Error> {
+            self.set_lock_traces.push((lock_type, lock_state));
+            Ok(())
+        }
+
+        fn fastboot_get_lock(&mut self, _: LockType) -> Result<LockState, Error> {
+            unimplemented!()
         }
 
         fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {

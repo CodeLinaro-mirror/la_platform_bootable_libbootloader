@@ -48,7 +48,7 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   GBL_EFI_FASTBOOT_GET_STAGED                   GetStaged;
   GBL_EFI_FASTBOOT_GET_POLICY                   GetPolicy;
   GBL_EFI_FASTBOOT_SET_LOCK                     SetLock;
-  GBL_EFI_FASTBOOT_CLEAR_LOCK                   ClearLock;
+  GBL_EFI_FASTBOOT_GET_LOCK                     GetLock;
   VOID*                                         Reserved[3];
   GBL_EFI_FASTBOOT_GET_PARTITION_PERMISSIONS    GetPartitionPermissions;
   GBL_EFI_FASTBOOT_WIPE_USER_DATA               WipeUserData;
@@ -100,13 +100,13 @@ See [`GBL_EFI_FASTBOOT_PROTOCOL.GetPolicy()`](#gbl_efi_fastboot_protocolgetpolic
 
 **SetLock**
 
-Enables device locks according to the provided ORed lock definitions.
+Locks or unlocks device or critical partitions.
 See [`GBL_EFI_FASTBOOT_PROTOCOL.SetLock()`](#gbl_efi_fastboot_protocolsetlock).
 
-**ClearLock**
+**GetLock**
 
-Removes devices locks according to the provided ORed lock definitions.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.ClearLock()`](#gbl_efi_fastboot_protocolclearlock).
+Queries lock status of device or critical partitions.
+See [`GBL_EFI_FASTBOOT_PROTOCOL.GetLock()`](#gbl_efi_fastboot_protocolGetLock).
 
 **GetPartitionPermissions**
 
@@ -519,8 +519,8 @@ is generally not permitted on anything except development hardware.
 Developer workflows and CI/CD infrastructure need to be able to query
 whether a device is able to be unlocked and whether RAM booting is permitted.
 
-See [`SetLock()`](#gbl_efi_fastboot_protocolsetlock) and [`ClearLock()`](#gbl_efi_fastboot_protocolclearlock)
-for methods that modify the device lock state. Querying lock state is handled by Android Verified Boot.
+See [`SetLock()`](#gbl_efi_fastboot_protocolsetlock) for a method that modifies
+the device lock state.
 
 ### Status Codes
 
@@ -542,23 +542,9 @@ typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_SET_LOCK)(
     IN GBL_EFI_FASTBOOT_PROTOCOL* This,
-    IN UINT64                     LockState,
+    IN BOOL                       Critical,
+    IN BOOL                       Lock,
 );
-```
-
-### Related Definitions
-
-```c
-typedef enum _GBL_EFI_FASTBOOT_LOCK_FLAGS {
-  // All device partitions are locked.
-  GBL_EFI_FASTBOOT_GBL_EFI_LOCKED = 0x1 << 0,
-  // All 'critical' device partitions are locked.
-  // The 'critical' lock is optional,
-  // and which partitions are locked by the critical lock
-  // is a vendor implementation detail.
-  GBL_EFI_FASTBOOT_GBL_EFI_CRITICAL_LOCKED = 0x1 << 1,
-} GBL_EFI_FASTBOOT_LOCK_FLAGS;
-
 ```
 
 ### Parameters
@@ -567,41 +553,43 @@ typedef enum _GBL_EFI_FASTBOOT_LOCK_FLAGS {
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 
-*LockState*
+*Critical*
 
-The ORed value of all device partition locks to enable.
-When locked, partitions generally cannot be read, written, or erased via fastboot.
-See [Related Definitions](#related-definitions-3) for valid lock flags.
+Set to true if operation is to lock/unlock critical partitions. Set to false if
+operation is to lock/unlock device.
+
+*Lock*
+
+Set to true to lock. Set to false to unlock.
 
 ### Description
 
 Device lock state determines what operations can be performed on device partitions.
-`SetLock()` enables the locks defined in *LockState*, some of which may already be set.
-No locks are cleared by any call to `SetLock()`.
+`SetLock()` locks or unlocks device or critical partitions.
 
 ### Status Codes Returned
 
 | Return Code             | Semantics                                          |
 |:------------------------|:---------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                   |
-| `EFI_INVALID_PARAMETER` | *This* is `NULL` or improperly aligned.            |
-| `EFI_INVALID_PARAMETER` | The lock flags in *LockState* are invalid.         |
-| `EFI_ACCESS_DENIED`     | Device policy prohibited the change in lock state. |
+| `EFI_INVALID_PARAMETER` | *This* is invalid or improperly aligned.           |
+| `EFI_ACCESS_DENIED`     | Caller intends to lock/unlock device or critical partition but device prohibits the operation. |
 
-## `GBL_EFI_FASTBOOT_PROTOCOL.ClearLock()`
+## `GBL_EFI_FASTBOOT_PROTOCOL.GetLock()`
 
 ### Summary
 
-Clears device partition locks.
+Qeury lock status.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_CLEAR_LOCK)(
+(EFIAPI * GBL_EFI_FASTBOOT_GET_LOCK)(
     IN GBL_EFI_FASTBOOT_PROTOCOL* This,
-    IN UINT64                     LockState,
+    IN BOOL                       Critical,
+    OUT BOOL                      *Lock,
 );
 ```
 
@@ -611,24 +599,26 @@ EFI_STATUS
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 
-*LockState*
+*Critical*
 
-The ORed value of all device partition locks to disable.
-See the [Related Definitions](#related-definitions-3) for `SetLock()` for valid lock flags.
+Set to true to query lock/unlock status of critical partitions. Set to false to
+query lock/unlock status of device.
+
+*Lock*
+
+Stores the output lock status. Set to true if status is locked. Set to false
+otherwise.
 
 ### Description
 
-Device lock state determines what operations can be performed on device partitions.
-`ClearLock()` disables the locks defined in *LockState*, some of which may already be cleared.
+`GetLock()` queries the lock status of device or critical partitions.
 
 ### Status Codes Returned
 
 | Return Code             | Semantics                                          |
 |:------------------------|:---------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                   |
-| `EFI_INVALID_PARAMETER` | *This* is `NULL` or improperly aligned.            |
-| `EFI_INVALID_PARAMETER` | The lock flags in *LockState* are invalid.         |
-| `EFI_ACCESS_DENIED`     | Device policy prohibited the change in lock state. |
+| `EFI_INVALID_PARAMETER` | *This* is invalid or improperly aligned.           |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.GetPartitionPermissions()`
 
