@@ -45,9 +45,11 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   GBL_EFI_FASTBOOT_GET_VAR                      GetVar;
   GBL_EFI_FASTBOOT_GET_VAR_ALL                  GetVarAll;
   GBL_EFI_FASTBOOT_RUN_OEM_FUNCTION             RunOemFunction;
+  GBL_EFI_FASTBOOT_GET_STAGED                   GetStaged;
   GBL_EFI_FASTBOOT_GET_POLICY                   GetPolicy;
   GBL_EFI_FASTBOOT_SET_LOCK                     SetLock;
   GBL_EFI_FASTBOOT_CLEAR_LOCK                   ClearLock;
+  VOID*                                         Reserved[3];
   GBL_EFI_FASTBOOT_GET_PARTITION_PERMISSIONS    GetPartitionPermissions;
   GBL_EFI_FASTBOOT_WIPE_USER_DATA               WipeUserData;
   GBL_EFI_FASTBOOT_SHOULD_STOP_IN_FASTBOOT      ShouldStopInFastboot;
