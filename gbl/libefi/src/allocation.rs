@@ -13,16 +13,22 @@
 // limitations under the License.
 
 use crate::{EfiEntry, RuntimeServices};
-use efi_types::EFI_MEMORY_TYPE_LOADER_DATA;
+use efi_types::{EFI_ALLOCATOR_TYPE_ALLOCATE_ANY_PAGES, EFI_MEMORY_TYPE_LOADER_DATA};
 
-use core::mem::size_of_val;
-use core::ptr::null_mut;
 use core::{
     alloc::{GlobalAlloc, Layout},
     fmt::Write,
+    mem::size_of,
+    ptr::{copy, null_mut},
+    slice::from_raw_parts,
 };
 use liberror::{Error, Result};
 use safemath::SafeNum;
+
+// Alignment guaranteed by EFI AllocatePoll()
+const EFI_ALLOCATE_POOL_ALIGNMENT: usize = 8;
+// Page size of AllocatePages() by UEFI spec.
+const EFI_PAGE_SIZE: usize = 4096;
 
 /// Implements a global allocator using `EFI_BOOT_SERVICES.AllocatePool()/FreePool()`
 ///
@@ -150,7 +156,40 @@ impl EfiAllocator {
         (self.state.efi_entry(), self.runtime_services.as_ref())
     }
 
-    /// Allocate memory via EFI_BOOT_SERVICES.
+    /// Computes the number of pages with a total size no smaller than `size`.
+    fn pages(size: usize) -> Result<usize> {
+        Ok(usize::try_from(SafeNum::from(size).round_up(EFI_PAGE_SIZE))? / EFI_PAGE_SIZE)
+    }
+
+    /// Allocates memory via EFI `AllocatePages()`.
+    fn allocate_pages(&self, size: usize) -> Result<*mut u8> {
+        let entry = self.state.efi_entry().ok_or(Error::InvalidState)?;
+        let bs = entry.system_table_checked()?.boot_services_checked()?;
+        let ptr = bs.allocate_pages(
+            EFI_ALLOCATOR_TYPE_ALLOCATE_ANY_PAGES,
+            EFI_MEMORY_TYPE_LOADER_DATA,
+            Self::pages(size)?,
+        )?;
+        Ok(ptr as _)
+    }
+
+    /// Deallocates memory previously allocated by `allocate_pages()`.
+    ///
+    /// Errors are logged but ignored.
+    fn deallocate_pages(&self, ptr: *mut u8, size: usize) {
+        let Some(ref entry) = self.state.efi_entry() else {
+            // After EFI_BOOT_SERVICES.ExitBootServices(), all allocated memory is considered
+            // leaked and under full ownership of subsequent OS loader code.
+            return;
+        };
+        let _ = entry
+            .system_table_checked()
+            .and_then(|v| v.boot_services_checked())
+            .and_then(|v| v.free_pages(ptr as *mut _, Self::pages(size).unwrap()))
+            .inspect_err(|e| efi_try_print!("failed to deallocate pages: {e}\r\n"));
+    }
+
+    /// Allocate memory via EFI_BOOT_SERVICES.AllocatePool().
     fn allocate(&self, size: usize) -> *mut u8 {
         self.state
             .efi_entry()
@@ -162,7 +201,7 @@ impl EfiAllocator {
             .unwrap_or(null_mut()) as _
     }
 
-    /// Deallocate memory previously allocated by `Self::allocate()`.
+    /// Deallocates memory previously allocated by `Self::allocate()`.
     ///
     /// Errors are logged but ignored.
     fn deallocate(&self, ptr: *mut u8) {
@@ -179,47 +218,49 @@ impl EfiAllocator {
             _ => {}
         }
     }
-}
 
-// Alignment guaranteed by EFI AllocatePoll()
-const EFI_ALLOCATE_POOL_ALIGNMENT: usize = 8;
+    /// Selects whether to allocate by EFI pages and calculate the total alloc size accommodating
+    /// alignment adjustment.
+    fn select_alloc_type(layout: &Layout) -> Result<(bool, usize)> {
+        let (sz, align) = (layout.size(), layout.align());
+        let (by_pages, alloc_native_alignment) = match sz % EFI_PAGE_SIZE == 0 {
+            true => (true, EFI_PAGE_SIZE),
+            _ => (false, EFI_ALLOCATE_POOL_ALIGNMENT),
+        };
+        // If requested alignment is > alloc_alignment then make sure to allocate bigger buffer
+        // to adjust ptr to be aligned and stores the real start address.
+        Ok(match align > alloc_native_alignment {
+            true => (by_pages, (SafeNum::from(align) + size_of::<usize>() + sz).try_into()?),
+            _ => (by_pages, sz),
+        })
+    }
+}
 
 unsafe impl GlobalAlloc for EfiAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         (|| -> Result<*mut u8> {
-            let align = layout.align();
+            let (by_pages, alloc_sz) = Self::select_alloc_type(&layout)?;
+            let ptr = match by_pages {
+                true => self.allocate(alloc_sz),
+                _ => self.allocate_pages(alloc_sz)?,
+            };
 
-            // EFI AllocatePoll() must be at 8-bytes aligned so we can just use returned pointer.
-            if align <= EFI_ALLOCATE_POOL_ALIGNMENT {
-                let ptr = self.allocate(layout.size());
-                assert_eq!(ptr as usize % EFI_ALLOCATE_POOL_ALIGNMENT, 0);
+            if ptr.is_null() {
+                return Err(Error::Other(Some("Allocation failed")));
+            } else if alloc_sz == layout.size() {
+                // No need for alignment adjustment.
                 return Ok(ptr);
             }
-
-            // If requested alignment is > EFI_ALLOCATE_POOL_ALIGNMENT then make sure to allocate
-            // bigger buffer and adjust ptr to be aligned.
-            let mut offset: usize = 0usize;
-            let extra_size = SafeNum::from(align) + size_of_val(&offset);
-            let size = SafeNum::from(layout.size()) + extra_size;
-
-            // TODO(300168989):
-            // `AllocatePool()` can be slow for allocating large buffers. In this case,
-            // `AllocatePages()` is recommended.
-            let unaligned_ptr = self.allocate(size.try_into()?);
-            if unaligned_ptr.is_null() {
-                return Err(Error::Other(Some("Allocation failed")));
-            }
-            offset = align - (unaligned_ptr as usize % align);
+            let addr_bytes = (ptr as usize).to_ne_bytes();
+            let offset = layout.align() - (ptr as usize % layout.align());
+            assert!(offset <= alloc_sz && alloc_sz - offset >= layout.size());
 
             // SAFETY:
-            // - `unaligned_ptr` is guaranteed to point to buffer big enough to contain offset+size
-            // bytes since this is the size passed to `allocate`
-            // - ptr+layout.size() is also pointing to valid buffer since actual allocate size takes
-            // into account additional suffix for usize variable
+            // - `ptr` is guaranteed to point to buffer bigger than `layout.size()`, plus the
+            //   alignment (and thus `offset`) and plus a usize value.
             unsafe {
-                let ptr = unaligned_ptr.add(offset);
-                core::slice::from_raw_parts_mut(ptr.add(layout.size()), size_of_val(&offset))
-                    .copy_from_slice(&offset.to_ne_bytes());
+                let ptr = ptr.add(offset);
+                copy(addr_bytes.as_ptr(), ptr.add(layout.size()), addr_bytes.len());
                 Ok(ptr)
             }
         })()
@@ -227,26 +268,23 @@ unsafe impl GlobalAlloc for EfiAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // If alignment is EFI_ALLOCATE_POOL_ALIGNMENT or less, then we can just used ptr directly
-        if layout.align() <= EFI_ALLOCATE_POOL_ALIGNMENT {
-            self.deallocate(ptr);
-            return;
-        }
+        let (by_pages, alloc_sz) = Self::select_alloc_type(&layout).unwrap();
+        let sz = layout.size();
+        // Checks if alignment adjustment was performed and finds real allocated pointer.
+        let ptr = match alloc_sz == sz {
+            true => ptr,
+            _ => {
+                // SAFETY:
+                // `ptr` guarantees to point to a buffer big enough to contain `layout.size()`,
+                // plus a valid usize value.
+                let addr_bytes = unsafe { from_raw_parts(ptr.add(sz), size_of::<usize>()) };
+                usize::from_ne_bytes(addr_bytes.try_into().unwrap()) as _
+            }
+        };
 
-        let mut offset: usize = 0usize;
-        offset = usize::from_ne_bytes(
-            // SAFETY:
-            // * `ptr` is allocated by `alloc` and has enough padding after `ptr`+size to hold
-            // suffix `offset: usize`.
-            // * Alignment of `ptr` is 1 for &[u8]
-            unsafe { core::slice::from_raw_parts(ptr.add(layout.size()), size_of_val(&offset)) }
-                .try_into()
-                .unwrap(),
-        );
-
-        // SAFETY:
-        // (`ptr` - `offset`) must be valid unaligned pointer to buffer allocated by `alloc`
-        let real_start_ptr = unsafe { ptr.sub(offset) };
-        self.deallocate(real_start_ptr);
+        match by_pages {
+            true => self.deallocate(ptr),
+            _ => self.deallocate_pages(ptr, alloc_sz),
+        };
     }
 }
