@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::cstr_bytes_to_str;
+use super::{cstr_bytes_to_str, LoadBuffer};
 use crate::{
     android_boot::avf::DEFAULT_PVMFW_PART_NAME_CSTR,
     constants::{KERNEL_ALIGNMENT, PAGE_SIZE},
@@ -229,7 +229,9 @@ pub struct LoadedImages<'a> {
     pub ramdisk: &'a [u8],
     /// pVM firmware image.
     pub pvmfw: &'a [u8],
-    /// Unused portion. Can be used by the caller to construct FDT.
+    /// Designated FDT fix up buffer,
+    pub fdt_fixup: &'a mut [u8],
+    /// Unused portion immediately following ramdisk.
     pub unused: &'a mut [u8],
 }
 
@@ -266,6 +268,7 @@ impl<'a> Default for LoadedImages<'a> {
             kernel: &[][..],
             ramdisk: &[][..],
             pvmfw: &[][..],
+            fdt_fixup: &mut [][..],
             unused: &mut [][..],
         }
     }
@@ -337,7 +340,7 @@ pub(crate) fn android_load_verified<'a, 'b, 'c>(
     slot: u8,
     unlocked: bool,
     verify_data: &'c SlotVerifyData,
-    load: &'c mut [u8],
+    load: &'c mut LoadBuffer<'_>,
 ) -> Result<LoadedImages<'c>, Error> {
     let mut images = LoadedImages::default();
     images.dtb_part = get_verified_partition(ops, c"dtb", slot, unlocked, true, verify_data)?;
@@ -374,10 +377,10 @@ pub(crate) fn android_load_verified<'a, 'b, 'c>(
 fn load_v2_or_lower_verified<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
     boot: &'c [u8],
-    load: &'c mut [u8],
+    load: &'c mut LoadBuffer<'_>,
     images: &mut LoadedImages<'c>,
 ) -> Result<(), Error> {
-    // Loads from `verify_data` into the following layout:
+    // For monolithic buffer, loads from `verify_data` into the following layout:
     //
     // +------------------------+
     // | ramdisk                |
@@ -391,13 +394,25 @@ fn load_v2_or_lower_verified<'a, 'b, 'c>(
     let info = BootImageV2Info::new(boot).unwrap();
     images.boot_cmdline = info.cmdline;
     images.dtb = get_range(boot, &info.dtb_range)?;
-    let (ramdisk, remains) = split(load, info.ramdisk_range.len())?;
+    let (kernel, ramdisk, fdt) = match load {
+        LoadBuffer::Monolithic(v) => (&mut [][..], &mut v[..], &mut [][..]),
+        LoadBuffer::Designated { kernel, ramdisk, fdt } => {
+            (&mut kernel[..], &mut ramdisk[..], &mut fdt[..])
+        }
+    };
+    let (ramdisk, remains) = split(ramdisk, info.ramdisk_range.len())?;
     ramdisk.clone_from_slice(get_range(boot, &info.ramdisk_range)?);
     images.ramdisk = ramdisk;
-    let (remains, kernel, kernel_sz) =
-        relocate_kernel(ops, get_range(boot, &info.kernel_range)?, remains)?;
+    let (remains, kernel, kernel_sz) = match kernel.is_empty() {
+        true => relocate_kernel(ops, get_range(boot, &info.kernel_range)?, remains)?,
+        _ => {
+            let kernel_sz = decompress_kernel(ops, get_range(boot, &info.kernel_range)?, kernel)?;
+            (remains, kernel, kernel_sz)
+        }
+    };
     images.kernel = &kernel[..kernel_sz];
     images.unused = remains;
+    images.fdt_fixup = fdt;
     Ok(())
 }
 
@@ -449,10 +464,10 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     slot: u8,
     unlocked: bool,
     verify_data: &'c SlotVerifyData,
-    load: &'c mut [u8],
+    load: &'c mut LoadBuffer<'_>,
     images: &mut LoadedImages<'c>,
 ) -> Result<(), Error> {
-    // Loads from `verify_data` into the following layout:
+    // For monolithic buffer, loads from `verify_data` into the following layout:
     //
     // +------------------------+
     // | vendor ramdisk         |
@@ -468,8 +483,6 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     let boot_info = BootImageV3Info::new(boot).unwrap();
     images.boot_cmdline = BootImageV3Info::cmdline(boot)?;
 
-    let remains = &mut load[..];
-
     // Loads vendor_boot partition, including ramdisk, dtb, commandline etc.
     let vendor_boot =
         get_verified_partition(ops, c"vendor_boot", slot, unlocked, false, verify_data)?;
@@ -478,6 +491,16 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     images.vendor_cmdline = VendorBootImageInfo::cmdline(vendor_boot)?;
     images.dtb = get_range(vendor_boot, &vendor_boot_info.dtb_range)?;
     images.vendor_bootconfig = get_range(vendor_boot, &vendor_boot_info.bootconfig_range)?;
+
+    let (kernel, ramdisk, fdt) = match load {
+        LoadBuffer::Monolithic(v) => (&mut [][..], &mut v[..], &mut [][..]),
+        LoadBuffer::Designated { kernel, ramdisk, fdt } => {
+            (&mut kernel[..], &mut ramdisk[..], &mut fdt[..])
+        }
+    };
+
+    let load = &mut ramdisk[..];
+    let remains = &mut load[..];
     let (vendor_ramdisk_buf, remains) = remains.split_at_mut(vendor_boot_info.ramdisk_range.len());
     vendor_ramdisk_buf.clone_from_slice(get_range(vendor_boot, &vendor_boot_info.ramdisk_range)?);
 
@@ -515,10 +538,17 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     images.ramdisk = ramdisk;
 
     // Loads kernel
-    let (remains, kernel, kernel_sz) =
-        relocate_kernel(ops, get_range(boot, &boot_info.kernel_range)?, remains)?;
+    let (remains, kernel, kernel_sz) = match kernel.is_empty() {
+        true => relocate_kernel(ops, get_range(boot, &boot_info.kernel_range)?, remains)?,
+        _ => {
+            let kernel_sz =
+                decompress_kernel(ops, get_range(boot, &boot_info.kernel_range)?, kernel)?;
+            (remains, kernel, kernel_sz)
+        }
+    };
     images.kernel = &kernel[..kernel_sz];
     images.unused = remains;
+    images.fdt_fixup = fdt;
 
     Ok(())
 }

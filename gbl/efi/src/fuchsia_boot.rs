@@ -68,10 +68,10 @@ pub fn efi_fuchsia_load(ops: &mut Ops) -> Result<LoadedVerifiedZircon<'static>> 
     gbl_println!(ops, "Try booting as Fuchsia/Zircon");
 
     // Prepares the OS load buffer.
-    let load_buffer = take_os_load_buffer(entry, 128 * 1024 * 1024);
+    let load_buffer = take_os_load_buffer(entry, 128 * 1024 * 1024).into_largest();
 
     let mut fastboot_buffer_info = None;
-    Ok(zircon_main(ops, load_buffer.as_mut(), |fb| {
+    Ok(zircon_main(ops, load_buffer, |fb| {
         efi_gbl_fastboot_entry(entry, fb, &mut fastboot_buffer_info)
     })?)
 }

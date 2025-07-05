@@ -27,9 +27,13 @@ use efi::{
     utils::Timeout,
     DeviceHandle, EfiEntry,
 };
-use efi_types::{EfiGuid, EfiInputKey, GBL_IMAGE_TYPE_OS_LOAD};
+use efi_types::{
+    EfiGuid, EfiInputKey, GBL_IMAGE_TYPE_FDT_LOAD, GBL_IMAGE_TYPE_KERNEL_LOAD,
+    GBL_IMAGE_TYPE_OS_LOAD, GBL_IMAGE_TYPE_RAMDISK_LOAD,
+};
 use fdt::FdtHeader;
 use liberror::Error;
+use libgbl::android_boot::LoadBuffer;
 
 type Result<T> = core::result::Result<T, Error>;
 
@@ -223,15 +227,29 @@ pub(crate) fn get_platform_buffer_info(
 
 pub(crate) const SZ_MB: usize = 1024 * 1024;
 
-/// Helper for getting OS Load buffer
-pub(crate) fn take_os_load_buffer(entry: &EfiEntry, default: usize) -> &'static mut [u8] {
-    let img_type_os_load = from_utf8(GBL_IMAGE_TYPE_OS_LOAD).unwrap();
-    match get_platform_buffer_info(&entry, img_type_os_load, default) {
-        BufferInfo::Static(v) => v,
-        BufferInfo::Alloc(sz) => {
-            let alloc = vec![0u8; sz];
-            efi_println!(entry, "Allocated {:#x} bytes for OS load buffer.", alloc.len());
-            alloc.leak()
+/// Helper for getting load buffer
+pub(crate) fn take_os_load_buffer(entry: &EfiEntry, default: usize) -> LoadBuffer<'static> {
+    let kernel = get_platform_buffer_info(entry, from_utf8(GBL_IMAGE_TYPE_KERNEL_LOAD).unwrap(), 0);
+    let ramdisk =
+        get_platform_buffer_info(entry, from_utf8(GBL_IMAGE_TYPE_RAMDISK_LOAD).unwrap(), 0);
+    let fdt = get_platform_buffer_info(entry, from_utf8(GBL_IMAGE_TYPE_FDT_LOAD).unwrap(), 0);
+    match (kernel, ramdisk, fdt) {
+        (BufferInfo::Static(kernel), BufferInfo::Static(ramdisk), BufferInfo::Static(fdt))
+            if !kernel.is_empty() && !ramdisk.is_empty() && !fdt.is_empty() =>
+        {
+            return LoadBuffer::Designated { kernel, ramdisk, fdt }
+        }
+        _ => {
+            let img_type_os_load = from_utf8(GBL_IMAGE_TYPE_OS_LOAD).unwrap();
+            let buf = match get_platform_buffer_info(&entry, img_type_os_load, default) {
+                BufferInfo::Static(v) => v,
+                BufferInfo::Alloc(sz) => {
+                    let alloc = vec![0u8; sz];
+                    efi_println!(entry, "Allocated {:#x} bytes for OS load buffer.", alloc.len());
+                    alloc.leak()
+                }
+            };
+            LoadBuffer::Monolithic(buf)
         }
     }
 }

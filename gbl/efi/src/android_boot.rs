@@ -28,7 +28,7 @@ pub fn efi_android_load(
 
     let mut fastboot_buffer_info = None;
     gbl_println!(ops, "Try booting as Android");
-    Ok(android_main(ops, load_buffer.as_mut(), |fb| {
+    Ok(android_main(ops, load_buffer, |fb| {
         efi_gbl_fastboot_entry(entry, fb, &mut fastboot_buffer_info)
     })?)
 }

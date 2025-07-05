@@ -632,7 +632,7 @@ where
         let slot_idx = (u64::from(slot_suffix) - u64::from('a')).try_into().unwrap();
         let mut ramboot_ops = RambootOps { ops: self.gbl_ops, ram_partitions: &[(boot_part, img)] };
         let (ramdisk, fdt, kernel, _) =
-            android_load_verify_fixup(&mut ramboot_ops, slot_idx, false, self.load_buffer)?;
+            android_load_verify_fixup(&mut ramboot_ops, slot_idx, false, self.load_buffer.into())?;
         self.result.loaded_image_info = Some(LoadedImageInfo::Android {
             ramdisk: to_range(ramdisk.as_ptr() as usize - load_buffer_addr, ramdisk.len()),
             fdt: to_range(fdt.as_ptr() as usize - load_buffer_addr, fdt.len()),
