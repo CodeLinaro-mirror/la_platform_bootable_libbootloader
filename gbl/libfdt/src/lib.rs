@@ -25,8 +25,8 @@ use core::mem::size_of;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 use liberror::{Error, Result};
 use libfdt_bindgen::{
-    fdt_add_subnode_namelen, fdt_del_node, fdt_get_property, fdt_header, fdt_move, fdt_setprop,
-    fdt_setprop_placeholder, fdt_strerror, fdt_subnode_offset_namelen,
+    fdt_add_subnode_namelen, fdt_create_empty_tree, fdt_del_node, fdt_get_property, fdt_header,
+    fdt_move, fdt_setprop, fdt_setprop_placeholder, fdt_strerror, fdt_subnode_offset_namelen,
 };
 use libufdt_bindgen::ufdt_apply_multioverlay;
 use safemath::SafeNum;
@@ -337,6 +337,22 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
         Ok(ret)
     }
 
+    /// Creates a new empty [Fdt] in `init`.
+    pub fn new_empty(mut init: T) -> Result<Self> {
+        let buffer = init.as_mut();
+        // SAFETY:
+        // `buffer` is a valid, aligned, and writable byte slice. The pointer derived from it is
+        // valid for writes up to `buffer.len()` bytes. The C function will not write out of bounds.
+        // All byte patterns are valid for `[u8]`, so no additional invariants are violated.
+        map_result(unsafe {
+            fdt_create_empty_tree(
+                buffer.as_mut_ptr().cast(),
+                buffer.len().try_into().or(Err(Error::Other(None)))?,
+            )
+        })?;
+        Ok(Fdt::new(init)?)
+    }
+
     /// Parse and get the FDT header.
     fn header_mut(&mut self) -> Result<&mut FdtHeader> {
         FdtHeader::from_bytes_mut(self.0.as_mut())
@@ -361,6 +377,11 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
         let buffer_size = self.0.as_ref().len().try_into().unwrap();
         self.header_mut()?.set_totalsize(buffer_size);
         Ok(())
+    }
+
+    /// Create node by `path` if it does not exist already.
+    pub fn ensure_node(&mut self, path: &str) -> Result<()> {
+        self.find_or_add_node(path).map(|_| ())
     }
 
     /// Delete node by `path``. Fail if node doesn't exist.
@@ -876,5 +897,32 @@ mod test {
         // Buffer too small
         fdt_encode_cell_sized_property(&[0x1, 0x2, 0x3, 0x4, 0x5, 0x6], &[4, 4], &mut buffer)
             .unwrap_err();
+    }
+
+    #[test]
+    fn test_ensure_node() {
+        let init = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut dt_buf = [0u8; 1000];
+        let mut dt = Fdt::new_from_init(&mut dt_buf, &init).unwrap();
+
+        dt.find_node("/dev-3").unwrap();
+        dt.ensure_node("/dev-3").unwrap();
+        dt.ensure_node("/dev-3/a/b").unwrap();
+        dt.find_node("/dev-3/a/b").unwrap();
+    }
+
+    #[test]
+    fn test_create_fdt_from_empty() {
+        let mut dt_buf = AlignedBuffer::new(256, 8);
+        let mut dt = Fdt::new_empty(&mut dt_buf[..]).unwrap();
+
+        dt.find_node("/").unwrap();
+        dt.find_node("/a").unwrap_err();
+        dt.ensure_node("/a").unwrap();
+        dt.find_node("/a").unwrap();
+        dt.find_node("/b").unwrap_err();
+
+        dt.shrink_to_fit().unwrap();
+        dt.header_ref().unwrap();
     }
 }
