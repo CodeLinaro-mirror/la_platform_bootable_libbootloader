@@ -18,6 +18,7 @@
 //! Similar to [ReadBuf](https://docs.rs/tokio/latest/tokio/io/struct.ReadBuf.html) but works in
 //! `no_std`.
 
+use crate::constants::ImageType;
 use core::mem::MaybeUninit;
 use liberror::{Error, Result};
 
@@ -27,6 +28,7 @@ use liberror::{Error, Result};
 #[derive(Debug)]
 pub struct ImageBuffer<'a> {
     buffer: Option<&'a mut [MaybeUninit<u8>]>,
+    image_type: Option<ImageType>,
     // number of initialized and filled bytes.
     used_bytes: usize,
 }
@@ -62,8 +64,16 @@ unsafe fn slice_assume_init_ref<T>(slice: &[MaybeUninit<T>]) -> &[T] {
 
 impl ImageBuffer<'_> {
     /// Create new ImageBuffer from buffer and used_bytes
-    pub fn new(buffer: &mut [MaybeUninit<u8>]) -> ImageBuffer {
-        ImageBuffer { buffer: Some(buffer), used_bytes: 0 }
+    pub fn new(image_type: ImageType, buffer: &mut [MaybeUninit<u8>]) -> Result<ImageBuffer> {
+        if buffer.as_ptr().align_offset(image_type.alignment()) != 0 {
+            return Err(Error::InvalidAlignment);
+        }
+        Ok(ImageBuffer { image_type: Some(image_type), buffer: Some(buffer), used_bytes: 0 })
+    }
+
+    /// Corresponding image type.
+    pub fn image_type(&self) -> ImageType {
+        self.image_type.unwrap()
     }
 
     /// Total buffer capacity.
@@ -150,48 +160,52 @@ impl PartialEq for ImageBuffer<'_> {
 }
 
 #[cfg(test)]
-/// Helper to create ImageBuffers from Vec<u8>
-pub struct ImageBufferVec {
-    buf: Vec<u8>,
-}
-
-#[cfg(test)]
-impl ImageBufferVec {
-    pub fn new(buf: Vec<u8>) -> Self {
-        Self { buf }
-    }
-
-    pub fn get(&mut self) -> ImageBuffer {
-        ImageBuffer::new(Self::slice_assume_not_init_mut(self.buf.as_mut_slice()))
-    }
-
-    fn slice_assume_not_init_mut<T>(slice: &mut [T]) -> &mut [MaybeUninit<T>] {
-        // SAFETY: similar to safety notes for `slice_get_ref`, but we have a
-        // mutable reference which is also guaranteed to be valid for writes.
-        unsafe { &mut *(slice as *mut [T] as *mut [MaybeUninit<T>]) }
-    }
-}
-
-#[cfg(test)]
 mod test {
     use super::*;
+    use crate::tests::AlignedBuffer;
+
+    /// Helper to create ImageBuffers from AlignedBuffer
+    pub struct TestImageBuffer {
+        image_type: ImageType,
+        buf: AlignedBuffer<u8>,
+    }
+
+    impl TestImageBuffer {
+        pub fn new(image_type: ImageType, size: usize) -> Self {
+            Self { image_type, buf: AlignedBuffer::new(size, image_type.alignment()) }
+        }
+
+        pub fn new_with_data(image_type: ImageType, data: &[u8]) -> Self {
+            Self { image_type, buf: AlignedBuffer::new_with_data(data, image_type.alignment()) }
+        }
+
+        pub fn get(&mut self) -> ImageBuffer {
+            ImageBuffer::new(self.image_type, Self::slice_assume_not_init_mut(&mut self.buf))
+                .unwrap()
+        }
+
+        fn slice_assume_not_init_mut<T>(slice: &mut [T]) -> &mut [MaybeUninit<T>] {
+            // SAFETY: similar to safety notes for `slice_get_ref`, but we have a
+            // mutable reference which is also guaranteed to be valid for writes.
+            unsafe { &mut *(slice as *mut [T] as *mut [MaybeUninit<T>]) }
+        }
+    }
 
     #[test]
     fn test_image_buffer_capacity() {
-        assert_eq!(ImageBufferVec::new(vec![0u8; 0]).get().capacity(), 0);
-        assert_eq!(ImageBufferVec::new(vec![0u8; 0]).get().capacity(), 0);
-        assert_eq!(ImageBufferVec::new(vec![0u8; 1]).get().capacity(), 1);
-        assert_eq!(ImageBufferVec::new(vec![0u8; 100]).get().capacity(), 100);
+        assert_eq!(TestImageBuffer::new(ImageType::Boot, 0).get().capacity(), 0);
+        assert_eq!(TestImageBuffer::new(ImageType::Boot, 1).get().capacity(), 1);
+        assert_eq!(TestImageBuffer::new(ImageType::Boot, 100).get().capacity(), 100);
         assert_eq!(
-            ImageBufferVec::new(vec![0u8; 128 * 1024 * 1024]).get().capacity(),
+            TestImageBuffer::new(ImageType::Boot, 128 * 1024 * 1024).get().capacity(),
             128 * 1024 * 1024
         );
     }
 
     #[test]
     fn test_image_buffer_used() {
-        let mut img_buf_vec = ImageBufferVec::new(vec![0u8; 100]);
-        let mut img_buf = img_buf_vec.get();
+        let mut img_buf_aligned = TestImageBuffer::new(ImageType::Boot, 100);
+        let mut img_buf = img_buf_aligned.get();
         assert_eq!(img_buf.used().len(), 0);
         assert_eq!(img_buf.used_mut().len(), 0);
         // SAFETY:
@@ -216,8 +230,8 @@ mod test {
 
     #[test]
     fn test_image_buffer_get_split() {
-        let mut img_buf_vec = ImageBufferVec::new(vec![0u8, 1, 2, 3]);
-        let mut img_buf = img_buf_vec.get();
+        let mut img_buf_aligned = TestImageBuffer::new_with_data(ImageType::Boot, &[0u8, 1, 2, 3]);
+        let mut img_buf = img_buf_aligned.get();
 
         assert_eq!(img_buf.used(), [].as_slice());
         assert_eq!(img_buf.used_mut(), [].as_mut_slice());
@@ -260,15 +274,15 @@ mod test {
     #[test]
     fn test_image_buffer_eq_not_init() {
         assert_eq!(
-            ImageBufferVec::new(vec![0u8, 1, 2]).get(),
-            ImageBufferVec::new(vec![0u8, 1, 2]).get()
+            TestImageBuffer::new_with_data(ImageType::Boot, &[0u8, 1, 2]).get(),
+            TestImageBuffer::new_with_data(ImageType::Boot, &[0u8, 1, 2]).get()
         );
     }
 
     #[test]
     fn test_image_buffer_eq_init_same() {
-        let mut v1 = ImageBufferVec::new(vec![0u8, 1, 2]);
-        let mut v2 = ImageBufferVec::new(vec![0u8, 1, 2]);
+        let mut v1 = TestImageBuffer::new_with_data(ImageType::Boot, &[0u8, 1, 2]);
+        let mut v2 = TestImageBuffer::new_with_data(ImageType::Boot, &[0u8, 1, 2]);
         let mut image_buffer_1 = v1.get();
         let mut image_buffer_2 = v2.get();
 
@@ -284,8 +298,8 @@ mod test {
 
     #[test]
     fn test_image_buffer_eq_diff_capacity() {
-        let mut v1 = ImageBufferVec::new(vec![0u8, 1, 2]);
-        let mut v2 = ImageBufferVec::new(vec![0u8, 1, 2, 3]);
+        let mut v1 = TestImageBuffer::new_with_data(ImageType::Boot, &[0u8, 1, 2]);
+        let mut v2 = TestImageBuffer::new_with_data(ImageType::Boot, &[0u8, 1, 2, 3]);
         let mut image_buffer_1 = v1.get();
         let mut image_buffer_2 = v2.get();
 
@@ -297,5 +311,16 @@ mod test {
         }
 
         assert_eq!(image_buffer_1, image_buffer_2);
+    }
+
+    #[test]
+    fn test_image_buffer_wrong_alignment() {
+        assert_eq!(
+            ImageBuffer::new(
+                ImageType::Boot,
+                &mut AlignedBuffer::new_uninit(0, ImageType::Boot.alignment() + 1)
+            ),
+            Err(Error::InvalidAlignment)
+        );
     }
 }

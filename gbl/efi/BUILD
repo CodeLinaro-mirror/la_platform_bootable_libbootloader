@@ -48,6 +48,7 @@ rust_library(
         "@gbl//libsafemath",
         "@gbl//libstorage",
         "@gbl//libutils",
+        "@static_assertions",
         "@uuid",
         "@zbi",
         "@zerocopy",

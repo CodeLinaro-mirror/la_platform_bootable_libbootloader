@@ -47,13 +47,14 @@ use efi_types::{
     EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootMode,
     GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
     EFI_FASTBOOT_MESSAGE_TYPE_FAIL, EFI_FASTBOOT_MESSAGE_TYPE_INFO, EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
+    PARTITION_NAME_LEN_U16,
 };
 use fdt::Fdt;
 use gbl_async::block_on;
 use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::{Error, Result};
 use libgbl::{
-    constants::{ImageName, BOOTCMD_SIZE},
+    constants::{ImageType, BOOTCMD_SIZE, IMAGE_NAME_MAX_LEN},
     device_tree::{
         DeviceTreeComponent, DeviceTreeComponentSource, DeviceTreeComponentType,
         DeviceTreeComponentsRegistry, MAXIMUM_DEVICE_TREE_COMPONENTS,
@@ -69,8 +70,13 @@ use libgbl::{
 };
 use libprofile::ProfileBackend;
 use safemath::SafeNum;
+use static_assertions::const_assert_eq;
 use zbi::ZbiContainer;
 use zerocopy::IntoBytes;
+
+// Ensure the max partition name length in the image loading protocol matches the max image type
+// name length in GBL ops.
+const_assert_eq!(PARTITION_NAME_LEN_U16 as usize, IMAGE_NAME_MAX_LEN);
 
 fn to_avb_validation_status_or_panic(status: GblEfiAvbKeyValidationStatus) -> KeyValidationStatus {
     match status {
@@ -198,8 +204,7 @@ impl<'a, 'b> Ops<'a, 'b> {
     /// Uses GBL EFI ImageLoading protocol.
     ///
     /// # Arguments
-    /// * `image_name` - image name to differentiate the buffer properties. Processing is limited
-    /// to first [PARTITION_NAME_LEN_U16] symbols, and the remaining will be ignored.
+    /// * `image_type` - image type to differentiate the buffer properties
     /// * `size` - requested buffer size
     ///
     /// # Return
@@ -207,23 +212,24 @@ impl<'a, 'b> Ops<'a, 'b> {
     /// * Err(_) - on error
     pub(crate) fn get_buffer_image_loading(
         &mut self,
-        image_name: &str,
+        image_type: ImageType,
         size: NonZeroUsize,
     ) -> GblResult<ImageBuffer<'static>> {
         // EfiImageBuffer -> ImageBuffer
         // Make sure not to drop efi_image_buffer since we transferred ownership to ImageBuffer
         Ok(ImageBuffer::new(
-            get_buffer_from_protocol(self.efi_entry, image_name, size.get())?
+            image_type,
+            get_buffer_from_protocol(self.efi_entry, image_type.name(), size.get())?
                 .take()
                 .ok_or(Error::InvalidState)?,
-        ))
+        )?)
     }
 
     /// Get buffer for partition loading and verification.
     /// Uses provided allocator.
     ///
     /// # Arguments
-    /// * `image_name` - image name to differentiate the buffer properties
+    /// * `image_type` - image type to differentiate the buffer properties
     /// * `size` - requested buffer size
     ///
     /// # Return
@@ -233,16 +239,19 @@ impl<'a, 'b> Ops<'a, 'b> {
     // Allocated buffer is leaked intentionally. ImageBuffer is assumed to reference static memory.
     // ImageBuffer is not expected to be released, and is allocated to hold data necessary for next
     // boot stage (kernel boot). All allocated buffers are expected to be used by kernel.
-    fn allocate_image_buffer(image_name: &str, size: NonZeroUsize) -> Result<ImageBuffer<'static>> {
-        let size = match image_name {
-            "ramdisk" => (SafeNum::from(size.get()) + BOOTCMD_SIZE).try_into()?,
+    fn allocate_image_buffer(
+        image_type: ImageType,
+        size: NonZeroUsize,
+    ) -> Result<ImageBuffer<'static>> {
+        let size = match image_type {
+            ImageType::Ramdisk => (SafeNum::from(size.get()) + BOOTCMD_SIZE).try_into()?,
             _ => size.get(),
         };
         // Check for `from_raw_parts_mut()` safety requirements.
         assert!(size < isize::MAX.try_into().unwrap());
-        let align = ImageName::try_from(image_name).map(|i| i.alignment()).unwrap_or(1);
 
-        let layout = Layout::from_size_align(size, align).or(Err(Error::InvalidAlignment))?;
+        let layout = Layout::from_size_align(size, image_type.alignment())
+            .or(Err(Error::InvalidAlignment))?;
         // SAFETY:
         // `layout.size()` is checked to be not zero.
         let ptr = unsafe { alloc(layout) } as *mut MaybeUninit<u8>;
@@ -265,7 +274,7 @@ impl<'a, 'b> Ops<'a, 'b> {
         // `ptr + size` doesn't wrap since it is returned from alloc and it didn't fail.
         let buf = unsafe { from_raw_parts_mut(ptr, size) };
 
-        Ok(ImageBuffer::new(buf))
+        Ok(ImageBuffer::new(image_type, buf)?)
     }
 
     /// Helper for opening GblSlotProtocol protocol. Maps `Error::NotFound` to `Error::Unsupported`
@@ -555,11 +564,11 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
     fn get_image_buffer(
         &mut self,
-        image_name: &str,
+        image_type: ImageType,
         size: NonZeroUsize,
     ) -> GblResult<ImageBuffer<'d>> {
-        self.get_buffer_image_loading(image_name, size)
-            .or(Self::allocate_image_buffer(image_name, size)
+        self.get_buffer_image_loading(image_type, size)
+            .or(Self::allocate_image_buffer(image_type, size)
                 .map_err(|e| libgbl::IntegrationError::UnificationError(e)))
     }
 

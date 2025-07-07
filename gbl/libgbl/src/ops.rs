@@ -16,6 +16,7 @@
 
 pub use crate::image_buffer::ImageBuffer;
 use crate::{
+    constants::ImageType,
     error::Result as GblResult,
     fuchsia_boot::GblAbrOps,
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
@@ -340,7 +341,7 @@ pub trait GblOps<'a, 'd> {
     /// Get buffer for specific image of requested size.
     fn get_image_buffer(
         &mut self,
-        image_name: &str,
+        image_type: ImageType,
         size: NonZeroUsize,
     ) -> GblResult<ImageBuffer<'d>>;
 
@@ -694,10 +695,10 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 
     fn get_image_buffer(
         &mut self,
-        image_name: &str,
+        image_type: ImageType,
         size: NonZeroUsize,
     ) -> GblResult<ImageBuffer<'d>> {
-        self.ops.get_image_buffer(image_name, size)
+        self.ops.get_image_buffer(image_type, size)
     }
 
     fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
@@ -1000,7 +1001,7 @@ pub(crate) mod test {
         pub avb_key_validation_status: Option<AvbIoResult<KeyValidationStatus>>,
 
         /// For return by `Self::get_image_buffer()`
-        pub image_buffers: HashMap<String, LinkedList<ImageBuffer<'d>>>,
+        pub image_buffers: HashMap<ImageType, LinkedList<ImageBuffer<'d>>>,
 
         /// Custom device tree.
         pub custom_device_tree: Option<&'a [u8]>,
@@ -1332,16 +1333,16 @@ pub(crate) mod test {
 
         fn get_image_buffer(
             &mut self,
-            image_name: &str,
+            image_type: ImageType,
             _size: NonZeroUsize,
         ) -> GblResult<ImageBuffer<'d>> {
-            if let Some(buf_list) = self.image_buffers.get_mut(image_name) {
+            if let Some(buf_list) = self.image_buffers.get_mut(&image_type) {
                 if let Some(buf) = buf_list.pop_front() {
                     return Ok(buf);
                 };
             };
 
-            gbl_println!(self, "FakeGblOps.get_image_buffer({image_name}) no buffer for the image");
+            gbl_println!(self, "FakeGblOps.get_image_buffer({image_type}) no buffer for the image");
             Err(IntegrationError::UnificationError(Error::Other(Some(
                 "No buffer provided. Add sufficient buffers to FakeGblOps.image_buffers",
             ))))
