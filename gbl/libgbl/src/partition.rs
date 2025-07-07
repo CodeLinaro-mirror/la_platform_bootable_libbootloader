@@ -33,7 +33,7 @@ use safemath::SafeNum;
 pub const RAW_PARTITION_NAME_LEN: usize = 72;
 
 /// Wraps a bytes buffer containing a null-terminated C string
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RawName([u8; RAW_PARTITION_NAME_LEN]);
 
 impl RawName {

@@ -34,10 +34,10 @@ use liberror::Error;
 // Maximum number of partition allowed for verification.
 //
 // The value is randomly chosen for now. We can update it as we see more usecases.
-const MAX_NUM_PARTITION: usize = 16;
+pub(crate) const MAX_NUM_PARTITION: usize = 16;
 
 // Type alias for ArrayVec of size `MAX_NUM_PARTITION`:
-type ArrayMaxParts<T> = ArrayVec<T, MAX_NUM_PARTITION>;
+pub(crate) type ArrayMaxParts<T> = ArrayVec<T, MAX_NUM_PARTITION>;
 
 /// A container holding partitions for libavb verification
 pub struct PartitionsToVerify<'a> {

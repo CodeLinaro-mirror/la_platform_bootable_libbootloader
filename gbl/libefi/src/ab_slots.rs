@@ -149,7 +149,8 @@ mod test {
     };
     use gbl::{
         ops::{
-            AvbIoResult, CertPermanentAttributes, RebootMode, SlotsMetadata, SHA256_DIGEST_SIZE,
+            AvbIoResult, CertPermanentAttributes, Partition, PartitionBuffer, RebootMode,
+            SlotsMetadata, SHA256_DIGEST_SIZE,
         },
         partition::GblDisk,
         slots::{Bootability, Cursor, RecoveryTarget, UnbootableReason},
@@ -374,6 +375,13 @@ mod test {
             _buffer: &'c mut [u8],
         ) -> Result<Option<&'c [u8]>> {
             unimplemented!();
+        }
+
+        fn get_partition_buffer(
+            &self,
+            _: Partition,
+        ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>> {
+            Err::<PartitionBuffer<&mut [u8]>, _>(Error::NotFound)
         }
 
         fn get_image_buffer(

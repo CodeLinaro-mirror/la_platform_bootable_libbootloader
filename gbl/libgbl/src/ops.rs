@@ -14,7 +14,6 @@
 
 //! GblOps trait that defines GBL callbacks.
 
-pub use crate::image_buffer::ImageBuffer;
 use crate::{
     constants::ImageType,
     error::Result as GblResult,
@@ -26,6 +25,7 @@ use crate::{
         write_unique_partition, GblDisk,
     },
 };
+pub use crate::{constants::Partition, image_buffer::ImageBuffer};
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
 use bytes::buf::UninitSlice;
 use core::{ffi::CStr, fmt::Write, num::NonZeroUsize, ops::DerefMut, result::Result};
@@ -66,6 +66,14 @@ pub enum RebootMode {
     FastbootD,
     /// Bootloader Fastboot mode.
     Bootloader,
+}
+
+/// Represents a partition buffer for return by `GblOps::get_partition_buffer()`.
+pub enum PartitionBuffer<T> {
+    /// Buffer with preloaded partition image.
+    Preloaded(T),
+    /// Designated buffer for loading the partition image.
+    Designated(T),
 }
 
 // https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
@@ -337,6 +345,38 @@ pub trait GblOps<'a, 'd> {
         &mut self,
         buffer: &'c mut [u8],
     ) -> Result<Option<&'c [u8]>, Error>;
+
+    /// Gets platform reserved buffer for loading the given type of partition image.
+    ///
+    /// Implementation should always return the same and unique buffer for `img` until
+    /// `sync_partition_buffer()` is called. If caller has not dropped a previously returned
+    /// instance, implementation should return `Err(Error::NotReady)`.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Err(Error::NotReady)`, if a previous returned instance is still in scope.
+    /// Returns `Err(Error::NotFound)`, if buffer is not found.
+    /// Returns `Ok(PartitionBuffer::Designated(..))`, if buffer is found.
+    /// Returns `Ok(PartitionBuffer::Preloaded(..))`, if buffer is found and contains preloaded
+    /// data.
+    fn get_partition_buffer(
+        &self,
+        img: Partition,
+        //) -> Result<(impl DerefMut<Target = [u8]> + 'a, bool), Error>;
+    ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error>;
+
+    /// Notifies the firmware to inspect or update buffer for return by `get_partition_buffer()`.
+    ///
+    /// # Args
+    ///
+    /// * `sync_preloaded`: Set to true to request backend to re-sync preloaded partition buffer.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Err(Error::NotReady)`, if some previously returned buffer is still in use.
+    fn sync_partition_buffer(&self, _sync_preloaded: bool) -> Result<(), Error> {
+        todo!()
+    }
 
     /// Get buffer for specific image of requested size.
     fn get_image_buffer(
@@ -693,6 +733,13 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.avb_cert_read_permanent_attributes_hash()
     }
 
+    fn get_partition_buffer(
+        &self,
+        img: Partition,
+    ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
+        self.ops.get_partition_buffer(img)
+    }
+
     fn get_image_buffer(
         &mut self,
         image_type: ImageType,
@@ -906,6 +953,7 @@ pub(crate) mod test {
     use avb_test::TestOps as AvbTestOps;
     use bootparams::commandline::CommandlineBuilder;
     use core::{
+        cell::RefMut,
         fmt::Write,
         ops::{Deref, DerefMut},
         time::Duration,
@@ -967,6 +1015,13 @@ pub(crate) mod test {
         fn deref(&self) -> &Self::Target {
             &self.0[..]
         }
+    }
+
+    /// Converts a RefMut of type that can dereference to &mut [u8] to RefMut<'_, [u8]>
+    pub(crate) fn into_refmut_bytes<'a>(
+        val: RefMut<'a, impl DerefMut<Target = [u8]>>,
+    ) -> RefMut<'a, [u8]> {
+        RefMut::map(val, |f| &mut f[..])
     }
 
     /// Fake [GblOps] implementation for testing.
@@ -1068,6 +1123,10 @@ pub(crate) mod test {
 
         /// Stores the inputs of `fastboot_set_lock()` call.
         pub set_lock_traces: Vec<(LockType, LockState)>,
+
+        /// Handler for `get_partition_buffer`
+        pub get_partition_buf_handler:
+            Option<&'a dyn Fn(Partition) -> Result<PartitionBuffer<RefMut<'a, [u8]>>, Error>>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1329,6 +1388,13 @@ pub(crate) mod test {
             let (out, _) = buffer.split_at_mut(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY.len());
             out.copy_from_slice(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY);
             Ok(Some(out))
+        }
+
+        fn get_partition_buffer(
+            &self,
+            img: Partition,
+        ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
+            self.get_partition_buf_handler.as_ref().ok_or(Error::NotFound)?(img)
         }
 
         fn get_image_buffer(

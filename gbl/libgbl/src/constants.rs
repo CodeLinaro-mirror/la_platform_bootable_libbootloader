@@ -16,8 +16,13 @@
 
 // TODO(b/380392958) Cleanup other used of the constants. Move them here as well.
 
+use crate::{android_boot::load::SlotSuffix, partition::RawName};
 use arrayvec::ArrayString;
-use core::fmt::{Debug, Display, Formatter};
+use core::{
+    ffi::CStr,
+    fmt::{Debug, Display, Formatter, Write},
+};
+use liberror::Error;
 use static_assertions::const_assert_eq;
 use zbi::ZBI_ALIGNMENT_USIZE;
 
@@ -120,5 +125,66 @@ impl ImageType {
 impl Display for ImageType {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.name())
+    }
+}
+
+/// Represents a standard boot partition.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Partition {
+    /// boot
+    Boot,
+    /// vendor_boot
+    VendorBoot,
+    /// vendor_kernel_boot
+    VendorKernelBoot,
+    /// init_boot,
+    InitBoot,
+    /// dtb
+    Dtb,
+    /// dtbo
+    Dtbo,
+    /// pVM firmware data
+    Pvmfw,
+    /// Platform specific partition.
+    // Use our custom `RawName` instead of ArrayString for its better CStr support.
+    PlatformSpecific(RawName),
+}
+
+impl Partition {
+    /// Returns slotless partition name as &str.
+    pub fn name(&self) -> &str {
+        self.name_cstr().to_str().unwrap()
+    }
+
+    /// Returns slotless partition name as &CStr.
+    pub fn name_cstr(&self) -> &CStr {
+        match self {
+            Self::Boot => c"boot",
+            Self::VendorBoot => c"vendor_boot",
+            Self::VendorKernelBoot => c"vendor_kernel_boot",
+            Self::InitBoot => c"init_boot",
+            Self::Dtb => c"dtb",
+            Self::Dtbo => c"dtbo",
+            Self::Pvmfw => c"pvmfw",
+            Self::PlatformSpecific(v) => v.to_cstr(),
+        }
+    }
+
+    /// Returns the slotted name.
+    pub fn slotted(&self, slot: u8) -> Result<PartitionImageName, Error> {
+        let mut res = ArrayString::new_const();
+        write!(res, "{}{}", self.name(), &SlotSuffix::new(slot)? as &str).unwrap();
+        Ok(res)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_slotted_image_name() {
+        assert_eq!(&Partition::Boot.slotted(0).unwrap(), "boot_a");
+        assert_eq!(&Partition::Boot.slotted(1).unwrap(), "boot_b");
     }
 }

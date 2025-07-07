@@ -62,7 +62,8 @@ use libgbl::{
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, ImageBuffer, InfoSender,
-        LockState, LockType, OkaySender, RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
+        LockState, LockType, OkaySender, Partition, PartitionBuffer, RebootMode, Slot,
+        SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -560,6 +561,13 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             }
             Err(e) => Err(e),
         }
+    }
+
+    fn get_partition_buffer(
+        &self,
+        _: Partition,
+    ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'b>> {
+        Err::<PartitionBuffer<&mut [u8]>, _>(Error::NotFound)
     }
 
     fn get_image_buffer(

@@ -26,8 +26,16 @@ use crate::{
 };
 pub use abr::{mark_slot_active, set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
 use core::{
-    array::from_fn, cmp::min, ffi::CStr, fmt::Write, future::Future, marker::PhantomData,
-    mem::take, ops::DerefMut, ops::Range, pin::Pin, str::from_utf8,
+    array::from_fn,
+    cmp::min,
+    ffi::CStr,
+    fmt::Write,
+    future::Future,
+    marker::PhantomData,
+    mem::take,
+    ops::{DerefMut, Range},
+    pin::Pin,
+    str::from_utf8,
 };
 use fastboot::{
     local_session::LocalSession, next_arg, next_arg_u64, process_next_command, run_tcp_session,
@@ -1129,7 +1137,10 @@ pub(crate) mod test {
         },
         constants::KiB,
         constants::KERNEL_ALIGNMENT,
-        ops::test::{slot, FakeGblOps, FakeGblOpsStorage},
+        ops::{
+            test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage},
+            Partition, PartitionBuffer,
+        },
         slots::SlotsMetadata,
         Os,
     };
@@ -1146,8 +1157,12 @@ pub(crate) mod test {
     use liberror::Error;
     use libtestutils::AlignedBuffer;
     use spin::{Mutex, MutexGuard};
-    use std::ffi::CString;
-    use std::{collections::VecDeque, io::Read};
+    use std::{
+        cell::RefCell,
+        collections::{HashMap, VecDeque},
+        ffi::CString,
+        io::Read,
+    };
     use zerocopy::IntoBytes;
 
     /// A test implementation of [InfoSender] and [OkaySender].
@@ -3192,6 +3207,87 @@ pub(crate) mod test {
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let (ramdisk, _, kernel, _) = test_fastboot_boot_slot('b', &mut load_buffer);
         checks_loaded_v2_slot_b_normal_mode(ramdisk, kernel);
+    }
+
+    #[test]
+    fn test_fastboot_boot_reentrant() {
+        // Tests that "fastboot boot" is reentrant valid.
+        let mut storage = FakeGblOpsStorage::default();
+        let vbmeta = CString::new(format!("vbmeta_a")).unwrap();
+        let vbmeta_img = read_test_data(format!("vbmeta_v4_v4_init_boot_a.img"));
+        storage.add_raw_device(&vbmeta, vbmeta_img);
+
+        // Use preloaded buffers so that we can test that `GblOps::get_partition_buffer()` allows
+        // backend to handle buffer acquire and release.
+        let preloaded = vec![
+            (Partition::VendorKernelBoot, "vendor_kernel_boot_a.img"),
+            (Partition::VendorBoot, "vendor_boot_v4_a.img"),
+            (Partition::InitBoot, "init_boot_a.img"),
+        ];
+        let buffers = HashMap::<Partition, RefCell<Vec<u8>>>::from_iter(
+            preloaded.iter().map(|(p, f)| (*p, read_test_data(f).into())),
+        );
+        let get_partition_buf_handler = |n| {
+            Ok(PartitionBuffer::Preloaded(into_refmut_bytes(
+                buffers.get(&n).ok_or(Error::NotFound)?.borrow_mut(),
+            )))
+        };
+
+        let mut gbl_ops = default_test_gbl_ops(&storage);
+        gbl_ops.get_partition_buf_handler = Some(&get_partition_buf_handler);
+        gbl_ops.current_slot = Some(Ok(slot('a')));
+        let buffers = vec![vec![0u8; KiB!(128)]; 2];
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+
+        // "fastboot boot boot_v2_a.img" should failed.
+        let data = read_test_data("boot_v2_a.img");
+        listener.add_usb_input(format!("download:{:#x}", data.len()).as_bytes());
+        listener.add_usb_input(&data);
+        listener.add_usb_input(b"boot");
+
+        // "fastboot boot boot_no_ramdisk_v4_a.img", from the same state, should succeed.
+        let data = read_test_data("boot_no_ramdisk_v4_a.img");
+        listener.add_usb_input(format!("download:{:#x}", data.len()).as_bytes());
+        listener.add_usb_input(&data);
+        listener.add_usb_input(b"boot");
+        listener.add_usb_input(b"continue");
+
+        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let res = block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut load_buffer[..],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"DATA00004000",
+                b"OKAY",
+                b"FAILAvbSlotVerifyError(Verification(None))",
+                b"DATA00002000",
+                b"OKAY",
+                b"INFOBoot image as Android slot a",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        let (ramdisk, _, kernel, _) = res.split_loaded_android(&mut load_buffer[..]).unwrap();
+        assert_eq!(kernel, read_test_data("kernel_a.img"));
+        assert!(ramdisk.starts_with(
+            &[
+                read_test_data("vendor_ramdisk_a.img"),
+                read_test_data("vendor_kernel_a.img"),
+                read_test_data("generic_ramdisk_a.img"),
+            ]
+            .concat()
+        ));
     }
 
     #[test]
