@@ -34,6 +34,14 @@ impl Identified for EfiBlockIoProtocol {
 ///
 /// The implementation must adhere to the UEFI protocol specification.
 ///
+/// ## Concurrency
+///
+/// Block I/O protocol is supported at `TPL_CALLBACK` and below, which means
+/// for UEFI environments the TPL should be raised to at least this level
+/// before trying to access any mutable state.
+///
+/// See [Provider] docs for details on concurrency in UEFI.
+///
 /// ## [BlockIo::media()]
 ///
 /// The returned reference must not be invalidated by any protocol methods.
@@ -49,16 +57,22 @@ impl Identified for EfiBlockIoProtocol {
 #[cfg_attr(feature = "mocks", mockall::automock)]
 pub unsafe trait BlockIo {
     /// Returns the protocol revision that the implementation is providing.
-    fn revision(&mut self) -> u64;
+    fn revision(&self) -> u64;
 
     /// Returns the current media information.
     ///
-    /// The protocol spec does allow for modifying this data, but only during
-    /// calls into the protocol, not asynchronously.
-    fn media<'a>(&'a mut self) -> EfiResult<&'a EfiBlockIoMedia>;
+    /// # Safety
+    ///
+    /// The protocol spec indicates this data may be modified during calls into
+    /// this protocol. To prevent data races with other clients making calls
+    /// that might modify this data, the caller must enter a critical section
+    /// to lock this data during any access.
+    ///
+    /// For UEFI environments: raise the TPL to `TPL_CALLBACK` or above.
+    unsafe fn media<'a>(&'a self) -> EfiResult<&'a EfiBlockIoMedia>;
 
     /// Resets the block device.
-    fn reset(&mut self, extended_verification: bool) -> EfiResult<()>;
+    fn reset(&self, extended_verification: bool) -> EfiResult<()>;
 
     /// Reads blocks from the device.
     ///
@@ -73,18 +87,14 @@ pub unsafe trait BlockIo {
     /// `&mut [u8]` slice; see [MaybeUninit] docs for details. Expected usage is
     /// to get the raw pointer with [MaybeUninit::as_mut_ptr] and pass that
     /// pointer into the underlying disk I/O mechanisms.
-    fn read_blocks(
-        &mut self,
-        media_id: u32,
-        lba: u64,
-        buffer: &mut [MaybeUninit<u8>],
-    ) -> EfiResult<()>;
+    fn read_blocks(&self, media_id: u32, lba: u64, buffer: &mut [MaybeUninit<u8>])
+        -> EfiResult<()>;
 
     /// Writes blocks to the device.
-    fn write_blocks(&mut self, media_id: u32, lba: u64, buffer: &[u8]) -> EfiResult<()>;
+    fn write_blocks(&self, media_id: u32, lba: u64, buffer: &[u8]) -> EfiResult<()>;
 
     /// Flushes any buffered blocks to the device.
-    fn flush_blocks(&mut self) -> EfiResult<()>;
+    fn flush_blocks(&self) -> EfiResult<()>;
 }
 
 /// Client-side implementation.
@@ -95,27 +105,28 @@ pub unsafe trait BlockIo {
 /// * the [media] returned reference is never invalidated since we never modify
 ///   the pointer and the protocol guarantees it will stay valid
 unsafe impl BlockIo for Client<EfiBlockIoProtocol> {
-    fn revision(&mut self) -> u64 {
+    fn revision(&self) -> u64 {
         self.0.revision
     }
 
-    fn media(&mut self) -> EfiResult<&EfiBlockIoMedia> {
+    unsafe fn media(&self) -> EfiResult<&EfiBlockIoMedia> {
         // SAFETY:
         // * protocol spec guarantees `media` pointer is valid
-        // * by [Client::new] safety, we are currently the sole owner
+        // * function safety requires the caller lock the protocol so it
+        //   cannot be modified
         let media = unsafe { self.0.media.as_ref() }.ok_or(EfiError::NotFound)?;
         Ok(media)
     }
 
-    fn reset(&mut self, extended_verification: bool) -> EfiResult<()> {
+    fn reset(&self, extended_verification: bool) -> EfiResult<()> {
         let func = self.0.reset.ok_or(EfiError::NotFound)?;
         // SAFETY:
         // * `self.0` is only borrowed for the duration of the call
-        unsafe { func(self.0 as *mut _, extended_verification) }.into()
+        unsafe { func(self.0 as *const _ as *mut _, extended_verification) }.into()
     }
 
     fn read_blocks(
-        &mut self,
+        &self,
         media_id: u32,
         lba: u64,
         buffer: &mut [MaybeUninit<u8>],
@@ -126,26 +137,40 @@ unsafe impl BlockIo for Client<EfiBlockIoProtocol> {
         // * `buffer` will only be written up to `buffer.len()` and is only
         //   borrowed for the duration of the call
         unsafe {
-            func(self.0 as *mut _, media_id, lba, buffer.len(), buffer.as_mut_ptr() as *mut _)
+            func(
+                self.0 as *const _ as *mut _,
+                media_id,
+                lba,
+                buffer.len(),
+                buffer.as_mut_ptr() as *mut _,
+            )
         }
         .into()
     }
 
-    fn write_blocks(&mut self, media_id: u32, lba: u64, buffer: &[u8]) -> EfiResult<()> {
+    fn write_blocks(&self, media_id: u32, lba: u64, buffer: &[u8]) -> EfiResult<()> {
         let func = self.0.write_blocks.ok_or(EfiError::NotFound)?;
         // SAFETY:
         // * `self.0` is only borrowed for the duration of the call
         // * `buffer` will only be read up to `buffer.len()`, is only borrowed
         //   for the duration of the call, and will not be modified
-        unsafe { func(self.0 as *mut _, media_id, lba, buffer.len(), buffer.as_ptr() as *mut _) }
-            .into()
+        unsafe {
+            func(
+                self.0 as *const _ as *mut _,
+                media_id,
+                lba,
+                buffer.len(),
+                buffer.as_ptr() as *mut _,
+            )
+        }
+        .into()
     }
 
-    fn flush_blocks(&mut self) -> EfiResult<()> {
+    fn flush_blocks(&self) -> EfiResult<()> {
         let func = self.0.flush_blocks.ok_or(EfiError::NotFound)?;
         // SAFETY:
         // * `self.0` is only borrowed for the duration of the call
-        unsafe { func(self.0 as *mut _) }.into()
+        unsafe { func(self.0 as *const _ as *mut _) }.into()
     }
 }
 
@@ -153,13 +178,13 @@ unsafe impl BlockIo for Client<EfiBlockIoProtocol> {
 // * our wrapper functions adhere to the protocol spec
 // * [BlockIo] safety guarantees the [BlockIo::media] pointer stays valid
 unsafe impl<R: BlockIo> BridgeToRust<R> for EfiBlockIoProtocol {
-    unsafe fn create_bridge(rust_impl: &mut R) -> Self {
+    unsafe fn create_bridge(rust_impl: &R) -> Self {
         Self {
             revision: rust_impl.revision(),
-            // The API defines this as a non-const pointer so we have to
-            // cast to *mut, but the spec says that clients are not
-            // allowed to modify it so it's logically const.
-            media: rust_impl.media().unwrap() as *const _ as *mut EfiBlockIoMedia,
+            // SAFETY: we are only accessing the pointer here which is
+            // required by [BlockIo] safety to remain valid and unchanged, so
+            // we don't need a critical section.
+            media: unsafe { rust_impl.media() }.unwrap() as *const _ as *mut EfiBlockIoMedia,
             reset: Some(Provider::<_, R>::reset_wrapper),
             read_blocks: Some(Provider::<_, R>::read_blocks_wrapper),
             write_blocks: Some(Provider::<_, R>::write_blocks_wrapper),
@@ -248,12 +273,12 @@ mod test {
 
     #[test]
     fn register() {
-        let mut mock = create_mock();
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let mock = create_mock();
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().revision(), TEST_REVISION);
-        assert_eq!(tunnel.client().media(), Ok(&TEST_MEDIA));
+        // SAFETY: this is the only client so there is no data race.
+        assert_eq!(unsafe { tunnel.client().media() }, Ok(&TEST_MEDIA));
     }
 
     #[test]
@@ -265,8 +290,7 @@ mod test {
             assert_eq!(extended_verification, TEST_EXTENDED_VERIFICATION);
             Ok(())
         });
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().reset(TEST_EXTENDED_VERIFICATION), Ok(()));
     }
@@ -275,8 +299,7 @@ mod test {
     fn reset_failure() {
         let mut mock = create_mock();
         mock.expect_reset().returning(|_| Err(EfiError::NoMedia));
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().reset(true), Err(EfiError::NoMedia));
     }
@@ -305,8 +328,7 @@ mod test {
                 Ok(())
             },
         );
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().read_blocks(TEST_MEDIA_ID, TEST_LBA, &mut buffer), Ok(()));
         // SAFETY:
@@ -325,8 +347,7 @@ mod test {
     fn read_blocks_failure() {
         let mut mock = create_mock();
         mock.expect_read_blocks().returning(|_, _, _| Err(EfiError::NoMedia));
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().read_blocks(0, 0, &mut []), Err(EfiError::NoMedia));
     }
@@ -346,8 +367,7 @@ mod test {
             assert_eq!(buffer_range(buffer), buffer_range(TEST_BUFFER));
             Ok(())
         });
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().write_blocks(TEST_MEDIA_ID, TEST_LBA, TEST_BUFFER), Ok(()));
     }
@@ -356,8 +376,7 @@ mod test {
     fn write_blocks_failure() {
         let mut mock = create_mock();
         mock.expect_write_blocks().returning(|_, _, _| Err(EfiError::NoMedia));
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().write_blocks(0, 0, &[]), Err(EfiError::NoMedia));
     }
@@ -366,8 +385,7 @@ mod test {
     fn flush_blocks_success() {
         let mut mock = create_mock();
         mock.expect_flush_blocks().returning(|| Ok(()));
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().flush_blocks(), Ok(()));
     }
@@ -376,8 +394,7 @@ mod test {
     fn flush_blocks_failure() {
         let mut mock = create_mock();
         mock.expect_flush_blocks().returning(|| Err(EfiError::NoMedia));
-        let mut provider = Provider::new(&mut mock);
-        let mut tunnel = TestProtocolTunnel::new(&mut provider);
+        let tunnel = TestProtocolTunnel::new(&mock);
 
         assert_eq!(tunnel.client().flush_blocks(), Err(EfiError::NoMedia));
     }
