@@ -593,10 +593,23 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     }
 
     fn fixup_device_tree(&mut self, device_tree: &mut [u8]) -> Result<()> {
+        const MIN_SUPPORTED_REVISION: u64 = 0x00010000;
+
         match self.efi_entry.system_table().boot_services().find_first_and_open::<DtFixupProtocol>()
         {
-            Ok(protocol) => protocol.fixup(device_tree),
+            Ok(protocol) if protocol.revision() >= MIN_SUPPORTED_REVISION => {
+                protocol.fixup(device_tree)
+            }
             // Protocol is optional.
+            Ok(protocol) => {
+                efi_println!(
+                    self.efi_entry,
+                    "DtFixupProtocol exists but version is too low for GBL to use ({:X} < {:X})",
+                    protocol.revision(),
+                    MIN_SUPPORTED_REVISION
+                );
+                Ok(())
+            }
             Err(Error::NotFound) => Ok(()),
             Err(e) => Err(e),
         }
@@ -777,9 +790,9 @@ mod test {
         protocol::{gbl_efi_ab_slot::GblSlotProtocol, gbl_efi_avb::GblAvbProtocol},
         MockEfi,
     };
-    use efi_types::GBL_EFI_BOOT_MODE;
+    use efi_types::{defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GBL_EFI_BOOT_MODE};
     use mockall::predicate::eq;
-    use std::slice;
+    use std::{cell::RefCell, rc::Rc, slice};
 
     /// Represents possible outcomes for protocol method call.
     #[derive(Copy, Clone)]
@@ -1744,8 +1757,15 @@ mod test {
         base: &mut [u8],
         base_after_fixup: &'static [u8],
         protocol_lookup_error: Option<Error>,
+        protocol_revision_invalid: bool,
         protocol_result: Result<()>,
     ) -> Result<()> {
+        let (protocol_revision, expected_conout) = if protocol_revision_invalid {
+            (0, "DtFixupProtocol exists but version is too low for GBL to use (0 < 10000)\r\n")
+        } else {
+            (EFI_DT_FIXUP_PROTOCOL_REVISION, "")
+        };
+
         let mut mock_efi = MockEfi::new();
         mock_efi.boot_services.expect_find_first_and_open::<DtFixupProtocol>().return_once(
             move || {
@@ -1754,7 +1774,7 @@ mod test {
                 }
 
                 let mut dt_fixup = DtFixupProtocol::default();
-
+                dt_fixup.expect_revision().return_const(protocol_revision);
                 dt_fixup.expect_fixup().return_once(move |buffer| {
                     buffer.copy_from_slice(base_after_fixup);
                     protocol_result
@@ -1764,11 +1784,24 @@ mod test {
             },
         );
 
+        // This is a bit tricky, we want to check we're logging the right
+        // messages to conout, but depending on formatting it might be broken
+        // up into multiple calls to `write_str()`. So here we create a shared
+        // vector of strings which we append each call, and then at the end we
+        // can join all the outputs and compare against what we expect.
+        let actual_conout = Rc::new(RefCell::new(Vec::new()));
+        let expect_actual_conout = actual_conout.clone();
+        mock_efi.con_out.expect_write_str().returning_st(move |s| {
+            expect_actual_conout.borrow_mut().push(s.to_string());
+            Ok(())
+        });
+
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         let r = ops.fixup_device_tree(base);
         assert_eq!(base, base_after_fixup);
+        assert_eq!(expected_conout, actual_conout.borrow().join(""));
         r
     }
 
@@ -1783,6 +1816,8 @@ mod test {
                 WITH_FIXUP,
                 // No protocol lookup error.
                 None,
+                // Supported version.
+                false,
                 // No protocol call error.
                 Ok(()),
             ),
@@ -1801,6 +1836,8 @@ mod test {
                 WITH_FIXUP,
                 // No protocol lookup error.
                 None,
+                // Supported version.
+                false,
                 // Protocol returns error.
                 Err(Error::BufferTooSmall(Some(100))),
             ),
@@ -1817,6 +1854,26 @@ mod test {
                 &[],
                 // Protocol not found.
                 Some(Error::NotFound),
+                // Supported version.
+                false,
+                // No protocol call error.
+                Ok(()),
+            ),
+            // Protocol is optional, so passed.
+            Ok(()),
+        );
+    }
+
+    #[test]
+    fn test_fixup_device_tree_protocol_unsupported_revision() {
+        assert_eq!(
+            test_fixup_device_tree(
+                &mut [],
+                &[],
+                // No protocol lookup error.
+                None,
+                // Unsupported version.
+                true,
                 // No protocol call error.
                 Ok(()),
             ),
@@ -1833,6 +1890,8 @@ mod test {
                 &[],
                 // Protocol lookup failed.
                 Some(Error::AccessDenied),
+                // Supported version.
+                false,
                 // No protocol call error.
                 Ok(()),
             ),
