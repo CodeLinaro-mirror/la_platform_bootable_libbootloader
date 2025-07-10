@@ -31,6 +31,11 @@ impl ProtocolInfo for DtFixupProtocol {
 
 // Protocol interface wrappers.
 impl Protocol<'_, DtFixupProtocol> {
+    /// Wraps `EFI_DT_FIXUP_PROTOCOL.revision`.
+    pub fn revision(&self) -> u64 {
+        self.interface().unwrap().revision
+    }
+
     /// Wraps `EFI_DT_FIXUP_PROTOCOL.fixup()`.
     pub fn fixup(&self, device_tree: &mut [u8]) -> Result<()> {
         let mut buffer_size = device_tree.len();

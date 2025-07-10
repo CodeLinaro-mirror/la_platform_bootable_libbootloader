@@ -18,8 +18,7 @@
 //! to either one using the same path.
 
 use crate::{DeviceHandle, MOCK_EFI};
-use core::ffi::CStr;
-use core::fmt::Write;
+use core::{ffi::CStr, fmt::Write};
 pub use efi::protocol::gbl_efi_image_loading::EfiImageBufferInfo;
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition,
@@ -210,6 +209,9 @@ pub mod dt_fixup {
     mock! {
         /// Mock [efi::DtFixupProtocol].
         pub DtFixupProtocol {
+            /// Wraps `EFI_DT_FIXUP_PROTOCOL.revision`.
+            pub fn revision(&self) -> u64;
+
             /// Wraps `EFI_DT_FIXUP_PROTOCOL.fixup()`
             pub fn fixup(&self, device_tree: &mut [u8]) -> Result<()>;
         }
