@@ -16,9 +16,10 @@
 //! [`EFI_BLOCK_IO_PROTOCOL`](https://uefi.org/specs/UEFI/2.10/13_Protocols_Media_Access.html#block-i-o-protocol).
 
 use crate::{
-    defs::{EfiBlockIoMedia, EfiBlockIoProtocol, EfiGuid, EfiStatus},
+    defs::{EfiBlockIoMedia, EfiBlockIoProtocol, EfiGuid, EfiStatus, EfiTpl, EFI_TPL_CALLBACK},
     protocol::{BridgeToRust, Client, Provider},
     status::{EfiError, EfiResult},
+    tpl::TplLocked,
     Identified,
 };
 use core::{mem::MaybeUninit, slice};
@@ -95,6 +96,11 @@ pub unsafe trait BlockIo {
 
     /// Flushes any buffered blocks to the device.
     fn flush_blocks(&self) -> EfiResult<()>;
+}
+
+// SAFETY: UEFI spec says Block I/O protocol supports <= `EFI_TPL_CALLBACK`.
+unsafe impl TplLocked for Client<EfiBlockIoProtocol> {
+    const MAX_TPL: EfiTpl = EFI_TPL_CALLBACK;
 }
 
 /// Client-side implementation.
