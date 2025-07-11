@@ -20,8 +20,8 @@ set -e
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 readonly REPO_ROOT=$(readlink -f "${SCRIPT_DIR}/../../../..")
-readonly BAZEL_TARGET="@gbl//efi:x86_64_debug_dev"
-readonly BAZEL_OUT_BASE="${REPO_ROOT}/out_x86_64_debug_dev"
+readonly BAZEL_TARGET="@gbl//efi:aarch64_debug_dev"
+readonly BAZEL_OUT_BASE="${REPO_ROOT}/out_aarch64_debug_dev"
 # This UEFI prebuilt provides very limited stack and is not enough for the debug GBL build to run
 # fastboot. Consdier switching to u-boot or cuttlefish.
 readonly OVMF="/usr/share/OVMF/OVMF_CODE_4M.fd"

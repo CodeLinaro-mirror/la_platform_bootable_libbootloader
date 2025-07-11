@@ -208,6 +208,20 @@ build_with_platform(
 )
 
 build_with_platform(
+    name = "aarch64_debug_dev",
+    mode = "dbg",
+    platform = "@gbl//toolchain:gbl_uefi_aarch64_debug_dev",
+    deps = [":gbl_efi"],
+)
+
+build_with_platform(
+    name = "aarch64_debug_prod",
+    mode = "dbg",
+    platform = "@gbl//toolchain:gbl_uefi_aarch64_debug_prod",
+    deps = [":gbl_efi"],
+)
+
+build_with_platform(
     name = "riscv64_dev",
     platform = "@gbl//toolchain:gbl_elf_riscv64_dev",
     deps = [":gbl_efi_testkey"],

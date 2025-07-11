@@ -115,6 +115,12 @@ uefi_aarch64_constraint_values = [
     "@platforms//cpu:aarch64",
 ]
 
+uefi_aarch64_debug_constraint_values = [
+    ":uefi_debug",
+    "@platforms//os:none",
+    "@platforms//cpu:aarch64",
+]
+
 elf_riscv64_constraint_values = [
     ":elf",
     "@platforms//os:none",
@@ -139,6 +145,11 @@ config_setting(
 config_setting(
     name = "gbl_rust_uefi_aarch64",
     constraint_values = uefi_aarch64_constraint_values,
+)
+
+config_setting(
+    name = "gbl_rust_uefi_aarch64_debug",
+    constraint_values = uefi_aarch64_debug_constraint_values,
 )
 
 config_setting(
@@ -184,6 +195,16 @@ platform(
 platform(
     name = "gbl_uefi_aarch64_prod",
     constraint_values = uefi_aarch64_constraint_values + [":prod"],
+)
+
+platform(
+    name = "gbl_uefi_aarch64_debug_dev",
+    constraint_values = uefi_aarch64_debug_constraint_values + [":dev"],
+)
+
+platform(
+    name = "gbl_uefi_aarch64_debug_prod",
+    constraint_values = uefi_aarch64_debug_constraint_values + [":prod"],
 )
 
 platform(
@@ -341,6 +362,32 @@ toolchain(
     exec_compatible_with = ["@platforms//os:linux"],
     target_compatible_with = uefi_aarch64_constraint_values,
     toolchain = ":aarch64_uefi_clang_cc_toolchain",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+)
+
+# aarch64 UEFI DEBUG targets
+
+aarch64_uefi_debug_cc_flags = cc_flags_uefi_common + [
+    "-mbranch-protection=standard",
+    "-O0",
+]
+
+aarch64_uefi_debug_cc_flags.remove("-O3")
+
+gbl_clang_cc_toolchain(
+    name = "aarch64_uefi_debug_clang_cc_toolchain",
+    builtin_includes = builtin_includes_uefi_common,
+    cc_flags = aarch64_uefi_debug_cc_flags,
+    ld_flags = uefi_ld_flags_common,
+    target_cpu = "aarch64",
+    target_system_triple = "aarch64-unknown-windows",
+)
+
+toolchain(
+    name = "aarch64_uefi_debug_clang",
+    exec_compatible_with = ["@platforms//os:linux"],
+    target_compatible_with = uefi_aarch64_debug_constraint_values,
+    toolchain = ":aarch64_uefi_debug_clang_cc_toolchain",
     toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
 )
 
@@ -633,6 +680,109 @@ toolchain(
     exec_compatible_with = ["@platforms//os:linux"],
     target_settings = [":gbl_rust_uefi_aarch64"],
     toolchain = ":aarch64-unknown-uefi",
+    toolchain_type = "@rules_rust//rust:toolchain",
+)
+
+# aarch64 debug target
+rust_toolchain(
+    name = "aarch64-unknown-uefi-debug",
+    allocator_library = None,
+    binary_ext = "",
+    default_edition = "2021",
+    dylib_ext = ".so",
+    exec_triple = "aarch64-unknown-linux-gnu",
+    extra_rustc_flags = [
+        "-Z",
+        "cf-protection=full",
+        "--cfg",
+        "feature=\"gdb_debug\"",
+    ] + rustc_common_flags,
+    global_allocator_library = None,
+    rust_doc = "@rust_prebuilts//:bin/rustdoc",
+    # Need to use our own built sysroot because we are using a custom spec below.
+    rust_std = select({
+        ":rust_no_sysroot_true": ":rust_stdlib_empty",
+        "//conditions:default": ":rust_std_source_build",
+    }),
+    rustc = "@rust_prebuilts//:bin/rustc",
+    staticlib_ext = ".a",
+    stdlib_linkflags = [],
+    # The custom spec is based on builtin target "aarch64-unknown-uefi" but with the following
+    # changes for enabling debug symbols:
+    #
+    #   1. "debuginfo-kind" changed from "pdb" to "dwarf".
+    #   2. "split-debuginfo" changed from "packed" to "unpacked".
+    #   3. "is-like-msvc" changed from "true" to "false".
+    #
+    # Notes: 1 and 2 should be possible using commandline argument as well. 3 is not allowed but
+    # also not needed starting 1.87. Therefore, starting 1.87, it might be possible to reuse
+    # existing toolchain definition.
+    #
+    # The original spec can be obtained by:
+    #
+    #   rustc +nightly -Z unstable-options --print target-spec-json \
+    #     --target aarch64-unknown-uefi
+    target_json = """
+                {
+                    "abi-return-struct-as-int": true,
+                    "allows-weak-linkage": false,
+                    "arch": "aarch64",
+                    "archive-format": "coff",
+                    "crt-objects-fallback": "false",
+                    "data-layout": "e-m:w-p:64:64-i32:32-i64:64-i128:128-n32:64-S128-Fn32",
+                    "debuginfo-kind": "dwarf",
+                    "disable-redzone": true,
+                    "dll-tls-export": false,
+                    "emit-debug-gdb-scripts": false,
+                    "entry-name": "efi_main",
+                    "exe-suffix": ".efi",
+                    "features": "+v8a",
+                    "is-like-msvc": false,
+                    "is-like-windows": true,
+                    "linker": "rust-lld",
+                    "linker-flavor": "msvc-lld",
+                    "linker-is-gnu": false,
+                    "lld-flavor": "link",
+                    "llvm-target": "aarch64-unknown-windows",
+                    "max-atomic-width": 128,
+                    "metadata": {
+                        "description": "ARM64 UEFI",
+                        "host_tools": false,
+                        "std": null,
+                        "tier": 2
+                    },
+                    "os": "uefi",
+                    "panic-strategy": "abort",
+                    "pre-link-args": {
+                        "msvc": [
+                        "/NOLOGO",
+                        "/entry:efi_main",
+                        "/subsystem:efi_application"
+                        ],
+                        "msvc-lld": [
+                        "/NOLOGO",
+                        "/entry:efi_main",
+                        "/subsystem:efi_application"
+                        ]
+                    },
+                    "singlethread": true,
+                    "split-debuginfo": "unpacked",
+                    "stack-probes": {
+                        "kind": "call"
+                    },
+                    "supported-split-debuginfo": [
+                        "unpacked"
+                    ],
+                    "target-pointer-width": "64"
+                }
+""",
+)
+
+toolchain(
+    name = "aarch64-unknown-uefi-debug_toolchain",
+    exec_compatible_with = ["@platforms//os:linux"],
+    target_settings = ["@gbl//toolchain:gbl_rust_uefi_aarch64_debug"],
+    toolchain = ":aarch64-unknown-uefi-debug",
     toolchain_type = "@rules_rust//rust:toolchain",
 )
 

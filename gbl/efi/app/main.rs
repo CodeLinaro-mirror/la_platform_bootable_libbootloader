@@ -93,28 +93,65 @@ fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
     use core::arch::asm;
     let image_base = gbl_efi::utils::image_base(entry)?;
     efi_println!(entry, "Image base: {:#x}", image_base);
-    #[cfg(target_arch = "x86_64")]
+    let mut buf = [0u8; 1];
+    if entry
+        .system_table()
+        .runtime_services()
+        .get_variable(&efi::EFI_GLOBAL_VARIABLE_GUID, "gbl_debug", &mut buf)
+        .is_ok()
     {
-        efi_println!(entry, "Please run load_gbl_debug_bin.py or set $rax=0 from gdb to continue.");
-        // Sets $rax to `GDB_MAGIC` and $rcx to the image load address which will be retrieved by
-        // the debug script for loading debug symbols. Loops until $rax is set 0 either by the
-        // debug script or manually from gdb.
-
-        // SAFETY: The assembly code only sets $rax and $rcx reigster. It explicitly marks them as
-        // clobbered and does not modify any memory.
-        unsafe {
-            asm!(
-                "2:",
-                "cmp rax, 0",
-                "jne 2b",
-                in("rax") GDB_MAGIC,
-                in("rcx") image_base,
-                clobber_abi("C"),
+        #[cfg(target_arch = "x86_64")]
+        {
+            efi_println!(
+                entry,
+                "Please run load_gbl_debug_bin.py or set $rax=0 from gdb to continue."
             );
-        }
-        efi_println!(entry, "gdb connected!");
-    }
+            // Sets $rax to `GDB_MAGIC` and $rcx to the image load address
+            // which will be retrieved by the debug script for loading debug
+            // symbols. Loops until $rax is set 0 either by the
+            // debug script or manually from gdb.
 
+            // SAFETY: The assembly code only sets $rax and $rcx reigster.
+            // It explicitly marks them as clobbered and does not modify
+            // any memory.
+            unsafe {
+                asm!(
+                    "2:",
+                    "cmp rax, 0",
+                    "jne 2b",
+                    in("rax") GDB_MAGIC,
+                    in("rcx") image_base,
+                    clobber_abi("C"),
+                );
+            }
+            efi_println!(entry, "gdb connected!");
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            efi_println!(
+                entry,
+                "Please run load_gbl_debug_bin.py or set $x0=0 from gdb to continue."
+            );
+            // Sets $rax to `GDB_MAGIC` and $rcx to the image load address
+            // which will be retrieved by the debug script for loading debug
+            // symbols. Loops until $rax is set 0 either by the
+            // debug script or manually from gdb.
+
+            // SAFETY: The assembly code only sets $rax and $rcx reigster.
+            // It explicitly marks them as clobbered and does not modify
+            // any memory.
+            unsafe {
+                asm!(
+                    "2:",
+                    "cmp x0, 0",
+                    "b.ne 2b",
+                    in("x0") GDB_MAGIC,
+                    in("x2") image_base,
+                    clobber_abi("C"),
+                );
+            }
+        }
+    }
     Ok(())
 }
 

@@ -131,6 +131,10 @@ pub const GBL_EFI_VENDOR_GUID: EfiGuid =
 pub const EFI_MEMORY_ATTRIBUTES_GUID: EfiGuid =
     EfiGuid::new(0xdcfa911d, 0x26eb, 0x469f, [0xa2, 0x20, 0x38, 0xb7, 0xdc, 0x46, 0x12, 0x20]);
 
+/// GUID for UEFI Global variables
+pub const EFI_GLOBAL_VARIABLE_GUID: EfiGuid =
+    EfiGuid::new(0x8be4df61, 0x93ca, 0x11d2, [0xaa, 0x0d, 0x00, 0xe0, 0x98, 0x03, 0x2b, 0x8c]);
+
 /// The name of the UEFI variable that GBL defines to determine whether to boot Fuchsia.
 /// The value of the variable is ignored: if the variable is present,
 /// it indicates that the bootloader should attempt to boot a Fuchsia target.
