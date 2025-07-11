@@ -21,12 +21,13 @@ use efi::{
     protocol::{block_io::BlockIoProtocol, block_io2::BlockIo2Protocol, Protocol},
     EfiEntry,
 };
-use efi_types::EfiBlockIoMedia;
+use efi_types::{defs::EFI_TPL_APPLICATION, protocol::block_io::BlockIo as _, tpl::TplLocked};
 use gbl_async::block_on;
 use gbl_storage::{gpt_buffer_size, BlockInfo, BlockIo, Disk, Gpt};
 use liberror::Error;
 use libgbl::partition::GblDisk;
 use libprofile_macros::profile;
+use safemath::SafeNum;
 
 /// `EfiBlockDeviceIo` wraps a EFI `BlockIoProtocol` and optionally a `BlockIo2Protocol` and
 /// implements the `BlockIo` interface.
@@ -37,21 +38,11 @@ use libprofile_macros::profile;
 pub struct EfiBlockDeviceIo<'a> {
     block_io: Protocol<'a, BlockIoProtocol>,
     block_io2: Option<Protocol<'a, BlockIo2Protocol>>,
-}
-
-impl<'a> EfiBlockDeviceIo<'a> {
-    fn media(&self) -> EfiBlockIoMedia {
-        self.block_io.media().unwrap()
-    }
-
-    fn info(&mut self) -> BlockInfo {
-        let media = self.media();
-        BlockInfo {
-            block_size: media.block_size as u64,
-            num_blocks: (media.last_block + 1) as u64,
-            alignment: max(1, media.io_align as u64),
-        }
-    }
+    /// We don't currently support hot-plugging disks so we cache the media ID
+    /// upon creation; if this media ever goes away, the APIs will start
+    /// failing rather than trying to switch to a new ID.
+    media_id: u32,
+    block_info: BlockInfo,
 }
 
 // SAFETY:
@@ -60,7 +51,7 @@ impl<'a> EfiBlockDeviceIo<'a> {
 // For async `read_blocks_ex()` blocking wait guarantees that read finishes.
 unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
     fn info(&mut self) -> BlockInfo {
-        (*self).info()
+        self.block_info
     }
 
     async fn read_blocks<'a>(
@@ -70,7 +61,11 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
     ) -> Result<(), Error> {
         match &self.block_io2 {
             Some(v) => v.read_blocks_ex(blk_offset, out).await,
-            _ => self.block_io.read_blocks(blk_offset, out),
+            _ => {
+                // SAFETY: `read_blocks()` will only initialize the data.
+                let out = unsafe { out.into().as_uninit_slice_mut() };
+                self.block_io.read_blocks(self.media_id, blk_offset, out).map_err(Into::into)
+            }
         }
         .or(Err(Error::BlockIoError))
     }
@@ -78,7 +73,7 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
     async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
         match &self.block_io2 {
             Some(v) => v.write_blocks_ex(blk_offset, data).await,
-            _ => self.block_io.write_blocks(blk_offset, data),
+            _ => self.block_io.write_blocks(self.media_id, blk_offset, data).map_err(Into::into),
         }
         .or(Err(Error::BlockIoError))
     }
@@ -88,11 +83,13 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
         blk_offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<(), Error> {
-        self.block_io.read_blocks(blk_offset, out).or(Err(Error::BlockIoError))
+        // SAFETY: `read_blocks()` will only initialize the data.
+        let out = unsafe { out.into().as_uninit_slice_mut() };
+        self.block_io.read_blocks(self.media_id, blk_offset, out).or(Err(Error::BlockIoError))
     }
 
     fn write_blocks_sync(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
-        self.block_io.write_blocks(blk_offset, data).or(Err(Error::BlockIoError))
+        self.block_io.write_blocks(self.media_id, blk_offset, data).or(Err(Error::BlockIoError))
     }
 }
 
@@ -110,11 +107,26 @@ pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, E
     let gpt_buffer_size = gpt_buffer_size(MAX_GPT_ENTRIES)?;
     for (idx, handle) in block_dev_handles.handles().iter().enumerate() {
         let block_io = bs.open_protocol::<BlockIoProtocol>(*handle).unwrap();
-        let block_io2 = bs.open_protocol::<BlockIo2Protocol>(*handle).ok();
-        let blk_io = EfiBlockDeviceIo { block_io, block_io2 };
-        if blk_io.media().logical_partition {
+        // SAFETY: this code always executes at `EFI_TPL_APPLICATION`.
+        let media = unsafe {
+            block_io.with_lock::<EFI_TPL_APPLICATION, _>(efi_entry, || {
+                // SAFETY: the protocol is locked while we access `media`, we
+                // clone it here for safe access outside the critical section.
+                block_io.media().unwrap().clone()
+            })
+        };
+        if media.logical_partition {
             continue;
         }
+        let block_io2 = bs.open_protocol::<BlockIo2Protocol>(*handle).ok();
+        let block_info = BlockInfo {
+            // `block_size` is u32 so can always convert to u64
+            block_size: media.block_size as u64,
+            num_blocks: (SafeNum::from(media.last_block) + 1).try_into()?,
+            // `io_align` is u32 so can always convert to u64
+            alignment: max(1, media.io_align as u64),
+        };
+        let blk_io = EfiBlockDeviceIo { block_io, block_io2, media_id: media.media_id, block_info };
         // TODO(b/357688291): Support raw partition based on device path info.
         let disk = GblDisk::new_gpt(
             Disk::new_alloc_scratch(blk_io).unwrap(),

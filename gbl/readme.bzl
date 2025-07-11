@@ -53,8 +53,13 @@ ALL_INPUTS=$(echo ${INPUT} | sed 's/,/ /g')
 
 # Look for protocols in the source code that do not exist in the documentation.
 # The protocol name we match on here is the Rust struct name.
+#
+# For now we need to support both direct implementations via ProtocolInfo as
+# well as library implementations using libefi_types Client.
 DOCLESS_PROTOCOLS=""
-PROTOCOLS=($(grep -hE 'impl ProtocolInfo for .* \\{' ${ALL_INPUTS} | awk '{print $4}' | sort))
+PROTOCOLS=($(grep -hE 'impl ProtocolInfo for .* \\{' ${ALL_INPUTS} | awk '{print $4}'))
+PROTOCOLS+=($(grep -hE 'pub type .* = Client<Efi' ${ALL_INPUTS} | awk '{print $3}'))
+PROTOCOLS=$(echo $PROTOCOLS | sort)
 for P in ${PROTOCOLS[@]}
 do
   grep -Lq $P ${README} || DOCLESS_PROTOCOLS+="\n\t$P"
@@ -72,7 +77,7 @@ UNUSED_PROTOCOLS=""
 README_PROTOCOLS=($(grep -P " ?[^ ]+Protocol$" ${README} | awk '{print $NF}' | sort | uniq))
 for P in ${README_PROTOCOLS[@]}
 do
-  grep -qhE "impl ProtocolInfo for $P" ${ALL_INPUTS} || UNUSED_PROTOCOLS+="\n\t$P"
+  grep -qhE -e "impl ProtocolInfo for $P" -e "pub type $P = Client<Efi" ${ALL_INPUTS} || UNUSED_PROTOCOLS+="\n\t$P"
 done
 
 if [ ! -z "${UNUSED_PROTOCOLS}" ]; then

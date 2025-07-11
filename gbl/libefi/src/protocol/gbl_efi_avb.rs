@@ -253,8 +253,10 @@ impl Protocol<'_, GblAvbProtocol> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{protocol::EFI_STATUS_BUFFER_TOO_SMALL, test::run_test_with_mock_protocol, Error};
-    use efi_types::{EfiStatus, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS};
+    use crate::{test::run_test_with_mock_protocol, Error};
+    use efi_types::defs::{
+        EfiStatus, EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS,
+    };
     use std::{ptr, slice};
 
     #[test]
