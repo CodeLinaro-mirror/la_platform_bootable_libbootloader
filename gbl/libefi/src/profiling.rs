@@ -48,7 +48,18 @@ impl<'a> EfiProfileTimer<'a> {
             .system_table()
             .boot_services()
             .find_first_and_open::<TimestampProtocol>()
-            .inspect_err(|_| efi_println!(entry, "EFI_TIMESTAMP_PROTOCOL not supported"))
+            .inspect_err(|_| {
+                // The call to find_first_and_open already logs the absence
+                // of the protocol in dev mode.
+                #[cfg(not(feature = "gbl_dev"))]
+                efi_println!(
+                    entry,
+                    "Optional protocol not found: {}",
+                    libutils::base_type_name::<
+                        <TimestampProtocol as crate::protocol::ProtocolInfo>::InterfaceType,
+                    >()
+                )
+            })
         else {
             return Self::Unsupported;
         };
@@ -235,7 +246,7 @@ mod test {
 
             efi_call_traces().with(|trace| {
                 let out_str = trace.borrow().console_out_trace.as_single_string();
-                assert!(out_str.starts_with("EFI_TIMESTAMP_PROTOCOL not supported"));
+                assert!(out_str.starts_with("Optional protocol not found: EfiTimestampProtocol"));
             });
         });
     }
@@ -273,7 +284,7 @@ mod test {
 
             efi_call_traces().with(|trace| {
                 let out_str = trace.borrow().console_out_trace.as_single_string();
-                assert!(out_str.starts_with("Error getting timestamp properties: "));
+                assert!(out_str.find("Error getting timestamp properties: ").is_some());
             });
         });
     }

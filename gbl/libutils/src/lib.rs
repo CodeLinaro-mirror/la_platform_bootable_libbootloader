@@ -138,6 +138,32 @@ pub fn get_sp() -> usize {
     sp
 }
 
+/// Helper function for stripping namespaces from a typename.
+pub fn base_type_name<T>() -> &'static str {
+    let type_name = core::any::type_name::<T>();
+    type_name.rsplit("::").next().unwrap_or(type_name)
+}
+
+/// Helper function to split the basename from a method expression
+pub fn method_basename(method_str: &str) -> &str {
+    method_str.rsplit(".").next().unwrap_or(method_str)
+}
+
+/// Simple macro to emulate C's __func__ macro.
+/// Includes full module path.
+#[macro_export]
+macro_rules! func_name {
+    () => {{
+        fn thunk() {}
+        let mut full_path = core::any::type_name_of_val(&thunk);
+        let suffixes = [stringify!(thunk), "{{closure}}::", "::"];
+        for s in suffixes {
+            full_path = full_path.strip_suffix(s).unwrap_or(full_path);
+        }
+        full_path
+    }};
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

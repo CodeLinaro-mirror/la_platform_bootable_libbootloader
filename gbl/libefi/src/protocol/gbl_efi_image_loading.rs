@@ -15,7 +15,7 @@
 //! Rust wrapper for `EFI_IMAGE_LOADING_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use arrayvec::ArrayVec;
 use core::mem::{size_of, MaybeUninit};
 use efi_types::{EfiGuid, GblEfiImageBuffer, GblEfiImageInfo, GblEfiImageLoadingProtocol};
@@ -30,6 +30,8 @@ impl ProtocolInfo for GblImageLoadingProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xdb84b4fa, 0x53bd, 0x4436, [0x98, 0xa7, 0x4e, 0x02, 0x71, 0x42, 0x8b, 0xa8]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 /// Max length of a UTF16 partition name in u16 units.

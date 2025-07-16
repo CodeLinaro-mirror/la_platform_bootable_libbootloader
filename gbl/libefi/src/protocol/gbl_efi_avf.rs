@@ -14,7 +14,8 @@
 
 //! Rust wrapper for `GBL_EFI_AVF_PROTOCOL`.
 
-use crate::{efi_call, protocol::ProtocolInfo, Protocol};
+use crate::efi_call;
+use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use efi_types::{EfiGuid, GblEfiAvfProtocol};
 use liberror::{Error, Result};
 
@@ -26,6 +27,8 @@ impl ProtocolInfo for GblAvfProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xe7f1c4a6, 0x0a52, 0x4f61, [0xbd, 0x98, 0x9e, 0x60, 0xb5, 0x59, 0x45, 0x2a]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 // Protocol interface wrappers.

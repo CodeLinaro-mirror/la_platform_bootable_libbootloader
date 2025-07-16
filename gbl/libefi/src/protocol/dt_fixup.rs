@@ -15,7 +15,7 @@
 //! Rust wrapper for `EFI_DT_FIXUP_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use efi_types::{EfiDtFixupProtocol, EfiGuid, EFI_DT_APPLY_FIXUPS};
 use liberror::Result;
 
@@ -27,6 +27,8 @@ impl ProtocolInfo for DtFixupProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xe617d64c, 0xfe08, 0x46da, [0xf4, 0xdc, 0xbb, 0xd5, 0x87, 0x0c, 0x73, 0x00]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 // Protocol interface wrappers.

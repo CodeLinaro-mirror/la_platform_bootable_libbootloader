@@ -31,7 +31,7 @@ pub mod gbl_efi_ab_slot;
 pub mod gbl_efi_avb;
 pub mod gbl_efi_avf;
 pub mod gbl_efi_fastboot;
-pub mod gbl_efi_fastboot_usb;
+pub mod gbl_efi_fastboot_transport;
 pub mod gbl_efi_image_loading;
 pub mod gbl_efi_os_configuration;
 pub mod loaded_image;
@@ -45,12 +45,22 @@ pub mod timestamp;
 pub(super) mod hash2;
 pub(crate) mod service_binding;
 
+/// Describes whether a Protocol is required or optional.
+pub enum Requirement {
+    /// The protocol is a mandatory requirement for supporting GBL.
+    Mandatory,
+    /// The protocol is an optional requirement for supporting GBL.
+    Optional,
+}
+
 /// ProtocolInfo provides GUID info and the EFI data structure type for a protocol.
 pub trait ProtocolInfo {
     /// Data structure type of the interface.
     type InterfaceType;
     /// GUID of the protocol.
     const GUID: EfiGuid;
+    /// Whether the protocol is mandatory or optional.
+    const REQUIREMENT: Requirement = Requirement::Mandatory;
 }
 
 /// Temporary trait to abstract over protocols using [ProtocolInfo] vs [Client].
@@ -62,6 +72,8 @@ pub trait ProtocolImpl {
     type ImplType;
     /// The protocol GUID.
     const GUID: EfiGuid;
+    /// Whether the protocol is mandatory or optional.
+    const REQUIREMENT: Requirement = Requirement::Mandatory;
 
     /// Creates the corresponding `ImplType` from a raw C struct.
     ///
@@ -79,6 +91,7 @@ impl<T: ProtocolInfo> ProtocolImpl for T {
     type CInterface = T::InterfaceType;
     type ImplType = *mut T::InterfaceType;
     const GUID: EfiGuid = T::GUID;
+    const REQUIREMENT: Requirement = T::REQUIREMENT;
 
     unsafe fn new_impl(c_interface: *mut Self::CInterface) -> Self::ImplType {
         // Just pass the c_interface pointer through, we use it directly.
@@ -237,8 +250,14 @@ macro_rules! efi_call {
     ( $method:expr, $($x:expr),*$(,)? ) => {
         {
             use liberror::{Error, Result, efi_status_to_result};
+            use libutils::{method_basename, func_name};
             let res: Result<()> = match $method {
-                None => Err(Error::NotFound),
+                None => {
+                    $crate::efi_try_print!("Protocol method not found in caller '{}': {}\r\n",
+                                           func_name!(),
+                                           method_basename(stringify!($method)));
+                    Err(Error::NotFound)
+                },
                 Some(f) => efi_status_to_result(f($($x,)*)),
             };
             res
@@ -248,8 +267,13 @@ macro_rules! efi_call {
         {
             use liberror::{Error, Result, efi_status_to_result};
             use efi_types::EFI_STATUS_BUFFER_TOO_SMALL;
+            use libutils::{method_basename, func_name};
             let res: Result<()> = match $method {
-                None => Err(Error::NotFound),
+                None => {
+                    $crate::efi_try_print!("Protocol method not found in caller '{}': {}\r\n",
+                                           func_name!(),
+                                           method_basename(stringify!($method)));
+                    Err(Error::NotFound)},
                 Some(f) => {
                     match f($($x,)*) {
                         EFI_STATUS_BUFFER_TOO_SMALL => Err(Error::BufferTooSmall(Some($size))),

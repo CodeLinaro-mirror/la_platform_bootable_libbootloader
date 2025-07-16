@@ -15,7 +15,7 @@
 //! Rust wrapper for `EFI_SIMPLE_TEXT_INPUT_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use efi_types::{EfiGuid, EfiInputKey, EfiSimpleTextInputProtocol};
 use liberror::{Error, Result};
 
@@ -27,6 +27,8 @@ impl ProtocolInfo for SimpleTextInputProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0x387477c1, 0x69c7, 0x11d2, [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 impl Protocol<'_, SimpleTextInputProtocol> {

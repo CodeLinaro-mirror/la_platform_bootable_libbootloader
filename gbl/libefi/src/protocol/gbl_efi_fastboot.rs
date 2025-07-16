@@ -16,7 +16,7 @@
 
 use crate::{
     efi_call,
-    protocol::{Protocol, ProtocolInfo},
+    protocol::{Protocol, ProtocolInfo, Requirement},
 };
 use core::{
     ffi::{c_char, c_void, CStr},
@@ -42,6 +42,8 @@ impl ProtocolInfo for GblFastbootProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xc67e48a0, 0x5eb8, 0x4127, [0xbe, 0x89, 0xdf, 0x2e, 0xd9, 0x3d, 0x8a, 0x9a]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 /// Wrapper type for context parameter used in a fastboot local session.

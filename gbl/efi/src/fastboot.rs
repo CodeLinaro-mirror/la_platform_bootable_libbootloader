@@ -23,7 +23,7 @@ use core::{future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration};
 use efi::{
     efi_println,
     local_session::LocalFastbootSession,
-    protocol::{gbl_efi_fastboot_usb::GblFastbootTransportProtocol, Protocol},
+    protocol::{gbl_efi_fastboot_transport::GblFastbootTransportProtocol, Protocol},
     EfiEntry, WatchdogTimerCode,
 };
 use efi_types::GBL_IMAGE_TYPE_FASTBOOT;

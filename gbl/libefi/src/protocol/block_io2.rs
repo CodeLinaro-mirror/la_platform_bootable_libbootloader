@@ -16,7 +16,7 @@
 
 use crate::{
     efi_call,
-    protocol::{Protocol, ProtocolInfo},
+    protocol::{Protocol, ProtocolInfo, Requirement},
     EfiEntry, EventNotify, EventType, Tpl,
 };
 use bytes::buf::UninitSlice;
@@ -38,6 +38,8 @@ impl ProtocolInfo for BlockIo2Protocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xa77b2472, 0xe282, 0x4e9f, [0xa2, 0x45, 0xc2, 0xc0, 0xe2, 0x7b, 0xbc, 0xc1]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 /// Helper for waiting an AtomicBool to become true while regularly calling EFI CheckEvent().

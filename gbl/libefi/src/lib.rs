@@ -56,6 +56,22 @@ use alloc::vec::Vec;
 #[cfg(not(test))]
 mod allocation;
 
+#[cfg(test)]
+mod allocation {
+    /// Try to print via `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL` in `EFI_SYSTEM_TABLE.ConOut`.
+    ///
+    /// Errors are ignored.
+    #[macro_export]
+    macro_rules! efi_try_print {
+        ($( $x:expr ),* $(,)? ) => {
+            use core::fmt::Write;
+            $crate::test::efi_call_traces().with(|traces| {
+                write!(traces.borrow_mut().console_out_trace, $($x,)*).unwrap();
+            });
+        };
+    }
+}
+
 #[cfg(not(test))]
 pub mod libc;
 
@@ -73,7 +89,7 @@ pub mod protocol;
 pub mod utils;
 
 #[cfg(not(test))]
-use core::{fmt::Write, panic::PanicInfo};
+use core::panic::PanicInfo;
 
 use core::{marker::PhantomData, ptr::null_mut, slice::from_raw_parts, time::Duration};
 use efi_types::{
@@ -90,7 +106,7 @@ use efi_types::{
     tpl::TplControl,
 };
 use liberror::{Error, Result};
-use libutils::aligned_subslice;
+use libutils::{aligned_subslice, base_type_name};
 use protocol::{
     simple_text_output::SimpleTextOutputProtocol,
     {Protocol, ProtocolImpl, ProtocolInfo},
@@ -295,6 +311,24 @@ impl WatchdogTimerCode {
     }
 }
 
+fn log_missing_protocol<T: ProtocolImpl>(entry: &EfiEntry) {
+    match T::REQUIREMENT {
+        protocol::Requirement::Mandatory => efi_println!(
+            entry,
+            "Required protocol not found: {}",
+            base_type_name::<T::CInterface>()
+        ),
+        protocol::Requirement::Optional => {
+            #[cfg(feature = "gbl_dev")]
+            efi_println!(
+                entry,
+                "Optional protocol not found: {}",
+                base_type_name::<T::CInterface>()
+            )
+        }
+    }
+}
+
 /// `BootServices` provides methods for accessing various EFI_BOOT_SERVICES interfaces.
 #[derive(Copy, Clone)]
 pub struct BootServices<'a> {
@@ -402,18 +436,17 @@ impl<'a> BootServices<'a> {
         // `handles` should be a valid pointer if the above succeeds. But just double check
         // to be safe. If assert fails, then there's a bug in the UEFI firmware.
         assert!(!handles.is_null());
-        Ok(LocatedHandles::new(handles, num_handles, self.efi_entry))
+        Ok(LocatedHandles::new(handles, num_handles, &self.efi_entry))
     }
 
     /// Search and open the first found target EFI protocol.
     pub fn find_first_and_open<T: ProtocolImpl>(&self) -> Result<Protocol<'a, T>> {
         // We don't use EFI_BOOT_SERVICES.LocateProtocol() because it doesn't give device handle
         // which is required to close the protocol.
-        let handle = *self
-            .locate_handle_buffer_by_protocol::<T>()?
-            .handles()
-            .first()
-            .ok_or(Error::NotFound)?;
+        let handle = self
+            .locate_handle_buffer_by_protocol::<T>()
+            .and_then(|lh| lh.handles().first().cloned().ok_or(Error::NotFound))
+            .inspect_err(|_| log_missing_protocol::<T>(self.efi_entry))?;
         self.open_protocol::<T>(handle)
     }
 
@@ -614,6 +647,8 @@ impl<'a> BootServices<'a> {
             )?;
         }
 
+        // If the protocol isn't supported on this handle the `efi_call` should have
+        // returned an error, but check for extra safety.
         if interface.is_null() {
             Err(Error::Unsupported)
         } else {
@@ -1073,7 +1108,7 @@ pub mod hash2 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protocol::{block_io::BlockIoProtocol, ProtocolInfo};
+    use crate::protocol::{block_io::BlockIoProtocol, ProtocolInfo, Requirement};
     use alloc::string::String;
     use efi_types::{
         EfiBlockIoProtocol, EfiEventNotify, EfiLocateHandleSearchType, EfiSimpleTextOutputProtocol,
@@ -1476,6 +1511,13 @@ mod test {
         }
     }
 
+    impl core::fmt::Write for ConsoleOutTrace {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            self.strings.push(s.to_string());
+            Ok(())
+        }
+    }
+
     /// # SAFETY:
     ///
     /// * Caller should guarantee that `str` is a valid, null-terminated,
@@ -1639,6 +1681,11 @@ mod test {
                 .boot_services()
                 .open_protocol::<BlockIoProtocol>(DeviceHandle(as_efi_handle(&mut device_handle)))
                 .is_err());
+
+            efi_call_traces().with(|traces| {
+                let actual = traces.borrow().console_out_trace.as_single_string();
+                assert_eq!(actual, "Protocol method not found in caller 'efi::BootServices::open_protocol': open_protocol\r\n");
+            });
         })
     }
 
@@ -1996,6 +2043,181 @@ mod test {
                     traces.set_watchdog_timer_trace.inputs,
                     [(30, FIRST_CALL_CODE.0), (60, SECOND_CALL_CODE.0)]
                 );
+            });
+        });
+    }
+
+    macro_rules! TestProto {
+        { $required:expr } => {
+            struct EfiTestProtocol;
+            struct TestProtocol;
+
+            impl ProtocolInfo for TestProtocol /* NO DOCS */ {
+                type InterfaceType = EfiTestProtocol;
+
+                const GUID: EfiGuid = EfiGuid::new(
+                    0x2ec515d8,
+                    0xaff5,
+                    0x403f,
+                    [0xb3, 0x36, 0x0f, 0x07, 0xe0, 0x74, 0x66, 0x78],
+                );
+
+                const REQUIREMENT: Requirement = $required;
+            }
+        }
+    }
+
+    #[test]
+    fn test_required_protocol_present() {
+        TestProto! {Requirement::Mandatory};
+
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+
+            let mut located_handles = [DeviceHandle(1 as *mut _)];
+            let mut test = TestProtocol;
+
+            efi_call_traces().with(|traces| {
+                let mut traces = traces.borrow_mut();
+
+                traces
+                    .locate_handle_buffer_trace
+                    .outputs
+                    .push_back((located_handles.len(), located_handles.as_mut_ptr()));
+                traces
+                    .open_protocol_trace
+                    .outputs
+                    .push_back((as_efi_handle(&mut test), EFI_STATUS_SUCCESS));
+            });
+
+            assert!(efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<TestProtocol>()
+                .is_ok());
+
+            efi_call_traces().with(|trace| {
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert_eq!(out_str, "");
+            });
+        });
+    }
+
+    #[test]
+    fn test_required_protocol_not_present() {
+        TestProto! {Requirement::Mandatory};
+
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+
+            efi_call_traces()
+                .with(|traces| traces.borrow_mut().locate_handle_buffer_trace.outputs.clear());
+
+            assert!(efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<TestProtocol>()
+                .is_err());
+
+            efi_call_traces().with(|trace| {
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert_eq!(out_str, "Required protocol not found: EfiTestProtocol\r\n");
+            });
+        });
+    }
+
+    #[test]
+    fn test_optional_protocol_present() {
+        TestProto! {Requirement::Optional};
+
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+
+            let mut located_handles = [DeviceHandle(1 as *mut _)];
+            let mut test = TestProtocol;
+
+            efi_call_traces().with(|traces| {
+                let mut traces = traces.borrow_mut();
+
+                traces
+                    .locate_handle_buffer_trace
+                    .outputs
+                    .push_back((located_handles.len(), located_handles.as_mut_ptr()));
+                traces
+                    .open_protocol_trace
+                    .outputs
+                    .push_back((as_efi_handle(&mut test), EFI_STATUS_SUCCESS));
+            });
+
+            assert!(efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<TestProtocol>()
+                .is_ok());
+
+            efi_call_traces().with(|trace| {
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert_eq!(out_str, "");
+            });
+        });
+    }
+
+    #[test]
+    fn test_optional_protocol_not_present() {
+        TestProto! {Requirement::Optional};
+
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+
+            efi_call_traces()
+                .with(|traces| traces.borrow_mut().locate_handle_buffer_trace.outputs.clear());
+
+            assert!(efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<TestProtocol>()
+                .is_err());
+
+            efi_call_traces().with(|trace| {
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert_eq!(out_str, "");
+            });
+        });
+    }
+
+    #[test]
+    fn test_protocol_default_required() {
+        struct EfiTestProtocol;
+        struct TestProtocol;
+
+        impl ProtocolInfo for TestProtocol /* NO DOCS */ {
+            type InterfaceType = EfiTestProtocol;
+
+            const GUID: EfiGuid = EfiGuid::new(
+                0x2ec515d8,
+                0xaff5,
+                0x403f,
+                [0xb3, 0x36, 0x0f, 0x07, 0xe0, 0x74, 0x66, 0x78],
+            );
+
+            // Don't add a requirement override to make sure the default is 'Mandatory'.
+        }
+
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+
+            efi_call_traces()
+                .with(|traces| traces.borrow_mut().locate_handle_buffer_trace.outputs.clear());
+
+            assert!(efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<TestProtocol>()
+                .is_err());
+
+            efi_call_traces().with(|trace| {
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert_eq!(out_str, "Required protocol not found: EfiTestProtocol\r\n");
             });
         });
     }

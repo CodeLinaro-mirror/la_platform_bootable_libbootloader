@@ -14,7 +14,7 @@
 
 //! Rust wrapper for `EFI_LOADED_IMAGE_PROTOCOL`.
 
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use crate::DeviceHandle;
 use efi_types::{EfiGuid, EfiLoadedImageProtocol};
 use liberror::Result;
@@ -27,6 +27,8 @@ impl ProtocolInfo for LoadedImageProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0x5b1b31a1, 0x9562, 0x11d2, [0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 impl<'a> Protocol<'a, LoadedImageProtocol> {

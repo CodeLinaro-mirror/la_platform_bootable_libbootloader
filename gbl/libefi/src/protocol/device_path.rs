@@ -14,7 +14,7 @@
 
 //! Rust wrapper for `EFI_DEVICE_PATH_PROTOCOL`.
 
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use crate::EfiEntry;
 use core::fmt::Display;
 use efi_types::{EfiDevicePathProtocol, EfiDevicePathToTextProtocol, EfiGuid};
@@ -28,6 +28,8 @@ impl ProtocolInfo for DevicePathProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0x09576e91, 0x6d3f, 0x11d2, [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 /// `EFI_DEVICE_PATH_TO_TEXT_PROTOCOL`
@@ -38,6 +40,8 @@ impl ProtocolInfo for DevicePathToTextProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0x8b843e20, 0x8132, 0x4852, [0x90, 0xcc, 0x55, 0x1a, 0x4e, 0x4a, 0x7f, 0x1c]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 impl<'a> Protocol<'a, DevicePathToTextProtocol> {

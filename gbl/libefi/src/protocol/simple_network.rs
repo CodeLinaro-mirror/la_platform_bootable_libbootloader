@@ -15,7 +15,7 @@
 //! Rust wrapper for `EFI_SIMPLE_NETWORK_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use core::ffi::c_void;
 use core::ptr::null_mut;
 use efi_types::{
@@ -33,6 +33,8 @@ impl ProtocolInfo for SimpleNetworkProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xa19832b9, 0xac25, 0x11d3, [0x9a, 0x2d, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 impl<'a> Protocol<'a, SimpleNetworkProtocol> {

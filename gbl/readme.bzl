@@ -57,7 +57,7 @@ ALL_INPUTS=$(echo ${INPUT} | sed 's/,/ /g')
 # For now we need to support both direct implementations via ProtocolInfo as
 # well as library implementations using libefi_types Client.
 DOCLESS_PROTOCOLS=""
-PROTOCOLS=($(grep -hE 'impl ProtocolInfo for .* \\{' ${ALL_INPUTS} | awk '{print $4}'))
+PROTOCOLS=($(grep -hE 'impl ProtocolInfo for [^ /]+ *\\{ *$' ${ALL_INPUTS} | awk '{print $4}'))
 PROTOCOLS+=($(grep -hE 'pub type .* = Client<Efi' ${ALL_INPUTS} | awk '{print $3}'))
 PROTOCOLS=$(echo $PROTOCOLS | sort)
 for P in ${PROTOCOLS[@]}

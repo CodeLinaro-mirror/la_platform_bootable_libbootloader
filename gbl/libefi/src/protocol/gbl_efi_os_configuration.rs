@@ -15,7 +15,7 @@
 //! Rust wrapper for `GBL_EFI_OS_CONFIGURATION_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use efi_types::{EfiGuid, GblEfiOsConfigurationProtocol, GblEfiVerifiedDeviceTree};
 use liberror::{Error, Result};
 
@@ -27,6 +27,8 @@ impl ProtocolInfo for GblOsConfigurationProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xdda0d135, 0xaa5b, 0x42ff, [0x85, 0xac, 0xe3, 0xad, 0x6e, 0xfb, 0x46, 0x19]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 // Protocol interface wrappers.

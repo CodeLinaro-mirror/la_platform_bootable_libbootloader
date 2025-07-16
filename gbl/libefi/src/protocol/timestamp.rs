@@ -15,7 +15,7 @@
 //! Rust wrapper for `EFI_TIMESTAMP_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use efi_types::{EfiGuid, EfiTimestampProperties, EfiTimestampProtocol};
 use liberror::{Error, Result};
 
@@ -27,6 +27,8 @@ impl ProtocolInfo for TimestampProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xafbfde41, 0x2e6e, 0x4262, [0xba, 0x65, 0x62, 0xb9, 0x23, 0x6e, 0x54, 0x95]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 // Protocol interface wrappers.

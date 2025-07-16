@@ -17,7 +17,6 @@ use efi_types::{EFI_ALLOCATOR_TYPE_ALLOCATE_ANY_PAGES, EFI_MEMORY_TYPE_LOADER_DA
 
 use core::{
     alloc::{GlobalAlloc, Layout},
-    fmt::Write,
     mem::size_of,
     ptr::{copy, null_mut},
     slice::from_raw_parts,
@@ -100,9 +99,11 @@ macro_rules! efi_try_print {
     ($( $x:expr ),* $(,)? ) => {
         {
             let _ = (|| -> Result<()> {
+                use core::fmt::Write;
                 if let Some(entry) = crate::allocation::internal_efi_entry_and_rt().0 {
                     write!(entry.system_table_checked()?.con_out()?, $($x,)*)?;
                 }
+
                 Ok(())
             })();
         }

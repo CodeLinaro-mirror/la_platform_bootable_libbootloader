@@ -16,7 +16,7 @@
 
 use crate::{
     efi_call,
-    protocol::{Protocol, ProtocolInfo},
+    protocol::{Protocol, ProtocolInfo, Requirement},
 };
 use efi_types::{
     EfiGuid, GblEfiFastbootTransportProtocol, GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH,
@@ -33,6 +33,8 @@ impl ProtocolInfo for GblFastbootTransportProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xedade92c, 0x5c48, 0x440d, [0x84, 0x9c, 0xe2, 0xa0, 0xc7, 0xe5, 0x51, 0x43]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 // Protocol interface wrappers.
