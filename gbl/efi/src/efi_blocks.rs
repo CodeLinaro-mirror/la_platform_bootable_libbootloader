@@ -78,6 +78,11 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
         .or(Err(Error::BlockIoError))
     }
 
+    async fn erase_blocks(&mut self, _: u64, _: u64) -> Result<(), Error> {
+        // TODO(b/418942620): To implement using EFI_ERASE_BLOCK_PROTOCOL.
+        Err(Error::Unsupported)
+    }
+
     fn read_blocks_sync<'a>(
         &mut self,
         blk_offset: u64,
@@ -122,6 +127,8 @@ pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, E
         let block_info = BlockInfo {
             // `block_size` is u32 so can always convert to u64
             block_size: media.block_size as u64,
+            // TODO(b/418942620): To implement using EFI_ERASE_BLOCK_PROTOCOL.
+            erase_blocks: 1,
             num_blocks: (SafeNum::from(media.last_block) + 1).try_into()?,
             // `io_align` is u32 so can always convert to u64
             alignment: max(1, media.io_align as u64),

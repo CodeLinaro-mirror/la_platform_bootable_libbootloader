@@ -77,6 +77,7 @@ unsafe impl<T: DerefMut<Target = [u8]>> BlockIo for RamBlockIo<T> {
     fn info(&mut self) -> BlockInfo {
         BlockInfo {
             block_size: self.block_size,
+            erase_blocks: 2,
             num_blocks: u64::try_from(self.storage.len()).unwrap() / self.block_size,
             alignment: self.alignment,
         }
@@ -96,5 +97,14 @@ unsafe impl<T: DerefMut<Target = [u8]>> BlockIo for RamBlockIo<T> {
     async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
         let offset = self.checks(blk_offset, &mut *data).await?;
         Ok(self.storage[offset..][..data.len()].copy_from_slice(data))
+    }
+
+    async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<(), Error> {
+        yield_now().await;
+        let blk_sz = self.info().erase_block_size().unwrap();
+        let off = (SafeNum::from(blk_offset) * blk_sz).try_into().unwrap();
+        let sz = (SafeNum::from(num_blks) * blk_sz).try_into().unwrap();
+        // Erases by flipping the bits.
+        Ok(self.storage[off..][..sz].iter_mut().for_each(|v| *v = !*v))
     }
 }

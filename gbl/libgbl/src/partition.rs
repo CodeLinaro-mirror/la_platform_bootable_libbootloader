@@ -360,6 +360,11 @@ impl<'a, B: BlockIo> PartitionIo<'a, B> {
         self.disk.fill(self.part_start, self.size(), 0, scratch).await
     }
 
+    /// Performs io-specific erase.
+    pub async fn erase(&mut self, scratch: &mut [u8]) -> Result<(), Error> {
+        self.disk.erase(self.part_start, self.size(), scratch).await
+    }
+
     /// Writes sparse image to the partition.
     pub async fn write_sparse(&mut self, off: u64, img: &mut [u8]) -> Result<(), Error> {
         let sz = is_sparse_image(img).map_err(|_| Error::InvalidInput)?.data_size();

@@ -14,8 +14,8 @@
 
 use crate::{check_range, is_aligned, is_buffer_aligned, BlockInfo, BlockIo, CheckedGet};
 use bytes::buf::UninitSlice;
-use core::cmp::min;
-use liberror::Result;
+use core::cmp::{max, min};
+use liberror::{Error, Result};
 use libutils::aligned_subslice;
 use safemath::SafeNum;
 
@@ -138,7 +138,7 @@ fn split_scratch<'a>(
 }
 
 /// Read with no alignment requirement.
-pub async fn read_async<'a>(
+pub(crate) async fn read_async<'a>(
     io: &mut impl BlockIo,
     offset: u64,
     out: impl Into<&'a mut UninitSlice>,
@@ -297,7 +297,7 @@ async fn write_aligned_buffer(
 /// Writes bytes to the block device.
 /// It does internal optimization that temporarily modifies `data` layout to minimize number of
 /// calls to `io.read_blocks()`/`io.write_blocks()` (down to O(1)).
-pub async fn write_async(
+pub(crate) async fn write_async(
     io: &mut impl BlockIo,
     offset: u64,
     data: &mut [u8],
@@ -340,4 +340,58 @@ pub async fn write_async(
         block_alignment_scratch,
     )
     .await
+}
+
+/// Helper function for performing IO specific erase of arbitrary offset/size.
+pub(crate) async fn erase_async(
+    io: &mut impl BlockIo,
+    offset: u64,
+    size: u64,
+    erase_scratch: &mut [u8],
+    alignment_scratch: &mut [u8],
+) -> Result<()> {
+    let blk_sz = io.info().erase_block_size()?.try_into()?;
+    let blk_sz_u64 = u64::try_from(blk_sz)?;
+    let scratch = erase_scratch.get_mut(..blk_sz).ok_or(Error::BufferTooSmall(Some(blk_sz)))?;
+
+    // Erases center aligned part.
+    let off = SafeNum::from(offset);
+    let end = off + size;
+    let right = end.round_down(blk_sz).try_into()?;
+    let left = off.round_up(blk_sz).try_into()?;
+    if left < right {
+        io.erase_blocks(left / blk_sz_u64, (right - left) / blk_sz_u64).await?;
+    }
+
+    // read-modify-write leading partial block
+    if left > offset {
+        let start = off.round_down(blk_sz).try_into()?;
+        let data_sz = (off - start).try_into()?;
+        // Reads the data.
+        read_async(io, start, &mut scratch[..data_sz], &mut alignment_scratch[..]).await?;
+        // Erases the block.
+        io.erase_blocks(start / blk_sz_u64, 1).await?;
+        // Read back the erased part of the block. This is necessary because the erased state
+        // can be implementation specific and not necessarily, for example, 0.
+        read_async(io, offset, &mut scratch[data_sz..], &mut alignment_scratch[..]).await?;
+        // Writes back the part of data that should not be erased.
+        write_async(io, start, &mut scratch[..], &mut alignment_scratch[..]).await?;
+    }
+
+    // read-modify-write trailing partial block.
+    let end = u64::try_from(end)?;
+    if end > max(left, right) {
+        let data_off = usize::try_from(end - right)?;
+        // Reads the data.
+        read_async(io, end, &mut scratch[data_off..], &mut alignment_scratch[..]).await?;
+        // Erases the block.
+        io.erase_blocks(right / blk_sz_u64, 1).await?;
+        // Read back the erased part of the block. This is necessary because the erased state
+        // can be implementation specific and not necessarily, for example, 0.
+        read_async(io, right, &mut scratch[..data_off], &mut alignment_scratch[..]).await?;
+        // Writes back the part of data that should not be erased.
+        write_async(io, right, &mut scratch[..], &mut alignment_scratch[..]).await?;
+    }
+
+    Ok(())
 }

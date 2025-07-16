@@ -38,7 +38,7 @@ pub use gpt::{
 };
 
 mod algorithm;
-pub use algorithm::{read_async, write_async};
+use algorithm::{erase_async, read_async, write_async};
 
 pub mod ram_block;
 pub use ram_block::RamBlockIo;
@@ -109,6 +109,8 @@ where
 pub struct BlockInfo {
     /// Native block size of the block device.
     pub block_size: u64,
+    /// The size of an erase block in number of blocks.
+    pub erase_blocks: u64,
     /// Total number of blocks of the block device.
     pub num_blocks: u64,
     /// The alignment requirement for IO buffers. For example, many block device drivers use DMA
@@ -121,6 +123,11 @@ impl BlockInfo {
     /// Computes the total size in bytes of the block device.
     pub fn total_size(&self) -> Result<u64> {
         Ok((SafeNum::from(self.block_size) * self.num_blocks).try_into()?)
+    }
+
+    /// Returns the erase block size in bytes.
+    pub fn erase_block_size(&self) -> Result<u64> {
+        Ok((SafeNum::from(self.erase_blocks) * self.block_size).try_into()?)
     }
 }
 
@@ -189,7 +196,7 @@ pub unsafe trait BlockIo {
     ///
     /// # Returns
     ///
-    /// Returns `Ok` if exactly out.len() number of bytes are read. In this case only, if the
+    /// Returns `Ok(())` if exactly out.len() number of bytes are read. In this case only, if the
     /// backing buffer for `out` is [MaybeUninit], then it's safe to convert it to a `&[u8]` and
     /// read the now-initialized data.
     async fn read_blocks<'a>(
@@ -209,8 +216,21 @@ pub unsafe trait BlockIo {
     ///
     /// # Returns
     ///
-    /// Returns true if exactly data.len() number of bytes are written. Otherwise false.
+    /// Returns Ok(()) if exactly data.len() number of bytes are written. Otherwise errors.
     async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()>;
+
+    /// Erases blocks of data on the device.
+    ///
+    /// # Args
+    ///
+    /// * `blk_offset`: Offset in number of erase blocks.
+    ///
+    /// * `num_blks`: number of erase blocks to erase.
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if erase is successful. Error otherwise.
+    async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<()>;
 
     /// Same as `Self::read_blocks()` but IO is blocking.
     ///
@@ -229,6 +249,11 @@ pub unsafe trait BlockIo {
     /// Same as `Self::write_blocks` but IO is blocking
     fn write_blocks_sync(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
         block_on(self.write_blocks(blk_offset, data))
+    }
+
+    /// Same as `Self::erase_blocks` but IO is blocking
+    fn erase_blocks_sync(&mut self, blk_offset: u64, num_blks: u64) -> Result<()> {
+        block_on(self.erase_blocks(blk_offset, num_blks))
     }
 }
 
@@ -256,6 +281,10 @@ unsafe impl<T: BlockIo> BlockIo for BlockIoSync<T> {
     async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
         self.0.write_blocks_sync(blk_offset, data)
     }
+
+    async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<()> {
+        self.erase_blocks_sync(blk_offset, num_blks)
+    }
 }
 
 // SAFETY:
@@ -281,6 +310,10 @@ where
         self.deref_mut().write_blocks(blk_offset, data).await
     }
 
+    async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<()> {
+        self.deref_mut().erase_blocks(blk_offset, num_blks).await
+    }
+
     fn read_blocks_sync<'a>(
         &mut self,
         blk_offset: u64,
@@ -291,6 +324,10 @@ where
 
     fn write_blocks_sync(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
         self.deref_mut().write_blocks_sync(blk_offset, data)
+    }
+
+    fn erase_blocks_sync(&mut self, blk_offset: u64, num_blks: u64) -> Result<()> {
+        self.deref_mut().erase_blocks_sync(blk_offset, num_blks)
     }
 }
 
@@ -309,6 +346,10 @@ unsafe impl BlockIo for BlockIoNull {
     }
 
     async fn write_blocks(&mut self, _: u64, _: &mut [u8]) -> Result<()> {
+        unimplemented!();
+    }
+
+    async fn erase_blocks(&mut self, _: u64, _: u64) -> Result<()> {
         unimplemented!();
     }
 }
@@ -489,6 +530,22 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
             offset += to_write;
         }
         Ok(())
+    }
+
+    /// Performs IO-specific erase.
+    ///
+    /// # Args
+    ///
+    /// * `offset`: Offset in number of bytes.
+    /// * `size`: Number of bytes erase.
+    /// * `scratch`: A scratch buffer that will be used for partial block erase when offset and
+    ///   size are not multiples of block size. The buffer must be at least the erase block size.
+    ///
+    ///  # Returns
+    ///
+    /// * Return Err(Error::BufferTooSmall(_)) if `scratch` is less than block size.
+    pub async fn erase(&mut self, offset: u64, size: u64, scratch: &mut [u8]) -> Result<()> {
+        erase_async(&mut self.io, offset, size, scratch, &mut self.scratch).await
     }
 
     /// Loads and syncs GPT from a block device.
@@ -801,6 +858,22 @@ mod test {
         assert_eq!(expected, data, "Input is modified. Test case {:?}", case,);
     }
 
+    fn erase_test_helper(case: &TestCase) {
+        let data = (0..case.storage_size).map(|v| v as u8).collect::<Vec<_>>();
+        let mut disk =
+            TestDisk::new_ram_alloc(case.alignment, case.block_size, data.clone()).unwrap();
+        let mut erase_scratch = vec![0u8; case.block_size.try_into().unwrap()];
+        let rw_off = usize::try_from(case.rw_offset).unwrap();
+        let rw_sz = usize::try_from(case.rw_size).unwrap();
+        let orig = disk.io().storage()[rw_off..][..rw_sz].to_vec();
+        block_on(disk.erase(case.rw_offset, case.rw_size, &mut erase_scratch[..])).unwrap();
+        let erased = &mut disk.io().storage()[rw_off..][..rw_sz];
+        erased.iter_mut().for_each(|v| *v = !*v);
+        assert_eq!(erased.to_vec(), orig, "Erase test failed. Test case {:?}", case);
+        // The rest of the sotrage should be unchanged.
+        assert_eq!(data, disk.io().storage());
+    }
+
     macro_rules! read_write_test {
         ($name:ident, $x0:expr, $x1:expr, $x2:expr, $x3:expr, $x4:expr, $x5:expr) => {
             mod $name {
@@ -845,6 +918,23 @@ mod test {
                             assert!(blk.io().num_writes <= READ_WRITE_BLOCKS_UPPER_BOUND);
                         },
                     );
+                }
+
+                #[test]
+                fn erase_test() {
+                    // For test, an erase block is 2 native blocks, thus scale all parameters by
+                    // double, except block size.
+                    let (x0, x1, x2, x3, x4, x5) =
+                        (2 * $x0, 2 * $x1, 2 * $x2, 2 * $x3, 2 * $x4, 2 * $x5);
+                    erase_test_helper(&TestCase::new(x0, x1, x2, x3, x4, x5));
+                }
+
+                #[test]
+                fn erase_scaled_test() {
+                    // Scaled all parameters by double and test again.
+                    let (x0, x1, x2, x3, x4, x5) =
+                        (4 * $x0, 4 * $x1, 4 * $x2, 4 * $x3, 2 * $x4, 4 * $x5);
+                    erase_test_helper(&TestCase::new(x0, x1, x2, x3, x4, x5));
                 }
             }
         };
