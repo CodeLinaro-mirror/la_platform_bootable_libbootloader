@@ -17,7 +17,7 @@
 use crate::{
     efi_call,
     protocol::{Protocol, ProtocolInfo},
-    EventNotify, EventType, Tpl,
+    EfiEntry, EventNotify, EventType, Tpl,
 };
 use bytes::buf::UninitSlice;
 use core::{
@@ -40,26 +40,26 @@ impl ProtocolInfo for BlockIo2Protocol {
         EfiGuid::new(0xa77b2472, 0xe282, 0x4e9f, [0xa2, 0x45, 0xc2, 0xc0, 0xe2, 0x7b, 0xbc, 0xc1]);
 }
 
+/// Helper for waiting an AtomicBool to become true while regularly calling EFI CheckEvent().
+pub(crate) async fn wait_completion(entry: &EfiEntry, complete: &AtomicBool) {
+    while !complete.load(Ordering::Relaxed) {
+        let bs = entry.system_table().boot_services();
+        // UEFI implementation such as that of u-boot has no real interrupt. It relies on UEFI
+        // app regularly calling into UEFI API to have a chance to process timer and other
+        // events. Therefore here we make a call to CheckEvent() with a NULL event pointer. For
+        // UEFI platforms that do have interrupt, we assume this is a noop with little to no
+        // overhead. It should always return EFI_INVALID_PARAMETER according to UEFI spec.
+        //
+        // SAFETY:
+        // * efi_call checks that `check_event` is a valid function pointer before calling.
+        // * All parameters are valid and no memory is retained.
+        let _ = unsafe { efi_call!(bs.boot_services.check_event, null_mut()) };
+        yield_now().await;
+    }
+}
+
 // Protocol interface wrappers.
 impl Protocol<'_, BlockIo2Protocol> {
-    /// Helper for waiting an AtomicBool to become true.
-    async fn wait_completion(&self, complete: &AtomicBool) {
-        while !complete.load(Ordering::Relaxed) {
-            let bs = self.efi_entry().system_table().boot_services();
-            // UEFI implementation such as that of u-boot has no real interrupt. It relies on UEFI
-            // app regularly calling into UEFI API to have a chance to process timer and other
-            // events. Therefore here we make a call to CheckEvent() with a NULL event pointer. For
-            // UEFI platforms that do have interrupt, we assume this is a noop with little to no
-            // overhead. It should always return EFI_INVALID_PARAMETER according to UEFI spec.
-            //
-            // SAFETY:
-            // * efi_call checks that `check_event` is a valid function pointer before calling.
-            // * All parameters are valid and no memory is retained.
-            let _ = unsafe { efi_call!(bs.boot_services.check_event, null_mut()) };
-            yield_now().await;
-        }
-    }
-
     /// Wraps `EfiBlockIo2Protocol.read_blocks_ex`.
     pub async fn read_blocks_ex<'a>(
         &self,
@@ -99,7 +99,7 @@ impl Protocol<'_, BlockIo2Protocol> {
                 buffer.as_mut_ptr() as _
             )?;
         }
-        assert_return(self.wait_completion(&complete)).await;
+        assert_return(wait_completion(self.efi_entry(), &complete)).await;
         efi_status_to_result(token.transaction_status)
     }
 
@@ -126,7 +126,7 @@ impl Protocol<'_, BlockIo2Protocol> {
                 buffer.as_mut_ptr() as _
             )?;
         }
-        assert_return(self.wait_completion(&complete)).await;
+        assert_return(wait_completion(self.efi_entry(), &complete)).await;
         efi_status_to_result(token.transaction_status)
     }
 
@@ -143,7 +143,7 @@ impl Protocol<'_, BlockIo2Protocol> {
             EfiBlockIo2Token { event: event.efi_event, transaction_status: EFI_STATUS_NOT_READY };
         // SAFETY: See safety comment for `Self::read_blocks_ex()`.
         unsafe { efi_call!(self.interface()?.flush_blocks_ex, self.interface, &mut token) }?;
-        assert_return(self.wait_completion(&complete)).await;
+        assert_return(wait_completion(self.efi_entry(), &complete)).await;
         efi_status_to_result(token.transaction_status)
     }
 

@@ -28,6 +28,7 @@
 #include "protocols/block_io_protocol.h"
 #include "protocols/device_path_protocol.h"
 #include "protocols/dt_fixup_protocol.h"
+#include "protocols/erase_block_protocol.h"
 #include "protocols/gbl_efi_ab_slot_protocol.h"
 #include "protocols/gbl_efi_avb_protocol.h"
 #include "protocols/gbl_efi_avf_protocol.h"
