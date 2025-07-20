@@ -192,6 +192,11 @@ where
         self.disk.try_borrow_mut().map_err(|_| Error::NotReady)
     }
 
+    /// Gets the block io object `B` from the disk.
+    pub fn get_blk_io(&self) -> Result<RefMut<'_, B>, Error> {
+        Ok(RefMut::map(self.get_disk()?, |v| v.io()))
+    }
+
     /// Gets an instance of `PartitionIo` for a partition.
     ///
     /// If `part` is `None`, an IO for the whole block device is returned.
