@@ -66,6 +66,11 @@ impl DtTableHeaderEntry {
         u32::from_be(self.0.rev)
     }
 
+    /// Get custom data handling the bytes order
+    fn custom(self) -> [u32; 4] {
+        self.0.custom.map(u32::from_be)
+    }
+
     /// Get dt_size handling the bytes order
     fn dt_size(self) -> u32 {
         u32::from_be(self.0.dt_size)
@@ -175,7 +180,7 @@ impl<'a> DtTableImage<'a> {
 
         Ok(DtTableEntry {
             dtb: dtb_buffer,
-            metadata: DtTableMetadata { id: entry.id(), rev: entry.rev(), custom: entry.0.custom },
+            metadata: DtTableMetadata { id: entry.id(), rev: entry.rev(), custom: entry.custom() },
         })
     }
 }
@@ -197,12 +202,12 @@ mod test {
 
         assert_eq!(
             first_entry.metadata,
-            DtTableMetadata { id: 1, rev: 0, custom: Default::default() },
+            DtTableMetadata { id: 1, rev: 0, custom: [0, 1, 2, 3] },
             "First dttable entry is incorrect"
         );
         assert_eq!(
             second_entry.metadata,
-            DtTableMetadata { id: 2, rev: 0, custom: Default::default() },
+            DtTableMetadata { id: 2, rev: 0, custom: [0, 1, 2, 3] },
             "Second dttable entry is incorrect"
         );
 
@@ -228,12 +233,12 @@ mod test {
 
         assert_eq!(
             first_entry.metadata,
-            DtTableMetadata { id: 1, rev: 0, custom: Default::default() },
+            DtTableMetadata { id: 1, rev: 0, custom: [0, 1, 2, 3] },
             "First dttable entry metadata is incorrect"
         );
         assert_eq!(
             second_entry.metadata,
-            DtTableMetadata { id: 2, rev: 0, custom: Default::default() },
+            DtTableMetadata { id: 2, rev: 0, custom: [0, 1, 2, 3] },
             "Second dttable entry metadata is incorrect"
         );
 
