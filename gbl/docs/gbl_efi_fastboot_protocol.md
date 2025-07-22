@@ -40,7 +40,7 @@ requires cooperation with vendor firmware, OEM commands,
 #define GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8 32
 
 typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
-  UINT32                                        Revision
+  UINT64                                        Revision
   CHAR8                                         SerialNumber[GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8];
   GBL_EFI_FASTBOOT_GET_VAR                      GetVar;
   GBL_EFI_FASTBOOT_GET_VAR_ALL                  GetVarAll;

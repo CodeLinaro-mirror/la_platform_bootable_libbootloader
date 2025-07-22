@@ -82,6 +82,11 @@ impl Protocol<'_, GblAvfProtocol> {
 
         Ok(used_size)
     }
+
+    /// Wraps `GBL_EFI_AVF_PROTOCOL.revision()`.
+    pub fn revision(&self) -> Result<u64> {
+        Ok(self.interface()?.revision)
+    }
 }
 
 #[cfg(test)]

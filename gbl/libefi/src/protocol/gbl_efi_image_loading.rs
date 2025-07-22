@@ -196,6 +196,11 @@ impl Protocol<'_, GblImageLoadingProtocol> {
 
         Ok(image_buffer)
     }
+
+    /// Wraps `GBL_EFI_IMAGE_LOADING_PROTOCOL.revision()`.
+    pub fn revision(&self) -> Result<u64> {
+        Ok(self.interface()?.revision)
+    }
 }
 
 #[cfg(test)]

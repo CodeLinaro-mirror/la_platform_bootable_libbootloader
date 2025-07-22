@@ -37,8 +37,10 @@ typedef enum GBL_EFI_FASTBOOT_RX_MODE {
 } GblEfiFastbootRxMode;
 
 typedef struct GblEfiFastbootTransportProtocol {
+  // Revision of the protocol supported.
+  // Currently must contain 0x0000000300000000
   uint64_t revision;
-  const char *description;
+  const char* description;
   EfiStatus (*start)(struct GblEfiFastbootTransportProtocol* self);
   EfiStatus (*stop)(struct GblEfiFastbootTransportProtocol* self);
   EfiStatus (*receive)(struct GblEfiFastbootTransportProtocol* self,

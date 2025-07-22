@@ -56,22 +56,6 @@ use alloc::vec::Vec;
 #[cfg(not(test))]
 mod allocation;
 
-#[cfg(test)]
-mod allocation {
-    /// Try to print via `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL` in `EFI_SYSTEM_TABLE.ConOut`.
-    ///
-    /// Errors are ignored.
-    #[macro_export]
-    macro_rules! efi_try_print {
-        ($( $x:expr ),* $(,)? ) => {
-            use core::fmt::Write;
-            $crate::test::efi_call_traces().with(|traces| {
-                write!(traces.borrow_mut().console_out_trace, $($x,)*).unwrap();
-            });
-        };
-    }
-}
-
 #[cfg(not(test))]
 pub mod libc;
 
@@ -1103,6 +1087,22 @@ pub mod hash2 {
     /// These helper types have to live with the protocol implementation but are
     /// higher-level wrappers that don't directly correspond to the protocol API.
     pub use crate::protocol::hash2::{hash, HashAlgorithm, Hasher, Sha1, Sha256, Sha512};
+}
+
+#[cfg(test)]
+mod allocation {
+    /// Try to print via `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL` in `EFI_SYSTEM_TABLE.ConOut`.
+    ///
+    /// Errors are ignored.
+    #[macro_export]
+    macro_rules! efi_try_print {
+        ($( $x:expr ),* $(,)? ) => {
+            use core::fmt::Write;
+            $crate::test::efi_call_traces().with(|traces| {
+                write!(traces.borrow_mut().console_out_trace, $($x,)*).unwrap();
+            });
+        };
+    }
 }
 
 #[cfg(test)]

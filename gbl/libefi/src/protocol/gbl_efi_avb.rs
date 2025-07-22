@@ -248,6 +248,11 @@ impl Protocol<'_, GblAvbProtocol> {
             )
         }
     }
+
+    /// Wraps `GBL_EFI_AVB_PROTOCOL.revision()`.
+    pub fn revision(&self) -> Result<u64> {
+        Ok(self.interface()?.revision)
+    }
 }
 
 #[cfg(test)]

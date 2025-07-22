@@ -35,12 +35,17 @@
 
 typedef struct GblEfiFastbootPolicy {
   // Indicates whether device can be unlocked
-  bool can_unlock;
-  // Device firmware supports 'critical' partition locking
-  bool has_critical_lock;
-  // Indicates whether device allows booting from image loaded directly from
-  // RAM.
-  bool can_ram_boot;
+  // A value of '0' is falsy, all other values are truthy.
+  uint8_t can_unlock;
+  // Device firmware supports 'critical' partition locking.
+  // A value of '0' is falsy, all other values are truthy.
+  uint8_t has_critical_lock;
+  // Indicates whether the device allows booting from an image loaded directly
+  // from RAM.
+  // A value of '0' is falsy, all other values are truthy.
+  uint8_t can_ram_boot;
+  // Reserved for future use.
+  uint8_t reserved[5];
 } GblEfiFastbootPolicy;
 
 // Callback function pointer passed to GblEfiFastbootProtocol.get_var_all.
@@ -73,7 +78,8 @@ typedef enum GBL_EFI_FASTBOOT_PARTITION_PERMISSION_FLAGS {
 
 typedef struct GblEfiFastbootProtocol {
   // Revision of the protocol supported.
-  uint32_t version;
+  // Currently must contain 0x0000000300000000
+  uint64_t revision;
   // Null-terminated UTF-8 encoded string
   char8_t serial_number[GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8];
 
@@ -101,7 +107,7 @@ typedef struct GblEfiFastbootProtocol {
   EfiStatus (*set_lock)(struct GblEfiFastbootProtocol* this, bool critical,
                         bool lock);
   EfiStatus (*get_lock)(struct GblEfiFastbootProtocol* this, bool critical,
-                        bool *out_lock);
+                        bool* out_lock);
 
   // Local session methods
   EfiStatus (*start_local_session)(struct GblEfiFastbootProtocol* this,

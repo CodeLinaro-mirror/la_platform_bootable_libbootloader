@@ -198,8 +198,8 @@ impl<'a> Protocol<'a, GblSlotProtocol> {
         unsafe { efi_call!(self.interface()?.flush, self.interface) }
     }
 
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.version`
-    pub fn version(&self) -> Result<u32> {
-        Ok(self.interface()?.version)
+    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.revision`
+    pub fn revision(&self) -> Result<u64> {
+        Ok(self.interface()?.revision)
     }
 }

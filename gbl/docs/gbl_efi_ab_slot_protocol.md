@@ -40,18 +40,18 @@ preserved across warm reboots, but may not survive a cold reboot of the device.
   }
 ```
 
-### Protocol Version
+### Protocol Revision
 
 ```c
-#define GBL_EFI_AB_SLOT_PROTOCOL_VERSION 0x00010000
+#define GBL_EFI_AB_SLOT_PROTOCOL_REVISION 0x0000000300000000
 ```
 
 ### Protocol Interface Structure
 
 ```c
 typedef struct GBL_EFI_AB_SLOT_PROTOCOL {
-  // Currently must contain 0x00010000
-  UINT32                              Version;
+  // Currently must contain 0x0000000300000000
+  UINT64                              Revision;
   GBL_EFI_AB_SLOT_LOAD_BOOT_DATA      LoadBootData;
   GBL_EFI_AB_SLOT_GET_SLOT_INFO       GetSlotInfo;
   GBL_EFI_AB_SLOT_GET_CURRENT_SLOT    GetCurrentSlot;
@@ -67,7 +67,7 @@ typedef struct GBL_EFI_AB_SLOT_PROTOCOL {
 
 ### Parameters
 
-**Version**
+**Revision**
 
 The revision to which the `GBL_EFI_AB_SLOT_PROTOCOL` adheres.
 All future version must be backwards compatible.

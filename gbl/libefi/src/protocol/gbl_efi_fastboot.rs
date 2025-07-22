@@ -338,9 +338,9 @@ impl Protocol<'_, GblFastbootProtocol> {
         Ok(from_utf8(&serial_number[..null_idx])?)
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.version`
-    pub fn version(&self) -> Result<u32> {
-        Ok(self.interface()?.version)
+    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.revision`
+    pub fn revision(&self) -> Result<u64> {
+        Ok(self.interface()?.revision)
     }
 }
 
