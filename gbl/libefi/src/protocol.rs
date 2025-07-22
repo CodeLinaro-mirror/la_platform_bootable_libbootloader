@@ -42,6 +42,9 @@ pub mod simple_text_input;
 pub mod simple_text_output;
 pub mod timestamp;
 
+pub(super) mod hash2;
+pub(crate) mod service_binding;
+
 /// ProtocolInfo provides GUID info and the EFI data structure type for a protocol.
 pub trait ProtocolInfo {
     /// Data structure type of the interface.

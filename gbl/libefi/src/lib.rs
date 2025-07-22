@@ -93,7 +93,7 @@ use liberror::{Error, Result};
 use libutils::aligned_subslice;
 use protocol::{
     simple_text_output::SimpleTextOutputProtocol,
-    {Protocol, ProtocolImpl},
+    {Protocol, ProtocolImpl, ProtocolInfo},
 };
 use zerocopy::{FromBytes, Ref};
 
@@ -595,6 +595,36 @@ impl<'a> BootServices<'a> {
             )
         }
     }
+
+    /// Wrapper of `EFI_BOOT_SERVICE.HandleProtocol()`.
+    pub fn handle_protocol<T: ProtocolInfo>(
+        &self,
+        handle: DeviceHandle,
+    ) -> Result<Protocol<'a, T>> {
+        let mut interface: *mut T::InterfaceType = null_mut();
+
+        // SAFETY:
+        // `interface` is an output parameter. It is not retained and outlives the call.
+        unsafe {
+            efi_call!(
+                self.boot_services.handle_protocol,
+                handle.0,
+                &T::GUID,
+                &mut interface as *mut _ as *mut _
+            )?;
+        }
+
+        if interface.is_null() {
+            Err(Error::Unsupported)
+        } else {
+            // SAFETY:
+            // * `interface` is not NULL.
+            // * `interface` is not retained by `handle_protocol`.
+            // * It is the responsibility of `boot_services.handle_protocol`
+            //   to set `interface` to a valid value.
+            Ok(unsafe { Protocol::<T>::new(handle, interface, self.efi_entry) })
+        }
+    }
 }
 
 /// `RuntimeServices` provides methods for accessing various EFI_RUNTIME_SERVICES interfaces.
@@ -1032,6 +1062,14 @@ pub fn panic(panic: &PanicInfo) -> ! {
     reset();
 }
 
+/// Cryptographic hash interfaces based on the EfiHash2Protocol.
+pub mod hash2 {
+    /// Re-export public interfaces.
+    /// These helper types have to live with the protocol implementation but are
+    /// higher-level wrappers that don't directly correspond to the protocol API.
+    pub use crate::protocol::hash2::{hash, HashAlgorithm, Hasher, Sha1, Sha256, Sha512};
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1063,6 +1101,7 @@ mod test {
         pub free_pool_trace: FreePoolTrace,
         pub open_protocol_trace: OpenProtocolTrace,
         pub close_protocol_trace: CloseProtocolTrace,
+        pub handle_protocol_trace: HandleProtocolTrace,
         pub locate_handle_buffer_trace: LocateHandleBufferTrace,
         pub get_memory_map_trace: GetMemoryMapTrace,
         pub exit_boot_services_trace: ExitBootServicespTrace,
@@ -1174,6 +1213,52 @@ mod test {
             ));
             EFI_STATUS_SUCCESS
         })
+    }
+
+    /// Mock of the `EFI_BOOT_SERVICE.HandleProtocol` C API in test environment.
+    ///
+    /// # Safety
+    ///
+    ///   Caller should guarantee that `protocol_guid` points to a valid memory location.
+    ///   Caller should guarantee that `interface` is valid to write to with a
+    ///   value of type `<T: ProtocolInfo>::InterfaceType` such that `T::GUID` is equal
+    ///   to the value of `protocol_guid`.
+    unsafe extern "efiapi" fn handle_protocol(
+        handle: EfiHandle,
+        protocol_guid: *const EfiGuid,
+        interface: *mut *mut core::ffi::c_void,
+    ) -> EfiStatus {
+        EFI_CALL_TRACES.with(|traces| {
+            if protocol_guid.is_null() {
+                return EFI_STATUS_INVALID_PARAMETER;
+            }
+
+            let mut traces = traces.borrow_mut();
+            traces
+                .handle_protocol_trace
+                .inputs
+                // SAFETY:
+                // * `protocol_guid` is not NULL.
+                // * It is the caller's responsibility to pass a pointer whose pointee
+                //   lives for 'static.
+                .push_back((DeviceHandle(handle), unsafe { *protocol_guid }));
+
+            let intf = traces.handle_protocol_trace.outputs.pop_front().unwrap();
+            if interface.is_null() {
+                EFI_STATUS_INVALID_PARAMETER
+            } else {
+                // SAFETY:
+                // * `interface` is not NULL.
+                unsafe { *interface = intf };
+                EFI_STATUS_SUCCESS
+            }
+        })
+    }
+
+    #[derive(Default)]
+    pub struct HandleProtocolTrace {
+        pub inputs: VecDeque<(DeviceHandle, EfiGuid)>,
+        pub outputs: VecDeque<*mut core::ffi::c_void>,
     }
 
     /// EFI_BOOT_SERVICE.LocateHandleBuffer.
@@ -1435,6 +1520,7 @@ mod test {
         boot_services.free_pool = Some(free_pool);
         boot_services.open_protocol = Some(open_protocol);
         boot_services.close_protocol = Some(close_protocol);
+        boot_services.handle_protocol = Some(handle_protocol);
         boot_services.locate_handle_buffer = Some(locate_handle_buffer);
         boot_services.get_memory_map = Some(get_memory_map);
         boot_services.exit_boot_services = Some(exit_boot_services);

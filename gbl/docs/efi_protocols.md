@@ -80,6 +80,15 @@ This logging requires all three of:
 * Device Path to Text Protocol
 * Loaded Image Protocol
 
+### Hash2Protocol
+
+* [`EFI_HASH2_PROTOCOL`](https://uefi.org/specs/UEFI/2.11/37_Secure_Technologies.html#efi-hash2-protocol)
+* optional: enables optimized, incremental cryptographic hash algorithms
+
+Used as part of AVB signature checking. Implementations can use device specific extensions
+to accelerate cryptographic hash functions.
+If not present GBL will use hash implementations provided by BoringSSL.
+
 ### Memory Allocation Services
 
 * [Memory allocation services](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#memory-allocation-services)
