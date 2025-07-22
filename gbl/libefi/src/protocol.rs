@@ -26,6 +26,7 @@ pub mod block_io;
 pub mod block_io2;
 pub mod device_path;
 pub mod dt_fixup;
+pub mod erase_block;
 pub mod gbl_efi_ab_slot;
 pub mod gbl_efi_avb;
 pub mod gbl_efi_avf;

@@ -18,7 +18,10 @@ use core::cmp::max;
 use efi::{
     efi_println,
     profiling::EfiProfileBackend,
-    protocol::{block_io::BlockIoProtocol, block_io2::BlockIo2Protocol, Protocol},
+    protocol::{
+        block_io::BlockIoProtocol, block_io2::BlockIo2Protocol, erase_block::EraseBlockProtocol,
+        Protocol,
+    },
     EfiEntry,
 };
 use efi_types::{defs::EFI_TPL_APPLICATION, protocol::block_io::BlockIo as _, tpl::TplLocked};
@@ -38,6 +41,7 @@ use safemath::SafeNum;
 pub struct EfiBlockDeviceIo<'a> {
     block_io: Protocol<'a, BlockIoProtocol>,
     block_io2: Option<Protocol<'a, BlockIo2Protocol>>,
+    erase: Option<Protocol<'a, EraseBlockProtocol>>,
     /// We don't currently support hot-plugging disks so we cache the media ID
     /// upon creation; if this media ever goes away, the APIs will start
     /// failing rather than trying to switch to a new ID.
@@ -78,9 +82,10 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
         .or(Err(Error::BlockIoError))
     }
 
-    async fn erase_blocks(&mut self, _: u64, _: u64) -> Result<(), Error> {
-        // TODO(b/418942620): To implement using EFI_ERASE_BLOCK_PROTOCOL.
-        Err(Error::Unsupported)
+    async fn erase_blocks(&mut self, blk_off: u64, num_blks: u64) -> Result<(), Error> {
+        let protocol = self.erase.as_ref().ok_or(Error::Unsupported)?;
+        let sz = SafeNum::from(num_blks) * protocol.erase_length_granularity()?;
+        protocol.erase(self.media_id, blk_off, sz.try_into()?).await
     }
 
     fn read_blocks_sync<'a>(
@@ -124,16 +129,19 @@ pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, E
             continue;
         }
         let block_io2 = bs.open_protocol::<BlockIo2Protocol>(*handle).ok();
+        let erase = bs.open_protocol::<EraseBlockProtocol>(*handle).ok();
+        let erase_blocks =
+            erase.as_ref().and_then(|v| v.erase_length_granularity().ok()).unwrap_or(1);
         let block_info = BlockInfo {
             // `block_size` is u32 so can always convert to u64
             block_size: media.block_size as u64,
-            // TODO(b/418942620): To implement using EFI_ERASE_BLOCK_PROTOCOL.
-            erase_blocks: 1,
+            erase_blocks: erase_blocks.into(),
             num_blocks: (SafeNum::from(media.last_block) + 1).try_into()?,
             // `io_align` is u32 so can always convert to u64
             alignment: max(1, media.io_align as u64),
         };
-        let blk_io = EfiBlockDeviceIo { block_io, block_io2, media_id: media.media_id, block_info };
+        let blk_io =
+            EfiBlockDeviceIo { block_io, block_io2, erase, media_id: media.media_id, block_info };
         // TODO(b/357688291): Support raw partition based on device path info.
         let disk = GblDisk::new_gpt(
             Disk::new_alloc_scratch(blk_io).unwrap(),

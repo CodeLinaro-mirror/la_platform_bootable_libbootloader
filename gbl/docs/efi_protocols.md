@@ -21,11 +21,19 @@ might want to use this simpler API.
 ### BlockIo2Protocol
 
 * [`EFI_BLOCK_IO2_PROTOCOL`](https://uefi.org/specs/UEFI/2.10/13_Protocols_Media_Access.html#block-i-o-2-protocol)
-* optional: enables performance optimizations
+* optional: enables performance optimizations.
 
 If provided, GBL may use this protocol instead of the Block I/O Protocol as a
 performance optimization; for example during fastboot flashing it may flash to
 disk while concurrently receiving the next image over USB.
+
+### EraseBlockProtocol
+
+* [`EFI_ERASE_BLOCK_PROTOCOL`](https://uefi.org/specs/UEFI/2.10/13_Protocols_Media_Access.html#erase-block-protocol)
+* optional: enables block IO specific erase.
+
+If provided, GBL may use this protocol when erasing data on a block device
+instead of writing zeroes.
 
 ### DevicePathProtocol
 

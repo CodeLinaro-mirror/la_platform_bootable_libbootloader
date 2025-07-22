@@ -1,0 +1,70 @@
+// Copyright 2025, The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Rust wrapper for `EFI_ERASE_BLOCK_PROTOCOL`.
+
+use crate::{
+    efi_call,
+    protocol::{block_io2::wait_completion, Protocol, ProtocolInfo},
+    EventNotify, EventType, Tpl,
+};
+use core::sync::atomic::{AtomicBool, Ordering};
+use efi_types::{EfiEraseBlockProtocol, EfiEraseBlockToken, EfiGuid, EFI_STATUS_NOT_READY};
+use gbl_async::assert_return;
+use liberror::{efi_status_to_result, Result};
+
+/// EFI_ERASE_BLOCK_PROTOCOL
+pub struct EraseBlockProtocol;
+
+impl ProtocolInfo for EraseBlockProtocol {
+    type InterfaceType = EfiEraseBlockProtocol;
+
+    const GUID: EfiGuid =
+        EfiGuid::new(0x95A9A93E, 0xa86e, 0x4926, [0xaa, 0xef, 0x99, 0x18, 0xe7, 0x72, 0xd9, 0x87]);
+}
+
+// Protocol interface wrappers.
+impl Protocol<'_, EraseBlockProtocol> {
+    /// Returns `EFI_ERASE_BLOCK_PROTOCOL.erase_length_granularity`
+    pub fn erase_length_granularity(&self) -> Result<u32> {
+        Ok(self.interface()?.erase_length_granularity)
+    }
+
+    /// Wrapper of `EFI_ERASE_BLOCK_PROTOCOL.erase`
+    pub async fn erase(&self, media_id: u32, lba: u64, size: usize) -> Result<()> {
+        let bs = self.efi_entry().system_table().boot_services();
+        let complete = AtomicBool::new(false);
+        let mut notify_fn = &mut |_| complete.store(true, Ordering::Relaxed);
+        let mut notify = EventNotify::new(Tpl::Callback, &mut notify_fn);
+        // SAFETY: the notification callback never allocates, deallocates, or panics.
+        let event =
+            unsafe { bs.create_event_with_notification(EventType::NotifySignal, &mut notify) }?;
+        let mut token =
+            EfiEraseBlockToken { event: event.efi_event, transaction_status: EFI_STATUS_NOT_READY };
+        // SAFETY:
+        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
+        //    established by `Protocol::new()`.
+        // * `self.interface` is input parameter and will not be retained. It outlives the call.
+        // * The function waits until `complete` is marked true by the event notification function,
+        //   which guarantees that `token` are not being retained by the UEFI firmware anymore.
+        // * `assert_return` asserts that the wait for `complete = true` must complete. Otherwise
+        //   it panics. This makes sure that we don't violate aliasing rule due to the top level
+        //   Future getting dropped before it can execute to completion.
+        unsafe {
+            efi_call!(self.interface()?.erase, self.interface, media_id, lba, &mut token, size)?;
+        }
+        assert_return(wait_completion(self.efi_entry(), &complete)).await;
+        efi_status_to_result(token.transaction_status)
+    }
+}
