@@ -241,7 +241,7 @@ unsafe impl GlobalAlloc for EfiAllocator {
         (|| -> Result<*mut u8> {
             let (by_pages, alloc_sz) = Self::select_alloc_type(&layout)?;
             let ptr = match by_pages {
-                true => self.allocate(alloc_sz),
+                false => self.allocate(alloc_sz),
                 _ => self.allocate_pages(alloc_sz)?,
             };
 
@@ -283,7 +283,7 @@ unsafe impl GlobalAlloc for EfiAllocator {
         };
 
         match by_pages {
-            true => self.deallocate(ptr),
+            false => self.deallocate(ptr),
             _ => self.deallocate_pages(ptr, alloc_sz),
         };
     }
