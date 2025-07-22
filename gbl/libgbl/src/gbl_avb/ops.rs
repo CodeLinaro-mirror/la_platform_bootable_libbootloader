@@ -25,10 +25,11 @@ use avb::{
     Ops as AvbOps, PublicKeyForPartitionInfo, SlotVerifyData, SHA256_DIGEST_SIZE,
     SHA512_DIGEST_SIZE,
 };
-use core::fmt::Write;
 use core::{
     cmp::{max, min},
     ffi::CStr,
+    fmt::Write,
+    mem::take,
 };
 use liberror::Error;
 use safemath::SafeNum;
@@ -45,13 +46,21 @@ pub const AVB_DIGEST_KEY: &str = "androidboot.vbmeta.digest";
 // AVB cert tracks versions for the PIK and PSK; PRK cannot be changed so has no version info.
 const AVB_CERT_NUM_KEY_VERSIONS: usize = 2;
 
+/// Represents the state of preloaded buffer
+pub enum PreloadBufferState<'a> {
+    /// Loaded already
+    Loaded(&'a [u8]),
+    /// To be loaded.
+    ToLoad(&'a mut [u8]),
+}
+
 /// Implements avb ops callbacks for [GblOps].
-pub struct GblAvbOps<'a, 'b, T> {
+pub struct GblAvbOps<'a: 'c, 'b, 'c, T> {
     /// The underlying [GblOps].
     pub gbl_ops: &'b mut T,
     slot: Option<SlotIndex>,
     /// Slotless partitions pre-loaded by the implementation. Provided to avoid redundant IO.
-    preloaded_partitions: &'a [(&'a str, &'a [u8])],
+    preloaded_partitions: &'c mut [(&'a str, PreloadBufferState<'a>)],
     /// Used for storing key versions to be set (location, version).
     ///
     /// These will initially be `None`, but if using the cert extensions they will be updated during
@@ -67,12 +76,12 @@ pub struct GblAvbOps<'a, 'b, T> {
     key_validation_status: Option<KeyValidationStatus>,
 }
 
-impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, T> {
+impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
     /// Creates a new [GblAvbOps].
     pub fn new(
         gbl_ops: &'b mut T,
         slot: Option<SlotIndex>,
-        preloaded_partitions: &'a [(&'a str, &'a [u8])],
+        preloaded_partitions: &'c mut [(&'a str, PreloadBufferState<'a>)],
         use_cert: bool,
     ) -> Self {
         Self {
@@ -228,8 +237,10 @@ impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, T> {
             && self.read_permanent_attributes_hash() == Err(IoError::NotImplemented)
     }
 
-    /// Helper for getting entire preloaded partition buffer.
-    fn get_preloaded(&mut self, partition: &CStr) -> IoResult<&'a [u8]> {
+    /// Helper for getting the index of the buffer in `Self::preloaded_partitions` for the given
+    /// partition.
+    // We don't return the item reference because that would borrow the entire `self`.
+    fn get_preloaded_pos(&self, partition: &CStr) -> IoResult<usize> {
         let part_str = cstr_to_str(partition, IoError::NotImplemented)?;
 
         let partition_name = match self.slot {
@@ -249,8 +260,7 @@ impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, T> {
 
         self.preloaded_partitions
             .iter()
-            .find(|(name, _)| *name == partition_name)
-            .map(|(_, data)| *data)
+            .position(|(name, _)| *name == partition_name)
             .ok_or_else(|| IoError::NotImplemented)
     }
 }
@@ -277,10 +287,19 @@ fn split_slotted(partition: &str) -> Result<(&str, SlotIndex), Error> {
     Ok((partition_name, slot))
 }
 
+/// Helper for mapping disk read error to IoError.
+fn map_read_err(err: Error) -> IoError {
+    match err {
+        Error::NotFound => IoError::NoSuchPartition,
+        Error::ArithmeticOverflow(_) => IoError::RangeOutsidePartition,
+        _ => IoError::Io,
+    }
+}
+
 /// # Lifetimes
 /// * `'a`: preloaded data lifetime
 /// * `'b`: [GblOps] partition lifetime
-impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, T> {
+impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, 'c, T> {
     fn read_from_partition(
         &mut self,
         partition: &CStr,
@@ -297,13 +316,9 @@ impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, T> {
         let read_off = read_off.try_into().or(Err(IoError::RangeOutsidePartition))?;
         let read_sz =
             min(buffer.len(), read_sz.try_into().or(Err(IoError::RangeOutsidePartition))?);
-        self.gbl_ops.read_from_partition_sync(part_str, read_off, &mut buffer[..read_sz]).map_err(
-            |e| match e {
-                Error::NotFound => IoError::NoSuchPartition,
-                Error::ArithmeticOverflow(_) => IoError::RangeOutsidePartition,
-                _ => IoError::Io,
-            },
-        )?;
+        self.gbl_ops
+            .read_from_partition_sync(part_str, read_off, &mut buffer[..read_sz])
+            .map_err(map_read_err)?;
         Ok(read_sz)
     }
 
@@ -312,7 +327,22 @@ impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, T> {
         partition: &CStr,
         num_bytes: usize,
     ) -> IoResult<&'a [u8]> {
-        self.get_preloaded(partition)?.get(..num_bytes).ok_or(IoError::RangeOutsidePartition)
+        let res = &mut self.preloaded_partitions[self.get_preloaded_pos(partition)?].1;
+        match res {
+            PreloadBufferState::Loaded(v) => {
+                v.get(..num_bytes).ok_or(IoError::RangeOutsidePartition)
+            }
+            PreloadBufferState::ToLoad(v) => {
+                let out = v.get_mut(..num_bytes).ok_or(IoError::RangeOutsidePartition)?;
+                let part_str = cstr_to_str(partition, IoError::NoSuchPartition)?;
+                self.gbl_ops.read_from_partition_sync(part_str, 0, out).map_err(map_read_err)?;
+                // Note: we only take from v after everything is successful. If we take first and
+                // then there is error and we return early, the buffer is lost.
+                let buf = &mut take(v)[..num_bytes];
+                *res = PreloadBufferState::Loaded(buf);
+                Ok(buf)
+            }
+        }
     }
 
     fn validate_vbmeta_public_key(
@@ -395,12 +425,10 @@ impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, T> {
     }
 
     fn get_size_of_partition(&mut self, partition: &CStr) -> IoResult<u64> {
-        match self.get_preloaded(partition) {
-            Ok(img) => Ok(img.len().try_into().unwrap()),
-            _ => {
-                let part_str = cstr_to_str(partition, IoError::NoSuchPartition)?;
-                self.partition_size(part_str)
-            }
+        match self.get_preloaded_pos(partition).map(|v| &mut self.preloaded_partitions[v].1) {
+            Ok(PreloadBufferState::ToLoad(v)) => Ok(v.len().try_into().unwrap()),
+            Ok(PreloadBufferState::Loaded(v)) => Ok(v.len().try_into().unwrap()),
+            _ => self.partition_size(cstr_to_str(partition, IoError::NoSuchPartition)?),
         }
     }
 
@@ -459,7 +487,7 @@ impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, T> {
 }
 
 /// [GblAvbOps] always implements [CertOps], but it's only used if `use_cert` is set.
-impl<'a, 'b, T: GblOps<'a, 'b>> CertOps for GblAvbOps<'_, '_, T> {
+impl<'a, 'b, T: GblOps<'a, 'b>> CertOps for GblAvbOps<'_, '_, '_, T> {
     fn read_permanent_attributes(
         &mut self,
         attributes: &mut CertPermanentAttributes,
@@ -525,7 +553,7 @@ mod test {
         storage.add_raw_device(c"test_part", test_data(512));
 
         let mut gbl_ops = FakeGblOps::new(&storage);
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         // Positive offset.
         let mut out = [0u8; 4];
@@ -539,7 +567,7 @@ mod test {
         storage.add_raw_device(c"test_part", test_data(512));
 
         let mut gbl_ops = FakeGblOps::new(&storage);
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         // Negative offset should wrap from the end
         let mut out = [0u8; 6];
@@ -553,7 +581,7 @@ mod test {
         storage.add_raw_device(c"test_part", test_data(512));
 
         let mut gbl_ops = FakeGblOps::new(&storage);
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         // Reading past the end of the partition should truncate.
         let mut out = [0u8; 6];
@@ -567,7 +595,7 @@ mod test {
         storage.add_raw_device(c"test_part", test_data(512));
 
         let mut gbl_ops = FakeGblOps::new(&storage);
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         // Reads starting out of bounds should fail.
         let mut out = [0u8; 4];
@@ -584,7 +612,7 @@ mod test {
     #[test]
     fn read_from_partition_unknown_part() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         let mut out = [0u8; 4];
         assert_eq!(
@@ -604,8 +632,8 @@ mod test {
 
         let data = &test_data(512);
         let slice = &data[..];
-        let preloaded = [(preloaded_partition, slice)];
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, slot, &preloaded, false);
+        let mut preloaded = [(preloaded_partition, PreloadBufferState::Loaded(slice))];
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, slot, &mut preloaded, false);
 
         match expect_success {
             true => {
@@ -685,9 +713,27 @@ mod test {
     }
 
     #[test]
+    fn test_lazy_preloaded_partition() {
+        let part = c"test_part";
+        let data = test_data(512);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(part, &data[..]);
+
+        let mut out = vec![0u8; data.len()];
+        let mut preloaded = [(part.to_str().unwrap(), PreloadBufferState::ToLoad(&mut out[..]))];
+
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut preloaded[..], false);
+
+        assert_eq!(avb_ops.get_size_of_partition(part), Ok(data.len().try_into().unwrap()));
+        assert_eq!(avb_ops.get_preloaded_partition(part, data.len()).unwrap(), data);
+        assert_eq!(out, data);
+    }
+
+    #[test]
     fn set_key_version_default() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         assert_eq!(avb_ops.key_versions, [None, None]);
     }
@@ -695,7 +741,7 @@ mod test {
     #[test]
     fn set_key_version_once() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         avb_ops.set_key_version(5, 10);
         assert_eq!(avb_ops.key_versions, [Some((5, 10)), None]);
@@ -704,7 +750,7 @@ mod test {
     #[test]
     fn set_key_version_twice() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         avb_ops.set_key_version(5, 10);
         avb_ops.set_key_version(20, 40);
@@ -714,7 +760,7 @@ mod test {
     #[test]
     fn set_key_version_overwrite() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         avb_ops.set_key_version(5, 10);
         avb_ops.set_key_version(20, 40);
@@ -731,7 +777,7 @@ mod test {
     #[should_panic(expected = "Ran out of key version slots")]
     fn set_key_version_overflow() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         avb_ops.set_key_version(5, 10);
         avb_ops.set_key_version(20, 40);
@@ -751,7 +797,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.validate_vbmeta_public_key(&[], None), Ok(true));
         assert_eq!(avb_ops.key_validation_status(), Ok(KeyValidationStatus::Valid));
     }
@@ -761,7 +807,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::ValidCustomKey));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.validate_vbmeta_public_key(&[], None), Ok(true));
         assert_eq!(avb_ops.key_validation_status(), Ok(KeyValidationStatus::ValidCustomKey));
     }
@@ -771,7 +817,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Invalid));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.validate_vbmeta_public_key(&[], None), Ok(false));
         assert_eq!(avb_ops.key_validation_status(), Ok(KeyValidationStatus::Invalid));
     }
@@ -781,7 +827,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_key_validation_status = Some(Err(IoError::Io));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.validate_vbmeta_public_key(&[], None), Err(IoError::Io));
         assert!(avb_ops.key_validation_status().is_err());
     }
@@ -791,7 +837,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_key_validation_status = Some(Err(IoError::NotImplemented));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         // Dev should succeed but report invalid key, prod should fail.
         assert_eq!(avb_ops.validate_vbmeta_public_key(&[], None), dev_only(Ok(false)));
@@ -826,7 +872,7 @@ mod test {
     fn cert_validate_vbmeta_public_key_valid() {
         let (mut gbl_ops, public_key, metadata) = create_fake_gbl_ops_with_cert();
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], true);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], true);
         assert_eq!(avb_ops.validate_vbmeta_public_key(&public_key, Some(&metadata)), Ok(true));
         assert_eq!(avb_ops.key_validation_status(), Ok(KeyValidationStatus::Valid));
     }
@@ -838,7 +884,7 @@ mod test {
         // Modify the public key so it no longer matches the perm attributes.
         public_key[0] ^= 0x01;
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], true);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], true);
         assert_eq!(avb_ops.validate_vbmeta_public_key(&public_key, Some(&metadata)), Ok(false));
         assert_eq!(avb_ops.key_validation_status(), Ok(KeyValidationStatus::Invalid));
     }
@@ -850,7 +896,7 @@ mod test {
         // Setting the fake perm attributes to `None` causes [IoError::Io].
         gbl_ops.avb_ops.cert_permanent_attributes = None;
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], true);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], true);
         assert_eq!(
             avb_ops.validate_vbmeta_public_key(&public_key, Some(&metadata)),
             Err(IoError::Io)
@@ -871,7 +917,7 @@ mod test {
         gbl_ops.avb_ops.rollbacks.insert(CERT_PIK_VERSION_LOCATION, Err(IoError::NotImplemented));
         gbl_ops.avb_ops.rollbacks.insert(CERT_PSK_VERSION_LOCATION, Err(IoError::NotImplemented));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], true);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], true);
         // Dev should succeed but report invalid key, prod should fail.
         //
         // Because of the extra complications detecting the not-implemented case
@@ -897,7 +943,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.rollbacks.insert(EXPECTED_INDEX, Ok(EXPECTED_VALUE));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.read_rollback_index(EXPECTED_INDEX), Ok(EXPECTED_VALUE));
     }
 
@@ -905,7 +951,7 @@ mod test {
     fn read_rollback_index_error_handled() {
         let mut gbl_ops = FakeGblOps::new(&[]);
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.read_rollback_index(0), Err(IoError::Io));
     }
 
@@ -914,7 +960,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.rollbacks.insert(0, Err(IoError::NotImplemented));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         // Dev should always return 0, prod should fail.
         assert_eq!(avb_ops.read_rollback_index(0), dev_only(Ok(0)));
@@ -927,7 +973,7 @@ mod test {
 
         let mut gbl_ops = FakeGblOps::new(&[]);
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.write_rollback_index(EXPECTED_INDEX, EXPECTED_VALUE), Ok(()));
         assert_eq!(
             gbl_ops.avb_ops.rollbacks.get(&EXPECTED_INDEX),
@@ -940,7 +986,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.rollbacks.insert(0, Err(IoError::Io));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.write_rollback_index(0, 0), Err(IoError::Io));
     }
 
@@ -949,7 +995,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.rollbacks.insert(0, Err(IoError::NotImplemented));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         // Dev should always succeed, prod should fail.
         assert_eq!(avb_ops.write_rollback_index(0, 0), dev_only(Ok(())));
     }
@@ -959,7 +1005,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.unlock_state = Ok(true);
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
         assert_eq!(avb_ops.read_is_device_unlocked(), Ok(true));
     }
@@ -969,7 +1015,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.unlock_state = Err(IoError::Io);
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.read_is_device_unlocked(), Err(IoError::Io));
     }
 
@@ -978,7 +1024,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.unlock_state = Err(IoError::NotImplemented);
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         // Dev should report unlocked, prod should fail.
         assert_eq!(avb_ops.read_is_device_unlocked(), dev_only(Ok(true)));
     }
@@ -991,7 +1037,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Ok(EXPECTED_VALUE));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         let mut buffer = [0u8; EXPECTED_VALUE.len()];
         assert_eq!(
             avb_ops.read_persistent_value(EXPECTED_NAME, &mut buffer),
@@ -1007,7 +1053,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Err(IoError::Io));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         let mut buffer = [0u8; 4];
         assert_eq!(avb_ops.read_persistent_value(EXPECTED_NAME, &mut buffer), Err(IoError::Io));
     }
@@ -1021,7 +1067,7 @@ mod test {
             .avb_ops
             .add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Err(IoError::NotImplemented));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         let mut buffer = [0u8; 0];
         // Dev should report no such value, prod should fail.
         assert_eq!(
@@ -1037,7 +1083,7 @@ mod test {
 
         let mut gbl_ops = FakeGblOps::new(&[]);
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.write_persistent_value(EXPECTED_NAME, EXPECTED_VALUE), Ok(()));
 
         assert_eq!(
@@ -1054,7 +1100,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Err(IoError::Io));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.write_persistent_value(EXPECTED_NAME, EXPECTED_VALUE), Err(IoError::Io));
     }
 
@@ -1068,7 +1114,7 @@ mod test {
             .avb_ops
             .add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Err(IoError::NotImplemented));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         // Dev should report no such value, prod should fail.
         assert_eq!(
             avb_ops.write_persistent_value(EXPECTED_NAME, EXPECTED_VALUE),
@@ -1083,7 +1129,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Ok(b"test"));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.erase_persistent_value(EXPECTED_NAME), Ok(()));
 
         assert!(!gbl_ops.avb_ops.persistent_values.contains_key(EXPECTED_NAME.to_str().unwrap()));
@@ -1096,7 +1142,7 @@ mod test {
         let mut gbl_ops = FakeGblOps::new(&[]);
         gbl_ops.avb_ops.add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Err(IoError::Io));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.erase_persistent_value(EXPECTED_NAME), Err(IoError::Io));
     }
 
@@ -1109,7 +1155,7 @@ mod test {
             .avb_ops
             .add_persistent_value(EXPECTED_NAME.to_str().unwrap(), Err(IoError::NotImplemented));
 
-        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &[], false);
+        let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         // Dev should report no such value, prod should fail.
         assert_eq!(
             avb_ops.erase_persistent_value(EXPECTED_NAME),

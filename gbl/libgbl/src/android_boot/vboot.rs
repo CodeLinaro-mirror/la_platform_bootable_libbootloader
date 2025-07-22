@@ -16,7 +16,7 @@
 
 use crate::{
     gbl_avb::{
-        ops::{GblAvbOps, AVB_DIGEST_KEY},
+        ops::{GblAvbOps, PreloadBufferState, AVB_DIGEST_KEY},
         state::{BootStateColor, KeyValidationStatus},
     },
     gbl_println, GblOps, Result,
@@ -42,7 +42,7 @@ pub(crate) type ArrayMaxParts<T> = ArrayVec<T, MAX_NUM_PARTITION>;
 /// A container holding partitions for libavb verification
 pub struct PartitionsToVerify<'a> {
     partitions: ArrayMaxParts<&'a CStr>,
-    preloaded: ArrayMaxParts<(&'a str, &'a [u8])>,
+    preloaded: ArrayMaxParts<(&'a str, PreloadBufferState<'a>)>,
 }
 
 impl<'a> PartitionsToVerify<'a> {
@@ -52,28 +52,26 @@ impl<'a> PartitionsToVerify<'a> {
         Ok(())
     }
 
-    /// Appends a partition, along with its preloaded data
-    pub fn try_push_preloaded(&mut self, name: &'a CStr, data: &'a [u8]) -> Result<()> {
+    /// Appends a partition, along with a PreloadBufferState.
+    fn try_push_preloaded_buffer(
+        &mut self,
+        name: &'a CStr,
+        data: PreloadBufferState<'a>,
+    ) -> Result<()> {
         let err = Err(Error::TooManyPartitions(MAX_NUM_PARTITION));
         self.partitions.try_push(name).or(err)?;
-        self.preloaded.try_push((name.to_str().unwrap(), data)).or(err)?;
+        self.preloaded.try_push((name.to_str().unwrap(), data.into())).or(err)?;
         Ok(())
     }
 
-    /// Appends partitions, along with preloaded data
-    pub fn try_extend_preloaded(&mut self, partitions: &PartitionsToVerify<'a>) -> Result<()> {
-        let err = Err(Error::TooManyPartitions(MAX_NUM_PARTITION));
-        self.partitions.try_extend_from_slice(partitions.partitions()).or(err)?;
-        self.preloaded.try_extend_from_slice(partitions.preloaded()).or(err)?;
-        Ok(())
+    /// Appends a partition, along with its preloaded data
+    pub fn try_push_preloaded(&mut self, name: &'a CStr, data: &'a [u8]) -> Result<()> {
+        self.try_push_preloaded_buffer(name, PreloadBufferState::Loaded(data))
     }
 
-    fn partitions(&self) -> &[&'a CStr] {
-        &self.partitions
-    }
-
-    fn preloaded(&self) -> &[(&'a str, &'a [u8])] {
-        &self.preloaded
+    /// Appends a partition to be loaded lazily to the given buffer.
+    pub fn try_push_to_load(&mut self, name: &'a CStr, buf: &'a mut [u8]) -> Result<()> {
+        self.try_push_preloaded_buffer(name, PreloadBufferState::ToLoad(buf))
     }
 }
 
@@ -111,11 +109,11 @@ pub(crate) fn into_verify_data<'a>(
 ///
 /// * On success, returns a tuple of (verification result, BootStateColor, is_unlocked).
 /// * Returns an error if verification process failed and boot cannot continue.
-pub fn avb_verify_slot<'a, 'b, 'c>(
+pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
     ops: &mut impl GblOps<'a, 'b>,
     slot: u8,
-    partitions: &'c PartitionsToVerify,
-) -> Result<(SlotVerifyData<'c>, BootStateColor, bool)> {
+    partitions: &'d mut PartitionsToVerify<'c>,
+) -> Result<(SlotVerifyData<'d>, BootStateColor, bool)> {
     let slot = match slot {
         0 => SlotIndex::A,
         1 => SlotIndex::B,
@@ -125,11 +123,13 @@ pub fn avb_verify_slot<'a, 'b, 'c>(
         }
     };
 
-    let mut avb_ops = GblAvbOps::new(ops, Some(slot), partitions.preloaded(), false);
+    let PartitionsToVerify { partitions, preloaded } = partitions;
+
+    let mut avb_ops = GblAvbOps::new(ops, Some(slot), preloaded, false);
     let unlocked = avb_ops.read_is_device_unlocked()?;
     let verify_result = slot_verify(
         &mut avb_ops,
-        partitions.partitions(),
+        partitions,
         Some(slot.into()),
         // TODO(b/337846185): Pass AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION in
         // case verity corruption is detected by HLOS.
@@ -218,7 +218,7 @@ mod test {
     /// Helper for testing avb_verify_slot
     fn test_avb_verify_slot<'a>(
         partitions: &[(&CStr, &str)],
-        partitions_to_verify: &PartitionsToVerify<'a>,
+        partitions_to_verify: &mut PartitionsToVerify<'a>,
         device_unlocked: std::result::Result<bool, avb::IoError>,
         rollback_result: std::result::Result<u64, avb::IoError>,
         slot: u8,
@@ -268,7 +268,7 @@ mod test {
         assert_eq!(
             test_avb_verify_slot(
                 &partitions_data,
-                &partitions_to_verify,
+                &mut partitions_to_verify,
                 // Unlocked result
                 Ok(false),
                 // Rollback index result
@@ -299,7 +299,7 @@ mod test {
         assert_eq!(
             test_avb_verify_slot(
                 &partitions_data,
-                &partitions_to_verify,
+                &mut partitions_to_verify,
                 // Unlocked result
                 Ok(false),
                 // Rollback index result
@@ -328,7 +328,7 @@ mod test {
         assert_eq!(
             test_avb_verify_slot(
                 &partitions_data,
-                &partitions_to_verify,
+                &mut partitions_to_verify,
                 // Unlocked result
                 Ok(true),
                 // Rollback index result
@@ -357,7 +357,7 @@ mod test {
         assert_eq!(
             test_avb_verify_slot(
                 &partitions_data,
-                &partitions_to_verify,
+                &mut partitions_to_verify,
                 // Unlocked result
                 Ok(true),
                 // Rollback index result
@@ -387,7 +387,7 @@ mod test {
         assert_eq!(
             test_avb_verify_slot(
                 &partitions_data,
-                &partitions_to_verify,
+                &mut partitions_to_verify,
                 // Unlocked result
                 Ok(true),
                 // Get rollback index is failed
@@ -418,7 +418,7 @@ mod test {
         assert_eq!(
             test_avb_verify_slot(
                 &partitions_data,
-                &partitions_to_verify,
+                &mut partitions_to_verify,
                 // Unlocked result
                 Ok(false),
                 // Rollback index result
@@ -435,12 +435,12 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_verification_failed_obtain_lock_status() {
-        let partitions_to_verify = PartitionsToVerify::default();
+        let mut partitions_to_verify = PartitionsToVerify::default();
 
         assert_eq!(
             test_avb_verify_slot(
                 &[],
-                &partitions_to_verify,
+                &mut partitions_to_verify,
                 // Unlocked result
                 Err(avb::IoError::NoSuchValue),
                 // Rollback index result

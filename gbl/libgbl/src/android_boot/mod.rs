@@ -103,17 +103,18 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         }
     }
 
-    for v in &preloaded {
+    for v in &mut preloaded {
         match v {
-            (n, PartitionBuffer::Preloaded(v)) => {
-                partitions.try_push_preloaded(n.name_cstr(), &v)?
+            (n, PartitionBuffer::Preloaded(ref v)) => {
+                partitions.try_push_preloaded(n.name_cstr(), v)?
             }
-            // TODO(b/430068343): Support designated buffers.
-            _ => {}
+            (n, PartitionBuffer::Designated(ref mut v)) => {
+                partitions.try_push_to_load(n.name_cstr(), v)?
+            }
         }
     }
 
-    let (verify_data, color, unlocked) = avb_verify_slot(ops, slot, &partitions)?;
+    let (verify_data, color, unlocked) = avb_verify_slot(ops, slot, &mut partitions)?;
     let images = android_load_verified(ops, slot, unlocked, &verify_data, &mut load)?;
 
     // Fixes up bootconfig.
@@ -1667,10 +1668,22 @@ androidboot.veritymode=enforcing
             // Preloaded.
             (Partition::Boot, read_test_data("boot_no_ramdisk_v4_a.img").into(), true),
             (Partition::VendorKernelBoot, read_test_data("vendor_kernel_boot_a.img").into(), true),
+            // Designated load
+            (
+                Partition::VendorBoot,
+                vec![0u8; read_test_data("vendor_boot_v4_a.img").len()].into(),
+                false,
+            ),
+            (Partition::InitBoot, vec![0u8; read_test_data("init_boot_a.img").len()].into(), false),
         ];
+        let vendor_boot_addr = image_buffers[2].1.borrow_mut().as_ptr_range();
+        let init_boot_addr = image_buffers[3].1.borrow_mut().as_ptr_range();
         let get_partition_buf_handler = |img| {
-            let (_, buf, _) = image_buffers.iter().find(|v| v.0 == img).ok_or(Error::NotFound)?;
-            Ok(PartitionBuffer::Preloaded(into_refmut_bytes(buf.borrow_mut())))
+            let (_, buf, pre) = image_buffers.iter().find(|v| v.0 == img).ok_or(Error::NotFound)?;
+            match pre {
+                true => Ok(PartitionBuffer::Preloaded(into_refmut_bytes(buf.borrow_mut()))),
+                _ => Ok(PartitionBuffer::Designated(into_refmut_bytes(buf.borrow_mut()))),
+            }
         };
         let mut ops = default_test_gbl_ops(&storage);
         ops.get_partition_buf_handler = Some(&get_partition_buf_handler);
@@ -1700,6 +1713,12 @@ androidboot.veritymode=enforcing
         .concat();
         check_ramdisk(ramdisk, expected_ramdisk, &expected_bootconfig);
         assert_eq!(kernel, read_test_data("kernel_a.img"));
+
+        // Designated buffers are loaded with the correct image.
+        assert_eq!(*image_buffers[2].1.borrow_mut(), read_test_data("vendor_boot_v4_a.img"));
+        assert_eq!(vendor_boot_addr, image_buffers[2].1.borrow_mut().as_ptr_range());
+        assert_eq!(*image_buffers[3].1.borrow_mut(), read_test_data("init_boot_a.img"));
+        assert_eq!(init_boot_addr, image_buffers[3].1.borrow_mut().as_ptr_range());
     }
 
     /// Helper for checking V2 image loaded from slot A and in normal mode.
