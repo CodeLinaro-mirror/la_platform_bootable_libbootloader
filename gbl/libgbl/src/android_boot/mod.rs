@@ -261,11 +261,14 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     let cmd_len = commandline_builder.as_str().len();
     final_commandline_buffer[cmd_len..].fill(0);
 
-    // Place pvmfw binary into reserved memory
-    if images.pvmfw.len() > 0 {
-        let pvmfw_image_buf = pvmfw_place_in_memory(ops, images.pvmfw, [&[]; 4])?;
-        pkvm_describe_pvmfw_resvmem(&mut fdt, &pvmfw_image_buf)?;
-        gbl_println!(ops, "AVF: init success");
+    // TODO(b/429168146): re-enable once allocation issue is fixed
+    if false {
+        // Place pvmfw binary into reserved memory
+        if images.pvmfw.len() > 0 {
+            let pvmfw_image_buf = pvmfw_place_in_memory(ops, images.pvmfw, [&[]; 4])?;
+            pkvm_describe_pvmfw_resvmem(&mut fdt, &pvmfw_image_buf)?;
+            gbl_println!(ops, "AVF: init success");
+        }
     }
 
     // Make sure we provide an actual device tree size, so FW can calculate amount of space
