@@ -33,7 +33,7 @@ pub struct RamBlockIo<T> {
     pub num_writes: usize,
     /// The number of successful read calls.
     pub num_reads: usize,
-    /// Injected error to be returned by the next read/write IO.
+    /// Injected error to be returned by the next read/write/erase IO.
     pub error: Option<Error>,
 }
 
@@ -55,6 +55,14 @@ impl<T: DerefMut<Target = [u8]>> RamBlockIo<T> {
         &mut self.storage[..]
     }
 
+    /// Helper for checking custom injected errors
+    fn check_custom_error(&mut self) -> Result<(), Error> {
+        match self.error.take() {
+            Some(e) => Err(e),
+            _ => Ok(()),
+        }
+    }
+
     /// Checks injected error, simulates async waiting, checks read/write parameters and returns the
     /// offset in number of bytes.
     async fn checks<'a>(
@@ -66,7 +74,7 @@ impl<T: DerefMut<Target = [u8]>> RamBlockIo<T> {
         assert!(is_buffer_aligned(&mut *buf, self.alignment).unwrap_or(false));
         assert!(is_aligned(buf.len(), self.block_size).unwrap_or(false));
         yield_now().await;
-        self.error.take().map(|e| Err(e)).unwrap_or(Ok(()))?;
+        self.check_custom_error()?;
         Ok((SafeNum::from(blk_offset) * self.block_size).try_into().unwrap())
     }
 }
@@ -101,6 +109,7 @@ unsafe impl<T: DerefMut<Target = [u8]>> BlockIo for RamBlockIo<T> {
 
     async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<(), Error> {
         yield_now().await;
+        self.check_custom_error()?;
         let blk_sz = self.info().erase_block_size().unwrap();
         let off = (SafeNum::from(blk_offset) * blk_sz).try_into().unwrap();
         let sz = (SafeNum::from(num_blks) * blk_sz).try_into().unwrap();

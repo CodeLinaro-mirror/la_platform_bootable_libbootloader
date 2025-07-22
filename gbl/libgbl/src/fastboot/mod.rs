@@ -81,7 +81,10 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> TaskWorkload<'a, 'b, B, P> {
         match self {
             Self::Flash(mut io, mut data, sz) => io.write(0, &mut data[..sz]).await,
             Self::FlashSparse(mut io, mut data) => io.write_sparse(0, &mut data).await,
-            Self::Erase(mut io, mut buffer) => io.zeroize(&mut buffer).await,
+            Self::Erase(mut io, mut buffer) => match io.erase(&mut buffer).await {
+                Err(Error::Unsupported) => io.zeroize(&mut buffer).await,
+                v => v,
+            },
             _ => Ok(()),
         }
     }
@@ -1755,11 +1758,29 @@ pub(crate) mod test {
         check_var(&mut gbl_fb, "block-device", "0:status", "idle");
         check_var(&mut gbl_fb, "block-device", "1:status", "idle");
 
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0u8; 4096]);
+        // The mock storage device erases data by flipping bits. Thus 0x55 <--> 0xaa.
+        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0x55u8; 4096]);
         assert_eq!(
             storage[1].partition_io(None).unwrap().dev().io().storage,
-            [[0x55u8; 2048], [0u8; 2048]].concat()
+            [[0x55u8; 2048], [0xaau8; 2048]].concat()
         );
+    }
+
+    #[test]
+    fn test_async_erase_unsupported_fallback_to_zeroize() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"raw_0", [0xaau8; 4096]);
+        storage[0].get_blk_io().unwrap().error = Some(Error::Unsupported);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, &mut []);
+        let resp: TestResponder = Default::default();
+        // Erases "raw_0".
+        block_on(gbl_fb.erase("raw_0", &resp)).unwrap();
+        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0u8; 4096]);
     }
 
     #[test]
@@ -1772,8 +1793,7 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         let mut gbl_ops = FakeGblOps::new(&storage);
         // Injects an error.
-        storage[0].partition_io(None).unwrap().dev().io().error =
-            liberror::Error::Other(Some("test")).into();
+        storage[0].get_blk_io().unwrap().error = Some(Error::Other(Some("test")));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let mut gbl_fb =
