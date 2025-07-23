@@ -238,6 +238,13 @@ Typically these components are:
 This protocol allows the device to implement its own A/B metadata format while
 still allowing GBL to implement the boot flow logic.
 
+### GblBootMemoryProtocol
+
+* [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](./gbl_efi_boot_memory_protocol.md)
+* Optional: Provides reserved buffers for loading/preloaded partition image,
+assembling finalized kernel, ramdisk, fdt, pvmfw image and downloading in
+fastboot.
+
 ### GblImageLoadingProtocol
 
 * [`GBL_EFI_IMAGE_LOADING_PROTOCOL`](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md)
