@@ -111,16 +111,16 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     bootconfig_builder.add("androidboot.gbl.version=0\n")?;
     write!(bootconfig_builder, "androidboot.gbl.build_number={BUILD_NUMBER}\n")
         .map_err(Error::from)?;
-    // Adds platform-specific bootconfig.
-    bootconfig_builder.add_with(|bytes, out| {
-        Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
-    })?;
     // Add bootconfig from vendor_boot
     bootconfig_builder.add_with(|_, out| {
         out.get_mut(..images.vendor_bootconfig.len())
             .ok_or(Error::BufferTooSmall(Some(images.vendor_bootconfig.len())))?
             .clone_from_slice(images.vendor_bootconfig);
         Ok(images.vendor_bootconfig.len())
+    })?;
+    // Adds platform-specific bootconfig.
+    bootconfig_builder.add_with(|bytes, out| {
+        Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
     })?;
     let bootconfig_str_len = bootconfig_builder.config_str().len();
     let bootconfig_sz = bootconfig_builder.config_bytes().len();
@@ -775,8 +775,8 @@ androidboot.veritymode=enforcing
             .extra(format!("androidboot.slot_suffix=_{slot}\n"))
             .extra("androidboot.gbl.version=0\n")
             .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
-            .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
-            .extra(vendor_config);
+            .extra(vendor_config)
+            .extra(FakeGblOps::GBL_TEST_BOOTCONFIG);
         for (part, _) in partitions {
             let slotless = part.strip_suffix(&format!("_{slot}")).unwrap_or(part).to_string();
             let digest = vbmeta_file.with_extension(format!("{slotless}.digest.txt"));
