@@ -227,6 +227,32 @@ impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, T> {
         self.read_permanent_attributes(&mut attributes) == Err(IoError::NotImplemented)
             && self.read_permanent_attributes_hash() == Err(IoError::NotImplemented)
     }
+
+    /// Helper for getting entire preloaded partition buffer.
+    fn get_preloaded(&mut self, partition: &CStr) -> IoResult<&'a [u8]> {
+        let part_str = cstr_to_str(partition, IoError::NotImplemented)?;
+
+        let partition_name = match self.slot {
+            // Extract partition slot and ensure it's matched.
+            Some(slot) => {
+                let (partition_name, partition_slot) =
+                    split_slotted(part_str).map_err(|_| IoError::NotImplemented)?;
+
+                if partition_slot != slot {
+                    return Err(IoError::NotImplemented);
+                }
+
+                partition_name
+            }
+            _ => part_str,
+        };
+
+        self.preloaded_partitions
+            .iter()
+            .find(|(name, _)| *name == partition_name)
+            .map(|(_, data)| *data)
+            .ok_or_else(|| IoError::NotImplemented)
+    }
 }
 
 /// A helper function for converting `CStr` to `str`
@@ -281,29 +307,12 @@ impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, T> {
         Ok(read_sz)
     }
 
-    fn get_preloaded_partition(&mut self, partition: &CStr) -> IoResult<&'a [u8]> {
-        let part_str = cstr_to_str(partition, IoError::NotImplemented)?;
-
-        let partition_name = match self.slot {
-            // Extract partition slot and ensure it's matched.
-            Some(slot) => {
-                let (partition_name, partition_slot) =
-                    split_slotted(part_str).map_err(|_| IoError::NotImplemented)?;
-
-                if partition_slot != slot {
-                    return Err(IoError::NotImplemented);
-                }
-
-                partition_name
-            }
-            _ => part_str,
-        };
-
-        self.preloaded_partitions
-            .iter()
-            .find(|(name, _)| *name == partition_name)
-            .map(|(_, data)| *data)
-            .ok_or_else(|| IoError::NotImplemented)
+    fn get_preloaded_partition(
+        &mut self,
+        partition: &CStr,
+        num_bytes: usize,
+    ) -> IoResult<&'a [u8]> {
+        self.get_preloaded(partition)?.get(..num_bytes).ok_or(IoError::RangeOutsidePartition)
     }
 
     fn validate_vbmeta_public_key(
@@ -386,7 +395,7 @@ impl<'a, 'b, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, T> {
     }
 
     fn get_size_of_partition(&mut self, partition: &CStr) -> IoResult<u64> {
-        match self.get_preloaded_partition(partition) {
+        match self.get_preloaded(partition) {
             Ok(img) => Ok(img.len().try_into().unwrap()),
             _ => {
                 let part_str = cstr_to_str(partition, IoError::NoSuchPartition)?;
@@ -604,11 +613,14 @@ mod test {
                     avb_ops.get_size_of_partition(partition_to_read),
                     Ok(data.len().try_into().unwrap())
                 );
-                assert_eq!(avb_ops.get_preloaded_partition(partition_to_read), Ok(slice));
+                assert_eq!(
+                    avb_ops.get_preloaded_partition(partition_to_read, data.len()),
+                    Ok(slice)
+                );
             }
             false => {
                 assert_eq!(
-                    avb_ops.get_preloaded_partition(partition_to_read),
+                    avb_ops.get_preloaded_partition(partition_to_read, data.len()),
                     Err(IoError::NotImplemented),
                 );
             }
