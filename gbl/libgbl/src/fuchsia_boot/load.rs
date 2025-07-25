@@ -195,12 +195,12 @@ mod test {
             TEST_ROLLBACK_INDEX_LOCATION, TEST_ROLLBACK_INDEX_VALUE,
         },
         ops::test::FakeGblOps,
-        tests::AlignedBuffer,
     };
     use abr::{
         mark_slot_active, mark_slot_successful, mark_slot_unbootable, set_one_shot_bootloader,
     };
     use avb_bindgen::{AVB_CERT_PIK_VERSION_LOCATION, AVB_CERT_PSK_VERSION_LOCATION};
+    use libtestutils::AlignedBuffer;
     use std::string::String;
     use zbi::{ZbiItem, ZBI_ALIGNMENT_USIZE};
 

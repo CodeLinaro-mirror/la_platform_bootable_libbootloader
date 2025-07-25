@@ -191,9 +191,9 @@ mod test {
             ZIRCON_KERNEL_ALIGN,
         },
         ops::test::FakeGblOps,
-        tests::AlignedBuffer,
     };
     use avb::{IoError, CERT_PIK_VERSION_LOCATION, CERT_PSK_VERSION_LOCATION};
+    use libtestutils::AlignedBuffer;
     use zbi::ZBI_ALIGNMENT_USIZE;
 
     // Unittest for `copy_items_after_kernel()` helper function.

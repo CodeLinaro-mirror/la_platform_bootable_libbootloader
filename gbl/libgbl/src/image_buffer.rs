@@ -162,7 +162,7 @@ impl PartialEq for ImageBuffer<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::tests::AlignedBuffer;
+    use libtestutils::AlignedBuffer;
 
     /// Helper to create ImageBuffers from AlignedBuffer
     pub struct TestImageBuffer {

@@ -574,10 +574,10 @@ pub(crate) mod tests {
         fastboot::test::{make_expected_usb_out, SharedTestListener, TestLocalSession},
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
         ops::test::{slot, FakeGblOps, FakeGblOpsStorage},
-        tests::AlignedBuffer,
     };
     use bootparams::bootconfig::{BootConfigBuilder, BOOTCONFIG_TRAILER_SIZE};
     use libbuild_number::BUILD_NUMBER;
+    use libtestutils::AlignedBuffer;
     use std::{
         ascii::escape_default,
         collections::{BTreeMap, HashMap},
