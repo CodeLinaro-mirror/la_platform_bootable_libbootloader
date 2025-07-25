@@ -3,7 +3,7 @@
 // re-generate and push test artifacts using ./gen_test_dttable.sh after change in this file
 / {
     device {
-        value = <0x1>;
+        value = <0x3>;
         status = "okay";
     };
 };

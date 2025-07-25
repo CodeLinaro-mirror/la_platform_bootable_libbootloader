@@ -277,7 +277,9 @@ Selection is performed by setting `GBL_EFI_VERIFIED_DEVICE_TREE.Selected` to
 
 1. Exactly one device tree must be selected. GBL will refuse to boot if none or
    multiple base device trees are selected.
-2. Any number of overlays may be selected, including none.
+2. Overlays are guaranteed to be provided in the same order as they appear in
+   the `dtbo` partition and the selected ones are applied in that same order.
+   Any number of overlays may be selected, including none.
 3. At most one pVM device assignment overlay can be selected. If multiple such
    overlays are selected, GBL will refuse to boot.
 

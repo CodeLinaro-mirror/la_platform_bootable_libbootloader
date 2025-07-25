@@ -22,12 +22,16 @@ readonly TMP_DIR=`mktemp -d`
 
 dtc -I dts -O dtb -o ${TMP_DIR}/a.dtb ${SCRIPT_DIR}/a.dts
 dtc -I dts -O dtb -o ${TMP_DIR}/b.dtb ${SCRIPT_DIR}/b.dts
+dtc -I dts -O dtb -o ${TMP_DIR}/c.dtb ${SCRIPT_DIR}/c.dts
+dtc -I dts -O dtb -o ${TMP_DIR}/d.dtb ${SCRIPT_DIR}/d.dts
 
 echo "corrupted dttable" > ${DATA_DIR}/corrupted_dttable.img
 
 # mkdtboimg is built by cd aosp/system/libufdt/utils && mm
 mkdtboimg create ${DATA_DIR}/dttable.img \
-        --id=0x2 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3 \
-        ${TMP_DIR}/b.dtb \
-        --id=0x1 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3 \
-        ${TMP_DIR}/a.dtb
+  ${TMP_DIR}/a.dtb --id=0x0 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3 \
+  ${TMP_DIR}/b.dtb --id=0x1 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3 \
+  ${TMP_DIR}/c.dtb --id=0x2 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3 \
+  ${TMP_DIR}/d.dtb --id=0x3 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3
+
+mkdtboimg dump ${DATA_DIR}/dttable.img
