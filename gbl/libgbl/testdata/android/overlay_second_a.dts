@@ -1,0 +1,12 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    // add a new node on top of overlay_first_a
+    fragment@0 {
+        target-path = "/chosen/first_overlay";
+        __overlay__ {
+            second_overlay_a_property = "second_overlay_a_val";
+        };
+    };
+};

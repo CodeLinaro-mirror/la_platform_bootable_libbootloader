@@ -6,7 +6,9 @@
     fragment@0 {
         target-path = "/chosen";
         __overlay__ {
-            overlay_b_property = "overlay_b_val";
+            first_overlay {
+                overlay_b_property = "overlay_b_val";
+            };
         };
     };
 };

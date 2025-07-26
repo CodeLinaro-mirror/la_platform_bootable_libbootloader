@@ -212,18 +212,26 @@ def gen_android_test_dtb():
         check=True,
     )
 
-    # Generates overlay
-    gen_dtb(out_dir / "overlay_a.dts", out_dir / "overlay_a.dtb")
-    gen_dtb(out_dir / "overlay_b.dts", out_dir / "overlay_b.dtb")
+    # Generates overlays
+    gen_dtb(out_dir / "overlay_first_a.dts", out_dir / "overlay_first_a.dtb")
+    gen_dtb(out_dir / "overlay_second_a.dts", out_dir / "overlay_second_a.dtb")
+    gen_dtb(out_dir / "overlay_first_b.dts", out_dir / "overlay_first_b.dtb")
+    gen_dtb(out_dir / "overlay_second_b.dts", out_dir / "overlay_second_b.dtb")
 
+    # Create dtbo partitions. overlay_second_* could be only applied on top of
+    # overlay_first_*, which is getting verified by the tests, so overlays
+    # ordering is important here.
     subprocess.run(
         [
             MKDTBOIMG_TOOL,
             "create",
             out_dir / "dtbo_a.img",
+            out_dir / "overlay_first_a.dtb",
             "--id=0x1",
             "--rev=0x0",
-            out_dir / "overlay_a.dtb",
+            out_dir / "overlay_second_a.dtb",
+            "--id=0x2",
+            "--rev=0x0",
         ],
         stderr=subprocess.STDOUT,
         check=True,
@@ -233,9 +241,12 @@ def gen_android_test_dtb():
             MKDTBOIMG_TOOL,
             "create",
             out_dir / "dtbo_b.img",
+            out_dir / "overlay_first_b.dtb",
             "--id=0x1",
             "--rev=0x0",
-            out_dir / "overlay_b.dtb",
+            out_dir / "overlay_second_b.dtb",
+            "--id=0x2",
+            "--rev=0x0",
         ],
         stderr=subprocess.STDOUT,
         check=True,
