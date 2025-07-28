@@ -1132,6 +1132,7 @@ pub(crate) mod test {
     use super::*;
     use crate::test::TestDisk;
     use gbl_async::block_on;
+    use libtestutils::AlignedBuffer;
 
     /// A helper for creating a [TestDisk] from given data.
     fn test_disk(data: impl AsRef<[u8]>) -> TestDisk {
@@ -1163,10 +1164,8 @@ pub(crate) mod test {
 
     #[test]
     fn test_load_with_unaligned_buffer() {
-        #[repr(align(8))]
-        struct AlignedBuffer([u8; 34 * 1024]);
-        let mut buffer = AlignedBuffer([0u8; 34 * 1024]);
-        let buffer = &mut buffer.0[1..];
+        let mut buffer = AlignedBuffer::new(34 * 1024, 8);
+        let buffer = &mut buffer[1..];
         assert_ne!(buffer.as_ptr() as usize % 2, 0);
         let mut disk = test_disk(include_bytes!("../test/gpt_test_1.bin"));
         let mut gpt = Gpt::new(buffer).unwrap();

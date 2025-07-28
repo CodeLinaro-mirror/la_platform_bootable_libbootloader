@@ -84,6 +84,7 @@ rust_test(
         "@gbl//libavb:sysdeps",
         "@gbl//libboringssl:sysdeps",
         "@gbl//libc:libc_deps_posix",
+        "@gbl//libutils:libtestutils",
         "@itertools",
         "@itertools_noalloc",
         "@spin",

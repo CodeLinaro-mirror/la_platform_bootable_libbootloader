@@ -29,9 +29,33 @@ rust_library(
     ],
 )
 
+rust_library(
+    name = "libtestutils",
+    testonly = True,
+    srcs = [
+        "test/lib.rs",
+    ],
+    edition = "2021",
+    rustc_flags = ANDROID_RUST_LINTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@gbl//libsafemath",
+    ],
+)
+
 rust_test(
     name = "test",
     crate = ":libutils",
+    rustc_flags = ANDROID_RUST_LINTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libtestutils",
+    ],
+)
+
+rust_test(
+    name = "testutils_test",
+    crate = ":libtestutils",
     rustc_flags = ANDROID_RUST_LINTS,
     visibility = ["//visibility:public"],
 )

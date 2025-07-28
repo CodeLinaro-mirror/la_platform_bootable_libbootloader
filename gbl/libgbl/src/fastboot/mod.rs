@@ -1131,7 +1131,6 @@ pub(crate) mod test {
         constants::KERNEL_ALIGNMENT,
         ops::test::{slot, FakeGblOps, FakeGblOpsStorage},
         slots::SlotsMetadata,
-        tests::AlignedBuffer,
         Os,
     };
     use abr::{
@@ -1145,6 +1144,7 @@ pub(crate) mod test {
     use gbl_async::{block_on, poll, poll_n_times};
     use gbl_storage::GPT_GUID_LEN;
     use liberror::Error;
+    use libtestutils::AlignedBuffer;
     use spin::{Mutex, MutexGuard};
     use std::ffi::CString;
     use std::{collections::VecDeque, io::Read};

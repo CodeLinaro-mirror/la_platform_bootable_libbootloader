@@ -482,10 +482,7 @@ mod test {
     extern crate libc_deps_posix;
 
     use super::*;
-
-    // Fdt is required to be 8 bytes aligned. Buffer to test alignment-related logic.
-    #[repr(align(8))]
-    struct AlignedBytes<const N: usize>([u8; N]);
+    use libtestutils::AlignedBuffer;
 
     /// Checks to verify `overlay_*_by_path`/`overlay_*_by_reference` are successfully applied
     fn check_overlays_are_applied(fdt: &[u8]) {
@@ -669,10 +666,10 @@ mod test {
         let init = include_bytes!("../test/data/base.dtb").to_vec();
 
         const HEADER_SIZE: usize = size_of::<FdtHeader>();
-        let mut bytes = AlignedBytes([0u8; HEADER_SIZE + 1]);
+        let mut bytes = AlignedBuffer::new(HEADER_SIZE + 1, 8);
 
         // Guaranteed not to be 8 bytes aligned.
-        let (_, unaligned) = bytes.0.split_at_mut(1);
+        let unaligned = &mut bytes[1..];
         unaligned.copy_from_slice(&init[..HEADER_SIZE]);
 
         assert!(FdtHeader::from_bytes_ref(unaligned).is_err());

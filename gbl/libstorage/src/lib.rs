@@ -685,7 +685,7 @@ where
 mod test {
     use super::*;
     use gbl_async::block_on;
-    use safemath::SafeNum;
+    use libtestutils::AlignedBuffer;
     use std::slice::SliceIndex;
 
     #[derive(Debug)]
@@ -708,28 +708,6 @@ mod test {
             storage_size: u64,
         ) -> Self {
             Self { rw_offset, rw_size, misalignment, alignment, block_size, storage_size }
-        }
-    }
-
-    // Helper object for allocating aligned buffer.
-    struct AlignedBuffer {
-        buffer: Vec<u8>,
-        alignment: u64,
-        size: u64,
-    }
-
-    impl AlignedBuffer {
-        pub fn new(alignment: u64, size: u64) -> Self {
-            let aligned_size = (SafeNum::from(size) + alignment).try_into().unwrap();
-            let buffer = vec![0u8; aligned_size];
-            Self { buffer, alignment, size }
-        }
-
-        pub fn get(&mut self) -> &mut [u8] {
-            let addr = SafeNum::from(self.buffer.as_ptr() as usize);
-            let aligned_start = addr.round_up(self.alignment) - addr;
-            &mut self.buffer
-                [aligned_start.try_into().unwrap()..(aligned_start + self.size).try_into().unwrap()]
         }
     }
 
@@ -823,10 +801,13 @@ mod test {
         // Make an aligned buffer. A misaligned version is created by taking a sub slice that
         // starts at an unaligned offset. Because of this we need to allocate
         // `case.misalignment` more to accommodate it.
-        let mut aligned_buf = AlignedBuffer::new(case.alignment, case.rw_size + case.misalignment);
+        let mut aligned_buf: AlignedBuffer<u8> = AlignedBuffer::new(
+            (case.rw_size + case.misalignment).try_into().unwrap(),
+            case.alignment.try_into().unwrap(),
+        );
         let misalignment = usize::try_from(case.misalignment).unwrap();
         let rw_sz = usize::try_from(case.rw_size).unwrap();
-        let out = &mut aligned_buf.get()[misalignment..][..rw_sz];
+        let out = &mut aligned_buf[misalignment..][..rw_sz];
         block_on(disk.read(case.rw_offset, &mut *out)).unwrap();
         let rw_off = usize::try_from(case.rw_offset).unwrap();
         assert_eq!(out, &disk.io().storage()[rw_off..][..rw_sz], "Failed. Test case {:?}", case);
@@ -847,9 +828,12 @@ mod test {
         // Make an aligned buffer. A misaligned version is created by taking a sub slice that
         // starts at an unaligned offset. Because of this we need to allocate
         // `case.misalignment` more to accommodate it.
-        let mut aligned_buf = AlignedBuffer::new(case.alignment, case.rw_size + case.misalignment);
+        let mut aligned_buf = AlignedBuffer::new(
+            (case.rw_size + case.misalignment).try_into().unwrap(),
+            case.alignment.try_into().unwrap(),
+        );
         let misalignment = usize::try_from(case.misalignment).unwrap();
-        let data = &mut aligned_buf.get()[misalignment..][..rw_sz];
+        let data = &mut aligned_buf[misalignment..][..rw_sz];
         data.clone_from_slice(&expected);
         write_func(&mut disk, case.rw_offset, data);
         let written = &disk.io().storage()[rw_off..][..rw_sz];

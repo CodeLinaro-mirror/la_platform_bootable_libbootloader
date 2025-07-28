@@ -189,62 +189,54 @@ impl<'a> DtTableImage<'a> {
 mod test {
     use super::*;
     use fdt::Fdt;
+    use libtestutils::AlignedBuffer;
 
     #[test]
     fn test_dt_table_is_parsed() {
         let dttable = include_bytes!("../test/data/dttable.img").to_vec();
         let table = DtTableImage::from_bytes(&dttable[..]).unwrap();
+        let mut aligned = AlignedBuffer::new(4096, 8);
 
-        assert_eq!(table.entries_count(), 2, "Test data dttable image must have 2 dtb entries");
+        assert_eq!(table.entries_count(), 4, "Test data dttable image must have 4 dtb entries");
 
-        let first_entry = table.nth_entry(0).unwrap();
-        let second_entry = table.nth_entry(1).unwrap();
+        for i in 0..table.entries_count() {
+            let entry = table.nth_entry(i).unwrap();
+            // Ensures 8 bytes alignment
+            aligned[..entry.dtb.len()].copy_from_slice(entry.dtb);
 
-        assert_eq!(
-            first_entry.metadata,
-            DtTableMetadata { id: 1, rev: 0, custom: [0, 1, 2, 3] },
-            "First dttable entry is incorrect"
-        );
-        assert_eq!(
-            second_entry.metadata,
-            DtTableMetadata { id: 2, rev: 0, custom: [0, 1, 2, 3] },
-            "Second dttable entry is incorrect"
-        );
-
-        // verify fdt headers are properly parsed
-        let _ = Fdt::new(first_entry.dtb).unwrap();
-        let _ = Fdt::new(second_entry.dtb).unwrap();
+            assert_eq!(
+                entry.metadata,
+                DtTableMetadata { id: i.try_into().unwrap(), rev: 0, custom: [0, 1, 2, 3] }
+            );
+            assert_eq!(
+                Fdt::new(&aligned[..]).unwrap().get_property_u32("device", c"value").unwrap(),
+                i.try_into().unwrap()
+            );
+        }
     }
 
     #[test]
     fn test_dt_table_is_parsed_iterator() {
         let dttable = include_bytes!("../test/data/dttable.img").to_vec();
         let table = DtTableImage::from_bytes(&dttable[..]).unwrap();
-
-        // Collect entries from the iterator
-        let entries: Vec<_> = table.entries().collect();
+        let mut aligned = AlignedBuffer::new(4096, 8);
 
         // Verify that the iterator yields the correct number of entries
-        assert_eq!(entries.len(), 2, "Iterator should yield 2 entries");
+        assert_eq!(table.entries().count(), 4, "Iterator should yield 4 entries");
 
-        // Unwrap the entries from Result
-        let first_entry = &entries[0];
-        let second_entry = &entries[1];
+        for (i, entry) in table.entries().enumerate() {
+            // Ensures 8 bytes alignment
+            aligned[..entry.dtb.len()].copy_from_slice(entry.dtb);
 
-        assert_eq!(
-            first_entry.metadata,
-            DtTableMetadata { id: 1, rev: 0, custom: [0, 1, 2, 3] },
-            "First dttable entry metadata is incorrect"
-        );
-        assert_eq!(
-            second_entry.metadata,
-            DtTableMetadata { id: 2, rev: 0, custom: [0, 1, 2, 3] },
-            "Second dttable entry metadata is incorrect"
-        );
-
-        // Verify FDT headers are properly parsed
-        let _ = Fdt::new(first_entry.dtb).unwrap();
-        let _ = Fdt::new(second_entry.dtb).unwrap();
+            assert_eq!(
+                entry.metadata,
+                DtTableMetadata { id: i.try_into().unwrap(), rev: 0, custom: [0, 1, 2, 3] }
+            );
+            assert_eq!(
+                Fdt::new(&aligned[..]).unwrap().get_property_u32("device", c"value").unwrap(),
+                i.try_into().unwrap()
+            );
+        }
     }
 
     #[test]

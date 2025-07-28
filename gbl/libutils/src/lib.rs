@@ -167,29 +167,24 @@ macro_rules! func_name {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    // A byte array that's always at least 8-byte aligned for testing.
-    #[repr(align(8))]
-    struct AlignedBytes<const N: usize>([u8; N]);
+    use libtestutils::AlignedBuffer;
 
     #[test]
     fn aligned_subslice_already_aligned() {
-        let mut bytes = AlignedBytes([0u8; 16]);
-        let bytes = &mut bytes.0;
+        let mut bytes = AlignedBuffer::new(16, 8);
 
-        // AlignedBytes is `align(8)`, so must be 1/2/4/8-aligned.
-        assert_eq!(aligned_subslice(bytes, 1).unwrap().as_ptr_range(), bytes.as_ptr_range());
-        assert_eq!(aligned_subslice(bytes, 2).unwrap().as_ptr_range(), bytes.as_ptr_range());
-        assert_eq!(aligned_subslice(bytes, 4).unwrap().as_ptr_range(), bytes.as_ptr_range());
-        assert_eq!(aligned_subslice(bytes, 8).unwrap().as_ptr_range(), bytes.as_ptr_range());
+        // bytes is `align(8)`, so must be 1/2/4/8-aligned.
+        assert_eq!(aligned_subslice(&mut bytes, 1).unwrap().as_ptr_range(), bytes.as_ptr_range());
+        assert_eq!(aligned_subslice(&mut bytes, 2).unwrap().as_ptr_range(), bytes.as_ptr_range());
+        assert_eq!(aligned_subslice(&mut bytes, 4).unwrap().as_ptr_range(), bytes.as_ptr_range());
+        assert_eq!(aligned_subslice(&mut bytes, 8).unwrap().as_ptr_range(), bytes.as_ptr_range());
     }
 
     #[test]
     fn aligned_subslice_unaligned() {
-        let mut bytes = AlignedBytes([0u8; 16]);
-        let bytes = &mut bytes.0;
+        let mut bytes = AlignedBuffer::new(16, 8);
 
-        // AlignedBytes is 8-aligned, so offsetting by <8 should snap to the next 8-alignment.
+        // bytes is 8-aligned, so offsetting by <8 should snap to the next 8-alignment.
         assert_eq!(
             aligned_subslice(&mut bytes[1..], 8).unwrap().as_ptr_range(),
             bytes[8..].as_ptr_range()
@@ -206,8 +201,7 @@ mod test {
 
     #[test]
     fn aligned_subslice_empty_slice() {
-        let mut bytes = AlignedBytes([0u8; 16]);
-        let bytes = &mut bytes.0;
+        let mut bytes = AlignedBuffer::new(16, 8);
 
         // If the next alignment is just past the input, return the empty slice.
         assert_eq!(
@@ -218,8 +212,7 @@ mod test {
 
     #[test]
     fn aligned_subslice_buffer_overflow() {
-        let mut bytes = AlignedBytes([0u8; 7]); // 7 bytes; can't reach the next 8-alignment.
-        let bytes = &mut bytes.0;
+        let mut bytes = AlignedBuffer::new(7, 8); // 7 bytes; can't reach the next 8-alignment.
 
         assert_eq!(aligned_subslice(&mut bytes[1..], 8), Err(Error::BufferTooSmall(Some(7))));
         assert_eq!(aligned_subslice(&mut bytes[6..], 8), Err(Error::BufferTooSmall(Some(2))));
@@ -227,10 +220,12 @@ mod test {
 
     #[test]
     fn aligned_subslice_alignment_overflow() {
-        let mut bytes = AlignedBytes([0u8; 16]);
-        let bytes = &mut bytes.0;
+        let mut bytes = AlignedBuffer::new(16, 8);
 
-        assert!(matches!(aligned_subslice(bytes, SafeNum::MAX), Err(Error::ArithmeticOverflow(_))));
+        assert!(matches!(
+            aligned_subslice(&mut bytes, SafeNum::MAX),
+            Err(Error::ArithmeticOverflow(_))
+        ));
     }
 
     #[test]

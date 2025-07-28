@@ -240,11 +240,9 @@ fn write_pvmfw_config(imgbuf: &mut ImageBuffer, entries: EntryBufsArray) -> Resu
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{
-        ops::test::{FakeGblOps, FakeGblOpsStorage},
-        tests::AlignedBuffer,
-    };
+    use crate::ops::test::{FakeGblOps, FakeGblOpsStorage};
     use core::mem::MaybeUninit;
+    use libtestutils::AlignedBuffer;
     use std::collections::LinkedList;
 
     fn dummy_pvmfw_partition(fill_value: u8) -> Vec<u8> {

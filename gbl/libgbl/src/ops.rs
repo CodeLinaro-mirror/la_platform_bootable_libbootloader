@@ -1382,14 +1382,12 @@ pub(crate) mod test {
             &mut self,
             device_tree: &mut device_tree::DeviceTreeComponentsRegistry,
         ) -> Result<(), Error> {
-            // Select the first dtbo.
-            match device_tree
+            // Select all overlays.
+            device_tree
                 .components_mut()
-                .find(|v| v.component_type == DeviceTreeComponentType::Overlay)
-            {
-                Some(v) => v.selected = true,
-                _ => {}
-            }
+                .filter(|v| v.component_type == DeviceTreeComponentType::Overlay)
+                .for_each(|v| v.selected = true);
+            // Select the first base device tree.
             device_tree.autoselect()
         }
 

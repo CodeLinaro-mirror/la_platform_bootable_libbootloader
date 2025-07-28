@@ -54,6 +54,7 @@ rust_test(
 
 rust_library(
     name = "mocks",
+    testonly = True,
     srcs = glob(["mocks/**/*.rs"]),
     crate_name = "efi_mocks",
     rustc_flags = ANDROID_RUST_LINTS,

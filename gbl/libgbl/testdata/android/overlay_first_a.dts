@@ -6,7 +6,10 @@
     fragment@0 {
         target-path = "/chosen";
         __overlay__ {
-            overlay_a_property = "overlay_a_val";
+            // Add the node with property to this sub-node
+            first_overlay {
+                overlay_a_property = "overlay_a_val";
+            };
         };
     };
 };

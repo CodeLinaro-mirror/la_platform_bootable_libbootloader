@@ -263,17 +263,15 @@ pub fn zircon_check_enter_fastboot<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) -> boo
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use crate::{
-        ops::{
-            test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
-            CertPermanentAttributes, RebootMode,
-        },
-        tests::AlignedBuffer,
+    use crate::ops::{
+        test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
+        CertPermanentAttributes, RebootMode,
     };
     use abr::{
         mark_slot_active, mark_slot_unbootable, set_one_shot_bootloader, ABR_MAX_TRIES_REMAINING,
     };
     use avb_bindgen::{AVB_CERT_PIK_VERSION_LOCATION, AVB_CERT_PSK_VERSION_LOCATION};
+    use libtestutils::AlignedBuffer;
     use std::{
         collections::{BTreeSet, HashMap, LinkedList},
         fs,

@@ -149,80 +149,8 @@ mod tests {
     use crate::ops::test::FakeGblOps;
     use avb::{CertPermanentAttributes, SlotVerifyError};
     use avb_test::{FakeVbmetaKey, TestOps};
-    use safemath::SafeNum;
-    use std::mem::{size_of, MaybeUninit};
-    use std::{
-        fs,
-        ops::{Deref, DerefMut},
-        path::Path,
-    };
+    use std::{fs, path::Path};
     use zerocopy::FromBytes;
-
-    /// Helper object for allocating aligned buffer.
-    ///
-    /// Typically this will be used with `u8` bytes, but is generic so it can
-    /// also work with things like `MaybeUninit<u8>`.
-    ///
-    /// Using a non-byte-size `T` will cause a runtime panic.
-    pub(crate) struct AlignedBuffer<T = u8> {
-        buffer: Vec<T>,
-        size: usize,
-        alignment: usize,
-    }
-
-    impl<T> AlignedBuffer<T> {
-        /// Returns the offset to the aligned part of `buffer`.
-        fn offset(&self) -> usize {
-            // This math doesn't make sense for non-byte-size `T`, and since
-            // this code is test-only it's easier to just panic than to try
-            // to be fancier with generics to restrict the types.
-            assert_eq!(size_of::<T>(), 1);
-            let addr = SafeNum::from(self.buffer.as_ptr() as usize);
-            (addr.round_up(self.alignment) - addr).try_into().unwrap()
-        }
-    }
-
-    impl<T: Default + Clone> AlignedBuffer<T> {
-        /// Allocates a buffer with default contents.
-        pub(crate) fn new(size: usize, alignment: usize) -> Self {
-            Self { buffer: vec![Default::default(); alignment + size - 1], size, alignment }
-        }
-
-        /// Allocates a buffer and initializes with data.
-        pub(crate) fn new_with_data(data: &[T], alignment: usize) -> Self {
-            let mut res = Self::new(data.len(), alignment);
-            res.clone_from_slice(data);
-            res
-        }
-    }
-
-    impl<U> AlignedBuffer<MaybeUninit<U>>
-    where
-        MaybeUninit<U>: Clone,
-    {
-        /// Allocates a buffer of [MaybeUninit::uninit()].
-        pub(crate) fn new_uninit(size: usize, alignment: usize) -> Self {
-            let mut buffer = Vec::new();
-            buffer.resize(alignment + size - 1, MaybeUninit::uninit());
-            Self { buffer, size, alignment }
-        }
-    }
-
-    impl<T> Deref for AlignedBuffer<T> {
-        type Target = [T];
-
-        fn deref(&self) -> &Self::Target {
-            let offset = self.offset();
-            &self.buffer[offset..][..self.size]
-        }
-    }
-
-    impl<T> DerefMut for AlignedBuffer<T> {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            let offset = self.offset();
-            &mut self.buffer[offset..][..self.size]
-        }
-    }
 
     const TEST_ZIRCON_PARTITION_NAME: &str = "zircon_a";
     const TEST_ZIRCON_PARTITION_NAME_CSTR: &CStr = c"zircon_a";

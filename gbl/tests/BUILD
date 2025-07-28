@@ -59,6 +59,7 @@ build_and_run_tests(
         "@gbl//libsafemath:libsafemath_test",
         "@gbl//libstorage:libstorage_test",
         "@gbl//libutils:test",
+        "@gbl//libutils:testutils_test",
         "@zbi//:zbi_test",
     ],
 )
