@@ -575,9 +575,10 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         image_type: ImageType,
         size: NonZeroUsize,
     ) -> GblResult<ImageBuffer<'d>> {
-        self.get_buffer_image_loading(image_type, size)
-            .or(Self::allocate_image_buffer(image_type, size)
-                .map_err(|e| libgbl::IntegrationError::UnificationError(e)))
+        self.get_buffer_image_loading(image_type, size).or_else(|_| {
+            Self::allocate_image_buffer(image_type, size)
+                .map_err(|e| libgbl::IntegrationError::UnificationError(e))
+        })
     }
 
     fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
