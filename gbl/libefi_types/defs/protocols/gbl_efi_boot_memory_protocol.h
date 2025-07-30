@@ -48,7 +48,7 @@ typedef enum GBL_EFI_PARTITION_BUFFER_FLAG {
 typedef struct GblEfiBootMemoryProtocol {
   uint64_t revision;
   EfiStatus (*get_partition_buffer)(struct GblEfiBootMemoryProtocol* self,
-                                    /* in */ const char8_t* name,
+                                    /* in */ const char8_t* base_name,
                                     /* out */ size_t* size,
                                     /* out */ void** addr,
                                     /* out */ GblEfiPartitionBufferFlag* flag);

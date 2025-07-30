@@ -31,6 +31,8 @@
 
 #include "types.h"
 
+const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION = 0x00000001;
+
 // Os boot state color.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#communicating-verified-boot-state-to-users
@@ -72,10 +74,10 @@ typedef struct {
 } GblEfiAvbVerificationResult;
 
 typedef struct {
-  // On input - `name` buffer size
-  // On output - actual `name` length
-  size_t name_len;
-  char8_t* name;
+  // On input - `base_name` buffer size
+  // On output - actual `base_name` length
+  size_t base_name_len;
+  char8_t* base_name;
 } GblEfiAvbPartition;
 
 typedef struct GblEfiAvbProtocol {
