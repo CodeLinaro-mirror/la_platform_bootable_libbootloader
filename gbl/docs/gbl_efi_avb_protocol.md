@@ -1,16 +1,23 @@
-# GBL AVB EFI Protocol
+# GBL EFI Android Verified Boot Protocol
+
+|||
+| :--- | :--- |
+| **Status** | Work in progress |
+| **Created** | 2024-11-15 |
 
 ## GBL_EFI_AVB_PROTOCOL
 
 ### Summary
 
-This protocol allows to delegate device-specific Android verified booot (AVB)
-logic to the firmware.
+Android Verified Boot ([AVB][avb]) is the process of assuring the end user of
+the integrity of the software running on a device. This protocol allows
+vendor-specific [AVB][avb] logic to be delegated to the firmware, enabling
+device-specific security mechanisms to ensure the integrity of the HLOS.
 
-`GBL_EFI_AVB_PROTOCOL` protocol isn't required for dev GBL flavour with
-intention to support basic Android boot functionality on dev boards. On the
-production devices this protocol must be provided by the FW to ensure HLOS
-integrity.
+The `GBL_EFI_AVB_PROTOCOL` is not required for the development GBL flavor,
+which is intended to support basic Android boot functionality on unlocked
+development boards. However, this protocol must be implemented on production
+devices.
 
 ### GUID
 
@@ -26,12 +33,12 @@ integrity.
 
 ### Revision Number
 
-Note: revision 0 means the protocol is not yet stable and may change in
-backwards-incompatible ways.
-
 ```c
-#define GBL_EFI_AVB_PROTOCOL_REVISION 0x00010000
+#define GBL_EFI_AVB_PROTOCOL_REVISION 0x00000001
 ```
+
+Note: Revisions smaller than 0x00010000 indicate that the protocol is not yet
+stable, and backward compatibility is not guaranteed.
 
 ### Protocol Interface Structure
 
@@ -62,7 +69,7 @@ a different GUID must be used.
 
 Gets the list of additional partitions to be verified, beyond the standard set
 loaded and verified by GBL.
-[`GetVerifyPartitions()`](#gbl_efi_image_loading_protocolreadpartitionstoverify).
+[`ReadPartitionsToVerify()`][readpartitionstoverify].
 
 #### ReadIsDmVerityError
 
@@ -71,7 +78,7 @@ Gets whether the device is rebooted due to dm-verity error.
 
 #### ValidateVbmetaPublicKey
 
-Validate proper public key is used to sign HLOS artifacts.
+Validates proper public key is used to sign HLOS artifacts.
 [`ValidateVbmetaPublicKey()`](#gbl_efi_avb_protocolvalidatevbmetapublickey).
 
 #### ReadIsDeviceUnlocked
@@ -81,22 +88,22 @@ Gets whether the device is unlocked.
 
 #### ReadRollbackIndex
 
-Gets the rollback index corresponding to the location given by `index_location`.
+Gets the rollback index corresponding to the provided index location.
 [`ReadRollbackIndex()`](#readrollbackindex).
 
 #### WriteRollbackIndex
 
-Sets the rollback index corresponding to the location given by `index_location` to `rollback_index`.
+Sets the rollback index corresponding to the provided index location.
 [`WriteRollbackIndex()`](#writerollbackindex).
 
 #### ReadPersistentValue
 
-Gets the persistent value for the corresponding `name`.
+Gets the persistent value for the provided name.
 [`ReadPersistentValue()`](#readpersistentvalue).
 
 #### WritePersistentValue
 
-Sets or erases the persistent value for the corresponding `name`.
+Sets or erases the persistent value for the provided name.
 [`WritePersistentValue()`](#writepersistentvalue).
 
 #### HandleVerificationResult
@@ -134,7 +141,7 @@ A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
 Number of `Partitions` available to be filled by the FW. Must be updated to the
 number of partitions returned. If there are no extra partitions to be verified,
-`NumberOfPartitions` should be set to 0.
+`NumberOfPartitions` must be set to 0.
 
 #### Partitions
 
@@ -144,19 +151,19 @@ that GBL will load and verify.
 
 ### Description
 
-GBL loads and verifies a default set of partitions needed to boot HLOS. For
-example, in case of Android, GBL loads and verifies the following standard
-partitions: `boot`, `init_boot`, `vendor_boot`, `vendor_kernel_boot`, `dtb`,
-`dtbo`, `pvmfw` used to boot the system.
+GBL loads and verifies a default set of partitions required to boot the HLOS.
+For example, in case of Android, GBL loads and verifies the following standard
+set of partitions: `boot`, `init_boot`, `vendor_boot`, `vendor_kernel_boot`,
+`dtb`, `dtbo`, and `pvmfw`, which are used to boot the system.
 
 This method allows the firmware specify extra non-standard partitions that GBL
 will also load and verify to extend the integrity check.
 
-For example, to provide N additional partitions, the first N elements of
-`Partitions` must be filled with names, following the
-[`GBL_EFI_AVB_PARTITION`](#gbl_efi_avb_partition) format. If no extra partitions
-are required, `NumberOfPartitions` should be set to 0 or `EFI_UNSUPPORTED`
-should be returned.
+For example, to provide N additional partitions, firmware must update the
+`NumberOfPartitions` to N and fill first N elements of `Partitions` following
+the [`GBL_EFI_AVB_PARTITION`](#gbl_efi_avb_partition) format. If no extra
+partitions are required to be verified, `NumberOfPartitions` must be set to 0 or
+`EFI_UNSUPPORTED` is returned.
 
 If a requested partition does not have a corresponding hash descriptor in
 `vbmeta` or chained partition then it cannot be verified. GBL will treat it the
@@ -181,28 +188,29 @@ following way:
 ```c
 typedef
 struct GblEfiAvbPartition {
-  UINTN NameLen;
-  UINT8* Name;
+  UINTN BaseNameLen;
+  UINT8* BaseName;
 } GBL_EFI_AVB_PARTITION;
 ```
 
-##### NameLen
+##### BaseNameLen
 
-On input, represents the size of available space pointed by `Name` to be filled
-with UTF-8 partition name. On output, must be updated to the partition name's
-length copied into `Name` buffer.
+On input, indicates the size of the available space pointed to by `BaseName`,
+which will be filled with UTF-8 slotless partition name (e.g `boot` for
+`boot_a`). On output, it must be updated to reflect the number of bytes copied
+into the buffer pointed by `BaseName`.
 
-##### Name
+##### BaseName
 
-A pointer to available buffer of `NameLen` size for UTF-8 partition name to be
-copied by FW implementation. A copied partition name must not be null-terminated
-and must not include the slot suffix.
+A pointer to a buffer of `BaseNameLen` bytes available for the implementation to
+copy the UTF-8 slotless partition name (e.g `boot` for `boot_a`). A null
+terminator is not required be included.
 
 ## GBL_EFI_AVB_PROTOCOL.ReadIsDmVerityError()
 
 ### Summary
 
-Allows the firmware to provide the dm-verity error occurred to the GBL in a
+Allows the firmware to provide the dm-verity error state to GBL in a
 firmware-specific way.
 
 ### Prototype
@@ -223,12 +231,13 @@ A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
 #### IsDmVerityError
 
-An output parameter that communicates the dm-verity error state to the GBL.
+An output parameter that communicates the dm-verity error state to GBL.
 
 ### Description
 
-If `IsDmVerityError` is set `True` by the FW, GBL will pass [`AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION`][dm_verity_error],
-so `RED_IO` status will be reported unless new OS images are detected by the
+If `IsDmVerityError` is set `True` by the FW, GBL will pass
+[`AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION`][dmv_error], so
+`RED_IO` status will be reported unless new OS images are detected by the
 `libavb`.
 
 ## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey()
@@ -270,8 +279,9 @@ Specifies the length of the public key provided by `PublicKeyData`.
 
 #### PublicKeyMetadata
 
-A pointer to public key metadata generated using the `avbtool` `--public_key_metadata`
-flag. May be `NULL` if no public key metadata is provided.
+A pointer to public key metadata provided using the `avbtool`'s
+`--public_key_metadata` flag. May be `NULL` if no public key metadata is
+provided.
 
 #### PublicKeyMetadataLength
 
@@ -280,7 +290,7 @@ Guaranteed to be 0 in case of `NULL` `PublicKeyMetadata`.
 
 #### ValidationStatus
 
-An output parameter that communicates the verification status to the GBL. `VALID`
+An output parameter that communicates the verification status to GBL. `VALID`
 and `VALID_CUSTOM_KEY` are interpreted as successful validation statuses.
 
 ### Related Definitions
@@ -299,20 +309,22 @@ typedef enum {
 ### Description
 
 `ValidateVbmetaPublicKey` must set `ValidationStatus` and return `EFI_SUCCESS`.
-Any non `EFI_SUCCESS` return value from this method is treated as a fatal verification
-error, so `red` state is reported and GBL fails to boot even if device is unlocked.
+Any non `EFI_SUCCESS` return value from this method is treated as a fatal
+verification error, so `red` state is reported and GBL fails to boot even if
+device is unlocked.
 
 **`ValidationStatus` and GBL boot flow**:
 
-* `VALID`: The public key is valid and trusted, so the device can continue the boot
-  process for both locked and unlocked states.
+* `VALID`: The public key is valid and trusted, so the device can continue the
+  boot process for both locked and unlocked states.
 
-* `VALID_CUSTOM_KEY`: The public key is valid but not fully trusted. GBL continues
-  booting a locked device with a `yellow` state and an unlocked device with an `orange` state.
+* `VALID_CUSTOM_KEY`: The public key is valid but not fully trusted. GBL
+  continues booting a locked device with a `yellow` state and an unlocked device
+  with an `orange` state.
 
-* `INVALID`: The public key is not valid. The device cannot continue the boot process
-  for locked devices; GBL reports a `red` status and resets. Unlocked devices can still
-  boot with an `orange` state.
+* `INVALID`: The public key is not valid. The device cannot continue the boot
+  process for locked devices; GBL reports a `red` status and resets. Unlocked
+  devices can still boot with an `orange` state.
 
 GBL calls this function once per AVB verification session.
 
@@ -320,7 +332,7 @@ GBL calls this function once per AVB verification session.
 
 ### Summary
 
-Allows the firmware to provide the device's locking state to the GBL in a
+Allows the firmware to provide the device's locking state to GBL in a
 firmware-specific way.
 
 ### Prototype
@@ -341,7 +353,7 @@ A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
 #### IsUnlocked
 
-An output parameter that communicates the device locking state to the GBL.
+An output parameter that communicates the device locking state to GBL.
 
 ### Description
 
@@ -351,7 +363,8 @@ returns any error. GBL may call this method multiple times per boot session.
 
 ## Status Codes Returned
 
-The following EFI error types are used to communicate result to GBL and libavb in particular:
+The following UEFI error types are used to communicate result to GBL and
+`libavb` in particular:
 
 |                                |                                                                                                                                                         |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -366,4 +379,6 @@ The following EFI error types are used to communicate result to GBL and libavb i
 
 TODO(b/337846185): Provide docs for all methods.
 
-[dm_verity_error]: https://android.googlesource.com/platform/external/avb/+/master/README.md#handling-dm_verity-errors
+[readpartitionstoverify]: #gbl_efi_image_loading_protocolreadpartitionstoverify
+[avb]: https://source.android.com/docs/security/features/verifiedboot/avb
+[dmv_error]: https://android.googlesource.com/platform/external/avb/+/master/README.md#handling-dm_verity-errors

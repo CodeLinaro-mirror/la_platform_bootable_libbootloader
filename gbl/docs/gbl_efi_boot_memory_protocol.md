@@ -29,8 +29,11 @@ to, assemble kernel/ramdisk/fdt images, and download data in fastboot mode etc.
 ### Revision Number
 
 ```c
-#define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION 0x00010000
+#define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION 0x00000001
 ```
+
+Note: Revisions smaller than 0x00010000 indicate that the protocol is not yet
+stable, and backward compatibility is not guaranteed.
 
 ### Protocol Interface Structure
 
@@ -76,7 +79,7 @@ typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_GET_PARTITION_BUFFER) (
   IN GBL_EFI_BOOT_MEMORY_PROTOCOL *This,
-  IN CONST CHAR                   *Name,
+  IN CONST CHAR                   *BaseName,
   OUT UINTN                       *Size,
   OUT VOID                        **Addr,
   OUT GblEfiPartitionBufferFlag   *Flag,
@@ -89,8 +92,8 @@ EFI_STATUS
 A pointer to the
 [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol) instance.
 
-**Name** \
-A null-terminated UTF8 encoded string that represents partition image.
+**BaseName** \
+A null-terminated UTF8 encoded string that represents slotless partition name.
 
 **Size** \
 On exit, stores the size of the reserved memory in number of bytes.

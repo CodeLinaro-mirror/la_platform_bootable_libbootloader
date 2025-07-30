@@ -44,8 +44,8 @@ impl Protocol<'_, GblAvbProtocol> {
     /// Ok(len) - will return number of `GblEfiAvbPartition`s copied to `partitions` slice.
     ///
     /// SAFETY:
-    /// * Each `partitions[N].name` must point to non-null writable buffer of at least
-    /// `partitions[N].name_len` bytes.
+    /// * Each `partitions[N].base_name` must point to non-null writable buffer of at least
+    /// `partitions[N].base_name_len` bytes.
     pub unsafe fn read_partitions_to_verify(
         &self,
         partitions: &mut [GblEfiAvbPartition],
@@ -59,8 +59,8 @@ impl Protocol<'_, GblAvbProtocol> {
         // * `num_partitions` is input/output parameter, non-null and points to a valid writtable
         //   usize buffer.
         // * `partitions` is input/output parameter, non-null and points to `partitions.len()`
-        //   consecutive `GblEfiAvbPartition`. Each `partitions[N].name` points to writable buffer
-        //   of at least `partitions[N].name_len` bytes.
+        //   consecutive `GblEfiAvbPartition`. Each `partitions[N].base_name` points to writable
+        //   buffer of at least `partitions[N].base_name_len` bytes.
         unsafe {
             efi_call!(
                 @bufsize num_partitions,
@@ -278,21 +278,25 @@ mod test {
             // * `num_partitions` points to non-null writtable usize buffer.
             // * `partitions` points to writtable buffer with `num_partitions` amount of
             //   `GblEfiAvbPartition`.
-            // * Each `partitions[N].name` points to writable buffer of at least
-            //   `partitions[N].name_len` bytes.
+            // * Each `partitions[N].base_name` points to writable buffer of at least
+            //   `partitions[N].base_name_len` bytes.
             unsafe {
                 let partitions = core::slice::from_raw_parts_mut(partitions, *num_partitions);
-                let first =
-                    core::slice::from_raw_parts_mut(partitions[0].name, partitions[0].name_len);
-                let second =
-                    core::slice::from_raw_parts_mut(partitions[1].name, partitions[1].name_len);
+                let first = core::slice::from_raw_parts_mut(
+                    partitions[0].base_name,
+                    partitions[0].base_name_len,
+                );
+                let second = core::slice::from_raw_parts_mut(
+                    partitions[1].base_name,
+                    partitions[1].base_name_len,
+                );
 
                 first[..FIRST_PROVIDED_PARTITION.len()].copy_from_slice(FIRST_PROVIDED_PARTITION);
                 second[..SECOND_PROVIDED_PARTITION.len()]
                     .copy_from_slice(SECOND_PROVIDED_PARTITION);
 
-                partitions[0].name_len = FIRST_PROVIDED_PARTITION.len();
-                partitions[1].name_len = SECOND_PROVIDED_PARTITION.len();
+                partitions[0].base_name_len = FIRST_PROVIDED_PARTITION.len();
+                partitions[1].base_name_len = SECOND_PROVIDED_PARTITION.len();
 
                 *num_partitions = EXPECTED_PROVIDED_PARTITIONS_NUM
             }
@@ -312,26 +316,32 @@ mod test {
             let second_name = &mut [0u8; PARTITION_MAX_LEN];
             let third_name = &mut [0u8; PARTITION_MAX_LEN];
 
-            partitions[0].name_len = PARTITION_MAX_LEN;
-            partitions[0].name = first_name.as_mut_ptr();
-            partitions[1].name_len = PARTITION_MAX_LEN;
-            partitions[1].name = second_name.as_mut_ptr();
-            partitions[2].name_len = PARTITION_MAX_LEN;
-            partitions[2].name = third_name.as_mut_ptr();
+            partitions[0].base_name_len = PARTITION_MAX_LEN;
+            partitions[0].base_name = first_name.as_mut_ptr();
+            partitions[1].base_name_len = PARTITION_MAX_LEN;
+            partitions[1].base_name = second_name.as_mut_ptr();
+            partitions[2].base_name_len = PARTITION_MAX_LEN;
+            partitions[2].base_name = third_name.as_mut_ptr();
 
             // SAFETY:
-            // * Each `partitions[N].name` points to writable buffer of at least
-            // `partitions[N].name_len` bytes.
+            // * Each `partitions[N].base_name` points to writable buffer of at least
+            // `partitions[N].base_name_len` bytes.
             let result = unsafe { avb_protocol.read_partitions_to_verify(&mut partitions) };
             assert_eq!(result, Ok(EXPECTED_PROVIDED_PARTITIONS_NUM));
 
             // SAFETY:
-            // * Each `partitions[N].name` points to writable buffer of at least
-            // `partitions[N].name_len` bytes.
+            // * Each `partitions[N].base_name` points to writable buffer of at least
+            // `partitions[N].base_name_len` bytes.
             let (first_name, second_name) = unsafe {
                 (
-                    core::slice::from_raw_parts(partitions[0].name, partitions[0].name_len),
-                    core::slice::from_raw_parts(partitions[1].name, partitions[1].name_len),
+                    core::slice::from_raw_parts(
+                        partitions[0].base_name,
+                        partitions[0].base_name_len,
+                    ),
+                    core::slice::from_raw_parts(
+                        partitions[1].base_name,
+                        partitions[1].base_name_len,
+                    ),
                 )
             };
             assert_eq!(
@@ -365,8 +375,8 @@ mod test {
             let mut partitions: [GblEfiAvbPartition; 0] = [];
 
             // SAFETY:
-            // * Each `partitions[N].name` points to writable buffer of at least
-            // `partitions[N].name_len` bytes.
+            // * Each `partitions[N].base_name` points to writable buffer of at least
+            // `partitions[N].base_name_len` bytes.
             let result = unsafe { avb_protocol.read_partitions_to_verify(&mut partitions) };
             assert_eq!(result, Err(Error::BufferTooSmall(Some(EXPECTED_PARTITIONS_NUM))));
         });
@@ -392,8 +402,8 @@ mod test {
             let mut partitions: [GblEfiAvbPartition; 0] = [];
 
             // SAFETY:
-            // * Each `partitions[N].name` points to writable buffer of at least
-            // `partitions[N].name_len` bytes.
+            // * Each `partitions[N].base_name` points to writable buffer of at least
+            // `partitions[N].base_name_len` bytes.
             let result = unsafe { avb_protocol.read_partitions_to_verify(&mut partitions) };
             assert_eq!(result, Err(Error::InvalidInput));
         });
