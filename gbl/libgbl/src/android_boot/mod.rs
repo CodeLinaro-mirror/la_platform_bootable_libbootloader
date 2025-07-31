@@ -28,9 +28,11 @@ use crate::{
     GblOps, Result,
 };
 use bootparams::{
-    bootconfig::BootConfigBuilder, commandline::CommandlineBuilder, entry::CommandlineParser,
+    bootconfig::{extract_bootconfig, BootConfigBuilder},
+    commandline::CommandlineBuilder,
+    entry::CommandlineParser,
 };
-use core::{array::from_fn, ffi::CStr, fmt::Write, str::from_utf8};
+use core::{array::from_fn, ffi::CStr, fmt::Write, ops::Range};
 use dttable::DtTableImage;
 use fastboot::local_session::LocalSession;
 use fdt::{Fdt, FdtHeader};
@@ -146,18 +148,13 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     if enable_avf {
         avf_update_bootconfig(ops, &mut bootconfig_builder)?;
     }
-    // Adds platform-specific bootconfig.
-    bootconfig_builder.add_with(|bytes, out| {
-        Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
-    })?;
-    let bootconfig_str_len = bootconfig_builder.config_str().len();
     let bootconfig_sz = bootconfig_builder.config_bytes().len();
     let bootconfig_supported = images.bootconfig_supported();
 
     // Fixes up FDT.
 
     let mut components = DeviceTreeComponentsRegistry::new();
-    let (bootconfig, remains) = split(images.unused, bootconfig_sz)?;
+    let (_, remains) = split(images.unused, bootconfig_sz)?;
     // TODO(b/353272981): Remove get_custom_device_tree
     let (remains, base, overlays) = match ops.get_custom_device_tree() {
         Some(v) => (remains, v, &[][..]),
@@ -229,16 +226,6 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     };
     let mut fdt = Fdt::new_from_init(&mut fdt_load[..], base)?;
 
-    let ramdisk_addr: u64 = (images.ramdisk.as_ptr() as usize).try_into().map_err(Error::from)?;
-    // Notes: We keep bootconfig in the ramdisk regardless of whether it is supported for simplicity
-    // and in case device is using boot v3+vendor_boot v4 combination where Android 11 and
-    // Android 12+ are indistinguishable.
-    let ramdisk_end = ramdisk_addr + u64::try_from(images.ramdisk.len() + bootconfig_sz)?;
-    fdt.set_property("chosen", c"linux,initrd-start", &ramdisk_addr.to_be_bytes())?;
-    fdt.set_property("chosen", c"linux,initrd-end", &ramdisk_end.to_be_bytes())?;
-    gbl_println!(ops, "linux,initrd-start: {:#x}", ramdisk_addr);
-    gbl_println!(ops, "linux,initrd-end: {:#x}", ramdisk_end);
-
     gbl_println!(ops, "Applying {} overlays", overlays.len());
     fdt.multioverlay_apply(overlays)?;
     gbl_println!(ops, "Overlays applied");
@@ -248,46 +235,8 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     drop(components);
 
     // Updates the FDT commandline.
-
-    let device_tree_commandline_length = match fdt.get_property("chosen", BOOTARGS_PROP) {
-        Ok(val) => CStr::from_bytes_until_nul(val).map_err(Error::from)?.to_bytes().len(),
-        Err(_) => 0,
-    };
-
     // Reserves 1024 bytes for separators and fixup
-    let mut final_commandline_len = device_tree_commandline_length
-        + images.boot_cmdline.len()
-        + images.vendor_cmdline.len()
-        + 1024;
-    if !bootconfig_supported {
-        final_commandline_len += bootconfig_str_len;
-    }
-    let final_commandline_buffer =
-        fdt.set_property_placeholder("chosen", BOOTARGS_PROP, final_commandline_len)?;
-    let mut commandline_builder =
-        CommandlineBuilder::new_from_prefix(&mut final_commandline_buffer[..])?;
-    commandline_builder.add(images.boot_cmdline)?;
-    commandline_builder.add(images.vendor_cmdline)?;
-
-    // Add bootconfig to command line if it is not supported
-    if !bootconfig_supported {
-        for v in from_utf8(&bootconfig[..bootconfig_str_len])
-            .map_err(Error::from)?
-            .split('\n')
-            .filter(|v| !v.is_empty())
-        {
-            // Bootconfig supports ":=" overriding assignment but cmdline may not. However if
-            // bootconfig is not supported, platform most likely doesn't use this. Emit a warning
-            // just in case.
-            if v.find(":=").is_some() {
-                gbl_println!(ops, "{v},  \":=\" assignment may not be supported");
-            }
-            commandline_builder.add(v)?;
-        }
-    }
-
-    let cmd_len = commandline_builder.as_str().len();
-    final_commandline_buffer[cmd_len..].fill(0);
+    fdt_append_bootarg(ops, &mut fdt, [images.boot_cmdline, images.vendor_cmdline], 1024)?;
 
     // TODO(b/429168146): re-enable once allocation issue is fixed
     if false {
@@ -299,32 +248,72 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         }
     }
 
-    // Make sure we provide an actual device tree size, so FW can calculate amount of space
-    // available for fixup.
-    fdt.shrink_to_fit()?;
-    // TODO(b/353272981): Make a copy of current device tree and verify provided fixup.
-    // TODO(b/353272981): Handle buffer too small
-    ops.fixup_device_tree(fdt.as_mut())?;
     fdt.shrink_to_fit()?;
 
     let final_command_line = CStr::from_bytes_until_nul(fdt.get_property("chosen", BOOTARGS_PROP)?)
         .map_err(Error::from)?;
     gbl_println!(ops, "final cmdline: \"{}\"", final_command_line.to_str().unwrap());
 
-    let ramdisk_len = usize::try_from(ramdisk_end - ramdisk_addr).unwrap();
-    let ramdisk_addr = usize::try_from(ramdisk_addr).unwrap();
+    let ramdisk_addr = images.ramdisk.as_ptr() as usize;
+    // Notes: We keep bootconfig in the ramdisk regardless of whether it is supported for simplicity
+    // and in case device is using boot v3+vendor_boot v4 combination where Android 11 and
+    // Android 12+ are indistinguishable.
+    let bootconfig_off = images.ramdisk.len();
     let fdt_len = fdt.header_ref()?.actual_size();
     let fdt_addr = fdt_load.as_ptr() as usize;
     let kernel_len = images.kernel.len();
     let kernel_addr = images.kernel.as_ptr() as usize;
+
+    // Notifies platform to process loaded partitions before final bootconfig and FDT fixup, so
+    // that backend can add fixup items that depend on certain partition data.
+    //
+    // Need to explicitly releases the partition buffers for the backend to safely inspect, update
+    // or release them.
+    drop(verify_data);
+    drop(partitions);
+    drop(preloaded);
+    ops.sync_partition_buffer(false)?;
+
     match load {
         LoadBuffer::Designated { ramdisk, kernel, fdt } => {
+            // Fixes up bootconfig.
+            let bootconfig = fixup_bootconfig(ops, &mut ramdisk[bootconfig_off..], bootconfig_sz)?;
+            let ramdisk_len = bootconfig_off + bootconfig.config_bytes().len();
             let (ramdisk, remains) = ramdisk.split_at_mut(ramdisk_len);
+            // Fixes up FDT.
+            fixup_dt(ops, fdt, ramdisk, !bootconfig_supported)?;
             Ok((ramdisk, fdt, &mut kernel[..kernel_len], remains))
         }
         LoadBuffer::Monolithic(load) => {
-            let [ramdisk_off, kernel_off, fdt_off] =
-                [ramdisk_addr, kernel_addr, fdt_addr].map(|v| v - (load.as_ptr() as usize));
+            let [ramdisk_off, fdt_off, kernel_off] =
+                [ramdisk_addr, fdt_addr, kernel_addr].map(|v| v - (load.as_ptr() as usize));
+            // Buffer currently has layout
+            //
+            // +------------------------+
+            // | ramdisk                |
+            // +------------------------+
+            // | bootconfig             |
+            // +------------------------+
+            // | FDT                    |
+            // +------------------------+
+            // | unused                 |
+            // +------------------------+
+            // | kernel                 |
+            // +------------------------+
+            //
+            // Move FDT backward to make space for bootconfig fixup.
+            let fdt_temp_off = kernel_off - fdt_len;
+            load[fdt_off..kernel_off].copy_within(..fdt_len, fdt_temp_off - fdt_off);
+            // Fixes up bootconfig.
+            let bootconfig =
+                fixup_bootconfig(ops, &mut load[bootconfig_off..][..fdt_temp_off], bootconfig_sz)?;
+            let ramdisk_len = bootconfig_off + bootconfig.config_bytes().len();
+            // Move FDT forward to make space for its fixup.
+            let fdt_off = aligned_offset(&load[ramdisk_len..], FDT_ALIGNMENT)? + ramdisk_len;
+            load[..kernel_off].copy_within(fdt_temp_off.., fdt_off);
+            // Fixes up FDT.
+            let (ramdisk, fdt) = load[..kernel_off].split_at_mut(fdt_off);
+            let fdt_len = fixup_dt(ops, fdt, &ramdisk[..ramdisk_len], !bootconfig_supported)?;
             // Moves the kernel forward to reserve as much space as possible. This is in case there
             // is not enough memory after `load`, i.e. the memory after it is not mapped or is
             // reserved.
@@ -337,6 +326,97 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
             Ok((&mut ramdisk[..ramdisk_len], fdt, kernel, unused))
         }
     }
+}
+
+/// Helper for appending one or more commandline strings to FDT chosen/bootarg
+///
+/// # Args
+///
+/// * `ops`: An implementation of GblOps.
+/// * `fdt`: Target FDT to append to.
+/// * `cmds`: Commandline strings to add.
+/// * `extra_reserved`: Additional empty space to add.
+fn fdt_append_bootarg<'a, 'b, 'c>(
+    ops: &mut impl GblOps<'b, 'c>,
+    fdt: &mut Fdt<&mut [u8]>,
+    cmds: impl IntoIterator<Item = &'a str> + Clone,
+    extra_reserved: usize,
+) -> Result<()> {
+    let curr = fdt.get_property("chosen", BOOTARGS_PROP).map(|v| v.len()).unwrap_or(0);
+    let cmds_len = cmds.clone().into_iter().map(|v| v.len() + 1).sum::<usize>();
+    let total = curr + cmds_len + 1 + extra_reserved;
+    let buffer = fdt.set_property_placeholder("chosen", BOOTARGS_PROP, total)?;
+    let mut builder = CommandlineBuilder::new_from_prefix(&mut buffer[..])?;
+    for v in cmds {
+        // The commandline to be added may be from bootconfig which allows ":=". Emit a warning
+        // just in case.
+        if v.find(":=").is_some() {
+            gbl_println!(ops, "{v},  \":=\" assignment may not be supported");
+        }
+        builder.add(v)?;
+    }
+
+    // It has been observed that some OS call `from_utf8` on the entire bootarg buffer to decode,
+    // which will pick up everything after the null terminator. Thus zeroize the remaining to
+    // prevent OS from trying to think they are valid data.
+    builder.zeroize_remains();
+    Ok(())
+}
+
+/// Helper for performing platform custom FDT fixup, setting of `linux,initrd-start/end` and
+/// optionally appending bootconfig as bootarg in FDT.
+///
+/// # Args
+///
+/// * `ops`: An implementation of GblOps.
+/// * `fdt`: Target FDT to fixup.
+/// * `ramdisk`: Target ramdisk for setting `linux,initrd-start/end`
+/// * `append_bootconfig`: Set to true to append bootconfig from ramdisk as bootarg.
+fn fixup_dt<'a, 'b, 'c>(
+    ops: &mut impl GblOps<'b, 'c>,
+    fdt: &mut [u8],
+    ramdisk: &[u8],
+    append_bootconfig: bool,
+) -> Result<usize> {
+    let mut fdt = Fdt::new_mut(fdt)?;
+    let Range { start, end } = ramdisk.as_ptr_range();
+    let ramdisk_addr = u64::try_from(start as usize)?;
+    let ramdisk_end = u64::try_from(end as usize)?;
+    fdt.set_property("chosen", c"linux,initrd-start", &ramdisk_addr.to_be_bytes())?;
+    fdt.set_property("chosen", c"linux,initrd-end", &ramdisk_end.to_be_bytes())?;
+    gbl_println!(ops, "linux,initrd-start: {:#x}", ramdisk_addr);
+    gbl_println!(ops, "linux,initrd-end: {:#x}", ramdisk_end);
+    if append_bootconfig {
+        fdt_append_bootarg(ops, &mut fdt, extract_bootconfig(ramdisk)?.split('\n'), 0)?;
+    }
+    // Make sure we provide an actual device tree size, so FW can calculate amount of space
+    // available for fixup.
+    fdt.shrink_to_fit()?;
+    // TODO(b/353272981): Make a copy of current device tree and verify provided fixup.
+    // TODO(b/353272981): Handle buffer too small
+    ops.fixup_device_tree(fdt.as_mut())?;
+    fdt.shrink_to_fit()?;
+    Ok(fdt.header_ref()?.actual_size())
+}
+
+/// Helper for performing platform custom bootconfig fixup.
+///
+/// # Args
+///
+/// * `ops`: An implementation of GblOps.
+/// * `buf`: Buffer containing an existing bootconfig.
+/// * `curr_bootconfig_sz`: The size including trailer of the existing bootconfig.
+fn fixup_bootconfig<'a, 'b, 'c>(
+    ops: &mut impl GblOps<'b, 'c>,
+    buf: &'a mut [u8],
+    curr_bootconfig_sz: usize,
+) -> Result<BootConfigBuilder<'a>> {
+    let mut builder = BootConfigBuilder::from_prefix_unchecked(buf, curr_bootconfig_sz)?;
+    // Adds platform-specific bootconfig.
+    builder.add_with(|bytes, out| {
+        Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
+    })?;
+    Ok(builder)
 }
 
 /// Gets the target slot to boot.
@@ -573,6 +653,9 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
             gbl_println!(ops, "Booting from \"fastboot boot\"");
             return Ok(result.split_loaded_android(load.into_largest()).unwrap());
         }
+
+        // Device state or disk content might have changed. Re-sync preloaded partition buffer.
+        ops.sync_partition_buffer(true)?;
     }
 
     // Checks whether fastboot has set a different active slot. Reboot if it does.
@@ -613,6 +696,7 @@ pub(crate) mod tests {
         ffi::CString,
         fs,
         path::Path,
+        str::from_utf8,
         string::String,
     };
 
@@ -806,7 +890,7 @@ androidboot.veritymode=enforcing
     /// * `color`: The expected boot state color.
     /// * `slot`: The expected slot.
     /// * `vendor_config:` The expected vendor_boot config.
-    /// * `include`: Additional partition digest to include in the expected bootconfig.
+    /// * `fixup_config`: The expected fixup config by GblOps.
     fn make_expected_bootconfig(
         partitions: &[(String, String)],
         vbmeta_file: &str,
@@ -814,6 +898,7 @@ androidboot.veritymode=enforcing
         color: BootStateColor,
         slot: char,
         vendor_config: &str,
+        fixup_config: &str,
     ) -> Vec<u8> {
         let vbmeta_file = Path::new(vbmeta_file);
         let vbmeta_digest = vbmeta_file.with_extension("digest.txt");
@@ -829,7 +914,7 @@ androidboot.veritymode=enforcing
             .extra("androidboot.gbl.version=0\n")
             .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
             .extra(vendor_config)
-            .extra(FakeGblOps::GBL_TEST_BOOTCONFIG);
+            .extra(fixup_config);
         for (part, _) in partitions {
             let slotless = part.strip_suffix(&format!("_{slot}")).unwrap_or(part).to_string();
             let digest = vbmeta_file.with_extension(format!("{slotless}.digest.txt"));
@@ -924,7 +1009,10 @@ androidboot.veritymode=enforcing
         );
 
         // Fixup is applied.
-        assert_eq!(fdt.get_property("/chosen", c"fixup").unwrap(), &[1]);
+        assert_eq!(
+            fdt.get_property("/chosen", FakeGblOps::TEST_CUSTOM_FDT_FIXUP_PROP).unwrap(),
+            FakeGblOps::GBL_TEST_FDT_FIXUP
+        );
 
         // Other FDT properties are as expected.
         for (path, property, res) in expected_fdt_property {
@@ -1009,6 +1097,7 @@ androidboot.veritymode=enforcing
                 color,
                 slot,
                 expected_vendor_bootconfig,
+                FakeGblOps::GBL_TEST_BOOTCONFIG,
             );
             let expected_bootargs = match &bootconfig_supported {
                 true => expected_bootargs.to_string(),
@@ -1578,6 +1667,7 @@ androidboot.veritymode=enforcing
                 BootStateColor::Green,
                 'a',
                 TEST_VENDOR_BOOTCONFIG,
+                FakeGblOps::GBL_TEST_BOOTCONFIG,
             ),
             EXPECTED_V3_V4_CMDLINE,
             &[],
@@ -1659,7 +1749,7 @@ androidboot.veritymode=enforcing
     }
 
     #[test]
-    fn test_android_load_verify_fixup_with_image_buffers() {
+    fn test_android_load_verify_fixup_with_partition_buffers() {
         let mut storage = FakeGblOpsStorage::default();
         // Zeroes only. Will be provided via preloaded buffer.
         storage.add_raw_device(c"boot_a", vec![0; 1024]);
@@ -1683,18 +1773,42 @@ androidboot.veritymode=enforcing
         ];
         let vendor_boot_addr = image_buffers[2].1.borrow_mut().as_ptr_range();
         let init_boot_addr = image_buffers[3].1.borrow_mut().as_ptr_range();
-        let get_partition_buf_handler = |img| {
+
+        let get_partition_buffer_handler = |img| {
             let (_, buf, pre) = image_buffers.iter().find(|v| v.0 == img).ok_or(Error::NotFound)?;
             match pre {
                 true => Ok(PartitionBuffer::Preloaded(into_refmut_bytes(buf.borrow_mut()))),
                 _ => Ok(PartitionBuffer::Designated(into_refmut_bytes(buf.borrow_mut()))),
             }
         };
+
+        let mut sync_partition_called = false;
+        const TEST_FDT_FIXUP: &str = "fixup-by-sync-partition-buffer";
+        const TEST_BOOTCONFIG_FIXUP: &str = "fixup-by-sync-partition-buffer=1\n";
+        let mut sync_partition_buffer_handler = |ops: &mut FakeGblOps, sync_preloaded: bool| {
+            assert!(!sync_preloaded);
+            // Checks that this is called after images are loaded.
+            // Designated buffers are loaded with the correct image.
+            assert_eq!(*image_buffers[2].1.borrow_mut(), read_test_data("vendor_boot_v4_a.img"));
+            assert_eq!(vendor_boot_addr, image_buffers[2].1.borrow_mut().as_ptr_range());
+            assert_eq!(*image_buffers[3].1.borrow_mut(), read_test_data("init_boot_a.img"));
+            assert_eq!(init_boot_addr, image_buffers[3].1.borrow_mut().as_ptr_range());
+
+            // Override test custom FDT/bootconifg fixup. Checks that this is called before final
+            // FDT/bootconfig fixup.
+            ops.test_custom_fdt_fixup = Some(TEST_FDT_FIXUP.into());
+            ops.test_custom_bootconfig_fixup = Some(TEST_BOOTCONFIG_FIXUP.into());
+
+            sync_partition_called = true;
+            Ok(())
+        };
+
         let mut ops = default_test_gbl_ops(&storage);
-        ops.get_partition_buf_handler = Some(&get_partition_buf_handler);
+        ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
+        ops.sync_partition_buffer_handler = Some(&mut sync_partition_buffer_handler);
 
         let mut load = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let (ramdisk, _, kernel, _) =
+        let (ramdisk, fdt, kernel, _) =
             android_load_verify_fixup(&mut ops, 0, false, (&mut load[..]).into()).unwrap();
 
         let expected_bootconfig = make_expected_bootconfig(
@@ -1709,6 +1823,7 @@ androidboot.veritymode=enforcing
             BootStateColor::Green,
             'a',
             TEST_VENDOR_BOOTCONFIG,
+            TEST_BOOTCONFIG_FIXUP,
         );
         let expected_ramdisk = &[
             read_test_data("vendor_ramdisk_a.img"),
@@ -1719,11 +1834,12 @@ androidboot.veritymode=enforcing
         check_ramdisk(ramdisk, expected_ramdisk, &expected_bootconfig);
         assert_eq!(kernel, read_test_data("kernel_a.img"));
 
-        // Designated buffers are loaded with the correct image.
-        assert_eq!(*image_buffers[2].1.borrow_mut(), read_test_data("vendor_boot_v4_a.img"));
-        assert_eq!(vendor_boot_addr, image_buffers[2].1.borrow_mut().as_ptr_range());
-        assert_eq!(*image_buffers[3].1.borrow_mut(), read_test_data("init_boot_a.img"));
-        assert_eq!(init_boot_addr, image_buffers[3].1.borrow_mut().as_ptr_range());
+        // sync_partition_buffer is called and can affect fixup.
+        assert_eq!(
+            Fdt::new(fdt).unwrap().get_property("/chosen", FakeGblOps::TEST_CUSTOM_FDT_FIXUP_PROP),
+            Ok(TEST_FDT_FIXUP.as_bytes())
+        );
+        assert!(sync_partition_called);
     }
 
     /// Helper for checking V2 image loaded from slot A and in normal mode.
@@ -2082,6 +2198,138 @@ androidboot.veritymode=enforcing
             make_expected_usb_out(&[b"OKAY", b"INFOSyncing storage...", b"OKAY",]),
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_android_main_enter_fastboot_trigger_sync_preloaded_partition() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+
+        // Set up designated load buffer for boot_a image
+        let img_len = read_test_data("boot_v2_a.img").len();
+        let buf = RefCell::new(vec![0u8; img_len]);
+        let get_partition_buffer_handler = |img| match img {
+            Partition::Boot => Ok(PartitionBuffer::Designated(into_refmut_bytes(buf.borrow_mut()))),
+            _ => Err(Error::NotFound),
+        };
+
+        // Records the calls and inputs of `GblOps::sync_partitions_buffer()`.
+        let mut traces = vec![];
+        let mut sync_partition_buffer_handler = |_: &mut FakeGblOps, sync_preloaded: bool| {
+            traces.push((sync_preloaded, buf.borrow_mut().clone()));
+            Ok(())
+        };
+
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
+        ops.sync_partition_buffer_handler = Some(&mut sync_partition_buffer_handler);
+        ops.stop_in_fastboot = Some(Ok(true));
+        ops.current_slot = Some(Ok(slot('a')));
+
+        let listener: SharedTestListener = Default::default();
+        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
+            listener.add_usb_input(b"continue");
+            fb.run_n::<2>(
+                &mut vec![0u8; 256 * 1024],
+                Some(&mut TestLocalSession::default()),
+                Some(&listener),
+                Some(&listener),
+            )
+        })
+        .unwrap();
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+
+        assert_eq!(
+            traces,
+            vec![
+                // Called with `sync_preloaded=true` due to fastboot, image not loaded yet.
+                (true, vec![0u8; img_len]),
+                // sync_preloaded = false, image loaded.
+                (false, read_test_data("boot_v2_a.img")),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_android_main_fastboot_boot_always_sync_preloaded_partition() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+
+        // Set up designated load buffer for boot_a image
+        let img_len = read_test_data("boot_v2_a.img").len();
+        let buf = RefCell::new(vec![0u8; img_len]);
+        let get_partition_buffer_handler = |img| match img {
+            Partition::Boot => Ok(PartitionBuffer::Designated(into_refmut_bytes(buf.borrow_mut()))),
+            _ => Err(Error::NotFound),
+        };
+
+        // Records the calls and inputs of `GblOps::sync_partitions_buffer()`.
+        let mut traces = vec![];
+        let mut sync_partition_buffer_handler = |_: &mut FakeGblOps, sync_preloaded: bool| {
+            traces.push((sync_preloaded, buf.borrow_mut().clone()));
+            Ok(())
+        };
+
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
+        ops.sync_partition_buffer_handler = Some(&mut sync_partition_buffer_handler);
+        ops.stop_in_fastboot = Some(Ok(true));
+        ops.current_slot = Some(Ok(slot('a')));
+
+        let listener: SharedTestListener = Default::default();
+        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
+            let data = read_test_data(format!("boot_v2_a.img"));
+            listener.add_usb_input(format!("download:{:#x}", data.len()).as_bytes());
+            listener.add_usb_input(&data);
+            listener.add_usb_input(b"boot");
+            listener.add_usb_input(b"continue");
+            fb.run_n::<2>(
+                &mut vec![0u8; 256 * 1024],
+                Some(&mut TestLocalSession::default()),
+                Some(&listener),
+                Some(&listener),
+            )
+        })
+        .unwrap();
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"DATA00004000",
+                b"OKAY",
+                b"INFOBoot image as Android slot a",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+
+        assert_eq!(
+            traces,
+            vec![
+                // Called with `sync_preloaded=true` due to fastboot, images not loaded yet.
+                (true, vec![0u8; img_len]),
+                // Called with `sync_preloaded=false`, after images are loaded.
+                (false, read_test_data("boot_v2_a.img")),
+            ]
         );
     }
 }

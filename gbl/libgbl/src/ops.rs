@@ -374,9 +374,7 @@ pub trait GblOps<'a, 'd> {
     /// # Returns
     ///
     /// Returns `Err(Error::NotReady)`, if some previously returned buffer is still in use.
-    fn sync_partition_buffer(&self, _sync_preloaded: bool) -> Result<(), Error> {
-        todo!()
-    }
+    fn sync_partition_buffer(&mut self, sync_preloaded: bool) -> Result<(), Error>;
 
     /// Get buffer for specific image of requested size.
     fn get_image_buffer(
@@ -738,6 +736,10 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         img: Partition,
     ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
         self.ops.get_partition_buffer(img)
+    }
+
+    fn sync_partition_buffer(&mut self, sync_preloaded: bool) -> Result<(), Error> {
+        self.ops.sync_partition_buffer(sync_preloaded)
     }
 
     fn get_image_buffer(
@@ -1125,8 +1127,18 @@ pub(crate) mod test {
         pub set_lock_traces: Vec<(LockType, LockState)>,
 
         /// Handler for `get_partition_buffer`
-        pub get_partition_buf_handler:
+        pub get_partition_buffer_handler:
             Option<&'a dyn Fn(Partition) -> Result<PartitionBuffer<RefMut<'a, [u8]>>, Error>>,
+
+        /// Handler for `sync_partition_buffer`
+        pub sync_partition_buffer_handler:
+            Option<&'a mut dyn FnMut(&mut FakeGblOps, bool) -> Result<(), Error>>,
+
+        /// Custom FDT fixup value for property "chosen/test-fixup" set by unittest.
+        pub test_custom_fdt_fixup: Option<String>,
+
+        /// Custom bootconfig fixup value set by unittest.
+        pub test_custom_bootconfig_fixup: Option<String>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1146,11 +1158,13 @@ pub(crate) mod test {
         pub const GBL_TEST_VAR: &'static str = "gbl-test-var";
         pub const GBL_TEST_VAR_VAL: &'static str = "gbl-test-var-val";
         pub const GBL_TEST_BOOTCONFIG: &'static str = "arg1=val1\x0aarg2=val2\x0a";
+        pub const GBL_TEST_FDT_FIXUP: &'static [u8] = &[1];
         /// TODO(b/391191885): Generate real dice handover or use prebuilt
         pub const GBL_TEST_AVF_VENDOR_DICE_HANDOVER: &'static [u8] = b"fake_handover_always_fail";
         pub const GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY: &'static [u8] =
             b"secret_keeper_public_key";
         pub const GBL_OEM_CMD_INFO_MSG: &'static str = "oem-info";
+        pub const TEST_CUSTOM_FDT_FIXUP_PROP: &'static CStr = c"test-fixup";
 
         pub fn new(partitions: &'a [TestGblDisk]) -> Self {
             let mut res = Self {
@@ -1394,7 +1408,14 @@ pub(crate) mod test {
             &self,
             img: Partition,
         ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
-            self.get_partition_buf_handler.as_ref().ok_or(Error::NotFound)?(img)
+            self.get_partition_buffer_handler.as_ref().ok_or(Error::NotFound)?(img)
+        }
+
+        fn sync_partition_buffer(&mut self, sync: bool) -> Result<(), Error> {
+            let mut f = self.sync_partition_buffer_handler.take();
+            let res = f.as_mut().map(|v| (*v)(self, sync)).unwrap_or(Ok(()));
+            self.sync_partition_buffer_handler = f;
+            res
         }
 
         fn get_image_buffer(
@@ -1423,8 +1444,12 @@ pub(crate) mod test {
             _bootconfig: &[u8],
             fixup_buffer: &'c mut [u8],
         ) -> Result<Option<&'c [u8]>, Error> {
-            let (out, _) = fixup_buffer.split_at_mut(Self::GBL_TEST_BOOTCONFIG.len());
-            out.copy_from_slice(Self::GBL_TEST_BOOTCONFIG.as_bytes());
+            let config = self
+                .test_custom_bootconfig_fixup
+                .clone()
+                .unwrap_or(Self::GBL_TEST_BOOTCONFIG.into());
+            let (out, _) = fixup_buffer.split_at_mut(config.len());
+            out.copy_from_slice(config.as_bytes());
             Ok(Some(out))
         }
 
@@ -1440,8 +1465,15 @@ pub(crate) mod test {
             let mut commandline = CommandlineBuilder::new_from_prefix(cmd_prop_buffer)?;
             commandline.add("fixup")?;
 
-            // Update DT with fixup value.
-            fdt.set_property("chosen", c"fixup", &[1])
+            // Test custom fixup.
+            fdt.set_property(
+                "chosen",
+                Self::TEST_CUSTOM_FDT_FIXUP_PROP,
+                self.test_custom_fdt_fixup
+                    .as_ref()
+                    .map(|v| v.as_bytes())
+                    .unwrap_or(Self::GBL_TEST_FDT_FIXUP),
+            )
         }
 
         fn select_device_trees(

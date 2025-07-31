@@ -567,7 +567,13 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         &self,
         _: Partition,
     ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'b>> {
+        // TODO(b/430068343): Calls GblEfiBootMemoryProtocol API.
         Err::<PartitionBuffer<&mut [u8]>, _>(Error::NotFound)
+    }
+
+    fn sync_partition_buffer(&mut self, _: bool) -> Result<()> {
+        // TODO(b/430068343): Calls GblEfiBootMemoryProtocol API.
+        Ok(())
     }
 
     fn get_image_buffer(

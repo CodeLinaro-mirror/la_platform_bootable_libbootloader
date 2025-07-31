@@ -148,6 +148,11 @@ impl<'a> CommandlineBuilder<'a> {
     fn update_null_terminator(&mut self) {
         self.buffer[self.current_size] = 0;
     }
+
+    /// Zeroizes the remaining buffer.
+    pub fn zeroize_remains(&mut self) {
+        self.buffer[self.current_size..].fill(0)
+    }
 }
 
 impl core::fmt::Display for CommandlineBuilder<'_> {

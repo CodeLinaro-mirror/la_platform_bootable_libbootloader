@@ -384,6 +384,10 @@ mod test {
             Err::<PartitionBuffer<&mut [u8]>, _>(Error::NotFound)
         }
 
+        fn sync_partition_buffer(&mut self, _: bool) -> Result<()> {
+            Ok(())
+        }
+
         fn get_image_buffer(
             &mut self,
             _image_type: ImageType,

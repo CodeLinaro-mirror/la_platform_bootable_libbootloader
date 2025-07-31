@@ -919,6 +919,9 @@ where
 
     async fn boot(&mut self, resp: impl InfoSender + OkaySender) -> CommandResult<()> {
         let (img, sz) = self.take_download().ok_or("No boot image staged")?;
+        // Re-sync preloaded partitions. Device state or disk content might have changed due to
+        // flashing etc.
+        self.gbl_ops.sync_partition_buffer(true)?;
         match is_fuchsia_fastboot_boot_image(&img[..sz]) {
             true => self.boot_fuchsia(&img[..sz], resp).await,
             _ => self.boot_android(&img[..sz], resp).await,
@@ -3227,14 +3230,14 @@ pub(crate) mod test {
         let buffers = HashMap::<Partition, RefCell<Vec<u8>>>::from_iter(
             preloaded.iter().map(|(p, f)| (*p, read_test_data(f).into())),
         );
-        let get_partition_buf_handler = |n| {
+        let get_partition_buffer_handler = |n| {
             Ok(PartitionBuffer::Preloaded(into_refmut_bytes(
                 buffers.get(&n).ok_or(Error::NotFound)?.borrow_mut(),
             )))
         };
 
         let mut gbl_ops = default_test_gbl_ops(&storage);
-        gbl_ops.get_partition_buf_handler = Some(&get_partition_buf_handler);
+        gbl_ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
         gbl_ops.current_slot = Some(Ok(slot('a')));
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let listener: SharedTestListener = Default::default();

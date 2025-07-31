@@ -46,6 +46,19 @@ impl<'a> BootConfigBuilder<'a> {
         Ok(ret)
     }
 
+    /// Initializes from a given buffer with an existing bootconfig.
+    ///
+    /// # Args
+    ///
+    /// * `buffer`: The buffer containing an existing bootconfig.
+    /// * `size`: The size including trailer.
+    pub fn from_prefix_unchecked(buffer: &'a mut [u8], size: usize) -> Result<Self> {
+        Ok(Self {
+            buffer,
+            current_size: size.checked_sub(BOOTCONFIG_TRAILER_SIZE).ok_or(Error::InvalidInput)?,
+        })
+    }
+
     /// Get the remaining capacity for adding new bootconfig.
     pub fn remaining_capacity(&self) -> usize {
         self.buffer
@@ -123,6 +136,18 @@ impl<'a> BootConfigBuilder<'a> {
     pub fn config_str(&self) -> &str {
         from_utf8(&self.buffer[..self.current_size]).unwrap()
     }
+}
+
+/// Extracts bootconfig string from a buffer with bootconfig.
+///
+/// CRC is not checked.
+pub fn extract_bootconfig(buffer: &[u8]) -> Result<&str> {
+    let (buf, trailer) = buffer
+        .split_last_chunk::<BOOTCONFIG_TRAILER_SIZE>()
+        .ok_or(Error::BufferTooSmall(Some(BOOTCONFIG_TRAILER_SIZE)))?;
+    let sz = usize::try_from(u32::from_le_bytes(trailer[..4].try_into().unwrap()))?;
+    let off = buf.len().checked_sub(sz).ok_or(Error::BufferTooSmall(Some(sz)))?;
+    from_utf8(&buf[off..]).map_err(|_| Error::InvalidInput)
 }
 
 impl core::fmt::Display for BootConfigBuilder<'_> {
@@ -212,6 +237,8 @@ androidboot.verifiedbootstate=orange
             builder.config_bytes().to_vec(),
             [TEST_CONFIG.as_bytes(), TEST_CONFIG_TRAILER].concat().to_vec()
         );
+
+        assert_eq!(extract_bootconfig(&buffer[..]).unwrap(), TEST_CONFIG);
     }
 
     #[test]
