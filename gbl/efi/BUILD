@@ -103,7 +103,7 @@ rust_binary(
     ],
     deps = [
         ":libgbl_efi",
-        "@avb//:avb_crypto_ops_sha_impl_staticlib",
+        "@avb//:libavb_c_sha_staticlib",
         "@boringssl//:libcrypto_c_baremetal_static",
         "@cfg_if",
         "@gbl//libavb:sysdeps",
