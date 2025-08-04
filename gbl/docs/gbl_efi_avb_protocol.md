@@ -89,12 +89,12 @@ Gets whether the device is unlocked.
 #### ReadRollbackIndex
 
 Gets the rollback index corresponding to the provided index location.
-[`ReadRollbackIndex()`](#readrollbackindex).
+[`ReadRollbackIndex()`](#gbl_efi_avb_protocolreadrollbackindex).
 
 #### WriteRollbackIndex
 
 Sets the rollback index corresponding to the provided index location.
-[`WriteRollbackIndex()`](#writerollbackindex).
+[`WriteRollbackIndex()`][protocolwriterollbackindex].
 
 #### ReadPersistentValue
 
@@ -361,6 +361,97 @@ An unlocked device state allows GBL not to force AVB and to boot the device with
 an `orange` boot state. GBL rejects continuing the boot process if this method
 returns any error. GBL may call this method multiple times per boot session.
 
+## GBL_EFI_AVB_PROTOCOL.ReadRollbackIndex()
+
+### Summary
+
+Allows the firmware to provide rollback index for the provided index location to
+GBL in a vendor-specific way.
+
+### Prototype
+
+```c
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_AVB_READ_ROLLBACK_INDEX) (
+  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN USIZE IndexLocation,
+  OUT UINT64 *RollbackIndex);
+```
+
+### Parameters
+
+#### This
+
+A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
+
+#### IndexLocation
+
+The location of the rollback index to be provided by this method.
+
+#### RollbackIndex
+
+An output parameter used to return the rollback index corresponding to the
+provided `IndexLocation`.
+
+### Description
+
+GBL requests rollback indexes to compare against the value provided in the
+vbmeta header. This prevents a locked device from booting if the rollback index
+provided by the partition is smaller than the value previously written using
+[`WriteRollbackIndex`][protocolwriterollbackindex] during the last successful
+boot ensuring [rollback protection][rp] in case of an OTA.
+
+GBL only requests rollback indexes for `IndexLocation` equals `0` as a global
+HLOS index or locations specified in the corresponding chained partition
+descriptors. Returning any error in such cases causes GBL boot failure for
+locked devices.
+
+## GBL_EFI_AVB_PROTOCOL.WriteRollbackIndex()
+
+### Summary
+
+Allows the firmware to update rollback index for the provided index location in
+a vendor-specific way.
+
+### Prototype
+
+```c
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_AVB_WRITE_ROLLBACK_INDEX) (
+  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN USIZE IndexLocation,
+  IN UINT64 RollbackIndex);
+```
+
+### Parameters
+
+#### This
+
+A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
+
+#### IndexLocation
+
+The location of the rollback index to be set by this method.
+
+#### RollbackIndex
+
+A rollback index value to be set for the provided `IndexLocation`.
+
+### Description
+
+For a locked device, if a known-good slot is successfully verified, GBL updates
+rollback indexes to the value provided in the vbmeta header in accordance with
+`libavb` [requrements][update_ri]. This prevents a locked device from booting a
+previous version of HLOS on the next boot, ensuring [rollback protection][rp] in
+case of an OTA.
+
+GBL only updates rollback indexes for `IndexLocation` equals `0` as a global
+HLOS index or locations specified in the corresponding chained partition
+descriptors. Returning any error in such cases causes GBL boot failure for
+locked devices.
+
 ## Status Codes Returned
 
 The following UEFI error types are used to communicate result to GBL and
@@ -371,7 +462,7 @@ The following UEFI error types are used to communicate result to GBL and
 | `EFI_SUCCESS`                  | Requested operation was successful `libavb::AvbIOResult::AVB_IO_RESULT_OK`                                                                              |
 | `EFI_STATUS_OUT_OF_RESOURCES`  | Unable to allocate memory `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_OOM`                                                                                |
 | `EFI_STATUS_DEVICE_ERROR`      | Underlying hardware (disk or other subsystem) encountered an I/O error `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                    |
-| `EFI_STATUS_NOT_FOUND`         | Named persistent value does not exist `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_NO_SUCH_VALUE`                                                          |
+| `EFI_STATUS_NOT_FOUND`         | Named persistent value or rollback index does not exist for the corresponding key `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_NO_SUCH_VALUE`              |
 | `EFI_STATUS_END_OF_FILE`       | Range of bytes requested to be read or written is outside the range of the partition `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_RANGE_OUTSIDE_PARTITION` |
 | `EFI_STATUS_INVALID_PARAMETER` | Named persistent value size is not supported or does not match the expected size `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INVALID_VALUE_SIZE`          |
 | `EFI_STATUS_BUFFER_TOO_SMALL`  | Buffer is too small for the requested operation `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INSUFFICIENT_SPACE`                                           |
@@ -380,5 +471,8 @@ The following UEFI error types are used to communicate result to GBL and
 TODO(b/337846185): Provide docs for all methods.
 
 [readpartitionstoverify]: #gbl_efi_image_loading_protocolreadpartitionstoverify
+[protocolwriterollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
 [avb]: https://source.android.com/docs/security/features/verifiedboot/avb
 [dmv_error]: https://android.googlesource.com/platform/external/avb/+/master/README.md#handling-dm_verity-errors
+[rp]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#rollback-protection
+[update_ri]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes
