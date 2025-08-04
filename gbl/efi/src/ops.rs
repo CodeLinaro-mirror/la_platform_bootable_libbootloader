@@ -519,7 +519,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         {
             Ok(_) => Ok(true),
             // Protocol is optional.
-            Err(Error::NotFound) => Ok(false),
+            Err(Error::NotFound | Error::Unsupported) => Ok(false),
             Err(e) => Err(e),
         }
     }
