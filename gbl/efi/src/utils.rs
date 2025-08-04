@@ -20,6 +20,7 @@ use core::{slice::from_raw_parts_mut, str::from_utf8, time::Duration};
 use efi::{
     protocol::{
         device_path::{DevicePathProtocol, DevicePathText, DevicePathToTextProtocol},
+        gbl_efi_boot_memory::{gbl_get_boot_buffer, GblVendorReservedMemory},
         gbl_efi_image_loading::EfiImageBufferInfo,
         loaded_image::LoadedImageProtocol,
         simple_text_input::SimpleTextInputProtocol,
@@ -28,12 +29,12 @@ use efi::{
     DeviceHandle, EfiEntry,
 };
 use efi_types::{
-    EfiGuid, EfiInputKey, GBL_IMAGE_TYPE_FDT_LOAD, GBL_IMAGE_TYPE_KERNEL_LOAD,
-    GBL_IMAGE_TYPE_OS_LOAD, GBL_IMAGE_TYPE_RAMDISK_LOAD,
+    EfiGuid, EfiInputKey, GBL_EFI_BOOT_BUFFER_TYPE_FDT, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
+    GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_IMAGE_TYPE_OS_LOAD,
 };
 use fdt::FdtHeader;
 use liberror::Error;
-use libgbl::android_boot::LoadBuffer;
+use libgbl::android_boot::BootBuffer;
 
 type Result<T> = core::result::Result<T, Error>;
 
@@ -227,29 +228,51 @@ pub(crate) fn get_platform_buffer_info(
 
 pub(crate) const SZ_MB: usize = 1024 * 1024;
 
-/// Helper for getting load buffer
-pub(crate) fn take_os_load_buffer(entry: &EfiEntry, default: usize) -> LoadBuffer<'static> {
-    let kernel = get_platform_buffer_info(entry, from_utf8(GBL_IMAGE_TYPE_KERNEL_LOAD).unwrap(), 0);
-    let ramdisk =
-        get_platform_buffer_info(entry, from_utf8(GBL_IMAGE_TYPE_RAMDISK_LOAD).unwrap(), 0);
-    let fdt = get_platform_buffer_info(entry, from_utf8(GBL_IMAGE_TYPE_FDT_LOAD).unwrap(), 0);
-    match (kernel, ramdisk, fdt) {
-        (BufferInfo::Static(kernel), BufferInfo::Static(ramdisk), BufferInfo::Static(fdt))
-            if !kernel.is_empty() && !ramdisk.is_empty() && !fdt.is_empty() =>
-        {
-            return LoadBuffer::Designated { kernel, ramdisk, fdt }
-        }
-        _ => {
-            let img_type_os_load = from_utf8(GBL_IMAGE_TYPE_OS_LOAD).unwrap();
-            let buf = match get_platform_buffer_info(&entry, img_type_os_load, default) {
-                BufferInfo::Static(v) => v,
-                BufferInfo::Alloc(sz) => {
-                    let alloc = vec![0u8; sz];
-                    efi_println!(entry, "Allocated {:#x} bytes for OS load buffer.", alloc.len());
-                    alloc.leak()
-                }
-            };
-            LoadBuffer::Monolithic(buf)
+/// Take legacy os_load buffer using GblEfiImageLoading protocol.
+// TODO(b/430068343): Switch to `gbl_get_boot_buffer` and GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD.
+fn take_legacy_os_load(entry: &EfiEntry, default: usize) -> &'static mut [u8] {
+    let img_type_os_load = from_utf8(GBL_IMAGE_TYPE_OS_LOAD).unwrap();
+    match get_platform_buffer_info(&entry, img_type_os_load, default) {
+        BufferInfo::Static(v) => v,
+        BufferInfo::Alloc(sz) => {
+            let alloc = vec![0u8; sz];
+            efi_println!(entry, "Allocated {:#x} bytes for OS load buffer.", alloc.len());
+            alloc.leak()
         }
     }
+}
+
+/// Intermediate strucutre that can generate a `BootBuffer` instance.
+pub(crate) struct GblEfiBootBuffer {
+    general: &'static mut [u8],
+    kernel: Option<GblVendorReservedMemory>,
+    ramdisk: Option<GblVendorReservedMemory>,
+    fdt: Option<GblVendorReservedMemory>,
+    // TODO(b/430068343): Support pvmfw.
+}
+
+impl GblEfiBootBuffer {
+    pub(crate) fn to_boot_buffer(&mut self) -> BootBuffer<'_> {
+        BootBuffer {
+            general: self.general,
+            kernel: self.kernel.as_mut().map(|v| v as _),
+            ramdisk: self.ramdisk.as_mut().map(|v| v as _),
+            fdt: self.fdt.as_mut().map(|v| v as _),
+        }
+    }
+}
+
+/// Helper for getting boot buffer.
+pub(crate) fn get_boot_buffer(entry: &EfiEntry, default: usize) -> Result<GblEfiBootBuffer> {
+    let [kernel, ramdisk, fdt] = [
+        GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
+        GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK,
+        GBL_EFI_BOOT_BUFFER_TYPE_FDT,
+    ]
+    .map(|v| match gbl_get_boot_buffer(entry, v, 0) {
+        Err(Error::NotFound) => Ok(None),
+        v => v.map(|v| Some(v)),
+    });
+    let general = take_legacy_os_load(entry, default);
+    Ok(GblEfiBootBuffer { general, kernel: kernel?, ramdisk: ramdisk?, fdt: fdt? })
 }

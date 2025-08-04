@@ -12,25 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{fastboot::efi_gbl_fastboot_entry, ops::Ops, utils::take_os_load_buffer};
+use crate::{fastboot::efi_gbl_fastboot_entry, ops::Ops};
 use efi::{efi_println, exit_boot_services, EfiEntry};
-use libgbl::{android_boot::android_main, gbl_println, GblOps, Result};
+use libgbl::{
+    android_boot::{android_main, BootBuffer},
+    gbl_println, GblOps, Result,
+};
 
 /// Android bootloader main entry (before booting).
 ///
 /// On success, returns a tuple of slices (ramdisk, fdt, kernel, remains).
-pub fn efi_android_load(
+pub fn efi_android_load<'a>(
     ops: &mut Ops,
-) -> Result<(&'static mut [u8], &'static mut [u8], &'static mut [u8], &'static mut [u8])> {
+    load: BootBuffer<'a>,
+) -> Result<(&'a mut [u8], &'a mut [u8], &'a mut [u8], &'a mut [u8])> {
     let entry = ops.efi_entry;
-    // Prepares the OS load buffer.
-    let load_buffer = take_os_load_buffer(entry, 256 * 1024 * 1024);
-
     let mut fastboot_buffer_info = None;
     gbl_println!(ops, "Try booting as Android");
-    Ok(android_main(ops, load_buffer, |fb| {
-        efi_gbl_fastboot_entry(entry, fb, &mut fastboot_buffer_info)
-    })?)
+    Ok(android_main(ops, load, |fb| efi_gbl_fastboot_entry(entry, fb, &mut fastboot_buffer_info))?)
 }
 
 /// Exits boot services and boots loaded android images.

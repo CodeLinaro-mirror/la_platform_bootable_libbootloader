@@ -15,7 +15,7 @@
 //! Android boot support.
 
 use crate::{
-    constants::{Partition, FDT_ALIGNMENT, KERNEL_ALIGNMENT},
+    constants::{Partition, FDT_ALIGNMENT},
     device_tree::{
         DeviceTreeComponentSource, DeviceTreeComponentType, DeviceTreeComponentsRegistry,
     },
@@ -24,7 +24,7 @@ use crate::{
         GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
     },
     gbl_println,
-    ops::{PartitionBuffer, RebootMode},
+    ops::RebootMode,
     GblOps, Result,
 };
 use bootparams::{
@@ -39,9 +39,8 @@ use fdt::{Fdt, FdtHeader};
 use gbl_async::block_on;
 use libbuild_number::BUILD_NUMBER;
 use liberror::Error;
-use libutils::{aligned_offset, aligned_subslice};
+use libutils::aligned_subslice;
 use misc::{AndroidBootMode, BootloaderMessage};
-use safemath::SafeNum;
 
 mod avf;
 use avf::{avf_update_bootconfig, pkvm_describe_pvmfw_resvmem, pvmfw_place_in_memory};
@@ -51,7 +50,7 @@ pub use vboot::{avb_verify_slot, PartitionsToVerify};
 
 pub(crate) mod load;
 pub(crate) use load::get_kernel;
-use load::{android_load_verified, split, split_chunks, SlotSuffix};
+use load::{android_load_verified, BootBufferLoader, SlotSuffix};
 
 /// Device tree bootargs property to store kernel command line.
 pub const BOOTARGS_PROP: &CStr = c"bootargs";
@@ -80,8 +79,10 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     ops: &mut impl GblOps<'b, 'c>,
     slot: u8,
     is_recovery: bool,
-    mut load: LoadBuffer<'a>,
+    boot_buffer: BootBuffer<'a>,
 ) -> Result<(&'a mut [u8], &'a mut [u8], &'a mut [u8], &'a mut [u8])> {
+    let mut loader = BootBufferLoader::new(boot_buffer);
+
     // Performs libavb verification first.
 
     // Collects preloaded partition buffers from the platform.
@@ -104,25 +105,22 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
             Err(e) => return Err(e.into()),
         }
     }
-
-    for v in &mut preloaded {
-        match v {
-            (n, PartitionBuffer::Preloaded(ref v)) => {
-                partitions.try_push_preloaded(n.name_cstr(), v)?
-            }
-            (n, PartitionBuffer::Designated(ref mut v)) => {
-                partitions.try_push_to_load(n.name_cstr(), v)?
-            }
-        }
+    // Adds all preloaded partition buffers.
+    for (n, b) in &mut preloaded {
+        partitions.try_push_preloaded(n.name_cstr(), b)?;
     }
 
     let (verify_data, color, unlocked) = avb_verify_slot(ops, slot, &mut partitions)?;
-    let images = android_load_verified(ops, slot, unlocked, &verify_data, &mut load)?;
+    let images = android_load_verified(ops, slot, unlocked, &verify_data, &mut loader)?;
     let enable_avf = !images.pvmfw.is_empty();
+
+    let kernel_len = loader.kernel_sz;
+    let ramdisk_len = loader.ramdisk_sz;
 
     // Fixes up bootconfig.
 
-    let mut bootconfig_builder = BootConfigBuilder::new(images.unused)?;
+    let bootconfig_buf = loader.expand_bootconfig_buffer()?;
+    let mut bootconfig_builder = BootConfigBuilder::new(bootconfig_buf)?;
     for entry in CommandlineParser::new(verify_data.cmdline().to_str().unwrap()) {
         write!(bootconfig_builder, "{}\n", entry?).map_err(Error::from)?;
     }
@@ -149,12 +147,16 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         avf_update_bootconfig(ops, &mut bootconfig_builder)?;
     }
     let bootconfig_sz = bootconfig_builder.config_bytes().len();
+    loader.set_bootconfig_size(bootconfig_sz);
+    // Notes: We keep bootconfig in the ramdisk regardless of whether it is supported for simplicity
+    // and in case device is using boot v3+vendor_boot v4 combination where Android 11 and
+    // Android 12+ are indistinguishable.
     let bootconfig_supported = images.bootconfig_supported();
 
     // Fixes up FDT.
 
+    let (designated_fdt, remains) = loader.get_fdt_and_general_unused_buffer()?;
     let mut components = DeviceTreeComponentsRegistry::new();
-    let (_, remains) = split(images.unused, bootconfig_sz)?;
     // TODO(b/353272981): Remove get_custom_device_tree
     let (remains, base, overlays) = match ops.get_custom_device_tree() {
         Some(v) => (remains, v, &[][..]),
@@ -220,10 +222,8 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
             (remains, base, overlays)
         }
     };
-    let fdt_load = match images.fdt_fixup.is_empty() {
-        true => aligned_subslice(remains, FDT_ALIGNMENT)?,
-        _ => images.fdt_fixup,
-    };
+    // Assembles DT in designated buffer if provided, otherwise allocates from `general` buffer.
+    let fdt_load = designated_fdt.unwrap_or(aligned_subslice(remains, FDT_ALIGNMENT)?);
     let mut fdt = Fdt::new_from_init(&mut fdt_load[..], base)?;
 
     gbl_println!(ops, "Applying {} overlays", overlays.len());
@@ -248,21 +248,9 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         }
     }
 
-    fdt.shrink_to_fit()?;
-
     let final_command_line = CStr::from_bytes_until_nul(fdt.get_property("chosen", BOOTARGS_PROP)?)
         .map_err(Error::from)?;
     gbl_println!(ops, "final cmdline: \"{}\"", final_command_line.to_str().unwrap());
-
-    let ramdisk_addr = images.ramdisk.as_ptr() as usize;
-    // Notes: We keep bootconfig in the ramdisk regardless of whether it is supported for simplicity
-    // and in case device is using boot v3+vendor_boot v4 combination where Android 11 and
-    // Android 12+ are indistinguishable.
-    let bootconfig_off = images.ramdisk.len();
-    let fdt_len = fdt.header_ref()?.actual_size();
-    let fdt_addr = fdt_load.as_ptr() as usize;
-    let kernel_len = images.kernel.len();
-    let kernel_addr = images.kernel.as_ptr() as usize;
 
     // Notifies platform to process loaded partitions before final bootconfig and FDT fixup, so
     // that backend can add fixup items that depend on certain partition data.
@@ -274,58 +262,32 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     drop(preloaded);
     ops.sync_partition_buffer(false)?;
 
-    match load {
-        LoadBuffer::Designated { ramdisk, kernel, fdt } => {
-            // Fixes up bootconfig.
-            let bootconfig = fixup_bootconfig(ops, &mut ramdisk[bootconfig_off..], bootconfig_sz)?;
-            let ramdisk_len = bootconfig_off + bootconfig.config_bytes().len();
-            let (ramdisk, remains) = ramdisk.split_at_mut(ramdisk_len);
-            // Fixes up FDT.
-            fixup_dt(ops, fdt, ramdisk, !bootconfig_supported)?;
-            Ok((ramdisk, fdt, &mut kernel[..kernel_len], remains))
-        }
-        LoadBuffer::Monolithic(load) => {
-            let [ramdisk_off, fdt_off, kernel_off] =
-                [ramdisk_addr, fdt_addr, kernel_addr].map(|v| v - (load.as_ptr() as usize));
-            // Buffer currently has layout
-            //
-            // +------------------------+
-            // | ramdisk                |
-            // +------------------------+
-            // | bootconfig             |
-            // +------------------------+
-            // | FDT                    |
-            // +------------------------+
-            // | unused                 |
-            // +------------------------+
-            // | kernel                 |
-            // +------------------------+
-            //
-            // Move FDT backward to make space for bootconfig fixup.
-            let fdt_temp_off = kernel_off - fdt_len;
-            load[fdt_off..kernel_off].copy_within(..fdt_len, fdt_temp_off - fdt_off);
-            // Fixes up bootconfig.
-            let bootconfig =
-                fixup_bootconfig(ops, &mut load[bootconfig_off..][..fdt_temp_off], bootconfig_sz)?;
-            let ramdisk_len = bootconfig_off + bootconfig.config_bytes().len();
-            // Move FDT forward to make space for its fixup.
-            let fdt_off = aligned_offset(&load[ramdisk_len..], FDT_ALIGNMENT)? + ramdisk_len;
-            load[..kernel_off].copy_within(fdt_temp_off.., fdt_off);
-            // Fixes up FDT.
-            let (ramdisk, fdt) = load[..kernel_off].split_at_mut(fdt_off);
-            let fdt_len = fixup_dt(ops, fdt, &ramdisk[..ramdisk_len], !bootconfig_supported)?;
-            // Moves the kernel forward to reserve as much space as possible. This is in case there
-            // is not enough memory after `load`, i.e. the memory after it is not mapped or is
-            // reserved.
-            let mut kernel_new =
-                (SafeNum::from(fdt_off) + fdt_len).try_into().map_err(Error::from)?;
-            kernel_new += aligned_offset(&mut load[kernel_new..], KERNEL_ALIGNMENT)?;
-            load.copy_within(kernel_off..kernel_off + kernel_len, kernel_new);
-            let chunks = [ramdisk_off, fdt_off - ramdisk_off, kernel_new - fdt_off, kernel_len];
-            let ([_, ramdisk, fdt, kernel], unused) = split_chunks(load, &chunks);
-            Ok((&mut ramdisk[..ramdisk_len], fdt, kernel, unused))
-        }
-    }
+    // Backend FDT fixup.
+
+    // Make sure we provide an actual device tree size, so FW can calculate amount of space
+    // available for fixup.
+    fdt.shrink_to_fit()?;
+    // TODO(b/353272981): Make a copy of current device tree and verify provided fixup.
+    // TODO(b/353272981): Handle buffer too small
+    ops.fixup_device_tree(fdt.as_mut())?;
+    fdt.shrink_to_fit()?;
+    let fdt_ptr_range = fdt.as_ref()[..fdt.header_ref()?.actual_size()].as_ptr_range();
+    loader.set_fdt_range(fdt_ptr_range);
+
+    // Backend bootconfig fixup.
+    let bootconfig_sz = fixup_bootconfig(ops, loader.expand_bootconfig_buffer()?, bootconfig_sz)?;
+    loader.set_bootconfig_size(bootconfig_sz);
+    let ramdisk_len = ramdisk_len + bootconfig_sz;
+
+    // Finalizes FDT with ramdisk address and adds bootconfig as bootarg if it is not supported.
+    loader.expand_fdt()?;
+    let [ramdisk, fdt, _, _] = loader.splits();
+    let fdt_sz = finalize_dt(ops, fdt, &ramdisk[..ramdisk_len], !bootconfig_supported)?;
+    let fdt_range = fdt[..fdt_sz].as_ptr_range();
+    loader.set_fdt_range(fdt_range);
+    loader.move_kernel_left();
+    let [ramdisk, fdt, kernel, unused] = loader.into_splits();
+    Ok((&mut ramdisk[..ramdisk_len], &mut fdt[..fdt_sz], &mut kernel[..kernel_len], unused))
 }
 
 /// Helper for appending one or more commandline strings to FDT chosen/bootarg
@@ -363,8 +325,7 @@ fn fdt_append_bootarg<'a, 'b, 'c>(
     Ok(())
 }
 
-/// Helper for performing platform custom FDT fixup, setting of `linux,initrd-start/end` and
-/// optionally appending bootconfig as bootarg in FDT.
+/// Sets `linux,initrd-start/end` and optionally appending bootconfig as bootarg in FDT.
 ///
 /// # Args
 ///
@@ -372,7 +333,7 @@ fn fdt_append_bootarg<'a, 'b, 'c>(
 /// * `fdt`: Target FDT to fixup.
 /// * `ramdisk`: Target ramdisk for setting `linux,initrd-start/end`
 /// * `append_bootconfig`: Set to true to append bootconfig from ramdisk as bootarg.
-fn fixup_dt<'a, 'b, 'c>(
+fn finalize_dt<'b, 'c>(
     ops: &mut impl GblOps<'b, 'c>,
     fdt: &mut [u8],
     ramdisk: &[u8],
@@ -389,12 +350,6 @@ fn fixup_dt<'a, 'b, 'c>(
     if append_bootconfig {
         fdt_append_bootarg(ops, &mut fdt, extract_bootconfig(ramdisk)?.split('\n'), 0)?;
     }
-    // Make sure we provide an actual device tree size, so FW can calculate amount of space
-    // available for fixup.
-    fdt.shrink_to_fit()?;
-    // TODO(b/353272981): Make a copy of current device tree and verify provided fixup.
-    // TODO(b/353272981): Handle buffer too small
-    ops.fixup_device_tree(fdt.as_mut())?;
     fdt.shrink_to_fit()?;
     Ok(fdt.header_ref()?.actual_size())
 }
@@ -410,13 +365,13 @@ fn fixup_bootconfig<'a, 'b, 'c>(
     ops: &mut impl GblOps<'b, 'c>,
     buf: &'a mut [u8],
     curr_bootconfig_sz: usize,
-) -> Result<BootConfigBuilder<'a>> {
+) -> Result<usize> {
     let mut builder = BootConfigBuilder::from_prefix_unchecked(buf, curr_bootconfig_sz)?;
     // Adds platform-specific bootconfig.
     builder.add_with(|bytes, out| {
         Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
     })?;
-    Ok(builder)
+    Ok(builder.config_bytes().len())
 }
 
 /// Gets the target slot to boot.
@@ -528,54 +483,23 @@ where
     }
 }
 
-/// Contains load buffer
-pub enum LoadBuffer<'a> {
-    /// Single contiguous load buffer for everything.
-    Monolithic(&'a mut [u8]),
-    /// Designated buffers for kernel/ramdisk/fdt separately.
-    Designated {
-        /// Kernel load buffer,
-        kernel: &'a mut [u8],
-        /// Ramdisk load buffer,
-        ramdisk: &'a mut [u8],
-        /// FDT load buffer,
-        fdt: &'a mut [u8],
-    },
+/// Contains various boot buffers
+#[derive(Default, Debug)]
+pub struct BootBuffer<'a> {
+    /// Buffer for loading images without designated buffers.
+    pub general: &'a mut [u8],
+    /// Optional designated kernel load buffer.
+    pub kernel: Option<&'a mut [u8]>,
+    /// Optional designated ramdisk load buffer.
+    pub ramdisk: Option<&'a mut [u8]>,
+    /// Optional designated fdt load buffer.
+    pub fdt: Option<&'a mut [u8]>,
+    // TODO(b/430068343): Support designated pvmfw buffer
 }
 
-impl<'a> LoadBuffer<'a> {
-    /// Creates an instance that borrows internal buffers.
-    pub fn as_borrowed(&mut self) -> LoadBuffer<'_> {
-        match self {
-            LoadBuffer::Monolithic(v) => LoadBuffer::Monolithic(&mut v[..]),
-            LoadBuffer::Designated { kernel, ramdisk, fdt } => LoadBuffer::Designated {
-                kernel: &mut kernel[..],
-                ramdisk: &mut ramdisk[..],
-                fdt: &mut fdt[..],
-            },
-        }
-    }
-
-    /// Consumes and returns the largest buffer from the load buffer.
-    pub fn into_largest(self) -> &'a mut [u8] {
-        match self {
-            LoadBuffer::Monolithic(v) => &mut v[..],
-            LoadBuffer::Designated { kernel, ramdisk, fdt } => {
-                let mut all = [&mut kernel[..], &mut ramdisk[..], &mut fdt[..]];
-                core::mem::take(all.iter_mut().max_by_key(|v| v.len()).unwrap())
-            }
-        }
-    }
-
-    /// Gets the largest buffer from the load buffer.
-    pub fn get_largest(&mut self) -> &mut [u8] {
-        self.as_borrowed().into_largest()
-    }
-}
-
-impl<'a> From<&'a mut [u8]> for LoadBuffer<'a> {
-    fn from(val: &'a mut [u8]) -> Self {
-        Self::Monolithic(val)
+impl<'a> From<&'a mut [u8]> for BootBuffer<'a> {
+    fn from(general: &'a mut [u8]) -> Self {
+        Self { general, ..Default::default() }
     }
 }
 
@@ -596,11 +520,11 @@ impl<'a> From<&'a mut [u8]> for LoadBuffer<'a> {
 /// On success, returns a tuple of slices corresponding to `(ramdisk, FDT, kernel, unused)`
 pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     ops: &mut G,
-    mut load: LoadBuffer<'c>,
+    boot_buffer: BootBuffer<'c>,
     run_fastboot: impl FnOnce(GblFastbootEntry<'_, G>),
 ) -> Result<(&'c mut [u8], &'c mut [u8], &'c mut [u8], &'c mut [u8])> {
-    let (bcb_buffer, _) = load
-        .get_largest()
+    let (bcb_buffer, _) = boot_buffer
+        .general
         .split_at_mut_checked(BootloaderMessage::SIZE_BYTES)
         .ok_or(Error::BufferTooSmall(Some(BootloaderMessage::SIZE_BYTES)))
         .inspect_err(|e| gbl_println!(ops, "Buffer too small for reading misc. {e}"))?;
@@ -645,13 +569,13 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
             .unwrap_or(false)
     {
         gbl_println!(ops, "Entering fastboot mode...");
-        // TODO(): Use actual load buffer for the desinated case.
-        run_fastboot(GblFastbootEntry { ops, load: load.get_largest(), result });
+        // TODO(b/430068343): Support designated buffers for `fastboot boot`.
+        run_fastboot(GblFastbootEntry { ops, load: boot_buffer.general, result });
         gbl_println!(ops, "Leaving fastboot mode...");
         // Checks if "fastboot boot" has loaded an android image.
         if matches!(&result.loaded_image_info, Some(LoadedImageInfo::Android { .. })) {
             gbl_println!(ops, "Booting from \"fastboot boot\"");
-            return Ok(result.split_loaded_android(load.into_largest()).unwrap());
+            return Ok(result.split_loaded_android(boot_buffer.general).unwrap());
         }
 
         // Device state or disk content might have changed. Re-sync preloaded partition buffer.
@@ -675,16 +599,20 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 
     let is_recovery = matches!(reboot_mode, RebootMode::Recovery)
         || matches!(boot_mode, AndroidBootMode::Recovery);
-    android_load_verify_fixup(ops, slot_idx, is_recovery, load)
+    android_load_verify_fixup(ops, slot_idx, is_recovery, boot_buffer)
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::{
+        constants::KERNEL_ALIGNMENT,
         fastboot::test::{make_expected_usb_out, SharedTestListener, TestLocalSession},
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
-        ops::test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage},
+        ops::{
+            test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage},
+            PartitionBuffer,
+        },
     };
     use bootparams::bootconfig::{BootConfigBuilder, BOOTCONFIG_TRAILER_SIZE};
     use libbuild_number::BUILD_NUMBER;
@@ -941,6 +869,7 @@ androidboot.veritymode=enforcing
     /// * `preloaded`: Preloaded partitions.
     /// * `unlock`: Unlock state.
     /// * `rollback_idx`: Rollback index at location TEST_ROLLBACK_INDEX_LOCATION.
+    /// * `load`: A BootBuffer.
     /// * `expected_kernel`: Expected loaded kernel.
     /// * `expected_ramdisk`: Expected loaded ramdisk.
     /// * `expected_bootconfig`: Expected fixed-up bootconfig.
@@ -951,7 +880,7 @@ androidboot.veritymode=enforcing
         partitions: &[(String, String)],
         unlock: bool,
         rollback_idx: u64,
-        load_buffer: LoadBuffer<'_>,
+        boot_buffer: BootBuffer<'_>,
         expected_kernel: &[u8],
         expected_ramdisk: &[u8],
         expected_bootconfig: &[u8],
@@ -983,10 +912,16 @@ androidboot.veritymode=enforcing
         ops.avb_handle_verification_result = Some(&mut handler);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
 
+        let designated_ramdisk = boot_buffer.ramdisk.as_ref().map(|v| v.as_ptr());
+        let designated_fdt = boot_buffer.fdt.as_ref().map(|v| v.as_ptr());
+        let designated_kernel = boot_buffer.kernel.as_ref().map(|v| v.as_ptr());
         let (ramdisk, fdt, kernel, _) =
-            android_load_verify_fixup(&mut ops, slot_nr, false, load_buffer).unwrap();
+            android_load_verify_fixup(&mut ops, slot_nr, false, boot_buffer).unwrap();
         assert_eq!(kernel, expected_kernel);
         check_ramdisk(ramdisk, expected_ramdisk, expected_bootconfig);
+        assert_eq!(designated_ramdisk.unwrap_or(ramdisk.as_ptr()), ramdisk.as_ptr());
+        assert_eq!(designated_fdt.unwrap_or(fdt.as_ptr()), fdt.as_ptr());
+        assert_eq!(designated_kernel.unwrap_or(kernel.as_ptr()), kernel.as_ptr());
 
         let fdt = Fdt::new(fdt).unwrap();
         // "linux,initrd-start/end" are updated.
@@ -999,9 +934,6 @@ androidboot.veritymode=enforcing
             (ramdisk.as_ptr() as usize + ramdisk.len()).to_be_bytes(),
         );
 
-        // Fixup is appended by TestOps.
-        let expected_bootargs = format!("{expected_bootargs} fixup");
-
         // Commandlines are updated.
         assert_eq!(
             CStr::from_bytes_until_nul(fdt.get_property("/chosen", c"bootargs").unwrap()).unwrap(),
@@ -1013,6 +945,9 @@ androidboot.veritymode=enforcing
             fdt.get_property("/chosen", FakeGblOps::TEST_CUSTOM_FDT_FIXUP_PROP).unwrap(),
             FakeGblOps::GBL_TEST_FDT_FIXUP
         );
+
+        // Bootconfig fixup should happen after DT fixup.
+        assert_eq!(fdt.get_property("", c"fixup_bootconfig_calls").unwrap(), &[0]);
 
         // Other FDT properties are as expected.
         for (path, property, res) in expected_fdt_property {
@@ -1037,41 +972,35 @@ androidboot.veritymode=enforcing
         expected_bootargs: &str,
         expected_fdt_property: &[(&str, &CStr, Option<&[u8]>)],
     ) {
-        // Tests loading using monolithic buffer.
-        println!("Test loading with monolithic buffer");
-        let mut load_buffer = AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let monolithic = LoadBuffer::Monolithic(&mut load_buffer[..]);
-        test_android_load_verify_fixup_internal(
-            slot_nr,
-            partitions,
-            unlock,
-            rollback_idx,
-            monolithic,
-            expected_kernel,
-            expected_ramdisk,
-            expected_bootconfig,
-            expected_bootargs,
-            expected_fdt_property,
-        );
-
-        // Tests loading using separate buffer for kernel/ramdisk/fdt;
-        println!("Test loading with desinated buffer");
-        let kernel = &mut AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let ramdisk = &mut AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let fdt = &mut AlignedBuffer::new(1 * 1024 * 1024, FDT_ALIGNMENT);
-        let desinated = LoadBuffer::Designated { kernel, ramdisk, fdt };
-        test_android_load_verify_fixup_internal(
-            slot_nr,
-            partitions,
-            unlock,
-            rollback_idx,
-            desinated,
-            expected_kernel,
-            expected_ramdisk,
-            expected_bootconfig,
-            expected_bootargs,
-            expected_fdt_property,
-        );
+        let general = &mut AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut kernel = AlignedBuffer::<u8>::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut ramdisk = AlignedBuffer::<u8>::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut fdt = AlignedBuffer::<u8>::new(1 * 1024 * 1024, FDT_ALIGNMENT);
+        // Tests all possible combinations of available/unavailable designated buffer for
+        // kernel/ramdisk/fdt.
+        for flag in 0..0x8 {
+            let kernel = ((flag & 1) != 0).then_some(&mut kernel[..]);
+            let ramdisk = ((flag & 2) != 0).then_some(&mut ramdisk[..]);
+            let fdt = ((flag & 4) != 0).then_some(&mut fdt[..]);
+            let buffers = BootBuffer { general, kernel, ramdisk, fdt };
+            println!("\nBoot buffer config #{flag}");
+            println!("  general: {:?} bytes", buffers.general.len());
+            println!("  kernel: {:?} bytes", buffers.kernel.as_ref().map(|v| v.len()));
+            println!("  ramdisk: {:?} bytes", buffers.ramdisk.as_ref().map(|v| v.len()));
+            println!("  fdt: {:?} bytes", buffers.fdt.as_ref().map(|v| v.len()));
+            test_android_load_verify_fixup_internal(
+                slot_nr,
+                partitions,
+                unlock,
+                rollback_idx,
+                buffers,
+                expected_kernel,
+                expected_ramdisk,
+                expected_bootconfig,
+                expected_bootargs,
+                expected_fdt_property,
+            );
+        }
     }
 
     /// Helper for testing that `android_load_verify_fixup` succeeds for the given partition setup
@@ -1099,7 +1028,8 @@ androidboot.veritymode=enforcing
                 expected_vendor_bootconfig,
                 FakeGblOps::GBL_TEST_BOOTCONFIG,
             );
-            let expected_bootargs = match &bootconfig_supported {
+            let expected_bootargs = format!("{expected_bootargs} fixup");
+            let expected_bootargs = match bootconfig_supported {
                 true => expected_bootargs.to_string(),
                 _ => format!("{expected_bootargs} {}", bootconfig_to_bootarg(&expected_bootconfig)),
             };
@@ -1669,7 +1599,7 @@ androidboot.veritymode=enforcing
                 TEST_VENDOR_BOOTCONFIG,
                 FakeGblOps::GBL_TEST_BOOTCONFIG,
             ),
-            EXPECTED_V3_V4_CMDLINE,
+            &format!("{EXPECTED_V3_V4_CMDLINE} fixup"),
             &[],
         )
     }
@@ -1911,7 +1841,7 @@ androidboot.veritymode=enforcing
 
         let mut ops = default_test_gbl_ops(&storage);
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel)
     }
@@ -1926,7 +1856,7 @@ androidboot.veritymode=enforcing
         let mut ops = default_test_gbl_ops(&storage);
         ops.write_to_partition_sync("misc", 0, &mut b"boot-recovery".to_vec()).unwrap();
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         checks_loaded_v2_slot_a_recovery_mode(ramdisk, kernel)
     }
@@ -1941,7 +1871,7 @@ androidboot.veritymode=enforcing
         let mut ops = default_test_gbl_ops(&storage);
         ops.reboot_mode = Some(Ok(RebootMode::Recovery));
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         checks_loaded_v2_slot_a_recovery_mode(ramdisk, kernel)
     }
@@ -1972,7 +1902,7 @@ androidboot.veritymode=enforcing
 
         let mut ops = default_test_gbl_ops(&storage);
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         assert_eq!(ops.mark_boot_attempt_called, 0);
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel)
@@ -1989,7 +1919,7 @@ androidboot.veritymode=enforcing
         ops.current_slot = Some(Err(Error::Unsupported));
         ops.next_slot = Some(Ok(slot('a')));
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         assert_eq!(ops.mark_boot_attempt_called, 1);
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel)
@@ -2006,7 +1936,7 @@ androidboot.veritymode=enforcing
         ops.current_slot = Some(Ok(slot('b')));
 
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         assert_eq!(ops.mark_boot_attempt_called, 0);
         checks_loaded_v2_slot_b_normal_mode(ramdisk, kernel)
@@ -2023,7 +1953,7 @@ androidboot.veritymode=enforcing
         ops.current_slot = Some(Err(Error::Unsupported));
         ops.next_slot = Some(Ok(slot('b')));
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         assert_eq!(ops.mark_boot_attempt_called, 1);
         checks_loaded_v2_slot_b_normal_mode(ramdisk, kernel);
@@ -2040,7 +1970,7 @@ androidboot.veritymode=enforcing
         ops.current_slot = Some(Err(Error::Unsupported));
         ops.next_slot = Some(Err(Error::Unsupported));
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel)
     }
@@ -2049,7 +1979,7 @@ androidboot.veritymode=enforcing
     fn test_fastboot_is_triggered<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) {
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(ops, load_buffer, |fb| {
             listener.add_usb_input(b"getvar:max-fetch-size");
             listener.add_usb_input(b"continue");
@@ -2136,7 +2066,7 @@ androidboot.veritymode=enforcing
 
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
             let data = read_test_data(format!("boot_v2_a.img"));
             listener.add_usb_input(format!("download:{:#x}", data.len()).as_bytes());
@@ -2177,7 +2107,7 @@ androidboot.veritymode=enforcing
 
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         assert_eq!(
             android_main(&mut ops, load_buffer, |fb| {
                 listener.add_usb_input(b"set_active:b");
@@ -2231,7 +2161,7 @@ androidboot.veritymode=enforcing
 
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
             listener.add_usb_input(b"continue");
             fb.run_n::<2>(
@@ -2292,7 +2222,7 @@ androidboot.veritymode=enforcing
 
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = LoadBuffer::Monolithic(&mut load_buffer[..]);
+        let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
             let data = read_test_data(format!("boot_v2_a.img"));
             listener.add_usb_input(format!("download:{:#x}", data.len()).as_bytes());

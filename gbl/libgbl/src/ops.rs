@@ -1139,6 +1139,9 @@ pub(crate) mod test {
 
         /// Custom bootconfig fixup value set by unittest.
         pub test_custom_bootconfig_fixup: Option<String>,
+
+        /// Number of times `Self::fixup_bootconfig()` is called.
+        fixup_bootconfig_calls: u8,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1450,6 +1453,7 @@ pub(crate) mod test {
                 .unwrap_or(Self::GBL_TEST_BOOTCONFIG.into());
             let (out, _) = fixup_buffer.split_at_mut(config.len());
             out.copy_from_slice(config.as_bytes());
+            self.fixup_bootconfig_calls += 1;
             Ok(Some(out))
         }
 
@@ -1473,7 +1477,10 @@ pub(crate) mod test {
                     .as_ref()
                     .map(|v| v.as_bytes())
                     .unwrap_or(Self::GBL_TEST_FDT_FIXUP),
-            )
+            )?;
+
+            // Times Self::fixup_bootconfig is called
+            fdt.set_property("", c"fixup_bootconfig_calls", &[self.fixup_bootconfig_calls])
         }
 
         fn select_device_trees(

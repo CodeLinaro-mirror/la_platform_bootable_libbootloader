@@ -412,6 +412,25 @@ pub mod gbl_efi_ab_slot {
     pub type GblSlotProtocol = MockGblSlotProtocol;
 }
 
+/// Mock gbl_efi_boot_memory
+pub mod gbl_efi_boot_memory {
+    use super::*;
+    use crate::EfiEntry;
+    use efi_types::GblEfiBootBufferType;
+
+    /// Mock GblVendorReservedMemory
+    pub type GblVendorReservedMemory = &'static mut [u8];
+
+    /// Gets the boot buffer of the given type.
+    pub fn gbl_get_boot_buffer(
+        _: &EfiEntry,
+        _: GblEfiBootBufferType,
+        _: usize,
+    ) -> Result<GblVendorReservedMemory> {
+        unimplemented!();
+    }
+}
+
 /// Mock avf protocol.
 pub mod gbl_efi_avf {
     use super::*;

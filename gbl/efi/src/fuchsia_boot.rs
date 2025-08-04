@@ -13,10 +13,8 @@
 // limitations under the License.
 
 use crate::{
-    efi_blocks::EfiGblDisk,
-    fastboot::efi_gbl_fastboot_entry,
-    ops::Ops,
-    utils::{efi_to_zbi_mem_range_type, take_os_load_buffer},
+    efi_blocks::EfiGblDisk, fastboot::efi_gbl_fastboot_entry, ops::Ops,
+    utils::efi_to_zbi_mem_range_type,
 };
 use efi::{efi_println, EfiEntry, EfiMemoryAttributesTable, EfiMemoryMap};
 use efi_types::{
@@ -63,21 +61,15 @@ pub fn is_fuchsia_gpt(disks: &[EfiGblDisk]) -> Result<()> {
 /// Loads and verifies Fuchsia according to A/B/R.
 ///
 /// On success, returns a `LoadedVerifiedZircon`
-pub fn efi_fuchsia_load(ops: &mut Ops) -> Result<LoadedVerifiedZircon<'static>> {
+pub fn efi_fuchsia_load<'a>(ops: &mut Ops, load: &'a mut [u8]) -> Result<LoadedVerifiedZircon<'a>> {
     let entry = ops.efi_entry;
     gbl_println!(ops, "Try booting as Fuchsia/Zircon");
-
-    // Prepares the OS load buffer.
-    let load_buffer = take_os_load_buffer(entry, 128 * 1024 * 1024).into_largest();
-
     let mut fastboot_buffer_info = None;
-    Ok(zircon_main(ops, load_buffer, |fb| {
-        efi_gbl_fastboot_entry(entry, fb, &mut fastboot_buffer_info)
-    })?)
+    Ok(zircon_main(ops, load, |fb| efi_gbl_fastboot_entry(entry, fb, &mut fastboot_buffer_info))?)
 }
 
 /// Exits boot services and boots loaded fuchsia images.
-pub fn efi_fuchsia_boot(efi_entry: EfiEntry, images: LoadedVerifiedZircon<'static>) -> Result<()> {
+pub fn efi_fuchsia_boot(efi_entry: EfiEntry, images: LoadedVerifiedZircon<'_>) -> Result<()> {
     let LoadedVerifiedZircon { zbi_items, kernel, .. } = images;
     efi_println!(
         efi_entry,
