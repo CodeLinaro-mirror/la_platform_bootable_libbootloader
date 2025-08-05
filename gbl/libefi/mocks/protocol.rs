@@ -22,7 +22,8 @@ use core::{ffi::CStr, fmt::Write};
 pub use efi::protocol::gbl_efi_image_loading::EfiImageBufferInfo;
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition,
-    GblEfiAvbVerificationResult, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    GblEfiAvbVerificationResult, GblEfiFastbootEraseAction, GblEfiImageInfo,
+    GblEfiVerifiedDeviceTree,
 };
 use liberror::Result;
 use mockall::mock;
@@ -364,13 +365,18 @@ pub mod gbl_efi_fastboot {
             unimplemented!()
         }
 
-        /// Protocol<'_, GblFastbootProtocol>:set_lock()`
+        /// Protocol<'_, GblFastbootProtocol>::set_lock()`
         pub fn set_lock(&self, _: bool, _: bool) -> Result<()> {
             unimplemented!()
         }
 
-        /// Protocol<'_, GblFastbootProtocol>:get_lock()`
+        /// Protocol<'_, GblFastbootProtocol>::get_lock()`
         pub fn get_lock(&self, _: bool) -> Result<bool> {
+            unimplemented!()
+        }
+
+        /// Protocol<'_, GblFastbootProtocol>::vendor_erase()`
+        pub fn vendor_erase(&self, _: &str) -> Result<GblEfiFastbootEraseAction> {
             unimplemented!()
         }
     }

@@ -80,6 +80,13 @@ typedef enum GBL_EFI_FASTBOOT_PARTITION_PERMISSION_FLAGS {
 static const uint64_t GBL_EFI_FASTBOOT_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 1);
 
+typedef enum GBL_EFI_FASTBOOT_ERASE_ACTION {
+  // Treats the partition as a physical on disk partition and erases it.
+  ERASE_AS_PHYSICAL_PARTITION,
+  // Ignores the partition.
+  NOOP,
+} GblEfiFastbootEraseAction;
+
 typedef struct GblEfiFastbootProtocol {
   uint64_t revision;
   // Null-terminated UTF-8 encoded string
@@ -124,7 +131,9 @@ typedef struct GblEfiFastbootProtocol {
                                          const char8_t* part_name,
                                          size_t part_name_len,
                                          uint64_t* permissions);
-  EfiStatus (*wipe_user_data)(struct GblEfiFastbootProtocol* this);
+  EfiStatus (*vendor_erase)(struct GblEfiFastbootProtocol* this,
+                            const char8_t* part_name, size_t part_name_len,
+                            GblEfiFastbootEraseAction* action);
   bool (*should_stop_in_fastboot)(struct GblEfiFastbootProtocol* this);
 } GblEfiFastbootProtocol;
 

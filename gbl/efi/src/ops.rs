@@ -47,6 +47,7 @@ use efi_types::{
     EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootMode,
     GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
     EFI_FASTBOOT_MESSAGE_TYPE_FAIL, EFI_FASTBOOT_MESSAGE_TYPE_INFO, EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
+    GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION, GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP,
     PARTITION_NAME_LEN_U16,
 };
 use fdt::Fdt;
@@ -61,9 +62,9 @@ use libgbl::{
     },
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
     ops::{
-        AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, ImageBuffer, InfoSender,
-        LockState, LockType, OkaySender, Partition, PartitionBuffer, RebootMode, Slot,
-        SlotsMetadata, SHA256_DIGEST_SIZE,
+        AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
+        ImageBuffer, InfoSender, LockState, LockType, OkaySender, Partition, PartitionBuffer,
+        RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -769,6 +770,25 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         {
             Ok(v) => v.get_staged(out),
             Err(Error::NotFound) => Ok((0, 0)),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn fastboot_vendor_erase(&mut self, part: &str) -> Result<FastbootEraseAction> {
+        match self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()
+        {
+            Ok(v) => Ok(match v.vendor_erase(part)? {
+                GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION => {
+                    FastbootEraseAction::EraseAsPhysicalPartition
+                }
+                GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP => FastbootEraseAction::Noop,
+                _ => return Err(Error::InvalidState),
+            }),
+            Err(Error::NotFound) => Ok(FastbootEraseAction::EraseAsPhysicalPartition),
             Err(e) => Err(e),
         }
     }

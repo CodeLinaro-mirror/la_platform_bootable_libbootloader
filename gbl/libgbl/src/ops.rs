@@ -76,6 +76,14 @@ pub enum PartitionBuffer<T> {
     Designated(T),
 }
 
+/// Represents the action returned by `Self::fastboot_vendor_erase()` for the caller to take.
+pub enum FastbootEraseAction {
+    /// Nothing needs to be done.
+    Noop,
+    /// Erase as a physical partition.
+    EraseAsPhysicalPartition,
+}
+
 // https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
 // should we use traits for this? or optional/box FnMut?
 //
@@ -502,6 +510,11 @@ pub trait GblOps<'a, 'd> {
     ///
     /// * On success, returns the size of the actual read data and size of remaining data.
     fn fastboot_get_staged(&mut self, _out: &mut [u8]) -> Result<(usize, usize), Error>;
+
+    /// Performs vendor specific erase for the given partition `part`.
+    ///
+    /// On success returns Ok(action), where `action` represents the action the caller should take
+    fn fastboot_vendor_erase(&mut self, _part: &str) -> Result<FastbootEraseAction, Error>;
 
     /// Returns a [SlotsMetadata] for the platform.
     fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error>;
@@ -938,6 +951,11 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
+    fn fastboot_vendor_erase(&mut self, _part: &str) -> Result<FastbootEraseAction, Error> {
+        // Ramboot should not need this.
+        unreachable!();
+    }
+
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         self.ops.get_profiling_backend()
     }
@@ -1142,6 +1160,10 @@ pub(crate) mod test {
 
         /// Number of times `Self::fixup_bootconfig()` is called.
         fixup_bootconfig_calls: u8,
+
+        /// Handler for `Self::vendor_erase`
+        pub vendor_erase_handler:
+            Option<&'a mut dyn FnMut(&str) -> Result<FastbootEraseAction, Error>>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1553,6 +1575,13 @@ pub(crate) mod test {
 
         fn fastboot_get_lock(&mut self, _: LockType) -> Result<LockState, Error> {
             unimplemented!()
+        }
+
+        fn fastboot_vendor_erase(&mut self, part: &str) -> Result<FastbootEraseAction, Error> {
+            self.vendor_erase_handler
+                .as_mut()
+                .map(|v| v(part))
+                .unwrap_or(Ok(FastbootEraseAction::EraseAsPhysicalPartition))
         }
 
         fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {

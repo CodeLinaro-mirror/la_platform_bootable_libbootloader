@@ -53,7 +53,7 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   GBL_EFI_FASTBOOT_GET_LOCK                     GetLock;
   VOID*                                         Reserved[3];
   GBL_EFI_FASTBOOT_GET_PARTITION_PERMISSIONS    GetPartitionPermissions;
-  GBL_EFI_FASTBOOT_WIPE_USER_DATA               WipeUserData;
+  GBL_EFI_FASTBOOT_VENDOR_ERASE                 VendorErase;
   GBL_EFI_FASTBOOT_SHOULD_STOP_IN_FASTBOOT      ShouldStopInFastboot;
 } GBL_EFI_FASTBOOT_PROTOCOL;
 ```
@@ -695,19 +695,22 @@ on all partitions when the device is unlocked.
 | `EFI_NOT_FOUND`         | There is no partition named *PartName*.                                            |
 | `EFI_UNSUPPORTED`       | The device does not have a partition permission policy different from the default. |
 
-## `GBL_EFI_FASTBOOT_PROTOCOL.WipeUserData()`
+## `GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`
 
 ### Summary
 
-Erases all partitions containing user data.
+Performs vendor specific erase for a partition.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_WIPE_USER_DATA)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
+(EFIAPI * GBL_EFI_FASTBOOT_VENDOR_ERASE)(
+    IN GBL_EFI_FASTBOOT_PROTOCOL*       This,
+    IN CHAR8*                           PartName,
+    IN UINTN                            PartNameLen,
+    OUT GBL_EFI_FASTBOOT_ERASE_ACTION   *Action,
 );
 ```
 
@@ -717,23 +720,53 @@ EFI_STATUS
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 
+*PartName*
+
+The name of the partition to query as a UTF-8 encoded, Null-terminated string.
+This should be the same partition name passed from
+`fastboot erase <partition>`.
+
+*PartNameLen*
+
+The length of *PartName* in bytes, excluding any Null-terminator.
+
+*Action*
+
+On exit, stores the action for the caller to perform. See definition of
+`GBL_EFI_FASTBOOT_ERASE_ACTION`.
+
+
 ### Description
 
-Device user data is often stored on a dedicated partition
-apart from kernel images or other system data.
-This helps protect user data during system upgrades.
-`WipeUserData()` erases all user data partitions.
-This can be used to restore a device to its factory settings,
-as part of a refurbishment process, or for testing purposes.
+The API is for firmware to implement vendor specific erase logic during
+handling of `fastboot erase <partition>`. This can be used for partiitons that
+are virtual (i.e. metadata, cache) and partitions whose erase requires side
+effect such as resetting of metadata stored somewhere else.
+
+On exit, the API can suggest actions caller should take. If firmware wants the
+caller to treat the partition as a regular on-disk partition and perform a
+normal erase, `Action` should be set to `ERASE_AS_PHYSICAL_PARTITION`. If
+firmware has performed all necessary erase work and caller doesn't need to do
+anything, `Action` should be set to `NOOP`.
+
+### Related Definitions
+
+```c
+typedef enum  {
+  // Treats the partition as a physical partition on disk and erases it.
+  ERASE_AS_PHYSICAL_PARTITION,
+  // Ignores the partition.
+  NOOP,
+} GBL_EFI_FASTBOOT_ERASE_ACTION;
+```
 
 ### Status Codes
 
-| Return Code             | Semantics                                                 |
-|:------------------------|:----------------------------------------------------------|
-| `EFI_SUCCESS`           | User data was successfully wiped.                         |
-| `EFI_INVALID_PARAMETER` | *This* is `NULL` or improperly aligned.                   |
-| `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state. |
-| `EFI_DEVICE_ERROR`      | There was a block device or storage error.                |
+| Return Code             | Semantics |
+|:------------------------|:-|
+| `EFI_SUCCESS`           | The partition permision information was successfully queried. |
+| `EFI_INVALID_PARAMETER` | *PartName* or *Action* is `NULL`. |
+| `EFI_DEVICE_ERROR` | An internal device error occurred. |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.ShouldStopInFastboot()`
 

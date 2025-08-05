@@ -149,8 +149,8 @@ mod test {
     };
     use gbl::{
         ops::{
-            AvbIoResult, CertPermanentAttributes, Partition, PartitionBuffer, RebootMode,
-            SlotsMetadata, SHA256_DIGEST_SIZE,
+            AvbIoResult, CertPermanentAttributes, FastbootEraseAction, Partition, PartitionBuffer,
+            RebootMode, SlotsMetadata, SHA256_DIGEST_SIZE,
         },
         partition::GblDisk,
         slots::{Bootability, Cursor, RecoveryTarget, UnbootableReason},
@@ -442,6 +442,10 @@ mod test {
         }
 
         fn fastboot_get_staged(&mut self, _: &mut [u8]) -> Result<(usize, usize)> {
+            unimplemented!()
+        }
+
+        fn fastboot_vendor_erase(&mut self, _part: &str) -> Result<FastbootEraseAction> {
             unimplemented!()
         }
 

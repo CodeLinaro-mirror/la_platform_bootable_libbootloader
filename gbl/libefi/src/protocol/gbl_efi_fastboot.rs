@@ -25,7 +25,8 @@ use core::{
     str::from_utf8,
 };
 use efi_types::{
-    EfiFastbootMessageType, EfiGuid, EfiStatus, GblEfiFastbootPolicy, GblEfiFastbootProtocol,
+    EfiFastbootMessageType, EfiGuid, EfiStatus, GblEfiFastbootEraseAction, GblEfiFastbootPolicy,
+    GblEfiFastbootProtocol, GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
 };
 use liberror::{result_to_efi_status, Error, Result};
 
@@ -303,12 +304,24 @@ impl Protocol<'_, GblFastbootProtocol> {
         unsafe { efi_call!(self.interface().close_local_session, self.interface_ptr(), ctx.0) }
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.wipe_user_data()`
-    pub fn wipe_user_data(&self) -> Result<()> {
+    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.vendor_erase()`.
+    pub fn vendor_erase(&self, part_name: &str) -> Result<GblEfiFastbootEraseAction> {
+        let mut out_action: GblEfiFastbootEraseAction =
+            GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION;
         // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface().wipe_user_data, self.interface_ptr()) }
+        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
+        // established by `Protocol::new()`.
+        // No parameters are retained, all parameters outlive the call, and no pointers are Null.
+        unsafe {
+            efi_call!(
+                self.interface().vendor_erase,
+                self.interface_ptr(),
+                part_name.as_ptr(),
+                part_name.len(),
+                &mut out_action
+            )?
+        };
+        Ok(out_action)
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.should_stop_in_fastboot()`
