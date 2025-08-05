@@ -60,7 +60,7 @@ pub fn loaded_image_path(entry: &EfiEntry) -> Result<DevicePathText> {
             .system_table()
             .boot_services()
             .open_protocol::<LoadedImageProtocol>(entry.image_handle())?
-            .device_handle()?,
+            .device_handle(),
     )
 }
 
@@ -71,8 +71,7 @@ pub fn image_base(entry: &EfiEntry) -> Result<usize> {
         .boot_services()
         .open_protocol::<LoadedImageProtocol>(entry.image_handle())
         .inspect_err(|e| efi_println!(entry, "Failed to open LoadedImageProtocol: {e}"))?
-        .image_base()
-        .inspect_err(|e| efi_println!(entry, "Can't get image base address: {e}"))?)
+        .image_base())
 }
 
 /// Find FDT from EFI configuration table.

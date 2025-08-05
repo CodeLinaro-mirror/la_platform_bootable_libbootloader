@@ -37,8 +37,8 @@ impl ProtocolInfo for EraseBlockProtocol {
 // Protocol interface wrappers.
 impl Protocol<'_, EraseBlockProtocol> {
     /// Returns `EFI_ERASE_BLOCK_PROTOCOL.erase_length_granularity`
-    pub fn erase_length_granularity(&self) -> Result<u32> {
-        Ok(self.interface()?.erase_length_granularity)
+    pub fn erase_length_granularity(&self) -> u32 {
+        self.interface().erase_length_granularity
     }
 
     /// Wrapper of `EFI_ERASE_BLOCK_PROTOCOL.erase`
@@ -53,16 +53,23 @@ impl Protocol<'_, EraseBlockProtocol> {
         let mut token =
             EfiEraseBlockToken { event: event.efi_event, transaction_status: EFI_STATUS_NOT_READY };
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //    established by `Protocol::new()`.
-        // * `self.interface` is input parameter and will not be retained. It outlives the call.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // * `self.interface_ptr()` is an input parameter and will not be retained.
+        //   It outlives the call.
         // * The function waits until `complete` is marked true by the event notification function,
         //   which guarantees that `token` are not being retained by the UEFI firmware anymore.
         // * `assert_return` asserts that the wait for `complete = true` must complete. Otherwise
         //   it panics. This makes sure that we don't violate aliasing rule due to the top level
         //   Future getting dropped before it can execute to completion.
         unsafe {
-            efi_call!(self.interface()?.erase, self.interface, media_id, lba, &mut token, size)?;
+            efi_call!(
+                self.interface().erase,
+                self.interface_ptr(),
+                media_id,
+                lba,
+                &mut token,
+                size
+            )?;
         }
         assert_return(wait_completion(self.efi_entry(), &complete)).await;
         efi_status_to_result(token.transaction_status)

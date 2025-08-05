@@ -17,10 +17,9 @@
 use crate::{DeviceHandle, EfiEntry};
 use core::{
     ops::{Deref, DerefMut},
-    ptr::null_mut,
+    ptr::{null_mut, NonNull},
 };
 use efi_types::{defs::EfiGuid, protocol::Client, Identified};
-use liberror::{Error, Result};
 
 pub mod block_io;
 pub mod block_io2;
@@ -84,17 +83,17 @@ pub trait ProtocolImpl {
     /// * `c_interface` must outlive the returned `ImplType`
     /// * ownership of `c_interface` must be passed in, and must not be used
     ///   again except through the returned `ImplType`
-    unsafe fn new_impl(c_interface: *mut Self::CInterface) -> Self::ImplType;
+    unsafe fn new_impl(c_interface: NonNull<Self::CInterface>) -> Self::ImplType;
 }
 
 /// For [ProtocolInfo], the implementation type is a raw C struct pointer.
 impl<T: ProtocolInfo> ProtocolImpl for T {
     type CInterface = T::InterfaceType;
-    type ImplType = *mut T::InterfaceType;
+    type ImplType = NonNull<T::InterfaceType>;
     const GUID: EfiGuid = T::GUID;
     const REQUIREMENT: Requirement = T::REQUIREMENT;
 
-    unsafe fn new_impl(c_interface: *mut Self::CInterface) -> Self::ImplType {
+    unsafe fn new_impl(c_interface: NonNull<Self::CInterface>) -> Self::ImplType {
         // Just pass the c_interface pointer through, we use it directly.
         c_interface
     }
@@ -106,7 +105,7 @@ impl<T: Identified> ProtocolImpl for Client<T> {
     type ImplType = Self;
     const GUID: EfiGuid = T::GUID;
 
-    unsafe fn new_impl(c_interface: *mut Self::CInterface) -> Self::ImplType {
+    unsafe fn new_impl(c_interface: NonNull<Self::CInterface>) -> Self::ImplType {
         // SAFETY: by function safety,
         // * `c_interface` is a valid `CInterface`
         // * `c_interface` will outlive the returned `ImplType`
@@ -140,7 +139,7 @@ impl<'a, T: ProtocolImpl> Protocol<'a, T> {
     ///   again except through the returned `Protocol`
     pub(crate) unsafe fn new(
         device: DeviceHandle,
-        c_interface: *mut T::CInterface,
+        c_interface: NonNull<T::CInterface>,
         efi_entry: &'a EfiEntry,
     ) -> Self {
         // SAFETY: by function safety,
@@ -161,15 +160,15 @@ impl<'a, T: ProtocolImpl> Protocol<'a, T> {
 /// Additional functions for Protocol<T> with a raw pointer implementation.
 impl<'a, T: ProtocolInfo> Protocol<'a, T> {
     /// Returns the EFI data structure for the protocol interface.
-    pub fn interface(&self) -> Result<&T::InterfaceType> {
+    pub fn interface(&self) -> &T::InterfaceType {
         // SAFETY: EFI protocol interface data structure.
-        unsafe { self.interface.as_ref() }.ok_or(Error::InvalidInput)
+        unsafe { self.interface.as_ref() }
     }
 
     /// Returns the mutable pointer of the interface. Invisible from outside. Application should
     /// not have any need to alter the content of interface data.
     pub(crate) fn interface_ptr(&self) -> *mut T::InterfaceType {
-        self.interface
+        self.interface.as_ptr()
     }
 }
 
@@ -218,8 +217,8 @@ impl<T: ProtocolImpl> Drop for Protocol<'_, T> {
 ///
 /// ```
 /// efi_call!(
-///   self.interface()?.protocol_function_name,
-///   self.interface,
+///   self.interface().protocol_function_name,
+///   self.interface_ptr(),
 ///   arg1,
 ///   arg2,
 ///   ...
@@ -239,8 +238,8 @@ impl<T: ProtocolImpl> Drop for Protocol<'_, T> {
 /// ```
 /// efi_call!(
 ///   @bufsize arg2,
-///   self.interface()?.protocol_function_name,
-///   self.interface,
+///   self.interface().protocol_function_name,
+///   self.interface_ptr(),
 ///   arg1,
 ///   &mut arg2,
 ///   ...
@@ -291,6 +290,7 @@ macro_rules! efi_call {
 mod test {
     use super::*;
     use crate::test::*;
+    use core::ptr::{from_mut, NonNull};
     use efi_types::defs::EfiBlockIoProtocol;
 
     #[test]
@@ -302,7 +302,7 @@ mod test {
             unsafe {
                 Protocol::<block_io::BlockIoProtocol>::new(
                     DeviceHandle(null_mut()),
-                    &mut block_io as *mut _,
+                    NonNull::new(from_mut(&mut block_io)).unwrap(),
                     &efi_entry,
                 );
             }

@@ -46,11 +46,11 @@ impl<SBP: ServiceBindingProtocolInfo> Protocol<'_, SBP> {
         let mut handle: EfiHandle = core::ptr::null_mut();
 
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        // `handle` is an output parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.create_child, self.interface, &mut handle)? };
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // * `self.interface_ptr()` is an input parameter and will not be retained.
+        //   It outlives the call.
+        // * `handle` is an output parameter and will not be retained. It outlives the call.
+        unsafe { efi_call!(self.interface().create_child, self.interface_ptr(), &mut handle)? };
 
         Ok(DeviceHandle(handle))
     }
@@ -65,11 +65,10 @@ impl<SBP: ServiceBindingProtocolInfo> Protocol<'_, SBP> {
     ///   at most once per handle.
     pub(super) unsafe fn destroy_child(&self, handle: DeviceHandle) -> Result<()> {
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a
-        //   valid object established by `Protocol::new()`.
-        // * `self.interface` is an input parameter and will not be retained.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // * `self.interface_ptr()` is an input parameter and will not be retained.
         //   It outlives the call.
-        unsafe { efi_call!(self.interface()?.destroy_child, self.interface, handle.0) }
+        unsafe { efi_call!(self.interface().destroy_child, self.interface_ptr(), handle.0) }
     }
 }
 

@@ -38,7 +38,7 @@ impl Protocol<'_, TimestampProtocol> {
         // SAFETY:
         // * `get_timestamp.as_ref()` makes sure we are calling a non-null UEFI function pointer,
         //   which is valid assuming correct UEFI implementation.
-        Ok(unsafe { self.interface()?.get_timestamp.as_ref().ok_or(Error::NotFound)?() })
+        Ok(unsafe { self.interface().get_timestamp.as_ref().ok_or(Error::NotFound)?() })
     }
 
     /// Wraps `EFI_TIMESTAMP_PROTOCOL.get_properties()`.
@@ -47,7 +47,7 @@ impl Protocol<'_, TimestampProtocol> {
         // SAFETY:
         // * `res` points to a valid object and is for output only. It will not be retained by the
         //   API.
-        unsafe { efi_call!(self.interface()?.get_properties, &mut res)? };
+        unsafe { efi_call!(self.interface().get_properties, &mut res)? };
         Ok(res)
     }
 }

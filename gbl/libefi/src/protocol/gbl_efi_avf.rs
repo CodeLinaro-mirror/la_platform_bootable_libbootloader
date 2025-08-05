@@ -41,15 +41,14 @@ impl Protocol<'_, GblAvfProtocol> {
 
         let mut used_size = handover_buffer.len();
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // * `handover_buffer` is non-null buffer available for write, used only within the call.
         // * `used_size` is non-null usize buffer available for write, used only within the call.
         unsafe {
             efi_call!(
                 @bufsize used_size,
-                self.interface()?.read_vendor_dice_handover,
-                self.interface,
+                self.interface().read_vendor_dice_handover,
+                self.interface_ptr(),
                 &mut used_size,
                 handover_buffer.as_ptr() as _,
             )?;
@@ -66,15 +65,14 @@ impl Protocol<'_, GblAvfProtocol> {
 
         let mut used_size = key_buffer.len();
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // * `key_buffer` is non-null buffer available for write, used only within the call.
         // * `used_size` is non-null usize buffer available for write, used only within the call.
         unsafe {
             efi_call!(
                 @bufsize used_size,
-                self.interface()?.read_secretkeeper_public_key,
-                self.interface,
+                self.interface().read_secretkeeper_public_key,
+                self.interface_ptr(),
                 &mut used_size,
                 key_buffer.as_ptr() as _,
             )?;
@@ -83,9 +81,9 @@ impl Protocol<'_, GblAvfProtocol> {
         Ok(used_size)
     }
 
-    /// Wraps `GBL_EFI_AVF_PROTOCOL.revision()`.
-    pub fn revision(&self) -> Result<u64> {
-        Ok(self.interface()?.revision)
+    /// Wraps `GBL_EFI_AVF_PROTOCOL.revision`.
+    pub fn revision(&self) -> u64 {
+        self.interface().revision
     }
 }
 

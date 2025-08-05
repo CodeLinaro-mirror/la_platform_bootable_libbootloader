@@ -35,10 +35,10 @@ impl Protocol<'_, SimpleTextInputProtocol> {
     /// Wrapper of `EFI_SIMPLE_TEXT_INPUT_PROTOCOL.reset()`
     pub fn reset(&self, extendend_verification: bool) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees `self.interface` is non-null and points to a valid object
+        // `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid object
         // established by `Protocol::new()`.
-        // `self.interface` is input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.reset, self.interface, extendend_verification) }
+        // `self.interface_ptr()` is input parameter and will not be retained. It outlives the call.
+        unsafe { efi_call!(self.interface().reset, self.interface_ptr(), extendend_verification) }
     }
 
     /// Wrapper of `EFI_SIMPLE_TEXT_INPUT_PROTOCOL.read_key_stroke()`
@@ -48,11 +48,12 @@ impl Protocol<'_, SimpleTextInputProtocol> {
     pub fn read_key_stroke(&self) -> Result<Option<EfiInputKey>> {
         let mut key: EfiInputKey = Default::default();
         // SAFETY:
-        // `self.interface()?` guarantees `self.interface` is non-null and points to a valid object
+        // `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid object
         // established by `Protocol::new()`.
-        // `self.interface` is input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` is input parameter and will not be retained. It outlives the call.
         // `key` is an output argument. It outlives the call and will not be taken.
-        match unsafe { efi_call!(self.interface()?.read_key_stroke, self.interface, &mut key) } {
+        match unsafe { efi_call!(self.interface().read_key_stroke, self.interface_ptr(), &mut key) }
+        {
             Ok(()) => Ok(Some(key)),
             Err(Error::NotReady) => Ok(None),
             Err(e) => Err(e),

@@ -41,16 +41,15 @@ impl Protocol<'_, GblOsConfigurationProtocol> {
 
         let mut fixup_size = fixup.len();
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // * `bootconfig` is non-null buffer used only within the call.
         // * `fixup` is non-null buffer available for write, used only within the call.
         // * `fixup_size` is non-null usize buffer available for write, used only within the call.
         unsafe {
             efi_call!(
                 @bufsize fixup_size,
-                self.interface()?.fixup_bootconfig,
-                self.interface,
+                self.interface().fixup_bootconfig,
+                self.interface_ptr(),
                 bootconfig.as_ptr(),
                 bootconfig.len(),
                 fixup.as_mut_ptr(),
@@ -64,14 +63,13 @@ impl Protocol<'_, GblOsConfigurationProtocol> {
     /// Wraps `GBL_EFI_OS_CONFIGURATION_PROTOCOL.select_device_trees()`.
     pub fn select_device_trees(&self, components: &mut [GblEfiVerifiedDeviceTree]) -> Result<()> {
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // * `components` is non-null buffer available for write, used only within the call.
         // * `components_len` is non-null usize buffer, used only within the call.
         unsafe {
             efi_call!(
-                self.interface()?.select_device_trees,
-                self.interface,
+                self.interface().select_device_trees,
+                self.interface_ptr(),
                 components.as_mut_ptr() as _,
                 components.len(),
             )?;
@@ -80,9 +78,9 @@ impl Protocol<'_, GblOsConfigurationProtocol> {
         Ok(())
     }
 
-    /// Wraps `GBL_EFI_OS_CONFIGURATION_PROTOCOL.revision()`.
-    pub fn revision(&self) -> Result<u64> {
-        Ok(self.interface()?.revision)
+    /// Wraps `GBL_EFI_OS_CONFIGURATION_PROTOCOL.revision`.
+    pub fn revision(&self) -> u64 {
+        self.interface().revision
     }
 }
 

@@ -35,7 +35,7 @@ impl ProtocolInfo for DtFixupProtocol {
 impl Protocol<'_, DtFixupProtocol> {
     /// Wraps `EFI_DT_FIXUP_PROTOCOL.revision`.
     pub fn revision(&self) -> u64 {
-        self.interface().unwrap().revision
+        self.interface().revision
     }
 
     /// Wraps `EFI_DT_FIXUP_PROTOCOL.fixup()`.
@@ -43,15 +43,15 @@ impl Protocol<'_, DtFixupProtocol> {
         let mut buffer_size = device_tree.len();
 
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        //   It is an input parameter and is not retained after the call.
         // * `device_tree` is non-null buffer available for write, used only within the call.
         // * `buffer_size` is non-null usize buffer available for write, used only within the call.
         unsafe {
             efi_call!(
                 @bufsize buffer_size,
-                self.interface()?.fixup,
-                self.interface,
+                self.interface().fixup,
+                self.interface_ptr(),
                 device_tree.as_mut_ptr() as _,
                 &mut buffer_size,
                 EFI_DT_APPLY_FIXUPS

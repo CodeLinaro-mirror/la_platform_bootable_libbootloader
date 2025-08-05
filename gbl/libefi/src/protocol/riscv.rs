@@ -34,18 +34,18 @@ impl<'a> Protocol<'a, RiscvBootProtocol> {
     pub fn get_boot_hartid(&self) -> Result<usize> {
         let mut boot_hart_id: usize = 0;
         // SAFETY:
-        // `self.interface()?` guarantees `self.interface` is non-null and points to a valid object
+        // `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid object
         // established by `Protocol::new()`.
-        // `self.interface` is input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` is input parameter and will not be retained. It outlives the call.
         // `&mut boot_hart_id` is output parameter and will not be retained. It outlives the call.
         unsafe {
-            efi_call!(self.interface()?.get_boot_hartid, self.interface, &mut boot_hart_id)?;
+            efi_call!(self.interface().get_boot_hartid, self.interface_ptr(), &mut boot_hart_id)?;
         }
         Ok(boot_hart_id)
     }
 
     /// Wraps `RISCV_EFI_BOOT_PROTOCOL.Revision`.
-    pub fn revision(&self) -> Result<u64> {
-        Ok(self.interface()?.revision)
+    pub fn revision(&self) -> u64 {
+        self.interface().revision
     }
 }

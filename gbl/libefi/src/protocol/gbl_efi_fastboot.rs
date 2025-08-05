@@ -64,14 +64,13 @@ impl Protocol<'_, GblFastbootProtocol> {
         args_arr[1..].iter_mut().zip(args).for_each(|(l, r)| *l = r.as_ptr());
         let mut bufsize = out.len();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // No parameters are retained, all parameters outlive the call, and no pointers are Null.
         unsafe {
             efi_call!(
                 @bufsize bufsize,
-                self.interface()?.get_var,
-                self.interface,
+                self.interface().get_var,
+                self.interface_ptr(),
                 args_arr.as_ptr(),
                 args_arr.len(),
                 out.as_mut_ptr(),
@@ -121,7 +120,7 @@ impl Protocol<'_, GblFastbootProtocol> {
         }
 
         // SAFETY:
-        // *`self.interface()?` guarantees self.interface is non-null and points to a valid object
+        // *`self.interface_ptr()` points to a valid object
         // * established by `Protocol::new()`.
         // * The `ctx` parameter is a valid `Callback` object, outlives the call and not being
         //   referenced elsewhere(declared inline at the parameter site).
@@ -129,8 +128,8 @@ impl Protocol<'_, GblFastbootProtocol> {
         //   `get_var_all_cb` that remains valid for the call.
         unsafe {
             efi_call!(
-                self.interface()?.get_var_all,
-                self.interface,
+                self.interface().get_var_all,
+                self.interface_ptr(),
                 &mut Callback(&mut cb) as *mut _ as _,
                 Some(get_var_all_cb),
             )?
@@ -173,7 +172,7 @@ impl Protocol<'_, GblFastbootProtocol> {
         }
 
         // SAFETY:
-        // *`self.interface()?` guarantees self.interface is non-null and points to a valid object
+        // *`self.interface_ptr()` points to a valid object
         // * established by `Protocol::new()`.
         // * `cmd` and `download` are for input only. They outlive the call and won't be retained.
         // * The `ctx` parameter is a valid `SenderCtx` object, outlives the call and not being
@@ -182,8 +181,8 @@ impl Protocol<'_, GblFastbootProtocol> {
         //   the correct string length to the callback function.
         unsafe {
             efi_call!(
-                self.interface()?.run_oem_function,
-                self.interface,
+                self.interface().run_oem_function,
+                self.interface_ptr(),
                 cmd.as_ptr() as _,
                 cmd.len(),
                 download.as_mut_ptr(),
@@ -200,14 +199,14 @@ impl Protocol<'_, GblFastbootProtocol> {
         let mut out_remains = 0;
 
         // SAFETY:
-        // *`self.interface()?` guarantees self.interface is non-null and points to a valid object
+        // *`self.interface_ptr()` points to a valid object
         // * established by `Protocol::new()`.
         // * `out`, `out_size` and `out_remains` are for input/output only. They outlive the call
         //   and won't be retained.
         unsafe {
             efi_call!(
-                self.interface()?.get_staged,
-                self.interface,
+                self.interface().get_staged,
+                self.interface_ptr(),
                 out.as_mut_ptr(),
                 &mut out_size,
                 &mut out_remains,
@@ -221,10 +220,9 @@ impl Protocol<'_, GblFastbootProtocol> {
         let mut policy: GblEfiFastbootPolicy = Default::default();
 
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // No parameters are retained, all parameters outlive the call, and no pointers are Null.
-        unsafe { efi_call!(self.interface()?.get_policy, self.interface, &mut policy)? };
+        unsafe { efi_call!(self.interface().get_policy, self.interface_ptr(), &mut policy)? };
 
         Ok(policy)
     }
@@ -232,21 +230,21 @@ impl Protocol<'_, GblFastbootProtocol> {
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.set_lock()`
     pub fn set_lock(&self, is_critical: bool, is_lock: bool) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.set_lock, self.interface, is_critical, is_lock) }
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
+        unsafe { efi_call!(self.interface().set_lock, self.interface_ptr(), is_critical, is_lock) }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_lock()`
     pub fn get_lock(&self, is_critical: bool) -> Result<bool> {
         let mut out: bool = false;
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `out` is for output only and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.get_lock, self.interface, is_critical, &mut out)? };
+        unsafe {
+            efi_call!(self.interface().get_lock, self.interface_ptr(), is_critical, &mut out)?
+        };
         Ok(out)
     }
 
@@ -255,13 +253,12 @@ impl Protocol<'_, GblFastbootProtocol> {
         let mut permissions = 0u64;
 
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // No parameters are retained, all parameters outlive the call, and no pointers are Null.
         unsafe {
             efi_call!(
-                self.interface()?.get_partition_permissions,
-                self.interface,
+                self.interface().get_partition_permissions,
+                self.interface_ptr(),
                 part_name.as_ptr(),
                 part_name.len(),
                 &mut permissions
@@ -274,10 +271,9 @@ impl Protocol<'_, GblFastbootProtocol> {
     pub fn start_local_session(&self) -> Result<LocalSessionContext> {
         let mut ctx = null_mut();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // No parameters are retained, all parameters outlive the call, and no pointers are Null.
-        unsafe { efi_call!(self.interface()?.start_local_session, self.interface, &mut ctx)? };
+        unsafe { efi_call!(self.interface().start_local_session, self.interface_ptr(), &mut ctx)? };
         Ok(LocalSessionContext(ctx))
     }
 
@@ -286,14 +282,13 @@ impl Protocol<'_, GblFastbootProtocol> {
         let mut bufsize = out.len();
 
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // No parameters are retained, all parameters outlive the call, and no pointers are Null.
         unsafe {
             efi_call!(
                 @bufsize bufsize,
-                self.interface()?.update_local_session,
-                self.interface,
+                self.interface().update_local_session,
+                self.interface_ptr(),
                 ctx.0, out.as_mut_ptr(),
                 &mut bufsize)?
         };
@@ -303,44 +298,41 @@ impl Protocol<'_, GblFastbootProtocol> {
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.close_local_session()`
     pub fn close_local_session(&self, ctx: &LocalSessionContext) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // No parameters are retained, all parameters outlive the call, and no pointers are Null.
-        unsafe { efi_call!(self.interface()?.close_local_session, self.interface, ctx.0) }
+        unsafe { efi_call!(self.interface().close_local_session, self.interface_ptr(), ctx.0) }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.wipe_user_data()`
     pub fn wipe_user_data(&self) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.wipe_user_data, self.interface) }
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
+        unsafe { efi_call!(self.interface().wipe_user_data, self.interface_ptr()) }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.should_stop_in_fastboot()`
     pub fn should_stop_in_fastboot(&self) -> bool {
-        let Ok(interface) = self.interface() else { return false };
-
-        let Some(should_stop_in_fastboot) = interface.should_stop_in_fastboot else { return false };
+        let Some(should_stop_in_fastboot) = self.interface().should_stop_in_fastboot else {
+            return false;
+        };
         // SAFETY:
-        // `self.interface` is non-null due to check above.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `should_stop_in_fastboot` is non-null due to check above.
         // `should_stop_in_fastboot` is responsible for validating its input.
-        unsafe { should_stop_in_fastboot(self.interface) }
+        unsafe { should_stop_in_fastboot(self.interface_ptr()) }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.serial_number`
     pub fn serial_number(&self) -> Result<&str> {
-        let serial_number = &self.interface()?.serial_number;
+        let serial_number = &self.interface().serial_number;
         let null_idx = serial_number.iter().position(|c| *c == 0).unwrap_or(serial_number.len());
         Ok(from_utf8(&serial_number[..null_idx])?)
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.revision`
-    pub fn revision(&self) -> Result<u64> {
-        Ok(self.interface()?.revision)
+    pub fn revision(&self) -> u64 {
+        self.interface().revision
     }
 }
 
@@ -349,11 +341,10 @@ mod test {
     use super::*;
     use crate::{
         test::{generate_protocol, run_test},
-        DeviceHandle, EfiEntry,
+        EfiEntry,
     };
     use core::{
         ffi::{c_void, CStr},
-        ptr::null_mut,
         slice::from_raw_parts_mut,
     };
     use efi_types::defs::{EfiStatus, GetVarAllCallback, EFI_STATUS_SUCCESS};
@@ -540,22 +531,6 @@ mod test {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
             let protocol = generate_protocol::<GblFastbootProtocol>(&efi_entry, &mut fb);
             assert!(protocol.should_stop_in_fastboot());
-        });
-    }
-
-    #[test]
-    fn test_should_stop_in_fastboot_no_interface() {
-        run_test(|image_handle, systab_ptr| {
-            let efi_entry = EfiEntry { image_handle, systab_ptr };
-            // SAFETY: `protocol.interface` is explicitly null for testing.
-            let protocol = unsafe {
-                Protocol::<GblFastbootProtocol>::new(
-                    DeviceHandle::new(null_mut()),
-                    null_mut(),
-                    &efi_entry,
-                )
-            };
-            assert!(!protocol.should_stop_in_fastboot());
         });
     }
 

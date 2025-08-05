@@ -165,17 +165,16 @@ impl Protocol<'_, GblImageLoadingProtocol> {
     pub fn get_buffer(&self, gbl_image_info: &GblEfiImageInfo) -> Result<EfiImageBufferInfo> {
         let mut gbl_buffer: GblEfiImageBuffer = Default::default();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` and `gbl_buffer` are input/output parameters, outlive the call and
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` and `gbl_buffer` are input/output parameters, outlive the call and
         // will not be retained.
         // `gbl_buffer` returned by this call must not overlap, and will be checked by
         // `EfiImageBuffer`
         unsafe {
             efi_call!(
                 @bufsize gbl_image_info.SizeBytes,
-                self.interface()?.get_buffer,
-                self.interface,
+                self.interface().get_buffer,
+                self.interface_ptr(),
                 gbl_image_info,
                 &mut gbl_buffer
             )?;
@@ -197,9 +196,9 @@ impl Protocol<'_, GblImageLoadingProtocol> {
         Ok(image_buffer)
     }
 
-    /// Wraps `GBL_EFI_IMAGE_LOADING_PROTOCOL.revision()`.
-    pub fn revision(&self) -> Result<u64> {
-        Ok(self.interface()?.revision)
+    /// Wraps `GBL_EFI_IMAGE_LOADING_PROTOCOL.revision`.
+    pub fn revision(&self) -> u64 {
+        self.interface().revision
     }
 }
 
@@ -210,7 +209,10 @@ mod test {
         protocol::gbl_efi_image_loading::GblImageLoadingProtocol, test::run_test, DeviceHandle,
         EfiEntry,
     };
-    use core::{ffi::c_void, ptr::null_mut};
+    use core::{
+        ffi::c_void,
+        ptr::{from_mut, null_mut, NonNull},
+    };
     use efi_types::{EfiStatus, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS};
     use spin::MutexGuard;
     use std::cell::RefCell;
@@ -281,7 +283,13 @@ mod test {
     ) -> Protocol<'a, P> {
         // SAFETY:
         // proto is a valid pointer and lasts at least as long as efi_entry.
-        unsafe { Protocol::<'a, P>::new(DeviceHandle::new(null_mut()), proto, efi_entry) }
+        unsafe {
+            Protocol::<'a, P>::new(
+                DeviceHandle::new(null_mut()),
+                NonNull::new(from_mut(proto)).unwrap(),
+                efi_entry,
+            )
+        }
     }
 
     // Mutex to make sure tests that use `static RETURNED_BUFFERS` do not run in parallel to avoid

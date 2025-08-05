@@ -78,10 +78,10 @@ pub mod loaded_image {
         /// Mock [efi::LoadedImageProtocol].
         pub LoadedImageProtocol {
             /// Returns a real [efi::DeviceHandle], which is data-only so isn't mocked.
-            pub fn device_handle(&self) -> Result<DeviceHandle>;
+            pub fn device_handle(&self) -> DeviceHandle;
 
             /// Returns the image base address.
-            pub fn image_base(&self) -> Result<usize>;
+            pub fn image_base(&self) -> usize;
         }
     }
     /// Map to the libefi name so code under test can just use one name.

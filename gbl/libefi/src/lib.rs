@@ -256,7 +256,7 @@ impl<'a> SystemTable<'a> {
             Protocol::<SimpleTextOutputProtocol>::new(
                 // No device handle. This protocol is a permanent reference.
                 DeviceHandle(null_mut()),
-                self.table.con_out,
+                core::ptr::NonNull::new(self.table.con_out).ok_or(Error::NotFound)?,
                 self.efi_entry,
             )
         })
@@ -383,7 +383,13 @@ impl<'a> BootServices<'a> {
         // SAFETY: `EFI_SYSTEM_TABLE.OpenProtocol` returns a valid pointer to `T::InterfaceType`
         // on success. The pointer remains valid until closed by
         // `EFI_BOOT_SERVICES.CloseProtocol()` when Protocol goes out of scope.
-        Ok(unsafe { Protocol::<T>::new(handle, out_handle as *mut _, self.efi_entry) })
+        Ok(unsafe {
+            Protocol::<T>::new(
+                handle,
+                core::ptr::NonNull::new(out_handle as *mut _).ok_or(Error::NotFound)?,
+                self.efi_entry,
+            )
+        })
     }
 
     /// Wrapper of `EFI_BOOT_SERVICES.CloseProtocol()`.
@@ -631,18 +637,17 @@ impl<'a> BootServices<'a> {
             )?;
         }
 
-        // If the protocol isn't supported on this handle the `efi_call` should have
-        // returned an error, but check for extra safety.
-        if interface.is_null() {
-            Err(Error::Unsupported)
-        } else {
-            // SAFETY:
-            // * `interface` is not NULL.
-            // * `interface` is not retained by `handle_protocol`.
-            // * It is the responsibility of `boot_services.handle_protocol`
-            //   to set `interface` to a valid value.
-            Ok(unsafe { Protocol::<T>::new(handle, interface, self.efi_entry) })
-        }
+        // SAFETY:
+        // * `interface` is not retained by `handle_protocol`.
+        // * It is the responsibility of `boot_services.handle_protocol`
+        //   to set `interface` to a valid value.
+        Ok(unsafe {
+            Protocol::<T>::new(
+                handle,
+                core::ptr::NonNull::new(interface).ok_or(Error::NotFound)?,
+                self.efi_entry,
+            )
+        })
     }
 }
 
@@ -1110,6 +1115,7 @@ mod test {
     use super::*;
     use crate::protocol::{block_io::BlockIoProtocol, ProtocolInfo, Requirement};
     use alloc::string::String;
+    use core::ptr::{from_mut, NonNull};
     use efi_types::{
         EfiBlockIoProtocol, EfiEventNotify, EfiLocateHandleSearchType, EfiSimpleTextOutputProtocol,
         EfiStatus, EfiTpl, EFI_MEMORY_TYPE_LOADER_CODE, EFI_MEMORY_TYPE_LOADER_DATA,
@@ -1127,7 +1133,13 @@ mod test {
         proto: &'a mut P::InterfaceType,
     ) -> Protocol<'a, P> {
         // SAFETY: proto is a valid pointer and lasts at least as long as efi_entry.
-        unsafe { Protocol::<'a, P>::new(DeviceHandle::new(null_mut()), proto, efi_entry) }
+        unsafe {
+            Protocol::<'a, P>::new(
+                DeviceHandle::new(null_mut()),
+                NonNull::new(from_mut(proto)).unwrap(),
+                efi_entry,
+            )
+        }
     }
 
     /// A structure to store the traces of arguments/outputs for EFI methods.
@@ -1601,7 +1613,11 @@ mod test {
             // * `c_interface` is a valid C interface for proto `P`
             // * `c_interface` outlives the created `protocol`
             let protocol = unsafe {
-                Protocol::new(DeviceHandle::new(null_mut()), &mut c_interface, &efi_entry)
+                Protocol::new(
+                    DeviceHandle::new(null_mut()),
+                    NonNull::new(from_mut(&mut c_interface)).unwrap(),
+                    &efi_entry,
+                )
             };
             f(&protocol);
         });

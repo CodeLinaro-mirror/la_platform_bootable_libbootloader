@@ -150,14 +150,14 @@ impl Protocol<'_, Hash2Protocol> {
     fn hash<H: HashAlgorithm>(&self, message: &[u8]) -> Result<EfiHash2Output> {
         let mut output = EfiHash2Output::default();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` points to a valid object.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `message` is an input parameter and will not be retained. It outlives the call.
         // `output` is an output parameter and will not be retained. It outlives the call.
         unsafe {
             efi_call!(
-                self.interface()?.hash,
-                self.interface,
+                self.interface().hash,
+                self.interface_ptr(),
                 &H::GUID,
                 message.as_ptr(),
                 message.len(),
@@ -169,20 +169,20 @@ impl Protocol<'_, Hash2Protocol> {
 
     fn hash_init<H: HashAlgorithm>(&self) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.hash_init, self.interface, &H::GUID) }
+        // `self.interface_ptr()` points to a valid object.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
+        unsafe { efi_call!(self.interface().hash_init, self.interface_ptr(), &H::GUID) }
     }
 
     fn hash_update(&self, message: &[u8]) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` points to a valid object.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `message` is an input parameter and will not be retained. It outlives the call.
         unsafe {
             efi_call!(
-                self.interface()?.hash_update,
-                self.interface,
+                self.interface().hash_update,
+                self.interface_ptr(),
                 message.as_ptr(),
                 message.len()
             )
@@ -192,11 +192,11 @@ impl Protocol<'_, Hash2Protocol> {
     fn hash_final(&self) -> Result<EfiHash2Output> {
         let mut output = EfiHash2Output::default();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` points to a valid object.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `output` is an output parameter and will not be retained. It outlives the call.
         unsafe {
-            efi_call!(self.interface()?.hash_final, self.interface, &mut output)?;
+            efi_call!(self.interface().hash_final, self.interface_ptr(), &mut output)?;
         }
         Ok(output)
     }

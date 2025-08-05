@@ -52,11 +52,12 @@ impl<'a> Protocol<'a, DevicePathToTextProtocol> {
         display_only: bool,
         allow_shortcuts: bool,
     ) -> Result<DevicePathText<'a>> {
-        let f = self.interface()?.convert_device_path_to_text.as_ref().ok_or(Error::NotFound)?;
+        let f = self.interface().convert_device_path_to_text.as_ref().ok_or(Error::NotFound)?;
         // SAFETY:
-        // `self.interface()?` guarantees `self.interface` is non-null and points to a valid object
+        // `self.interface_ptr()` is non-null and points to a valid object
         // established by `Protocol::new()`.
-        // `self.interface` is input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` is an input parameter and will not be retained.
+        // It outlives the call.
         let res = unsafe { f(device_path.interface_ptr(), display_only, allow_shortcuts) };
         Ok(DevicePathText::new(res, self.efi_entry))
     }

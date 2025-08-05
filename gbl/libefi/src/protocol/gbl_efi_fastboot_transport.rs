@@ -60,35 +60,32 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
     /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.start()`
     pub fn start(&self) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` and `max_packet_size` are input/output parameters, outlive the call and
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` and `max_packet_size` are input/output parameters, outlive the call and
         // will not be retained.
-        unsafe { efi_call!(self.interface()?.start, self.interface) }
+        unsafe { efi_call!(self.interface().start, self.interface_ptr()) }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.stop()`
     pub fn stop(&self) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is input parameter, outlives the call, and will not be retained.
-        unsafe { efi_call!(self.interface()?.stop, self.interface) }
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is input parameter, outlives the call, and will not be retained.
+        unsafe { efi_call!(self.interface().stop, self.interface_ptr()) }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.receive()`
     pub fn receive(&self, out: &mut [u8], mode: ReceiveMode) -> Result<usize> {
         let mut out_size = out.len();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface`, `out_size` and `buffer` are input/output parameters, outlive the call
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()`, `out_size` and `buffer` are input/output parameters, outlive the call
         // and will not be retained.
         unsafe {
             efi_call!(
                 @bufsize out_size,
-                self.interface()?.receive,
-                self.interface,
+                self.interface().receive,
+                self.interface_ptr(),
                 &mut out_size,
                 out.as_mut_ptr() as _,
                 mode.into(),
@@ -102,15 +99,14 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
     pub fn send(&self, data: &[u8]) -> Result<usize> {
         let mut out_size = data.len();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface`, `out_size` and `buffer` are input/output parameters, outlive the call
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()`, `out_size` and `buffer` are input/output parameters, outlive the call
         // and will not be retained.
         unsafe {
             efi_call!(
                 @bufsize out_size,
-                self.interface()?.send,
-                self.interface,
+                self.interface().send,
+                self.interface_ptr(),
                 &mut out_size,
                 data.as_ptr() as _,
             )?;
@@ -122,14 +118,13 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
     /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.flush()`
     pub fn flush(&self) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        unsafe { efi_call!(self.interface()?.flush, self.interface) }
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        unsafe { efi_call!(self.interface().flush, self.interface_ptr()) }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.description()`
     pub fn description(&self) -> &'static str {
-        let Ok(s) = self.interface().map(|v| v.description) else { return "" };
+        let s = self.interface().description;
         // SAFETY: By UEFI spec, `f` returns a static NULL terminated ASCII string.
         unsafe { core::ffi::CStr::from_ptr(s as _).to_str().unwrap() }
     }
@@ -161,8 +156,8 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
         self.flush()
     }
 
-    /// Wraps `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.revision()`.
-    pub fn revision(&self) -> Result<u64> {
-        Ok(self.interface()?.revision)
+    /// Wraps `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.revision`.
+    pub fn revision(&self) -> u64 {
+        self.interface().revision
     }
 }

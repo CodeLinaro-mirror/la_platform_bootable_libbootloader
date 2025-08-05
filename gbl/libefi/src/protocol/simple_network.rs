@@ -41,16 +41,16 @@ impl<'a> Protocol<'a, SimpleNetworkProtocol> {
     /// Wrapper of `EFI_SIMPLE_NETWORK.Start()`
     pub fn start(&self) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees to return a valid object pointer as established by
+        // `self.interface_ptr()` guarantees to return a valid object pointer as established by
         // `Protocol::new()`.
-        // `self.interface` outlives the call and will not be retained.
-        unsafe { efi_call!(self.interface()?.start, self.interface) }
+        // `self.interface_ptr()` outlives the call and will not be retained.
+        unsafe { efi_call!(self.interface().start, self.interface_ptr()) }
     }
 
     /// Wrapper of `EFI_SIMPLE_NETWORK.Stop()`
     pub fn stop(&self) -> Result<()> {
         // SAFETY: See safety reasoning of `start()`.
-        unsafe { efi_call!(self.interface()?.stop, self.interface) }
+        unsafe { efi_call!(self.interface().stop, self.interface_ptr()) }
     }
 
     /// Wrapper of `EFI_SIMPLE_NETWORK.Initialize()`
@@ -58,8 +58,8 @@ impl<'a> Protocol<'a, SimpleNetworkProtocol> {
         // SAFETY: See safety reasoning of `start()`.
         unsafe {
             efi_call!(
-                self.interface()?.initialize,
-                self.interface,
+                self.interface().initialize,
+                self.interface_ptr(),
                 extra_rx_buf_size,
                 extra_tx_buf_size
             )
@@ -69,13 +69,13 @@ impl<'a> Protocol<'a, SimpleNetworkProtocol> {
     /// Wrapper of `EFI_SIMPLE_NETWORK.Reset()`
     pub fn reset(&self, extended_verification: bool) -> Result<()> {
         // SAFETY: See safety reasoning of `start()`.
-        unsafe { efi_call!(self.interface()?.reset, self.interface, extended_verification) }
+        unsafe { efi_call!(self.interface().reset, self.interface_ptr(), extended_verification) }
     }
 
     /// Wrapper of `EFI_SIMPLE_NETWORK.Shutdown()`
     pub fn shutdown(&self) -> Result<()> {
         // SAFETY: See safety reasoning of `start()`.
-        unsafe { efi_call!(self.interface()?.shutdown, self.interface) }
+        unsafe { efi_call!(self.interface().shutdown, self.interface_ptr()) }
     }
 
     /// Wrapper of `EFI_SIMPLE_NETWORK.ReceiveFilters()`
@@ -87,14 +87,14 @@ impl<'a> Protocol<'a, SimpleNetworkProtocol> {
         mcast_filter: &mut [EfiMacAddress],
     ) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees to return a valid object pointer as established by
+        // `self.interface_ptr()` guarantees to return a valid object pointer as established by
         // `Protocol::new()`.
-        // `self.interface` outlives the call and will not be retained.
+        // `self.interface_ptr()` outlives the call and will not be retained.
         // `mcast_filter` is for input only. It outlives the call and will not be retained.
         unsafe {
             efi_call!(
-                self.interface()?.receive_filters,
-                self.interface,
+                self.interface().receive_filters,
+                self.interface_ptr(),
                 enable,
                 disable,
                 reset_mcast_filter,
@@ -116,8 +116,8 @@ impl<'a> Protocol<'a, SimpleNetworkProtocol> {
         // writing output values only.
         unsafe {
             efi_call!(
-                self.interface()?.get_status,
-                self.interface,
+                self.interface().get_status,
+                self.interface_ptr(),
                 option_ref_mut_to_pointer(interrupt_status),
                 option_ref_mut_to_pointer(recycle_buffer)
             )?;
@@ -150,8 +150,8 @@ impl<'a> Protocol<'a, SimpleNetworkProtocol> {
         // All pointers passed are valid, outlive the call and are not retained by the call.
         unsafe {
             efi_call!(
-                self.interface()?.transmit,
-                self.interface,
+                self.interface().transmit,
+                self.interface_ptr(),
                 header_size,
                 buf.len(),
                 buf.as_mut_ptr() as *mut _,
@@ -177,8 +177,8 @@ impl<'a> Protocol<'a, SimpleNetworkProtocol> {
         // All pointers passed are valid, outlive the call and are not retained by the call.
         unsafe {
             efi_call!(
-                self.interface()?.receive,
-                self.interface,
+                self.interface().receive,
+                self.interface_ptr(),
                 option_ref_mut_to_pointer(header_size),
                 option_ref_mut_to_pointer(buf_size),
                 buf.as_mut_ptr() as *mut _,
@@ -193,7 +193,7 @@ impl<'a> Protocol<'a, SimpleNetworkProtocol> {
     /// Returns `EFI_SIMPLE_NETWORK.Mode` structure
     pub fn mode(&self) -> Result<EfiSimpleNetworkMode> {
         // SAFETY: Non-null pointer from UEFI interface points to valid object.
-        unsafe { self.interface()?.mode.as_ref() }.ok_or(Error::NotFound).copied()
+        unsafe { self.interface().mode.as_ref() }.ok_or(Error::NotFound).copied()
     }
 
     /// Sets to promiscuous mode to receive all packets over the network.

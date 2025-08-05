@@ -82,11 +82,10 @@ impl<'a> Protocol<'a, GblSlotProtocol> {
     pub fn load_boot_data(&self) -> Result<GblEfiSlotMetadataBlock> {
         let mut block: GblEfiSlotMetadataBlock = Default::default();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `block` is an output parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.load_boot_data, self.interface, &mut block)? }
+        unsafe { efi_call!(self.interface().load_boot_data, self.interface_ptr(), &mut block)? }
         Ok(block)
     }
 
@@ -94,11 +93,10 @@ impl<'a> Protocol<'a, GblSlotProtocol> {
     pub fn get_slot_info(&self, idx: u8) -> Result<GblSlot> {
         let mut info: GblEfiSlotInfo = Default::default();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `info` is an output parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.get_slot_info, self.interface, idx, &mut info,)? }
+        unsafe { efi_call!(self.interface().get_slot_info, self.interface_ptr(), idx, &mut info,)? }
         Ok(info.into())
     }
 
@@ -106,11 +104,10 @@ impl<'a> Protocol<'a, GblSlotProtocol> {
     pub fn get_current_slot(&self) -> Result<GblSlot> {
         let mut info: GblEfiSlotInfo = Default::default();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `info` is an output parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.get_current_slot, self.interface, &mut info)? };
+        unsafe { efi_call!(self.interface().get_current_slot, self.interface_ptr(), &mut info)? };
         Ok(info.into())
     }
 
@@ -118,14 +115,13 @@ impl<'a> Protocol<'a, GblSlotProtocol> {
     pub fn get_next_slot(&self, mark_boot_attempt: bool) -> Result<GblSlot> {
         let mut info = GblEfiSlotInfo::default();
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface`, `info` are input/output parameter and will not be retained. It
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()`, `info` are input/output parameter and will not be retained. It
         // outlives the call.
         unsafe {
             efi_call!(
-                self.interface()?.get_next_slot,
-                self.interface,
+                self.interface().get_next_slot,
+                self.interface_ptr(),
                 mark_boot_attempt,
                 &mut info as _
             )?;
@@ -136,40 +132,38 @@ impl<'a> Protocol<'a, GblSlotProtocol> {
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_active_slot()`
     pub fn set_active_slot(&self, idx: u8) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.set_active_slot, self.interface, idx) }
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
+        unsafe { efi_call!(self.interface().set_active_slot, self.interface_ptr(), idx) }
     }
 
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_slot_unbootable()`
     pub fn set_slot_unbootable(&self, idx: u8, reason: GblEfiUnbootableReason) -> Result<()> {
         let reason: u32 = reason.try_into().or(Err(Error::InvalidInput))?;
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.set_slot_unbootable, self.interface, idx, reason) }
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
+        unsafe {
+            efi_call!(self.interface().set_slot_unbootable, self.interface_ptr(), idx, reason)
+        }
     }
 
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.reinitialize()`
     pub fn reinitialize(&self) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.reinitialize, self.interface) }
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
+        unsafe { efi_call!(self.interface().reinitialize, self.interface_ptr()) }
     }
 
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.get_boot_mode()`
     pub fn get_boot_mode(&self) -> Result<GblEfiBootMode> {
         let mut mode: u32 = 0;
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `mode` is an output parameter. It is not retained, and it outlives the call.
-        unsafe { efi_call!(self.interface()?.get_boot_mode, self.interface, &mut mode)? }
+        unsafe { efi_call!(self.interface().get_boot_mode, self.interface_ptr(), &mut mode)? }
 
         Ok(mode.try_into().or(Err(Error::InvalidInput))?)
     }
@@ -177,13 +171,12 @@ impl<'a> Protocol<'a, GblSlotProtocol> {
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_boot_mode()`
     pub fn set_boot_mode(&self, mode: GblEfiBootMode) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         unsafe {
             efi_call!(
-                self.interface()?.set_boot_mode,
-                self.interface,
+                self.interface().set_boot_mode,
+                self.interface_ptr(),
                 mode.try_into().or(Err(Error::InvalidInput))?,
             )
         }
@@ -192,14 +185,13 @@ impl<'a> Protocol<'a, GblSlotProtocol> {
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.flush()`
     pub fn flush(&self) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // `self.interface` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface()?.flush, self.interface) }
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
+        unsafe { efi_call!(self.interface().flush, self.interface_ptr()) }
     }
 
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.revision`
-    pub fn revision(&self) -> Result<u64> {
-        Ok(self.interface()?.revision)
+    pub fn revision(&self) -> u64 {
+        self.interface().revision
     }
 }

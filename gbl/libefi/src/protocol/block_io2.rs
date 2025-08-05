@@ -28,7 +28,7 @@ use efi_types::{
     EfiBlockIo2Protocol, EfiBlockIo2Token, EfiBlockIoMedia, EfiGuid, EFI_STATUS_NOT_READY,
 };
 use gbl_async::{assert_return, yield_now};
-use liberror::{efi_status_to_result, Error, Result};
+use liberror::{efi_status_to_result, Result};
 
 /// EFI_BLOCK_IO2_PROTOCOL
 pub struct BlockIo2Protocol;
@@ -79,10 +79,9 @@ impl Protocol<'_, BlockIo2Protocol> {
             EfiBlockIo2Token { event: event.efi_event, transaction_status: EFI_STATUS_NOT_READY };
         let buffer = buffer.into();
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //    established by `Protocol::new()`.
-        // * `self.interface` is input parameter and will not be retained. It outlives the call.
-        // *  `EfiBlockIo2Protocol.read_blocks_ex()` will only initialize the data, never reading
+        // * `self.interface_ptr()` is an input parameter and will not be retained.
+        //   It outlives the call.
+        // * `EfiBlockIo2Protocol.read_blocks_ex()` will only initialize the data, never reading
         //    or uininitializing it.
         // * The function waits until `complete` is marked true by the event notification function,
         //   which guarantees that `buffer` and `token` are not being retained by the UEFI firmware
@@ -92,9 +91,9 @@ impl Protocol<'_, BlockIo2Protocol> {
         //   Future getting dropped before it can execute to completion.
         unsafe {
             efi_call!(
-                self.interface()?.read_blocks_ex,
-                self.interface,
-                self.media()?.media_id,
+                self.interface().read_blocks_ex,
+                self.interface_ptr(),
+                self.media().media_id,
                 lba,
                 &mut token,
                 buffer.len(),
@@ -119,9 +118,9 @@ impl Protocol<'_, BlockIo2Protocol> {
         // SAFETY: See safety comment for `Self::read_blocks_ex()`.
         unsafe {
             efi_call!(
-                self.interface()?.write_blocks_ex,
-                self.interface,
-                self.media()?.media_id,
+                self.interface().write_blocks_ex,
+                self.interface_ptr(),
+                self.media().media_id,
                 lba,
                 &mut token,
                 buffer.len(),
@@ -144,7 +143,7 @@ impl Protocol<'_, BlockIo2Protocol> {
         let mut token =
             EfiBlockIo2Token { event: event.efi_event, transaction_status: EFI_STATUS_NOT_READY };
         // SAFETY: See safety comment for `Self::read_blocks_ex()`.
-        unsafe { efi_call!(self.interface()?.flush_blocks_ex, self.interface, &mut token) }?;
+        unsafe { efi_call!(self.interface().flush_blocks_ex, self.interface_ptr(), &mut token) }?;
         assert_return(wait_completion(self.efi_entry(), &complete)).await;
         efi_status_to_result(token.transaction_status)
     }
@@ -154,13 +153,12 @@ impl Protocol<'_, BlockIo2Protocol> {
         // SAFETY:
         // * See safety comment for `Self::read_blocks_ex()`.
         // * The operation is synchronous, no need to call wait_io_completion().
-        unsafe { efi_call!(self.interface()?.reset, self.interface, extended_verification) }
+        unsafe { efi_call!(self.interface().reset, self.interface_ptr(), extended_verification) }
     }
 
     /// Gets a copy of the `EFI_BLOCK_IO2_PROTOCOL.Media` structure.
-    pub fn media(&self) -> Result<EfiBlockIoMedia> {
-        let ptr = self.interface()?.media;
+    pub fn media(&self) -> EfiBlockIoMedia {
         // SAFETY: Pointers to EFI data structure.
-        Ok(*unsafe { ptr.as_ref() }.ok_or(Error::InvalidInput)?)
+        unsafe { *self.interface().media }
     }
 }

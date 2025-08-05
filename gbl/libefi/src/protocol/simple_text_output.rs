@@ -34,11 +34,11 @@ impl Protocol<'_, SimpleTextOutputProtocol> {
     /// Wrapper of `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL.OutputString()`
     pub fn output_string(&self, msg: &mut [char16_t]) -> Result<()> {
         // SAFETY:
-        // `self.interface()?` guarantees `self.interface` is non-null and points to a valid object
+        // `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid object
         // established by `Protocol::new()`.
-        // `self.interface` is input parameter and will not be retained. It outlives the call.
+        // `self.interface_ptr()` is input parameter and will not be retained. It outlives the call.
         // `msg` is for input only and will not be retained.
-        unsafe { efi_call!(self.interface()?.output_string, self.interface, msg.as_mut_ptr()) }
+        unsafe { efi_call!(self.interface().output_string, self.interface_ptr(), msg.as_mut_ptr()) }
     }
 }
 

@@ -43,9 +43,9 @@ impl Protocol<'_, RandomNumberGeneratorProtocol> {
         let mut raw = MaybeUninit::<T>::uninit();
 
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and
-        //   points to a valid object established by `Protocol::new()`.
-        // * `self.interface` is an input parameter and will not be retained.
+        // * `self.interface_ptr()` points to a valid object
+        //   established by `Protocol::new()`.
+        // * `self.interface_ptr()` is an input parameter and will not be retained.
         //   It outlives the call.
         // * `rng_algorithm` is optional. Null is a valid value.
         // * `raw` is a non-null output parameter.
@@ -53,8 +53,8 @@ impl Protocol<'_, RandomNumberGeneratorProtocol> {
         //   that will be written to.
         unsafe {
             efi_call!(
-                self.interface()?.get_rng,
-                self.interface,
+                self.interface().get_rng,
+                self.interface_ptr(),
                 core::ptr::null(),
                 core::mem::size_of_val(&raw),
                 raw.as_mut_ptr() as *mut u8,

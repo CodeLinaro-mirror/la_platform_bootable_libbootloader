@@ -53,9 +53,8 @@ impl Protocol<'_, GblAvbProtocol> {
         let mut num_partitions = partitions.len();
 
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`.
-        // * `self.interface` is input parameter, outlives the call, and will not be retained.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // * `self.interface_ptr()` is input parameter, outlives the call, and will not be retained.
         // * `num_partitions` is input/output parameter, non-null and points to a valid writtable
         //   usize buffer.
         // * `partitions` is input/output parameter, non-null and points to `partitions.len()`
@@ -64,8 +63,8 @@ impl Protocol<'_, GblAvbProtocol> {
         unsafe {
             efi_call!(
                 @bufsize num_partitions,
-                self.interface()?.read_partitions_to_verify,
-                self.interface,
+                self.interface().read_partitions_to_verify,
+                self.interface_ptr(),
                 &mut num_partitions,
                 partitions.as_mut_ptr(),
             )?;
@@ -79,14 +78,13 @@ impl Protocol<'_, GblAvbProtocol> {
         let mut is_dm_verity_error = false;
 
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`
         // * `is_dm_verity_error` is non-null buffer to a `bool` available to write, must be used
         //   only within the call
         unsafe {
             efi_call!(
-                self.interface()?.read_is_dm_verity_error,
-                self.interface,
+                self.interface().read_is_dm_verity_error,
+                self.interface_ptr(),
                 &mut is_dm_verity_error,
             )?
         }
@@ -103,15 +101,14 @@ impl Protocol<'_, GblAvbProtocol> {
         let mut validation_status = efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID as _;
 
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`
         // * `public_key` pointer is not-null and used only within the call
         // * `public_key_metadata` pointer (can be null), used only within the call
         // * `validation_status` non-null pointer available to write
         unsafe {
             efi_call!(
-                self.interface()?.validate_vbmeta_public_key,
-                self.interface,
+                self.interface().validate_vbmeta_public_key,
+                self.interface_ptr(),
                 public_key.as_ptr() as *const _,
                 public_key.len(),
                 public_key_metadata.map_or(null(), |m| m.as_ptr() as *const _),
@@ -128,11 +125,15 @@ impl Protocol<'_, GblAvbProtocol> {
         let mut is_unlocked: bool = false;
 
         // SAFETY:
-        // * `self.interface()?` guarantees `self.interface` is non-null and points to a valid
+        // * `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid
         // object established by `Protocol::new()`.
         // * `is_unlocked` is a non-null pointer to a `bool` available for write.
         unsafe {
-            efi_call!(self.interface()?.read_is_device_unlocked, self.interface, &mut is_unlocked)?
+            efi_call!(
+                self.interface().read_is_device_unlocked,
+                self.interface_ptr(),
+                &mut is_unlocked
+            )?
         }
 
         Ok(is_unlocked)
@@ -143,13 +144,13 @@ impl Protocol<'_, GblAvbProtocol> {
         let mut rollback_index: u64 = 0;
 
         // SAFETY:
-        // * `self.interface()?` guarantees `self.interface` is non-null and points to a valid
+        // * `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid
         //   object established by `Protocol::new()`.
         // * `rollback_index` is a valid pointer to a `u64` available for write.
         unsafe {
             efi_call!(
-                self.interface()?.read_rollback_index,
-                self.interface,
+                self.interface().read_rollback_index,
+                self.interface_ptr(),
                 index_location,
                 &mut rollback_index,
             )?
@@ -161,12 +162,12 @@ impl Protocol<'_, GblAvbProtocol> {
     /// Wraps `GBL_EFI_AVB_PROTOCOL.write_rollback_index()`.
     pub fn write_rollback_index(&self, index_location: usize, rollback_index: u64) -> Result<()> {
         // SAFETY:
-        // * `self.interface()?` guarantees `self.interface` is non-null and points to a valid
+        // * `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid
         //   object established by `Protocol::new()`.
         unsafe {
             efi_call!(
-                self.interface()?.write_rollback_index,
-                self.interface,
+                self.interface().write_rollback_index,
+                self.interface_ptr(),
                 index_location,
                 rollback_index,
             )?
@@ -185,7 +186,7 @@ impl Protocol<'_, GblAvbProtocol> {
         };
 
         // SAFETY:
-        // * `self.interface()?` guarantees `self.interface` is non-null and points to a valid
+        // * `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid
         //   object established by `Protocol::new()`.
         // * `name` is a valid pointer to a null-terminated string used only within the call.
         // * `value_ptr` is either a valid pointer to a writable buffer or a null pointer, used only
@@ -194,8 +195,8 @@ impl Protocol<'_, GblAvbProtocol> {
         unsafe {
             efi_call!(
                 @bufsize value_buffer_size,
-                self.interface()?.read_persistent_value,
-                self.interface,
+                self.interface().read_persistent_value,
+                self.interface_ptr(),
                 name.as_ptr() as _,
                 value_ptr,
                 &mut value_buffer_size,
@@ -213,15 +214,15 @@ impl Protocol<'_, GblAvbProtocol> {
         };
 
         // SAFETY:
-        // * `self.interface()?` guarantees `self.interface` is non-null and points to a valid
+        // * `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid
         //   object established by `Protocol::new()`.
         // * `name` is a valid pointer to a null-terminated string used only within the call.
         // * `value_ptr` is a valid pointer to `value_len` sized buffer or null, used only within
         //   the call.
         unsafe {
             efi_call!(
-                self.interface()?.write_persistent_value,
-                self.interface,
+                self.interface().write_persistent_value,
+                self.interface_ptr(),
                 name.as_ptr() as _,
                 value_ptr,
                 value_len,
@@ -237,21 +238,20 @@ impl Protocol<'_, GblAvbProtocol> {
         verification_result: &GblEfiAvbVerificationResult,
     ) -> Result<()> {
         // SAFETY:
-        // * `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        //   established by `Protocol::new()`.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // * `verification_result` pointer is not-null and used only within the call.
         unsafe {
             efi_call!(
-                self.interface()?.handle_verification_result,
-                self.interface,
+                self.interface().handle_verification_result,
+                self.interface_ptr(),
                 verification_result as *const _
             )
         }
     }
 
-    /// Wraps `GBL_EFI_AVB_PROTOCOL.revision()`.
-    pub fn revision(&self) -> Result<u64> {
-        Ok(self.interface()?.revision)
+    /// Wraps `GBL_EFI_AVB_PROTOCOL.revision`.
+    pub fn revision(&self) -> u64 {
+        self.interface().revision
     }
 }
 

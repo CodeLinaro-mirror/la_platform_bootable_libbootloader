@@ -225,8 +225,8 @@ fn partition_buffer_op(
             //   outlive the call and will not be retained.
             unsafe {
                 efi_call!(
-                    protocol.interface()?.get_partition_buffer,
-                    protocol.interface,
+                    protocol.interface().get_partition_buffer,
+                    protocol.interface_ptr(),
                     part_cstr.as_ptr() as _,
                     &mut sz,
                     &mut addr,
@@ -263,7 +263,7 @@ fn partition_buffer_op(
             // * All existing references in PARTITION_BUFFER_POOL are dropped by
             //   `PARTITION_BUFFER_POOL.clear_all()?;` above.
             unsafe {
-                efi_call!(protocol.interface()?.sync_partition_buffer, protocol.interface, v)?
+                efi_call!(protocol.interface().sync_partition_buffer, protocol.interface_ptr(), v)?
             };
             Ok(None)
         }
@@ -334,8 +334,8 @@ fn boot_buffer_op(entry: &EfiEntry, op: BootBufferOp) -> Result<Option<GblVendor
             //   call and will not be retained.
             let res = unsafe {
                 efi_call!(
-                    protocol.interface()?.get_boot_buffer,
-                    protocol.interface,
+                    protocol.interface().get_boot_buffer,
+                    protocol.interface_ptr(),
                     buf_type,
                     &mut sz,
                     &mut addr,

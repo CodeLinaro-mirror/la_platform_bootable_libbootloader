@@ -17,7 +17,6 @@
 use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use crate::DeviceHandle;
 use efi_types::{EfiGuid, EfiLoadedImageProtocol};
-use liberror::Result;
 
 /// EFI_LOADED_IMAGE_PROTOCOL
 pub struct LoadedImageProtocol;
@@ -33,12 +32,12 @@ impl ProtocolInfo for LoadedImageProtocol {
 
 impl<'a> Protocol<'a, LoadedImageProtocol> {
     /// Wraps `EFI_LOADED_IMAGE_PROTOCOL.DeviceHandle`.
-    pub fn device_handle(&self) -> Result<DeviceHandle> {
-        Ok(DeviceHandle(self.interface()?.device_handle))
+    pub fn device_handle(&self) -> DeviceHandle {
+        DeviceHandle(self.interface().device_handle)
     }
 
     /// Returns the `EFI_LOADED_IMAGE_PROTOCOL.image_base` field.
-    pub fn image_base(&self) -> Result<usize> {
-        Ok(self.interface()?.image_base as _)
+    pub fn image_base(&self) -> usize {
+        self.interface().image_base as _
     }
 }

@@ -139,9 +139,9 @@ impl<C: 'static + Identified> Client<C> {
     /// Additionally, in UEFI the caller must only use the returned [Client]
     /// within the protocol's
     /// [supported TPL range](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#tpl-restrictions)
-    pub unsafe fn new(c_interface: *const C) -> Self {
+    pub unsafe fn new(c_interface: core::ptr::NonNull<C>) -> Self {
         // SAFETY: function safety requires a valid pointer which outlives us.
-        let c_interface = unsafe { c_interface.as_ref() }.unwrap();
+        let c_interface = unsafe { c_interface.as_ref() };
         Self(c_interface)
     }
 }
@@ -607,7 +607,7 @@ pub(crate) mod test {
             // * `c_interface` points to a valid UEFI protocol interface
             //   backed by `provider`
             // * `provider` outlives `client` due to struct declaration order
-            let client = unsafe { Client::new(c_interface) };
+            let client = unsafe { Client::new(core::ptr::NonNull::new(c_interface).unwrap()) };
 
             Self { client, _provider: provider }
         }
