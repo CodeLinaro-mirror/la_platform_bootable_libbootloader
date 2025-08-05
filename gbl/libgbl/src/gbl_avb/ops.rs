@@ -433,6 +433,8 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, 'c,
     }
 
     fn read_persistent_value(&mut self, name: &CStr, value: &mut [u8]) -> IoResult<usize> {
+        // TODO(b/337846185): Use Option<&mut [u8]> for `value` to support checking the value's
+        // availability and size documented by `libavb`.
         let result = self.gbl_ops.avb_read_persistent_value(name, value);
 
         // On dev boards default to no persistent values. libavb will handle
