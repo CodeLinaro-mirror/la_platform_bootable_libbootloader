@@ -73,6 +73,15 @@ specific code.
 
 And reload your IDE.
 
+## Gemini CLI
+
+This repo can be used with
+[Gemini CLI](https://github.com/google-gemini/gemini-cli). Refer to that
+link for installation instructions.
+
+To use it, run `gemini` from this directory so that it sees the `GEMINI.md`
+file to help specialize it for this codebase.
+
 ## Run the EFI application
 
 ### Boot Android on Cuttlefish
