@@ -131,6 +131,31 @@ EFI_STATUS
 );
 ```
 
+### Related Definitions
+
+#### GBL_EFI_AVB_PARTITION
+
+```c
+typedef
+struct GblEfiAvbPartition {
+  UINTN BaseNameLen;
+  UINT8* BaseName;
+} GBL_EFI_AVB_PARTITION;
+```
+
+##### BaseNameLen
+
+On input, specifies the size of the buffer pointed to by `BaseName`. The
+firmware is expected to fill this buffer with the UTF-8 slotless partition name
+(e.g., `boot` for `boot_a`). On output, this value must be updated to reflect
+the number of bytes copied into the buffer pointed by `BaseName`.
+
+##### BaseName
+
+A pointer to a buffer of `BaseNameLen` bytes available for the implementation to
+copy the UTF-8 slotless partition name (e.g `boot` for `boot_a`). A null
+terminator is not required be included.
+
 ### Parameters
 
 #### This
@@ -181,31 +206,6 @@ following way:
 | `EFI_BUFFER_TOO_SMALL` | Provided list of `Partitions` is too small; `NumberOfPartitions` has been updated with the required amount. GBL will call this method again with extended `Partitions`. |
 | `EFI_BAD_BUFFER_SIZE` | One of provided `Partition.NameLen` values is not sufficient to hold the partition name. GBL will fail to boot. |
 
-### Related Definitions
-
-#### GBL_EFI_AVB_PARTITION
-
-```c
-typedef
-struct GblEfiAvbPartition {
-  UINTN BaseNameLen;
-  UINT8* BaseName;
-} GBL_EFI_AVB_PARTITION;
-```
-
-##### BaseNameLen
-
-On input, specifies the size of the buffer pointed to by `BaseName`. The
-firmware is expected to fill this buffer with the UTF-8 slotless partition name
-(e.g., `boot` for `boot_a`). On output, this value must be updated to reflect
-the number of bytes copied into the buffer pointed by `BaseName`.
-
-##### BaseName
-
-A pointer to a buffer of `BaseNameLen` bytes available for the implementation to
-copy the UTF-8 slotless partition name (e.g `boot` for `boot_a`). A null
-terminator is not required be included.
-
 ## GBL_EFI_AVB_PROTOCOL.ReadIsDmVerityError()
 
 ### Summary
@@ -240,13 +240,19 @@ If `IsDmVerityError` is set `True` by the FW, GBL will pass
 `RED_IO` status will be reported unless new OS images are detected by the
 `libavb`.
 
+### Status Codes Returned
+
+|||
+| --- | --- |
+| `EFI_SUCCESS` | A dm-verity error state is succesfully returned. |
+| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+
 ## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey()
 
 ### Summary
 
-Allows the firmware to verify whether the public key used to sign the `vbmeta`
-partition is trusted by checking it against the hardware-trusted key shipped
-with the device.
+Allows the firmware to verify the public key used to sign the `vbmeta` partition
+in a vendor-specifc way.
 
 ### Prototype
 
@@ -261,6 +267,37 @@ EFI_STATUS
   IN UINTN PublicKeyMetadataLength,
   /* GBL_EFI_AVB_KEY_VALIDATION_STATUS */ OUT UINT32 *ValidationStatus);
 ```
+
+### Related Definitions
+
+#### GBL_EFI_AVB_KEY_VALIDATION_STATUS
+
+```c
+// Vbmeta key validation status.
+//
+// https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
+typedef enum {
+  VALID,
+  VALID_CUSTOM_KEY,
+  INVALID,
+} GBL_EFI_AVB_KEY_VALIDATION_STATUS;
+```
+
+##### VALID
+
+The public key is valid and trusted, so the device can continue the boot process
+for both locked and unlocked states.
+
+##### VALID_CUSTOM_KEY
+
+The public key is valid but not fully trusted. GBL continues booting a locked
+device with a `YELLOW` state and an unlocked device with an `ORANGE` state.
+
+##### INVALID
+
+The public key is not valid. The device cannot continue the boot process for
+locked devices; GBL reports a `RED` status and resets. Unlocked devices can
+still boot with an `ORANGE` state.
 
 ### Parameters
 
@@ -279,9 +316,8 @@ Specifies the length of the public key provided by `PublicKeyData`.
 
 #### PublicKeyMetadata
 
-A pointer to public key metadata provided using the `avbtool`'s
-`--public_key_metadata` flag. May be `NULL` if no public key metadata is
-provided.
+A pointer to public key metadata provided using the `--public_key_metadata`
+`avbtool`'s flag. May be `NULL` if no public key metadata is provided.
 
 #### PublicKeyMetadataLength
 
@@ -293,40 +329,26 @@ Guaranteed to be 0 in case of `NULL` `PublicKeyMetadata`.
 An output parameter that communicates the verification status to GBL. `VALID`
 and `VALID_CUSTOM_KEY` are interpreted as successful validation statuses.
 
-### Related Definitions
-
-```c
-// Vbmeta key validation status.
-//
-// https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
-typedef enum {
-  VALID,
-  VALID_CUSTOM_KEY,
-  INVALID,
-} GBL_EFI_AVB_KEY_VALIDATION_STATUS;
-```
-
 ### Description
+
+This method allows FW to perform device-specific validation of the public key
+extracted from the `vbmeta` partition. This typically involves checking the
+provided key against a hardware-trusted root of trust or a pre-provisioned key
+stored in secure firmware.
 
 `ValidateVbmetaPublicKey` must set `ValidationStatus` and return `EFI_SUCCESS`.
 Any return value other than `EFI_SUCCESS` is treated as a fatal verification
-error, resulting in a `red` state being reported and GBL failing to boot, even
+error, resulting in a `RED` state being reported and GBL failing to boot, even
 if the device is unlocked.
 
-**`ValidationStatus` and GBL boot flow**:
-
-* `VALID`: The public key is valid and trusted, so the device can continue the
-  boot process for both locked and unlocked states.
-
-* `VALID_CUSTOM_KEY`: The public key is valid but not fully trusted. GBL
-  continues booting a locked device with a `yellow` state and an unlocked device
-  with an `orange` state.
-
-* `INVALID`: The public key is not valid. The device cannot continue the boot
-  process for locked devices; GBL reports a `red` status and resets. Unlocked
-  devices can still boot with an `orange` state.
-
 GBL calls this function once per AVB verification session.
+
+### Status Codes Returned
+
+|||
+| --- | --- |
+| `EFI_SUCCESS` | A locked state is succesfully returned. |
+| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadIsDeviceUnlocked()
 
@@ -358,8 +380,16 @@ An output parameter that communicates the device locking state to GBL.
 ### Description
 
 An unlocked device state allows GBL not to force AVB and to boot the device with
-an `orange` boot state. GBL rejects continuing the boot process if this method
-returns any error. GBL may call this method multiple times per boot session.
+an `orange` boot state. GBL may call this method multiple times per boot
+session. GBL rejects continuing the boot process if this method returns any
+error.
+
+### Status Codes Returned
+
+|||
+| --- | --- |
+| `EFI_SUCCESS` | An unlocked state is succesfully returned. |
+| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadRollbackIndex()
 
@@ -407,6 +437,14 @@ HLOS index or locations specified in the corresponding chained partition
 descriptors. Returning any error in such cases causes GBL boot failure for
 locked devices.
 
+### Status Codes Returned
+
+|||
+| --- | --- |
+| `EFI_SUCCESS` | The rollback index value is succesfully returned. |
+| `EFI_STATUS_NOT_FOUND` | The requested rollback index isn't supported, so cannot be returned. GBL rejects to boot. |
+| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+
 ## GBL_EFI_AVB_PROTOCOL.WriteRollbackIndex()
 
 ### Summary
@@ -451,6 +489,14 @@ GBL only updates rollback indexes for `IndexLocation` equals `0` as a global
 HLOS index or locations specified in the corresponding chained partition
 descriptors. Returning any error in such cases causes GBL boot failure for
 locked devices.
+
+### Status Codes Returned
+
+|||
+| --- | --- |
+| `EFI_SUCCESS` | The rollback index value is succesfully updated. |
+| `EFI_STATUS_NOT_FOUND` | The requested rollback index isn't supported, so cannot be updated. GBL rejects to boot. |
+| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadPersistentValue()
 
@@ -560,7 +606,7 @@ updates in order to disable EIO mode.
 |||
 | --- | --- |
 | `EFI_SUCCESS` | The value for `Name` is succesfully updated. |
-| `EFI_STATUS_NOT_FOUND` | The value for `Name` isn't supported. |
+| `EFI_STATUS_NOT_FOUND` | Updating the value for `Name` isn't supported. GBL rejects to boot. |
 | `EFI_STATUS_INVALID_PARAMETER` | The `ValueSize` is too big or any other unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.HandleVerificationResult()
@@ -726,10 +772,10 @@ unavailable afterward.
 | `EFI_STATUS_INVALID_PARAMETER` | Invalid data is provided by the `Result`. GBL rejects to boot. |
 | `EFI_ACCESS_DENIED` | Failed to update root of trust or other secure world issues occurred. GBL rejects to boot. |
 
-## Status Codes Returned
+## Status codes returned to `libavb`
 
-The following UEFI error types are used to communicate result to GBL and
-`libavb` in particular:
+Some of the methods across this protocol are initiated by the `libavb`. The
+following UEFI error codes are used to communicate results back to the library:
 
 |                                |                                                                                                                                                         |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -741,8 +787,6 @@ The following UEFI error types are used to communicate result to GBL and
 | `EFI_STATUS_INVALID_PARAMETER` | Named persistent value size is not supported or does not match the expected size `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INVALID_VALUE_SIZE`          |
 | `EFI_STATUS_BUFFER_TOO_SMALL`  | Buffer is too small for the requested operation `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INSUFFICIENT_SPACE`                                           |
 | `EFI_STATUS_UNSUPPORTED`       | Operation isn't implemented / supported                                                                                                                 |
-
-TODO(b/337846185): Split status codes returned on per-method basis.
 
 [readpartitionstoverify]: #gbl_efi_image_loading_protocolreadpartitionstoverify
 [protocolwriterollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
