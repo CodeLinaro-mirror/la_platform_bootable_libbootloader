@@ -449,6 +449,15 @@ mod test {
             unimplemented!()
         }
 
+        fn fastboot_is_command_allowed<'arg>(
+            &mut self,
+            _: impl Iterator<Item = &'arg CStr> + Clone,
+            _: &mut [u8],
+            _: &mut [u8],
+        ) -> Result<bool> {
+            unimplemented!()
+        }
+
         fn fastboot_set_lock(&mut self, _: LockType, _: LockState) -> Result<()> {
             unreachable!();
         }

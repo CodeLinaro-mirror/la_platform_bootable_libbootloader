@@ -516,6 +516,23 @@ pub trait GblOps<'a, 'd> {
     /// On success returns Ok(action), where `action` represents the action the caller should take
     fn fastboot_vendor_erase(&mut self, _part: &str) -> Result<FastbootEraseAction, Error>;
 
+    /// Checks if the given fastboot command is allowed.
+    ///
+    /// # Args:
+    ///
+    /// * `args`: An iterator of CStrs. The first one is the command, followed by arguments.
+    /// * `download`: The current downloaded data.
+    /// * `out_msg`: Buffer for optionally constructing a UTF8 message in the case the command is
+    ///   not allowed.
+    ///
+    /// Returns Ok((true, _)) if allowed, Ok((false, <msg>)) if disallowed.
+    fn fastboot_is_command_allowed<'arg>(
+        &mut self,
+        args: impl Iterator<Item = &'arg CStr> + Clone,
+        download: &mut [u8],
+        out_msg: &mut [u8],
+    ) -> Result<bool, Error>;
+
     /// Returns a [SlotsMetadata] for the platform.
     fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error>;
 
@@ -956,6 +973,16 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
+    fn fastboot_is_command_allowed<'arg>(
+        &mut self,
+        _: impl Iterator<Item = &'arg CStr> + Clone,
+        _: &mut [u8],
+        _: &mut [u8],
+    ) -> Result<bool, Error> {
+        // Ramboot should not need this.
+        unreachable!();
+    }
+
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         self.ops.get_profiling_backend()
     }
@@ -1164,6 +1191,10 @@ pub(crate) mod test {
         /// Handler for `Self::vendor_erase`
         pub vendor_erase_handler:
             Option<&'a mut dyn FnMut(&str) -> Result<FastbootEraseAction, Error>>,
+
+        /// Handler for `Self::fastboot_is_command_allowed`.
+        pub fastboot_is_command_allowed_handler:
+            Option<&'a mut dyn FnMut(Vec<String>, &mut [u8], &mut [u8]) -> Result<bool, Error>>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1582,6 +1613,19 @@ pub(crate) mod test {
                 .as_mut()
                 .map(|v| v(part))
                 .unwrap_or(Ok(FastbootEraseAction::EraseAsPhysicalPartition))
+        }
+
+        fn fastboot_is_command_allowed<'arg>(
+            &mut self,
+            args: impl Iterator<Item = &'arg CStr> + Clone,
+            download: &mut [u8],
+            out_msg: &mut [u8],
+        ) -> Result<bool, Error> {
+            let args = args.map(|v| v.to_str().unwrap());
+            self.fastboot_is_command_allowed_handler
+                .as_mut()
+                .map(|v| v(args.map(|v| String::from(v)).collect::<Vec<_>>(), download, out_msg))
+                .unwrap_or(Ok(true))
         }
 
         fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {

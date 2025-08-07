@@ -379,6 +379,16 @@ pub mod gbl_efi_fastboot {
         pub fn vendor_erase(&self, _: &str) -> Result<GblEfiFastbootEraseAction> {
             unimplemented!()
         }
+
+        /// Protocol<'_, GblFastbootProtocol>::is_command_allowed()`
+        pub fn is_command_allowed<'a>(
+            &self,
+            _: impl Iterator<Item = &'a CStr> + Clone,
+            _: &mut [u8],
+            _: &mut [u8],
+        ) -> Result<bool> {
+            unimplemented!()
+        }
     }
 
     /// Map to the libefi name so code under test can just use one name.

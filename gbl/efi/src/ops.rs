@@ -793,6 +793,24 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
+    fn fastboot_is_command_allowed<'arg>(
+        &mut self,
+        args: impl Iterator<Item = &'arg CStr> + Clone,
+        download: &mut [u8],
+        out_msg: &mut [u8],
+    ) -> Result<bool> {
+        match self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()
+        {
+            Ok(v) => v.is_command_allowed(args, download, out_msg),
+            Err(Error::NotFound) => Ok(true),
+            Err(e) => Err(e),
+        }
+    }
+
     fn get_current_slot(&mut self) -> Result<Slot> {
         self.open_slot_protocol()?.get_current_slot()?.try_into()
     }

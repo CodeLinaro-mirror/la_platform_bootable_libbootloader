@@ -16,7 +16,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
-use core::{arch::asm, cmp::min, str::from_utf8};
+use core::{arch::asm, cmp::min, ffi::CStr, str::from_utf8};
 use liberror::{Error, Result};
 use safemath::SafeNum;
 
@@ -97,6 +97,17 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> FormattedBytes<T> {
     /// Converts to string.
     pub fn to_str(&self) -> &str {
         from_utf8(&self.0.as_ref()[..self.1]).unwrap_or("")
+    }
+
+    /// Gets the buffer
+    pub fn buffer(&mut self) -> &mut [u8] {
+        self.0.as_mut()
+    }
+
+    /// Treats the buffer containing a CStr and updates string length.
+    pub fn update_as_c_str(&mut self) -> Result<()> {
+        self.1 = CStr::from_bytes_until_nul(self.0.as_ref())?.count_bytes();
+        Ok(())
     }
 }
 

@@ -943,6 +943,26 @@ where
     ) -> CommandResult<()> {
         Ok(self.gbl_ops.fastboot_set_lock(lock_type, lock_state)?)
     }
+
+    async fn is_command_allowed(
+        &mut self,
+        args: impl Iterator<Item = &'_ CStr> + Clone,
+    ) -> CommandResult<()> {
+        let mut err: CommandError = "Command rejected by platform".into();
+        match self.gbl_ops.fastboot_is_command_allowed(
+            args,
+            self.current_download_buffer
+                .as_mut()
+                .map_or(&mut [][..], |v| &mut v[..self.current_download_size]),
+            err.formatted_bytes().buffer(),
+        )? {
+            true => Ok(()),
+            _ => {
+                err.formatted_bytes().update_as_c_str()?;
+                Err(err)
+            }
+        }
+    }
 }
 
 #[cfg(feature = "gbl_dev")]
@@ -3659,5 +3679,52 @@ pub(crate) mod test {
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         )
+    }
+
+    #[test]
+    fn test_fastboot_is_command_allowed() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", [0u8; KiB!(4)]);
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut download_trace = vec![];
+        let mut handler = |cmd: Vec<String>, download: &mut [u8], out_msg: &mut [u8]| {
+            download_trace.push(download.to_vec());
+            snprintf!(out_msg, "Command rejected.\0");
+            Ok(cmd.join(":") != "getvar:all")
+        };
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.fastboot_is_command_allowed_handler = Some(&mut handler);
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        let download_data = &[0xaau8; 0x400];
+        listener.add_usb_input(format!("download:{:#x}", download_data.len()).as_bytes());
+        listener.add_usb_input(download_data);
+        listener.add_usb_input(b"flash:boot_a");
+        // Fails due to permission.
+        listener.add_usb_input(b"getvar:all");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"DATA00000400",
+                b"OKAY",
+                b"OKAY",
+                b"FAILCommand rejected.",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        assert_eq!(download_trace, vec![vec![], download_data.to_vec(), vec![], vec![]]);
     }
 }

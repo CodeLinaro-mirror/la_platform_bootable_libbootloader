@@ -181,6 +181,11 @@ impl CommandError {
     pub fn to_str(&self) -> &str {
         self.0.to_str()
     }
+
+    /// Returns the `FormattedBytes` object.
+    pub fn formatted_bytes(&mut self) -> &mut FormattedBytes<impl AsMut<[u8]> + AsRef<[u8]>> {
+        &mut self.0
+    }
 }
 
 impl Clone for CommandError {
@@ -458,6 +463,15 @@ pub trait FastbootImplementation {
         &mut self,
         lock_type: LockType,
         lock_state: LockState,
+    ) -> CommandResult<()>;
+
+    /// Checks whether a command is allowed.
+    ///
+    /// Returns Ok(()) if command is allowed.
+    /// Returns Err(e) otherweise.
+    async fn is_command_allowed(
+        &mut self,
+        args: impl Iterator<Item = &'_ CStr> + Clone,
     ) -> CommandResult<()>;
 
     // TODO(b/322540167): Add methods for other commands.
@@ -747,11 +761,16 @@ const MAX_DOWNLOAD_SIZE_NAME: &'static str = "max-download-size";
 
 /// Converts a null-terminated command line string where arguments are separated by ':' into an
 /// iterator of individual argument as CStr.
-fn cmd_to_c_string_args(cmd: &mut [u8]) -> impl Iterator<Item = &CStr> + Clone {
+///
+/// Returns the iterator and the string length.
+fn cmd_to_c_string_args(cmd: &mut [u8]) -> (impl Iterator<Item = &CStr> + Clone, usize) {
     let end = cmd.iter().position(|v| *v == 0).unwrap();
     // Replace ':' with NULL.
     cmd.iter_mut().filter(|v| **v == b':').for_each(|v| *v = 0);
-    cmd[..end + 1].split_inclusive(|v| *v == 0).map(|v| CStr::from_bytes_until_nul(v).unwrap())
+    (
+        cmd[..end + 1].split_inclusive(|v| *v == 0).map(|v| CStr::from_bytes_until_nul(v).unwrap()),
+        end,
+    )
 }
 
 /// Helper for handling "fastboot getvar ..."
@@ -761,7 +780,7 @@ async fn get_var(
     fb_impl: &mut impl FastbootImplementation,
 ) -> Result<()> {
     let mut resp = Responder::new(transport);
-    let mut args = cmd_to_c_string_args(cmd).skip(1);
+    let mut args = cmd_to_c_string_args(cmd).0.skip(1);
     let Some(var) = args.next() else {
         return reply_fail!(resp, "Missing variable");
     };
@@ -1048,10 +1067,18 @@ pub async fn process_next_command(
         0 => return Ok(false),
         v => v,
     };
-    let Ok(cmd_str) = from_utf8(&packet[..cmd_size]) else {
+    // Checks utf8 encoding first. This is required by `cmd_to_c_string_args`.
+    if let Err(_) = from_utf8(&packet[..cmd_size]) {
         transport.send_packet(fastboot_fail!(packet, "Invalid Command")).await?;
         return Ok(false);
     };
+    let (cmd_c_args, cmd_len) = cmd_to_c_string_args(&mut packet[..]);
+    if let Err(e) = fb_impl.is_command_allowed(cmd_c_args).await {
+        transport.send_packet(fastboot_fail!(packet, "{}", e.to_str())).await?;
+        return Ok(false);
+    }
+    packet[..cmd_len].iter_mut().filter(|v| **v == 0).for_each(|v| *v = b':');
+    let cmd_str = from_utf8(&packet[..cmd_size]).unwrap();
     let mut args = cmd_str.split(':');
     let Some(cmd) = args.next() else {
         return transport.send_packet(fastboot_fail!(packet, "No command")).await.map(|_| false);
@@ -1173,6 +1200,8 @@ mod test {
         active_slot: Option<String>,
         boot_result: Option<CommandResult<()>>,
         last_set_lock_call: Option<(LockType, LockState)>,
+        is_command_allowed_args: String,
+        is_command_allowed: Option<CommandResult<()>>,
     }
 
     impl FastbootImplementation for FastbootTest {
@@ -1295,6 +1324,15 @@ mod test {
         ) -> CommandResult<()> {
             self.last_set_lock_call = Some((lock_type, lock_state));
             Ok(())
+        }
+
+        async fn is_command_allowed(
+            &mut self,
+            args: impl Iterator<Item = &'_ CStr> + Clone,
+        ) -> CommandResult<()> {
+            self.is_command_allowed_args =
+                args.map(|v| String::from(v.to_str().unwrap())).collect::<Vec<_>>().join(":");
+            self.is_command_allowed.take().unwrap_or(Ok(()))
         }
     }
 
@@ -2015,5 +2053,16 @@ mod test {
             fastboot_impl.last_set_lock_call,
             Some((LockType::Critical, LockState::Unlocked))
         );
+    }
+
+    #[test]
+    fn test_is_command_allowed() {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        fastboot_impl.is_command_allowed = Some(Err("test".into()));
+        let mut transport = TestTransport::new();
+        transport.add_input(b"getvar:all");
+        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"FAILtest".into()]));
+        assert_eq!(&fastboot_impl.is_command_allowed_args, "getvar:all");
     }
 }

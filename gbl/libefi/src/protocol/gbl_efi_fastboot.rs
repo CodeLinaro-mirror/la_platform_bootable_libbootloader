@@ -25,8 +25,8 @@ use core::{
     str::from_utf8,
 };
 use efi_types::{
-    EfiFastbootMessageType, EfiGuid, EfiStatus, GblEfiFastbootEraseAction, GblEfiFastbootPolicy,
-    GblEfiFastbootProtocol, GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
+    EfiFastbootMessageType, EfiGuid, EfiStatus, GblEfiFastbootEraseAction, GblEfiFastbootProtocol,
+    GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
 };
 use liberror::{result_to_efi_status, Error, Result};
 
@@ -216,18 +216,6 @@ impl Protocol<'_, GblFastbootProtocol> {
         Ok((out_size, out_remains))
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_policy()`
-    pub fn get_policy(&self) -> Result<GblEfiFastbootPolicy> {
-        let mut policy: GblEfiFastbootPolicy = Default::default();
-
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // No parameters are retained, all parameters outlive the call, and no pointers are Null.
-        unsafe { efi_call!(self.interface().get_policy, self.interface_ptr(), &mut policy)? };
-
-        Ok(policy)
-    }
-
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.set_lock()`
     pub fn set_lock(&self, is_critical: bool, is_lock: bool) -> Result<()> {
         // SAFETY:
@@ -249,23 +237,37 @@ impl Protocol<'_, GblFastbootProtocol> {
         Ok(out)
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_partition_permissions()`
-    pub fn get_partition_permissions(&self, part_name: &str) -> Result<u64> {
-        let mut permissions = 0u64;
-
+    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.is_command_allowed()`
+    pub fn is_command_allowed<'a>(
+        &self,
+        args: impl Iterator<Item = &'a CStr> + Clone,
+        download: &mut [u8],
+        out_msg: &mut [u8],
+    ) -> Result<bool> {
+        // Consider using ArrayVec to simplify the logic and the Clone bound.
+        let mut args_arr = [null(); MAX_ARGS];
+        let args_arr = args_arr.get_mut(..args.clone().count()).ok_or(Error::InvalidInput)?;
+        args_arr.iter_mut().zip(args).for_each(|(l, r)| *l = r.as_ptr());
+        let mut out_allowed = true;
         // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // No parameters are retained, all parameters outlive the call, and no pointers are Null.
+        // *`self.interface()?` guarantees self.interface is non-null and points to a valid object
+        // * established by `Protocol::new()`.
+        // * `cmd`, `download`, `out_msg`, and `out_allowed` are for input/output only. They
+        //   outlive the call and won't be retained.
         unsafe {
             efi_call!(
-                self.interface().get_partition_permissions,
+                self.interface().is_command_allowed,
                 self.interface_ptr(),
-                part_name.as_ptr(),
-                part_name.len(),
-                &mut permissions
-            )?
-        };
-        Ok(permissions)
+                args_arr.len(),
+                args_arr.as_ptr() as _,
+                download.len(),
+                download.as_mut_ptr(),
+                &mut out_allowed,
+                out_msg.len(),
+                out_msg.as_mut_ptr(),
+            )?;
+        }
+        Ok(out_allowed)
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.start_local_session()`

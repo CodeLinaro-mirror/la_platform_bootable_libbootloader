@@ -48,13 +48,12 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   GBL_EFI_FASTBOOT_GET_VAR_ALL                  GetVarAll;
   GBL_EFI_FASTBOOT_RUN_OEM_FUNCTION             RunOemFunction;
   GBL_EFI_FASTBOOT_GET_STAGED                   GetStaged;
-  GBL_EFI_FASTBOOT_GET_POLICY                   GetPolicy;
   GBL_EFI_FASTBOOT_SET_LOCK                     SetLock;
   GBL_EFI_FASTBOOT_GET_LOCK                     GetLock;
-  VOID*                                         Reserved[3];
-  GBL_EFI_FASTBOOT_GET_PARTITION_PERMISSIONS    GetPartitionPermissions;
   GBL_EFI_FASTBOOT_VENDOR_ERASE                 VendorErase;
   GBL_EFI_FASTBOOT_SHOULD_STOP_IN_FASTBOOT      ShouldStopInFastboot;
+  GBL_EFI_FASTBOOT_IS_COMMAND_ALLOWED           IsCommandAllowed;
+  VOID*                                         Reserved[3];
 } GBL_EFI_FASTBOOT_PROTOCOL;
 ```
 
@@ -93,13 +92,6 @@ Read OEM provided payload for uploading to fastboot host by command
 `fastboot get_staged`. See
 [`GBL_EFI_FASTBOOT_PROTOCOL.GetStaged()`](#gbl_efi_fastboot_protocolgetstaged).
 
-**GetPolicy**
-
-Querys device policy including device lock state, whether the device firmware
-supports a 'critical' lock, and whether the device is capable of booting from
-an image loaded directly into RAM.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.GetPolicy()`](#gbl_efi_fastboot_protocolgetpolicy).
-
 **SetLock**
 
 Locks or unlocks device or critical partitions.
@@ -110,15 +102,25 @@ See [`GBL_EFI_FASTBOOT_PROTOCOL.SetLock()`](#gbl_efi_fastboot_protocolsetlock).
 Queries lock status of device or critical partitions.
 See [`GBL_EFI_FASTBOOT_PROTOCOL.GetLock()`](#gbl_efi_fastboot_protocolGetLock).
 
-**GetPartitionPermissions**
+**VendorErase**
 
-Queries permissions information about the provided partition.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.GetPartitionPermissions()`](#gbl_efi_fastboot_protocolgetpartitionpermissions).
+Performs vendor specific erase for a partition during handling of
+`fastboot erase <partition>`
+See [`GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`](#gbl_efi_fastboot_protocolvendorerase).
 
-**WipeUserData**
+**ShouldStopInFastboot**
 
-Erases all partitions containing user data.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.WipeUserData()`](#gbl_efi_fastboot_protocolwipeuserdata).
+Checks whether boot should stop in fastboot mode. See
+[`GBL_EFI_FASTBOOT_PROTOCOL.ShouldStopInFastboot()`](#gbl_efi_fastboot_protocolshouldstopinfastboot)
+
+**IsCommandAllowed**
+
+Checks if a fastboot command is allowed by the platform.
+See [`GBL_EFI_FASTBOOT_PROTOCOL.IsCommandAllowed()`](#gbl_efi_fastboot_protocoliscommandallowed).
+
+**Reserved**
+
+Must be kept zeroes.
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.GetVar()`
 
@@ -467,70 +469,6 @@ payload and then retrieve the payload via `fastboot get_staged` from the host.
 | `EFI_INVALID_PARAMETER` | Any of *Out*, *OutLen*, *RemainingSize* is `NULL`.       |
 | `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state.|
 
-
-## `GBL_EFI_FASTBOOT_PROTOCOL.GetPolicy()`
-
-### Summary
-
-Gets the device policy pertaining to locking and booting directly from RAM.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_GET_POLICY)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
-    OUT GBL_EFI_FASTBOOT_POLICY*  Policy,
-);
-```
-
-### Related Definitions
-
-```c
-typedef struct _GBL_EFI_FASTBOOT_POLICY {
-  // Indicates whether device can be unlocked.
-  BOOL CanUnlock;
-  // Device firmware supports 'critical' partition locking.
-  BOOL HasCriticalLock;
-  // Indicates whether device allows booting
-  // from images loaded directly from RAM.
-  BOOL CanRamBoot;
-} GBL_EFI_FASTBOOT_POLICY;
-
-```
-
-### Parameters
-
-*This*
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
-
-*Policy*
-
-On exit contains the device policy.
-See [Related Definitions](#related-definitions-2) for the definition of `GBL_EFI_FASTBOOT_POLICY`.
-
-### Description
-
-Depending on various factors including whether the device
-is a development target or end-user device,
-certain operations may be prohibited.
-In particular, loading an image directly into RAM and then booting it
-is generally not permitted on anything except development hardware.
-Developer workflows and CI/CD infrastructure need to be able to query
-whether a device is able to be unlocked and whether RAM booting is permitted.
-
-See [`SetLock()`](#gbl_efi_fastboot_protocolsetlock) for a method that modifies
-the device lock state.
-
-### Status Codes
-
-| Return Code             | Semantics                                                  |
-|:------------------------|:-----------------------------------------------------------|
-| `EFI_SUCCESS`           | The device policy was successfuly retrieved.               |
-| `EFI_INVALID_PARAMETER` | One of *This* or *Policy* is `NULL` or improperly aligned. |
-
 ## `GBL_EFI_FASTBOOT_PROTOCOL.SetLock()`
 
 ### Summary
@@ -621,79 +559,7 @@ otherwise.
 |:------------------------|:---------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                   |
 | `EFI_INVALID_PARAMETER` | *This* is invalid or improperly aligned.           |
-
-## `GBL_EFI_FASTBOOT_PROTOCOL.GetPartitionPermissions()`
-
-### Summary
-
-Gets access permission information about the given partition.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_GET_PARTITION_PERMISSIONS)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
-    IN CHAR8*                     PartName,
-    IN UINTN                      PartNameLen,
-    OUT UINT64                    Permissions,
-);
-```
-
-### Related Definitions
-
-```c
-typedef enum _GBL_EFI_FASTBOOT_PARTITION_PERMISSION_FLAGS {
-  // Firmware can read the given partition and send its data to fastboot client.
-  GBL_EFI_FASTBOOT_PARTITION_READ = 0x1 << 0,
-  // Firmware can overwrite the given partition.
-  GBL_EFI_FASTBOOT_PARTITION_WRITE = 0x1 << 1,
-  // Firmware can erase the given partition.
-  GBL_EFI_FASTBOOT_PARTITION_ERASE = 0x1 << 2,
-} GBL_EFI_FASTBOOT_PARTITION_PERMISSION_FLAGS;
-
-```
-
-### Parameters
-
-*This*
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
-
-*PartName*
-
-The name of the partition to query as a UTF-8 encoded, Null-terminated string.
-
-*PartNameLen*
-
-The length of *PartName* in bytes, excluding any Null-terminator.
-
-*Permissions*
-
-On exit contains the ORed flags detailing the current fastboot permissions for
-the given partition.
-See [Related Definitions](#related-definitions-4) for flag value semantics.
-
-### Description
-
-Depending on device lock state, Android Verified Boot policy, and other factors,
-various partitions may have restricted permissions within a fastboot environment.
-`GetPartitionPermissions()` retrieves the current permissions
-for the requested partition.
-
-By default, unless overridden by device policy, no operations are permitted on
-any partition when the device is locked, and all operations are permitted
-on all partitions when the device is unlocked.
-
-### Status Codes
-
-| Return Code             | Semantics                                                                          |
-|:------------------------|:-----------------------------------------------------------------------------------|
-| `EFI_SUCCESS`           | The partition permision information was successfully queried.                      |
-| `EFI_INVALID_PARAMETER` | One of *This*, *PartName*, or *Permissions* is `NULL` or improperly aligned.       |
-| `EFI_NOT_FOUND`         | There is no partition named *PartName*.                                            |
-| `EFI_UNSUPPORTED`       | The device does not have a partition permission policy different from the default. |
+| `EFI_UNSUPPORTED`       | The corresponding lock is unsupported. |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`
 
@@ -806,3 +672,81 @@ button press is active. In particular, if the device supports
 `GBL_EFI_AB_SLOT_PROTOCOL.GetBootReason()` or the underlying persistent boot reason.
 
 Any errors should cause a return value of `false`.
+
+## `GBL_EFI_FASTBOOT_PROTOCOL.IsCommandAllowed()`
+
+### Summary
+
+Checks whether a fastboot command is allowed.
+
+### Prototype
+
+```c
+typedef
+EFI_STATUS
+(EFIAPI * GBL_EFI_FASTBOOT_IS_COMMAND_ALLOWED)(
+    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
+    IN UINTN                      NumArgs,
+    IN CONST CHAR8* CONST*        Args,
+    IN UINTN                      DownloadDataLen,
+    IN UINT8*                     DownloadData,
+    OUT BOOLEAN                   *Allowed,
+    IN UINTN                      MsgBufSize,
+    OUT CHAR8*                    MsgBuf,
+);
+```
+
+### Parameters
+
+*This*
+
+A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
+
+*NumArgs*
+
+The number of elements in the *Args* array.
+
+*Args*
+
+A pointer to an array of NULL-terminated UTF-8 strings that contains the
+fastboot command followed by additional arguments.
+
+*DownloadData*
+
+A pointer to the most recent downloaded data.
+
+*DownloadDataLen*
+
+The size of the download data in `DownloadData`.
+
+`DownloadData` and `DownloadDataLen` provide additional context for commands
+such as `fastboot flash`.
+
+*Allowed*
+
+On exit, set to TRUE if the command is allowed. Set to FALSE otherwise.
+
+*MsgBufSize*
+
+Store the size of `MsgBuf`.
+
+*MsgBuf*
+
+On exit, stores a NULL-terminated UTF-8 output message.
+
+### Description
+
+`IsCommandAllowed()` queries whether a fastboot command is allowed by the
+platform. When command is not allowed, firmware can output an optional
+NULL-terminated message in `MsgBuf`.
+
+It's up to the caller to decide how to proceed in the case of error, i.e base
+on the level of security requirement.
+
+### Status Codes Returned
+
+| Return Code             | Semantics                                          |
+|:------------------------|:---------------------------------------------------|
+| `EFI_SUCCESS`           | The call completed successfully.                   |
+| `EFI_INVALID_PARAMETER` | `Command` or `Allowed` or `MsgBuf` is NULL. `DownloadDataLen` is non-zero but `DownloadData` is NULL. |
+| `EFI_DEVICE_ERROR`      | An internal error occurred. |
