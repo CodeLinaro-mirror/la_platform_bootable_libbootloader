@@ -111,8 +111,14 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     }
 
     let (verify_data, color, unlocked) = avb_verify_slot(ops, slot, &mut partitions)?;
-    let images = android_load_verified(ops, slot, unlocked, &verify_data, &mut loader)?;
-    let enable_avf = !images.pvmfw.is_empty();
+    let images = android_load_verified(ops, slot, unlocked, &verify_data)?;
+
+    let pvmfw = match images.pvmfw.is_empty() {
+        true => None,
+        _ => Some(loader.pvmfw_load(images.pvmfw)?),
+    };
+    loader.ramdisk_load(&images.ramdisks[..])?;
+    loader.kernel_load(ops, images.kernel)?;
 
     let kernel_len = loader.kernel_sz;
     let ramdisk_len = loader.ramdisk_sz;
@@ -143,7 +149,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         Ok(images.vendor_bootconfig.len())
     })?;
     // Adds AVF-specific bootconfig.
-    if enable_avf {
+    if pvmfw.is_some() {
         avf_update_bootconfig(ops, &mut bootconfig_builder)?;
     }
     let bootconfig_sz = bootconfig_builder.config_bytes().len();
@@ -238,14 +244,10 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     // Reserves 1024 bytes for separators and fixup
     fdt_append_bootarg(ops, &mut fdt, [images.boot_cmdline, images.vendor_cmdline], 1024)?;
 
-    // TODO(b/429168146): re-enable once allocation issue is fixed
-    if false {
-        // Place pvmfw binary into reserved memory
-        if enable_avf {
-            let pvmfw_image_buf = pvmfw_place_in_memory(ops, images.pvmfw, [&[]; 4])?;
-            pkvm_describe_pvmfw_resvmem(&mut fdt, &pvmfw_image_buf)?;
-            gbl_println!(ops, "AVF: init success");
-        }
+    match pvmfw {
+        Some(ref v) => pkvm_describe_pvmfw_resvmem(&mut fdt, v)
+            .inspect(|_| gbl_println!(ops, "AVF: init success"))?,
+        _ => {}
     }
 
     let final_command_line = CStr::from_bytes_until_nul(fdt.get_property("chosen", BOOTARGS_PROP)?)
@@ -257,6 +259,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     //
     // Need to explicitly releases the partition buffers for the backend to safely inspect, update
     // or release them.
+    drop(images);
     drop(verify_data);
     drop(partitions);
     drop(preloaded);
@@ -494,7 +497,8 @@ pub struct BootBuffer<'a> {
     pub ramdisk: Option<&'a mut [u8]>,
     /// Optional designated fdt load buffer.
     pub fdt: Option<&'a mut [u8]>,
-    // TODO(b/430068343): Support designated pvmfw buffer
+    /// Optional designated pvmfw load buffer.
+    pub pvmfw_data: Option<&'a mut [u8]>,
 }
 
 impl<'a> From<&'a mut [u8]> for BootBuffer<'a> {
@@ -606,7 +610,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 pub(crate) mod tests {
     use super::*;
     use crate::{
-        constants::KERNEL_ALIGNMENT,
+        constants::{KERNEL_ALIGNMENT, PVMFW_DATA_ALIGNMENT},
         fastboot::test::{make_expected_usb_out, SharedTestListener, TestLocalSession},
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
         ops::{
@@ -614,7 +618,9 @@ pub(crate) mod tests {
             PartitionBuffer,
         },
     };
+    use avf::test::dummy_pvmfw_partition;
     use bootparams::bootconfig::{BootConfigBuilder, BOOTCONFIG_TRAILER_SIZE};
+    use fdt::std_props;
     use libbuild_number::BUILD_NUMBER;
     use libtestutils::AlignedBuffer;
     use std::{
@@ -982,7 +988,7 @@ androidboot.veritymode=enforcing
             let kernel = ((flag & 1) != 0).then_some(&mut kernel[..]);
             let ramdisk = ((flag & 2) != 0).then_some(&mut ramdisk[..]);
             let fdt = ((flag & 4) != 0).then_some(&mut fdt[..]);
-            let buffers = BootBuffer { general, kernel, ramdisk, fdt };
+            let buffers = BootBuffer { general, kernel, ramdisk, fdt, pvmfw_data: None };
             println!("\nBoot buffer config #{flag}");
             println!("  general: {:?} bytes", buffers.general.len());
             println!("  kernel: {:?} bytes", buffers.kernel.as_ref().map(|v| v.len()));
@@ -1830,6 +1836,71 @@ androidboot.veritymode=enforcing
         let (ramdisk, _, kernel, _) =
             android_load_verify_fixup(&mut ops, 0, true, (&mut load[..]).into()).unwrap();
         checks_loaded_v2_slot_a_recovery_mode(ramdisk, kernel)
+    }
+
+    const TEST_PVMFW_FILL_VALUE: u8 = 0xAB;
+
+    /// Helper for testing pvmfw load.
+    fn test_android_load_verify_fixup_pvmfw_load(boot_buffer: BootBuffer, expected_addr: usize) {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        // We are just interested in pvmfw load behavior. Don't care about avb verification.
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_disabled.img"));
+        let (pvmfw_part, expected_sz) = dummy_pvmfw_partition(TEST_PVMFW_FILL_VALUE);
+        storage.add_raw_device(c"pvmfw_a", pvmfw_part);
+
+        let mut ops = default_test_gbl_ops(&storage);
+        // Rollback required by `vbmeta_disabled.img`.
+        ops.avb_ops.rollbacks = HashMap::from([(0, Ok(0))]);
+        ops.avf_is_supported = true;
+        let (ramdisk, fdt, _, _) =
+            android_load_verify_fixup(&mut ops, 0, false, boot_buffer).unwrap();
+
+        let bootconfig = extract_bootconfig(ramdisk).unwrap();
+        bootconfig.find("androidboot.hypervisor.protected_vm.supported=true").unwrap();
+        bootconfig.find("androidboot.hypervisor.vm.supported=true").unwrap();
+
+        let fdt = Fdt::new(&fdt[..]).unwrap();
+        assert_eq!(
+            fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::COMPATIBLE)
+                .unwrap(),
+            b"linux,pkvm-guest-firmware-memory\0",
+        );
+        assert_eq!(
+            fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::NO_MAP).unwrap(),
+            &[]
+        );
+        let reg_prop =
+            fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::REG).unwrap();
+        assert_eq!(&reg_prop[..8], expected_addr.to_be_bytes());
+        let mut length_bytes = reg_prop[8..].to_vec();
+        // The length field is sometimes less than 8 bytes. Converts to little endian and resizes
+        // to 8 bytes.
+        length_bytes.reverse();
+        length_bytes.resize(8, 0);
+        assert_eq!(length_bytes, expected_sz.to_le_bytes());
+    }
+
+    #[test]
+    fn test_android_load_verify_fixup_pvmfw_load_designated() {
+        let general = &mut AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let pvmfw_data = &mut AlignedBuffer::new(32 * 1024, PVMFW_DATA_ALIGNMENT);
+        let expected_addr = pvmfw_data.as_ptr() as usize;
+        let boot_buffer =
+            BootBuffer { general, pvmfw_data: Some(pvmfw_data), ..Default::default() };
+        test_android_load_verify_fixup_pvmfw_load(boot_buffer, expected_addr);
+        assert!(&pvmfw_data[..0xc00].iter().all(|&b| b == TEST_PVMFW_FILL_VALUE));
+    }
+
+    #[test]
+    fn test_android_load_verify_fixup_pvmfw_load_general() {
+        let general = &mut AlignedBuffer::new(8 * 1024 * 1024, PVMFW_DATA_ALIGNMENT);
+        // Starts with unaligned address. pvmfw should be loaded at offset 1.
+        let general = &mut general[PVMFW_DATA_ALIGNMENT - 1..];
+        let expected_addr = general[1..].as_ptr() as usize;
+        let boot_buffer = BootBuffer { general, ..Default::default() };
+        test_android_load_verify_fixup_pvmfw_load(boot_buffer, expected_addr);
+        assert!(&general[1..][..0xc00].iter().all(|&b| b == TEST_PVMFW_FILL_VALUE));
     }
 
     #[test]

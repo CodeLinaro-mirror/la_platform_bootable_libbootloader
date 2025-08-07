@@ -35,9 +35,9 @@ AVB_TOOL = AVB_DIR / "avbtool.py"
 MKBOOTIMG_TOOL = AOSP_ROOT / "tools" / "mkbootimg" / "mkbootimg.py"
 UNPACKBOOTIMG_TOOL = AOSP_ROOT / "tools" / "mkbootimg" / "unpack_bootimg.py"
 AVB_TEST_DATA_DIR = AVB_DIR / "test" / "data"
-DTC_TOOL = AOSP_ROOT / "prebuilts" / "kernel-build-tools" / "linux-x86" / "bin" / "dtc"
+DTC_TOOL = AOSP_ROOT / "prebuilts" / "kernel-build-tools" / "linux_musl-x86" / "bin" / "dtc"
 MKDTBOIMG_TOOL = (
-    AOSP_ROOT / "prebuilts" / "kernel-build-tools" / "linux-x86" / "bin" / "mkdtboimg"
+    AOSP_ROOT / "prebuilts" / "kernel-build-tools" / "linux_musl-x86" / "bin" / "mkdtboimg"
 )
 LZ4_TOOL = "lz4"
 SZ_KB = 1024
@@ -321,6 +321,26 @@ def gen_android_test_vbmeta(partition_file_pairs, out_vbmeta):
         extract_vbmeta_digests(out_vbmeta)
 
 
+def gen_disabled_vbmeta(out_vbmeta):
+    subprocess.run(
+        [
+            AVB_TOOL,
+            "make_vbmeta_image",
+            "--output",
+            out_vbmeta,
+            "--key",
+            PSK,
+            "--algorithm",
+            "SHA512_RSA4096",
+            "--rollback_index=0",
+            "--rollback_index_location=0",
+            "--set_verification_disabled_flag",
+        ],
+        stderr=subprocess.STDOUT,
+        check=True,
+    )
+
+
 # Extract digests from vbmeta data
 def extract_vbmeta_digests(vbmeta):
     digests = subprocess.run(
@@ -591,6 +611,9 @@ androidboot.config_2=val_2
     # Generates a vbmeta image that doesn't verify any partition and will just
     # trivially succeed.
     gen_android_test_vbmeta([], out_dir / f"vbmeta_noop.img")
+    # Generates a vbmeta image that disables verification.
+    # (`AVB_VBMETA_IMAGE_FLAGS_VERIFICATION_DISABLED` is set).
+    gen_disabled_vbmeta(out_dir / f"vbmeta_disabled.img")
 
 
 def gen_zircon_test_images(zbi_tool):
