@@ -711,15 +711,8 @@ impl<'a> BootBufferLoader<'a> {
 
     /// Splits out the [ramdisk, fdt, kernel, unused] buffers without consuming the loader.
     pub(super) fn splits(&mut self) -> [&mut [u8]; 4] {
-        let bufs = BootBuffer {
-            general: &mut self.bufs.general[..],
-            kernel: self.bufs.kernel.as_mut().map(|v| v as _),
-            ramdisk: self.bufs.ramdisk.as_mut().map(|v| v as _),
-            fdt: self.bufs.fdt.as_mut().map(|v| v as _),
-            pvmfw_data: self.bufs.pvmfw_data.as_mut().map(|v| v as _),
-        };
         BootBufferLoader {
-            bufs,
+            bufs: self.bufs.as_borrowed(),
             ramdisk_sz: self.ramdisk_sz,
             bootconfig_sz: self.bootconfig_sz,
             kernel_sz: self.kernel_sz,
@@ -745,7 +738,10 @@ impl<'a> BootBufferLoader<'a> {
 /// Computes the index range of `sub` in the parent slice `buf`.
 ///
 /// Returns None if the `sub` is not a sublice of `buf`
-fn sub_slice_range(buf: &Range<*const u8>, sub: &Range<*const u8>) -> Option<Range<usize>> {
+pub(crate) fn sub_slice_range(
+    buf: &Range<*const u8>,
+    sub: &Range<*const u8>,
+) -> Option<Range<usize>> {
     let start = (sub.start as usize).checked_sub(buf.start as _)?;
     let end = (sub.end as usize).checked_sub(buf.start as _)?;
     (sub.end <= buf.end).then_some(start..end)

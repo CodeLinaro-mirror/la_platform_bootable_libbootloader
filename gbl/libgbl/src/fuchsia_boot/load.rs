@@ -170,7 +170,7 @@ pub fn zircon_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     let result = &mut Default::default();
     if matches!(reboot_mode, RebootMode::Bootloader) || zircon_check_enter_fastboot(ops) {
         gbl_println!(ops, "Entering fastboot mode...");
-        run_fastboot(GblFastbootEntry { ops, load: &mut load[..], result });
+        run_fastboot(GblFastbootEntry { ops, boot_buffer: (&mut load[..]).into(), result });
         gbl_println!(ops, "Leaving fastboot mode...");
     }
 
