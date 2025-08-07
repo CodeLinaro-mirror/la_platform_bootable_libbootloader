@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{cstr_bytes_to_str, LoadBuffer};
+use super::{cstr_bytes_to_str, BootBuffer};
 use crate::{
     android_boot::avf::DEFAULT_PVMFW_PART_NAME_CSTR,
-    constants::{KERNEL_ALIGNMENT, PAGE_SIZE},
+    constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE},
     decompress::decompress_kernel,
     gbl_println,
     ops::GblOps,
@@ -25,12 +25,13 @@ use arrayvec::ArrayString;
 use avb::SlotVerifyData;
 use bootimg::{defs::*, BootImage, VendorImageHeader};
 use core::{
-    array,
+    cmp::max,
     ffi::CStr,
     fmt::Write,
     ops::{Deref, Range},
 };
 use liberror::Error;
+use libutils::aligned_subslice;
 use safemath::SafeNum;
 use zerocopy::{IntoBytes, Ref};
 
@@ -223,16 +224,8 @@ pub struct LoadedImages<'a> {
     pub dtb: &'a [u8],
     /// DTB from partition.
     pub dtb_part: &'a [u8],
-    /// Kernel image.
-    pub kernel: &'a [u8],
-    /// Ramdisk image.
-    pub ramdisk: &'a [u8],
     /// pVM firmware image.
     pub pvmfw: &'a [u8],
-    /// Designated FDT fix up buffer,
-    pub fdt_fixup: &'a mut [u8],
-    /// Unused portion immediately following ramdisk.
-    pub unused: &'a mut [u8],
 }
 
 impl LoadedImages<'_> {
@@ -265,11 +258,7 @@ impl<'a> Default for LoadedImages<'a> {
             vendor_bootconfig: &[][..],
             dtb: &[][..],
             dtb_part: &[][..],
-            kernel: &[][..],
-            ramdisk: &[][..],
             pvmfw: &[][..],
-            fdt_fixup: &mut [][..],
-            unused: &mut [][..],
         }
     }
 }
@@ -331,16 +320,16 @@ fn log_and_parse_bootimg<'a, 'b, 'c>(
 /// # Args
 ///
 /// * `ops`: An implementation of `GblOps`.
-/// * `slot`: The target slot to load.
+/// * `slot`: The target slot to loader.
 /// * `unlocked`: The unlock state.
 /// * `verify_data`: `SlotVerifyData` returns from `avb_slot_verify`.
 /// * `load`: The destination image assembly load buffer.
-pub(crate) fn android_load_verified<'a, 'b, 'c>(
+pub(super) fn android_load_verified<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
     slot: u8,
     unlocked: bool,
     verify_data: &'c SlotVerifyData,
-    load: &'c mut LoadBuffer<'_>,
+    loader: &mut BootBufferLoader<'_>,
 ) -> Result<LoadedImages<'c>, Error> {
     let mut images = LoadedImages::default();
     images.dtb_part = get_verified_partition(ops, c"dtb", slot, unlocked, true, verify_data)?;
@@ -353,10 +342,10 @@ pub(crate) fn android_load_verified<'a, 'b, 'c>(
     images.boot_hdr = boot;
     match log_and_parse_bootimg(ops, boot)? {
         BootImage::V3(_) | BootImage::V4(_) => {
-            load_v3_and_v4_verified(ops, boot, slot, unlocked, verify_data, load, &mut images)
+            load_v3_and_v4_verified(ops, boot, slot, unlocked, verify_data, loader, &mut images)
         }
         BootImage::V0(_) | BootImage::V1(_) | BootImage::V2(_) => {
-            load_v2_or_lower_verified(ops, boot, load, &mut images)
+            load_v2_or_lower_verified(ops, boot, loader, &mut images)
         }
     }?;
     Ok(images)
@@ -379,43 +368,14 @@ pub(crate) fn android_load_verified<'a, 'b, 'c>(
 fn load_v2_or_lower_verified<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
     boot: &'c [u8],
-    load: &'c mut LoadBuffer<'_>,
+    loader: &mut BootBufferLoader<'_>,
     images: &mut LoadedImages<'c>,
 ) -> Result<(), Error> {
-    // For monolithic buffer, loads from `verify_data` into the following layout:
-    //
-    // +------------------------+
-    // | ramdisk                |
-    // +------------------------+
-    // | unused                 |
-    // +------------------------+
-    // | kernel                 |
-    // +------------------------+
-    //
-    // dtb, cmdline comes directly from avb allocated buffers.
     let info = BootImageV2Info::new(boot).unwrap();
     images.boot_cmdline = info.cmdline;
     images.dtb = get_range(boot, &info.dtb_range)?;
-    let (kernel, ramdisk, fdt) = match load {
-        LoadBuffer::Monolithic(v) => (&mut [][..], &mut v[..], &mut [][..]),
-        LoadBuffer::Designated { kernel, ramdisk, fdt } => {
-            (&mut kernel[..], &mut ramdisk[..], &mut fdt[..])
-        }
-    };
-    let (ramdisk, remains) = split(ramdisk, info.ramdisk_range.len())?;
-    ramdisk.clone_from_slice(get_range(boot, &info.ramdisk_range)?);
-    images.ramdisk = ramdisk;
-    let (remains, kernel, kernel_sz) = match kernel.is_empty() {
-        true => relocate_kernel(ops, get_range(boot, &info.kernel_range)?, remains)?,
-        _ => {
-            let kernel_sz = decompress_kernel(ops, get_range(boot, &info.kernel_range)?, kernel)?;
-            (remains, kernel, kernel_sz)
-        }
-    };
-    images.kernel = &kernel[..kernel_sz];
-    images.unused = remains;
-    images.fdt_fixup = fdt;
-    Ok(())
+    loader.kernel_load(ops, get_range(boot, &info.kernel_range)?)?;
+    loader.ramdisk_append(get_range(boot, &info.ramdisk_range)?)
 }
 
 /// Loads android boot images of version 3 and 4 from avb verified partitions.
@@ -424,7 +384,7 @@ fn load_v2_or_lower_verified<'a, 'b, 'c>(
 ///
 /// * `ops`: An implementation of `GblOps`.
 /// * `boot`: A buffer containing the boot image.
-/// * `slot`: The target slot to load.
+/// * `slot`: The target slot to loader.
 /// * `unlocked`: The unlock state.
 /// * `verify_data`: `SlotVerifyData` returns from `avb_slot_verify`.
 /// * `load`: The destination image assembly load buffer.
@@ -466,22 +426,9 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     slot: u8,
     unlocked: bool,
     verify_data: &'c SlotVerifyData,
-    load: &'c mut LoadBuffer<'_>,
+    loader: &mut BootBufferLoader<'_>,
     images: &mut LoadedImages<'c>,
 ) -> Result<(), Error> {
-    // For monolithic buffer, loads from `verify_data` into the following layout:
-    //
-    // +------------------------+
-    // | vendor ramdisk         |
-    // +------------------------+
-    // | generic ramdisk        |
-    // +------------------------+
-    // | unused                 |
-    // +------------------------+
-    // | kernel                 |
-    // +------------------------+
-    //
-    // vendor dtb, boot config, cmdline come directly from avb allocated buffers.
     let boot_info = BootImageV3Info::new(boot).unwrap();
     images.boot_cmdline = BootImageV3Info::cmdline(boot)?;
 
@@ -494,32 +441,19 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     images.dtb = get_range(vendor_boot, &vendor_boot_info.dtb_range)?;
     images.vendor_bootconfig = get_range(vendor_boot, &vendor_boot_info.bootconfig_range)?;
 
-    let (kernel, ramdisk, fdt) = match load {
-        LoadBuffer::Monolithic(v) => (&mut [][..], &mut v[..], &mut [][..]),
-        LoadBuffer::Designated { kernel, ramdisk, fdt } => {
-            (&mut kernel[..], &mut ramdisk[..], &mut fdt[..])
-        }
-    };
+    loader.kernel_load(ops, get_range(boot, &boot_info.kernel_range)?)?;
 
-    let load = &mut ramdisk[..];
-    let remains = &mut load[..];
-    let (vendor_ramdisk_buf, remains) = remains.split_at_mut(vendor_boot_info.ramdisk_range.len());
-    vendor_ramdisk_buf.clone_from_slice(get_range(vendor_boot, &vendor_boot_info.ramdisk_range)?);
+    loader.ramdisk_append(get_range(vendor_boot, &vendor_boot_info.ramdisk_range)?)?;
 
     // Finds and loads vendor_kernel_boot partition if provided.
     let vendor_kernel_boot =
         get_verified_partition(ops, c"vendor_kernel_boot", slot, unlocked, true, verify_data)?;
-    let vendor_kernel_rd = match vendor_kernel_boot.len() > 0 {
-        true => {
-            let vendor_kernel_boot_info = VendorBootImageInfo::new(vendor_kernel_boot)?;
-            // DTB should be provided by vendor_kerenl_boot if it exists.
-            images.dtb = get_range(vendor_kernel_boot, &vendor_kernel_boot_info.dtb_range)?;
-            get_range(vendor_kernel_boot, &vendor_kernel_boot_info.ramdisk_range)?
-        }
-        _ => &[][..],
-    };
-    let (vendor_kernel_boot_buf, remains) = remains.split_at_mut(vendor_kernel_rd.len());
-    vendor_kernel_boot_buf.clone_from_slice(vendor_kernel_rd);
+    if vendor_kernel_boot.len() > 0 {
+        let info = VendorBootImageInfo::new(vendor_kernel_boot)?;
+        // DTB should be provided by vendor_kerenl_boot if it exists.
+        images.dtb = get_range(vendor_kernel_boot, &info.dtb_range)?;
+        loader.ramdisk_append(get_range(vendor_kernel_boot, &info.ramdisk_range)?)?;
+    }
 
     // Loads generic ramdisk, which may come from either boot or init_boot.
     let generic_ramdisk = match boot_info.ramdisk_range.is_empty() {
@@ -531,28 +465,7 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
         false => boot,
     };
     let generic_ramdisk_range = BootImageV3Info::new(generic_ramdisk)?.ramdisk_range;
-    let (generic_ramdisk_buf, _) = remains.split_at_mut(generic_ramdisk_range.len());
-    generic_ramdisk_buf.clone_from_slice(get_range(generic_ramdisk, &generic_ramdisk_range)?);
-
-    let ramdisk_len =
-        vendor_ramdisk_buf.len() + generic_ramdisk_buf.len() + vendor_kernel_boot_buf.len();
-    let (ramdisk, remains) = load.split_at_mut(ramdisk_len);
-    images.ramdisk = ramdisk;
-
-    // Loads kernel
-    let (remains, kernel, kernel_sz) = match kernel.is_empty() {
-        true => relocate_kernel(ops, get_range(boot, &boot_info.kernel_range)?, remains)?,
-        _ => {
-            let kernel_sz =
-                decompress_kernel(ops, get_range(boot, &boot_info.kernel_range)?, kernel)?;
-            (remains, kernel, kernel_sz)
-        }
-    };
-    images.kernel = &kernel[..kernel_sz];
-    images.unused = remains;
-    images.fdt_fixup = fdt;
-
-    Ok(())
+    loader.ramdisk_append(get_range(generic_ramdisk, &generic_ramdisk_range)?)
 }
 
 /// Wrapper of `split_at_mut_checked` with error conversion.
@@ -569,43 +482,14 @@ fn get_range<'a>(buffer: &'a [u8], range: &Range<usize>) -> Result<&'a [u8], Err
 /// that can fit at least `size` bytes with the given alignment.
 ///
 /// Returns the starting offset of the aligned tail slice.
-fn aligned_tail_offset(buffer: &[u8], size: usize, align: usize) -> Result<usize, Error> {
+pub(crate) fn aligned_tail_offset(
+    buffer: &[u8],
+    size: usize,
+    align: usize,
+) -> Result<usize, Error> {
     let off = SafeNum::from(buffer.len()) - size;
     let rem = buffer[off.try_into()?..].as_ptr() as usize % align;
     Ok(usize::try_from(off - rem)?)
-}
-
-/// Splits a buffer into multiple chunks of the given sizes.
-///
-/// Returns an array of slices corresponding to the given sizes and the remaining slice.
-pub(super) fn split_chunks<'a, const N: usize>(
-    buf: &'a mut [u8],
-    sizes: &[usize; N],
-) -> ([&'a mut [u8]; N], &'a mut [u8]) {
-    let mut chunks: [_; N] = array::from_fn(|_| &mut [][..]);
-    let mut remains = buf;
-    for (i, ele) in sizes.iter().enumerate() {
-        (chunks[i], remains) = remains.split_at_mut(*ele);
-    }
-    (chunks, remains)
-}
-
-/// A helper function for relocating and decompressing kernel to a different buffer.
-///
-/// The relocated kernel will be place at the tail.
-///
-/// Returns the leading unused slice, the relocated slice and the actual kernel size without
-/// alignment padding.
-fn relocate_kernel<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
-    kernel: &[u8],
-    dst: &'c mut [u8],
-) -> Result<(&'c mut [u8], &'c mut [u8], usize), Error> {
-    let decompressed_size = decompress_kernel(ops, kernel, dst)?;
-    let aligned_tail_off = aligned_tail_offset(dst, decompressed_size, KERNEL_ALIGNMENT)?;
-    dst.copy_within(0..decompressed_size, aligned_tail_off);
-    let (prefix, tail) = split(dst, aligned_tail_off)?;
-    Ok((prefix, tail, decompressed_size))
 }
 
 /// Parses and returns the kernel image from a boot image.
@@ -615,4 +499,244 @@ pub fn get_kernel(boot: &[u8]) -> Result<&[u8], Error> {
         _ => boot.get(BootImageV2Info::new(boot)?.kernel_range),
     }
     .ok_or(Error::InvalidInput)
+}
+
+/// Helper data strucuture for loading boot images into a `BootBuffer`.
+///
+///
+/// Each image is loaded to its designated buffers if provided. If not, it'll be loaded to
+/// `loader.general` according to the following layout:
+///
+/// +---------------------------+
+/// | ramdisk                   |
+/// +---------------------------+
+/// | bootconfig                |
+/// +---------------------------+
+/// | FDT                       |
+/// +---------------------------+
+/// | kernel                    |
+/// +---------------------------+
+///
+/// Unused image segments will be empty.
+#[derive(Default)]
+pub(super) struct BootBufferLoader<'a> {
+    bufs: BootBuffer<'a>,
+
+    pub(super) ramdisk_sz: usize,
+    pub(super) bootconfig_sz: usize,
+    pub(super) kernel_sz: usize,
+
+    general_ramdisk: Range<usize>,
+    general_fdt: Range<usize>,
+    general_kernel: Range<usize>,
+}
+
+impl<'a> BootBufferLoader<'a> {
+    pub(super) fn new(bufs: BootBuffer<'a>) -> Self {
+        Self { bufs, ..Default::default() }
+    }
+
+    /// Decompresses and loads kernel into the kernel buffer.
+    fn kernel_load<'b, 'c>(
+        &mut self,
+        ops: &mut impl GblOps<'b, 'c>,
+        kernel: &[u8],
+    ) -> Result<(), Error> {
+        self.general_kernel = self.bufs.general.len()..self.bufs.general.len();
+        self.kernel_sz = match self.bufs.kernel.as_mut() {
+            // Designated buffer, decompresses directly into it.
+            Some(v) => decompress_kernel(ops, kernel, v)?,
+            // Use general buffer. decompresses at the tail of the buffer.
+            _ => {
+                // We assume entire general buffer is available, which means other components
+                // shouldn't be loaded yet.
+                assert_eq!(self.general_ramdisk, 0..0);
+                assert_eq!(self.bootconfig_sz, 0);
+                assert_eq!(self.general_fdt, 0..0);
+                let sz = decompress_kernel(ops, kernel, self.bufs.general)?;
+                // TODO(b/430068343): We place the kenrel at the tail because we haven't fixup
+                // FDT/bootconfig yet and don't know their exact size. However the fixup requires
+                // calling sync_partition_buffer() first which requires all partition buffers to
+                // be dropped. Thus we need to be done with partitions first.
+                //
+                // Investigate if partition drop can be relaxed (i.e. adding a read-only mode for
+                // sync_partition_buffer()) so that this can be avoided.
+                let off = aligned_tail_offset(self.bufs.general, sz, KERNEL_ALIGNMENT)?;
+                self.bufs.general.copy_within(0..sz, off);
+                self.general_kernel = off..off + sz;
+                sz
+            }
+        };
+        Ok(())
+    }
+
+    /// Appends ramdisks to the ramdisk buffer.
+    fn ramdisk_append(&mut self, ramdisk: &[u8]) -> Result<(), Error> {
+        match self.bufs.ramdisk.as_mut() {
+            Some(v) => split(&mut v[self.ramdisk_sz..], ramdisk.len())?.0.clone_from_slice(ramdisk),
+            _ => {
+                // We assume all buffer before kernel is available. Thus bootconfig/fdt must not be
+                // loaded.
+                assert_eq!(self.bootconfig_sz, 0);
+                assert_eq!(self.general_fdt, 0..0);
+                let load = &mut self.bufs.general[..self.general_kernel.start][self.ramdisk_sz..];
+                split(load, ramdisk.len())?.0.clone_from_slice(ramdisk);
+                self.general_ramdisk.end = self.ramdisk_sz + ramdisk.len();
+            }
+        }
+        self.ramdisk_sz += ramdisk.len();
+        Ok(())
+    }
+
+    /// Expands bootconfig buffer to cover the rest of unused space and returns it.
+    pub(super) fn expand_bootconfig_buffer(&mut self) -> Result<&mut [u8], Error> {
+        self.check_general_fdt_range();
+        match self.bufs.ramdisk.as_mut() {
+            Some(v) => Ok(&mut v[self.ramdisk_sz..]),
+            _ => {
+                // Moves FDT to the right most position to make more space for bootconfig fixup.
+                let buffer = &mut self.bufs.general[..self.general_kernel.start];
+                let off = aligned_tail_offset(buffer as _, self.general_fdt.len(), FDT_ALIGNMENT)?;
+                buffer.copy_within(self.general_fdt.clone(), off);
+                self.general_fdt = off..off + self.general_fdt.len();
+                Ok(&mut self.bufs.general[self.ramdisk_sz..off])
+            }
+        }
+    }
+
+    /// Sets bootconfig size.
+    pub(super) fn set_bootconfig_size(&mut self, sz: usize) {
+        self.bootconfig_sz = sz;
+    }
+
+    /// Computes the end of bootconfig segment in the general load buffer.
+    fn general_bootconfig_end(&self) -> Result<usize, Error> {
+        match self.bufs.ramdisk.is_some() {
+            // Designated ramdisk. The segment is unused in general load buffer.
+            true => Ok(0),
+            _ => Ok((SafeNum::from(self.general_ramdisk.end) + self.bootconfig_sz).try_into()?),
+        }
+    }
+
+    /// Returns the designated fdt buffer and the unused buffer between bootconfig and kernel in the
+    /// general load buffer for constructing FDT.
+    ///
+    /// Note: the unused buffer is still necessary even if we have designated buffer because we
+    /// need it for relocating DT sources.
+    pub(super) fn get_fdt_and_general_unused_buffer(
+        &mut self,
+    ) -> Result<(Option<&mut [u8]>, &mut [u8]), Error> {
+        let unused_off = self.general_bootconfig_end()?;
+        let fdt = self.bufs.fdt.as_mut().map(|v| v as _);
+        Ok((fdt, &mut self.bufs.general[unused_off..self.general_kernel.start]))
+    }
+
+    /// Sets FDT range.
+    ///
+    /// The intended usage is to get the buffer using `Self::get_fdt_and_general_unused_buffer()`,
+    /// construct FDT, compute the ptr range, release the borrow then call this API.
+    pub(super) fn set_fdt_range(&mut self, fdt: Range<*const u8>) {
+        // Updates `self.general_fdt` if fdt is loaded to general load buffer.
+        if self.bufs.fdt.is_none() {
+            self.general_fdt = sub_slice_range(&self.bufs.general.as_ptr_range(), &fdt).unwrap();
+            self.check_general_fdt_range();
+        }
+    }
+
+    /// Expands FDT buffer to cover the rest of unused space.
+    pub(super) fn expand_fdt(&mut self) -> Result<&mut [u8], Error> {
+        // Computes the values that require borrowing self first.
+        let bootconfig_end = self.general_bootconfig_end()?;
+        self.check_general_fdt_range();
+        match self.bufs.fdt.as_mut() {
+            // Noop for desiganted FDT buffer.
+            Some(v) => Ok(&mut v[..]),
+            _ => {
+                // Moves FDT to the left most position.
+                self.general_fdt =
+                    move_left(self.bufs.general, &self.general_fdt, bootconfig_end, FDT_ALIGNMENT)?;
+                Ok(&mut self.bufs.general[self.general_fdt.start..self.general_kernel.start])
+            }
+        }
+    }
+
+    /// Checks Self::general_fdt_range is a valid.
+    fn check_general_fdt_range(&self) {
+        // Either empty or valid range between bootconfig and kernel
+        assert!(
+            self.general_fdt.len() == 0
+                || self.general_fdt.start >= self.general_bootconfig_end().unwrap()
+                    && self.general_fdt.end <= self.general_kernel.start
+        );
+    }
+
+    /// Moves kernel to the left to reserve more space after it.
+    pub(super) fn move_kernel_left(&mut self) {
+        // Kernel may require additional memory after it for stuffs such as bss section. If kernel
+        // is loaded in general buffer, moves it forward to reserve as much space as possible after
+        // it.
+        if self.bufs.kernel.is_none() {
+            let bound = max(self.general_bootconfig_end().unwrap(), self.general_fdt.end);
+            self.general_kernel =
+                move_left(self.bufs.general, &self.general_kernel, bound, KERNEL_ALIGNMENT)
+                    .unwrap();
+        }
+    }
+
+    /// Splits out the [ramdisk, fdt, kernel, unused] buffers without consuming the loader.
+    pub(super) fn splits(&mut self) -> [&mut [u8]; 4] {
+        let bufs = BootBuffer {
+            general: &mut self.bufs.general[..],
+            kernel: self.bufs.kernel.as_mut().map(|v| v as _),
+            ramdisk: self.bufs.ramdisk.as_mut().map(|v| v as _),
+            fdt: self.bufs.fdt.as_mut().map(|v| v as _),
+        };
+        BootBufferLoader {
+            bufs,
+            ramdisk_sz: self.ramdisk_sz,
+            bootconfig_sz: self.bootconfig_sz,
+            kernel_sz: self.kernel_sz,
+            general_ramdisk: self.general_ramdisk.clone(),
+            general_fdt: self.general_fdt.clone(),
+            general_kernel: self.general_kernel.clone(),
+        }
+        .into_splits()
+    }
+
+    /// Consumes the loader and splits out the [ramdisk, fdt, kernel, unused] buffers
+    pub(super) fn into_splits(self) -> [&'a mut [u8]; 4] {
+        let (rem, unused) = self.bufs.general.split_at_mut(self.general_kernel.end);
+        let (rem, kernel) = rem.split_at_mut(self.general_kernel.start);
+        let (ramdisk, fdt) = rem.split_at_mut(self.general_fdt.start);
+        // Use designated buffers if provided, otherwise falls back to `general`
+        let ramdisk = self.bufs.ramdisk.unwrap_or(ramdisk);
+        let fdt = self.bufs.fdt.unwrap_or(fdt);
+        let kernel = self.bufs.kernel.unwrap_or(kernel);
+        [ramdisk, fdt, kernel, unused]
+    }
+}
+
+/// Computes the index range of `sub` in the parent slice `buf`.
+///
+/// Returns None if the `sub` is not a sublice of `buf`
+fn sub_slice_range(buf: &Range<*const u8>, sub: &Range<*const u8>) -> Option<Range<usize>> {
+    let start = (sub.start as usize).checked_sub(buf.start as _)?;
+    let end = (sub.end as usize).checked_sub(buf.start as _)?;
+    (sub.end <= buf.end).then_some(start..end)
+}
+
+/// Moves data in subslice range `sub` to the left most aligned position after `bound`.
+///
+/// Returns the new range.
+fn move_left(
+    buffer: &mut [u8],
+    sub: &Range<usize>,
+    bound: usize,
+    align: usize,
+) -> Result<Range<usize>, Error> {
+    let range = buffer.as_ptr_range();
+    let buffer = aligned_subslice(&mut buffer[..sub.end][bound..], align)?;
+    buffer.get(..sub.len()).ok_or(Error::BufferTooSmall(Some(sub.len())))?;
+    buffer.copy_within(buffer.len() - sub.len().., 0);
+    Ok(sub_slice_range(&range, &buffer[..sub.len()].as_ptr_range()).unwrap())
 }

@@ -642,6 +642,7 @@ where
         // vbmeta still come from the disk.
         let slot_idx = (u64::from(slot_suffix) - u64::from('a')).try_into().unwrap();
         let mut ramboot_ops = RambootOps { ops: self.gbl_ops, ram_partitions: &[(boot_part, img)] };
+        // TODO(b/430068343): Use actual boot buffer passed from android_main.
         let (ramdisk, fdt, kernel, _) =
             android_load_verify_fixup(&mut ramboot_ops, slot_idx, false, self.load_buffer.into())?;
         self.result.loaded_image_info = Some(LoadedImageInfo::Android {

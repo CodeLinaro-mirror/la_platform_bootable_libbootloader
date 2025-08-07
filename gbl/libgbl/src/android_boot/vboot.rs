@@ -19,7 +19,9 @@ use crate::{
         ops::{GblAvbOps, PreloadBufferState, AVB_DIGEST_KEY},
         state::{BootStateColor, KeyValidationStatus},
     },
-    gbl_println, GblOps, Result,
+    gbl_println,
+    ops::PartitionBuffer,
+    GblOps, Result,
 };
 use abr::SlotIndex;
 use arrayvec::ArrayVec;
@@ -28,7 +30,7 @@ use avb::{
     SlotVerifyResult,
 };
 use bootparams::entry::CommandlineParser;
-use core::ffi::CStr;
+use core::{ffi::CStr, ops::DerefMut};
 use liberror::Error;
 
 // Maximum number of partition allowed for verification.
@@ -52,26 +54,20 @@ impl<'a> PartitionsToVerify<'a> {
         Ok(())
     }
 
-    /// Appends a partition, along with a PreloadBufferState.
-    fn try_push_preloaded_buffer(
+    /// Appends a preloaded partition buffer.
+    pub fn try_push_preloaded(
         &mut self,
         name: &'a CStr,
-        data: PreloadBufferState<'a>,
+        buf: &'a mut PartitionBuffer<impl DerefMut<Target = [u8]>>,
     ) -> Result<()> {
+        let buf = match buf {
+            PartitionBuffer::Preloaded(ref v) => PreloadBufferState::Loaded(&v[..]),
+            PartitionBuffer::Designated(ref mut v) => PreloadBufferState::ToLoad(&mut v[..]),
+        };
         let err = Err(Error::TooManyPartitions(MAX_NUM_PARTITION));
         self.partitions.try_push(name).or(err)?;
-        self.preloaded.try_push((name.to_str().unwrap(), data.into())).or(err)?;
+        self.preloaded.try_push((name.to_str().unwrap(), buf)).or(err)?;
         Ok(())
-    }
-
-    /// Appends a partition, along with its preloaded data
-    pub fn try_push_preloaded(&mut self, name: &'a CStr, data: &'a [u8]) -> Result<()> {
-        self.try_push_preloaded_buffer(name, PreloadBufferState::Loaded(data))
-    }
-
-    /// Appends a partition to be loaded lazily to the given buffer.
-    pub fn try_push_to_load(&mut self, name: &'a CStr, buf: &'a mut [u8]) -> Result<()> {
-        self.try_push_preloaded_buffer(name, PreloadBufferState::ToLoad(buf))
     }
 }
 
@@ -284,14 +280,19 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_from_preloaded_success() {
-        let boot = read_test_data("boot_no_ramdisk_v4_a.img");
-        let init_boot = read_test_data("init_boot_a.img");
-        let vendor_boot = read_test_data("vendor_boot_v4_a.img");
+        let mut boot = read_test_data("boot_no_ramdisk_v4_a.img");
+        let mut init_boot = read_test_data("init_boot_a.img");
+        let mut vendor_boot = read_test_data("vendor_boot_v4_a.img");
 
+        let mut preloaded = [
+            (c"boot", PartitionBuffer::Preloaded(&mut boot[..])),
+            (c"init_boot", PartitionBuffer::Preloaded(&mut init_boot[..])),
+            (c"vendor_boot", PartitionBuffer::Preloaded(&mut vendor_boot[..])),
+        ];
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push_preloaded(c"boot", &boot).unwrap();
-        partitions_to_verify.try_push_preloaded(c"init_boot", &init_boot).unwrap();
-        partitions_to_verify.try_push_preloaded(c"vendor_boot", &vendor_boot).unwrap();
+        for (n, v) in &mut preloaded {
+            partitions_to_verify.try_push_preloaded(n, v).unwrap();
+        }
         let partitions_data = [
             // Required images aren't presented. Have to rely on preloaded.
             (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),

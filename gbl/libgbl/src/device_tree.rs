@@ -126,13 +126,13 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
 
     /// Load device tree components from a dt table image. Ensure components are 8 bytes
     /// aligned by using provided buffer to cut from. Returns remain buffer.
-    pub fn append_from_dttable<'b>(
+    pub fn append_from_dttable<'b, 'c: 'a>(
         &mut self,
         component_source: DeviceTreeComponentSource,
         component_type: DeviceTreeComponentType,
         dttable: &DtTableImage<'b>,
-        buffer: &'a mut [u8],
-    ) -> Result<&'a mut [u8]> {
+        buffer: &'c mut [u8],
+    ) -> Result<&'c mut [u8]> {
         if dttable.entries_count() > self.components.remaining_capacity() {
             return Err(Error::Other(Some(MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG)));
         }
@@ -165,14 +165,14 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
     /// Ensure components are 8 bytes aligned by using provided buffer to cut from. Returns remain
     /// buffer.
     /// TODO(b/363244924): Remove after partners migrated to DTB.
-    fn append_from_multifdt_buffer<'b, 'c>(
+    fn append_from_multifdt_buffer<'b, 'c, 'd: 'a>(
         &mut self,
         ops: &mut impl GblOps<'b, 'c>,
         component_source: DeviceTreeComponentSource,
         component_type: DeviceTreeComponentType,
         data: &'a [u8],
-        buffer: &'a mut [u8],
-    ) -> Result<&'a mut [u8]> {
+        buffer: &'d mut [u8],
+    ) -> Result<&'d mut [u8]> {
         let mut components_added = 0;
         let mut data_remains = data;
         let mut buffer_remains = buffer;
@@ -229,14 +229,14 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
     /// of such components are 8 bytes aligned by using provided `buffer` to cut from. Returns
     /// remain buffer.
     /// TODO(b/363244924): Remove multiple fdt support after partners migrated to DTB.
-    pub fn append<'b, 'c>(
+    pub fn append<'b, 'c, 'd: 'a>(
         &mut self,
         ops: &mut impl GblOps<'b, 'c>,
         component_source: DeviceTreeComponentSource,
         component_type: DeviceTreeComponentType,
         fdt: &'a [u8],
-        buffer: &'a mut [u8],
-    ) -> Result<&'a mut [u8]> {
+        buffer: &'d mut [u8],
+    ) -> Result<&'d mut [u8]> {
         if self.components.is_full() {
             return Err(Error::Other(Some(MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG)));
         }
