@@ -61,6 +61,8 @@ typedef struct GblEfiImageBuffer {
 } GblEfiImageBuffer;
 
 typedef struct GblEfiImageLoadingProtocol {
+  // Revision of the protocol supported.
+  // Currently must contain 0x0000000300000000
   uint64_t revision;
   EfiStatus (*get_buffer)(struct GblEfiImageLoadingProtocol* self,
                           const GblEfiImageInfo* ImageInfo,

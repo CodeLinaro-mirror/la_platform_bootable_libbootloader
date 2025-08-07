@@ -79,6 +79,11 @@ impl Protocol<'_, GblOsConfigurationProtocol> {
 
         Ok(())
     }
+
+    /// Wraps `GBL_EFI_OS_CONFIGURATION_PROTOCOL.revision()`.
+    pub fn revision(&self) -> Result<u64> {
+        Ok(self.interface()?.revision)
+    }
 }
 
 #[cfg(test)]

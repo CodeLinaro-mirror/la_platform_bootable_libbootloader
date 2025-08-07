@@ -427,7 +427,7 @@ where
     /// * `buffer_pool`: An implementation of `BufferPool` wrapped in `Shared` for allocating
     ///    download buffers.
     /// * `tasks`: An implementation of `PinFutContainer` used as task container for GBL fastboot to
-    // /   schedule dynamically spawned async tasks.
+    ///   schedule dynamically spawned async tasks.
     /// * `local`: An implementation of `LocalSession` which exchanges fastboot packet from platform
     ///   specific channels i.e. UX.
     /// * `usb`: An implementation of `GblUsbTransport` that represents USB channel.

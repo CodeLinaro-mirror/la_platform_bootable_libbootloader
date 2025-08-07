@@ -77,6 +77,8 @@ typedef struct {
 // Documentation:
 // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
 typedef struct GblEfiOsConfigurationProtocol {
+  // Revision of the protocol supported.
+  // Currently must contain 0x0000000300000000
   uint64_t revision;
 
   // Generates fixups for the bootconfig built by GBL.

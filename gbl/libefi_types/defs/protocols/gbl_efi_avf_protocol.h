@@ -32,6 +32,8 @@
 #include "types.h"
 
 typedef struct GblEfiAvfProtocol {
+  // Revision of the protocol supported.
+  // Currently must contain 0x00000002000000000
   uint64_t revision;
 
   EfiStatus (*read_vendor_dice_handover)(struct GblEfiAvfProtocol* self,

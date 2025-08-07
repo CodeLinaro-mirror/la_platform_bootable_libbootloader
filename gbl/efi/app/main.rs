@@ -132,12 +132,12 @@ fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
                 entry,
                 "Please run load_gbl_debug_bin.py or set $x0=0 from gdb to continue."
             );
-            // Sets $rax to `GDB_MAGIC` and $rcx to the image load address
+            // Sets $x0 to `GDB_MAGIC` and $x2 to the image load address
             // which will be retrieved by the debug script for loading debug
-            // symbols. Loops until $rax is set 0 either by the
+            // symbols. Loops until $x0 is set 0 either by the
             // debug script or manually from gdb.
 
-            // SAFETY: The assembly code only sets $rax and $rcx reigster.
+            // SAFETY: The assembly code only sets $x0 and $x2 reigster.
             // It explicitly marks them as clobbered and does not modify
             // any memory.
             unsafe {

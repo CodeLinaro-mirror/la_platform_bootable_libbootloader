@@ -57,7 +57,7 @@ typedef struct {
   uint32_t suffix;
   // Any value other than those explicitly enumerated in EFI_UNBOOTABLE_REASON
   // will be interpreted as UNKNOWN_REASON.
-  uint32_t unbootable_reason;
+  uint8_t unbootable_reason;
   uint8_t priority;
   uint8_t tries;
   // Value of 1 if slot has successfully booted.
@@ -74,8 +74,9 @@ typedef struct {
 } GblEfiSlotMetadataBlock;
 
 typedef struct GblEfiABSlotProtocol {
-  // Currently must contain 0x00010000
-  uint32_t version;
+  // Revision of the protocol supported.
+  // Currently must contain 0x000003000000
+  uint64_t revision;
   // Slot metadata query methods
   EfiStatus (*load_boot_data)(struct GblEfiABSlotProtocol* self,
                               /* out */ GblEfiSlotMetadataBlock* metadata);

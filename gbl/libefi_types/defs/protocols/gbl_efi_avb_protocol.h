@@ -81,6 +81,8 @@ typedef struct {
 } GblEfiAvbPartition;
 
 typedef struct GblEfiAvbProtocol {
+  // Revision of the protocol supported.
+  // Currently must contain 0x00000002000000000
   uint64_t revision;
 
   EfiStatus (*read_partitions_to_verify)(

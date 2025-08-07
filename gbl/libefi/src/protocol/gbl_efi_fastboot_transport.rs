@@ -19,8 +19,8 @@ use crate::{
     protocol::{Protocol, ProtocolInfo, Requirement},
 };
 use efi_types::{
-    EfiGuid, GblEfiFastbootTransportProtocol, GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH,
-    GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
+    EfiGuid, GblEfiFastbootRxMode, GblEfiFastbootTransportProtocol,
+    GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH, GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
 };
 use gbl_async::yield_now;
 use liberror::{Error, Result};
@@ -35,6 +35,24 @@ impl ProtocolInfo for GblFastbootTransportProtocol {
         EfiGuid::new(0xedade92c, 0x5c48, 0x440d, [0x84, 0x9c, 0xe2, 0xa0, 0xc7, 0xe5, 0x51, 0x43]);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
+}
+
+/// Wrapper for GblEfiFastbootRxMode
+#[derive(Copy, Clone, Debug)]
+pub enum ReceiveMode {
+    /// Receive a single packet
+    SinglePacket,
+    /// Receive a fixed number of bytes
+    FixedLength,
+}
+
+impl From<ReceiveMode> for GblEfiFastbootRxMode {
+    fn from(mode: ReceiveMode) -> Self {
+        match mode {
+            ReceiveMode::SinglePacket => GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
+            ReceiveMode::FixedLength => GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH,
+        }
+    }
 }
 
 // Protocol interface wrappers.
@@ -59,12 +77,8 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.receive()`
-    pub fn receive(&self, out: &mut [u8], single_packet: bool) -> Result<usize> {
+    pub fn receive(&self, out: &mut [u8], mode: ReceiveMode) -> Result<usize> {
         let mut out_size = out.len();
-        let phase = match single_packet {
-            true => GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
-            _ => GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH,
-        };
         // SAFETY:
         // `self.interface()?` guarantees self.interface is non-null and points to a valid object
         // established by `Protocol::new()`.
@@ -77,7 +91,7 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
                 self.interface,
                 &mut out_size,
                 out.as_mut_ptr() as _,
-                phase,
+                mode.into(),
             )?;
         }
 
@@ -121,9 +135,9 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
     }
 
     /// Receives the next packet from the USB.
-    pub async fn receive_packet(&self, out: &mut [u8], single_packet: bool) -> Result<usize> {
+    pub async fn receive_packet(&self, out: &mut [u8], mode: ReceiveMode) -> Result<usize> {
         loop {
-            match self.receive(out, single_packet) {
+            match self.receive(out, mode) {
                 Ok(out_size) => return Ok(out_size),
                 Err(Error::NotReady) => yield_now().await,
                 Err(e) => return Err(e),
@@ -145,5 +159,10 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
             }
         }
         self.flush()
+    }
+
+    /// Wraps `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.revision()`.
+    pub fn revision(&self) -> Result<u64> {
+        Ok(self.interface()?.revision)
     }
 }

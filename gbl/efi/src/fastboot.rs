@@ -23,7 +23,10 @@ use core::{future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration};
 use efi::{
     efi_println,
     local_session::LocalFastbootSession,
-    protocol::{gbl_efi_fastboot_transport::GblFastbootTransportProtocol, Protocol},
+    protocol::{
+        gbl_efi_fastboot_transport::{GblFastbootTransportProtocol, ReceiveMode},
+        Protocol,
+    },
     EfiEntry, WatchdogTimerCode,
 };
 use efi_types::GBL_IMAGE_TYPE_FASTBOOT;
@@ -193,14 +196,16 @@ impl<'a> UsbTransport<'a> {
     /// otherwise.
     fn poll_next_packet(&mut self) -> Result<bool> {
         match &mut self.prefetched {
-            (pkt, len) if *len == 0 => match self.protocol.receive(pkt, true) {
-                Ok(out_size) => {
-                    *len = out_size;
-                    return Ok(true);
+            (pkt, len) if *len == 0 => {
+                match self.protocol.receive(pkt, ReceiveMode::SinglePacket) {
+                    Ok(out_size) => {
+                        *len = out_size;
+                        return Ok(true);
+                    }
+                    Err(Error::NotReady) => return Ok(false),
+                    Err(e) => return Err(e),
                 }
-                Err(Error::NotReady) => return Ok(false),
-                Err(e) => return Err(e),
-            },
+            }
             _ => Ok(true),
         }
     }
@@ -215,7 +220,14 @@ impl Transport for UsbTransport<'_> {
                 out.clone_from_slice(src);
                 take(len)
             }
-            _ => self.protocol.receive_packet(out, out.len() <= MAX_COMMAND_SIZE).await?,
+            _ => {
+                let mode = if out.len() <= MAX_COMMAND_SIZE {
+                    ReceiveMode::SinglePacket
+                } else {
+                    ReceiveMode::FixedLength
+                };
+                self.protocol.receive_packet(out, mode).await?
+            }
         };
         // Forces a yield to the executor if the data received/sent reaches a certain
         // threshold. This is to prevent the async code from holding up the CPU for too long
