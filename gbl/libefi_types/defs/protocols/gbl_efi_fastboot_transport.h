@@ -29,6 +29,7 @@
 #ifndef __GBL_EFI_FASTBOOT_USB_H__
 #define __GBL_EFI_FASTBOOT_USB_H__
 
+#include "gbl_protocol_utils.h"
 #include "types.h"
 
 typedef enum GBL_EFI_FASTBOOT_RX_MODE {
@@ -36,9 +37,10 @@ typedef enum GBL_EFI_FASTBOOT_RX_MODE {
   FIXED_LENGTH,
 } GblEfiFastbootRxMode;
 
+static const uint64_t GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 1);
+
 typedef struct GblEfiFastbootTransportProtocol {
-  // Revision of the protocol supported.
-  // Currently must contain 0x0000000300000000
   uint64_t revision;
   const char* description;
   EfiStatus (*start)(struct GblEfiFastbootTransportProtocol* self);

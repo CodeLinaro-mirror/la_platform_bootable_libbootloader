@@ -29,9 +29,11 @@
 #ifndef __GBL_AVB_PROTOCOL_H__
 #define __GBL_AVB_PROTOCOL_H__
 
+#include "gbl_protocol_utils.h"
 #include "types.h"
 
-const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION = 0x00000001;
+static const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 1);
 
 // Os boot state color.
 //
@@ -81,8 +83,6 @@ typedef struct {
 } GblEfiAvbPartition;
 
 typedef struct GblEfiAvbProtocol {
-  // Revision of the protocol supported.
-  // Currently must contain 0x00000002000000000
   uint64_t revision;
 
   EfiStatus (*read_partitions_to_verify)(

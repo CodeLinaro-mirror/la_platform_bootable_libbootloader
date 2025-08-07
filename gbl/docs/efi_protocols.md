@@ -192,6 +192,27 @@ However, without these protocols GBL will be missing key features such as
 USB fastboot and verified boot, so production targets and more full-featured dev
 boards will need to implement them.
 
+### GBL Custom Protocol Revisions
+
+All GBL custom protocols have an unsigned 64 bit revision as their first field.
+The semantics of the field are explained by the following macros:
+```c
+#define GBL_PROTOCOL_MAJOR_REV(x) (((x) >> 16 ) & 0xFFFF)
+#define GBL_PROTOCOL_MINOR_REV(x) ((x) & 0xFFFF)
+
+#define GBL_PROTOCOL_REVISION(major, minor) ((((major) & 0xFFFF) << 16) | ((minor) & 0xFFFF))
+```
+
+The minor revision is the 2 least significant bytes, and the major revision is the
+second 2 least significant bytes.
+
+Note: While the revision field is 64 bits wide, only the least significant 32 bits
+are used to define the major and minor version.
+The most significant 32 bites are reserved for future use.
+
+Note: Major revisions of `0` indicate that the protocol is not yet stable,
+and backwards compatibility is not guaranteed.
+
 ### GblFastbootProtocol
 
 * [`GBL_EFI_FASTBOOT_PROTOCOL`](./gbl_efi_fastboot_protocol.md)
@@ -207,20 +228,20 @@ Used to provide an interface for
 
 ### GblFastbootTransportProtocol
 
-* [`GblFastbootTransportProtocol`](./gbl_efi_fastboot_transport.md)
+* [`GblFastbootTransportProtocol`](./gbl_efi_fastboot_transport_protocol.md)
 * optional: enables fastboot over platform defined channels such as USB.
 
 This can be enabled by itself, or in addition to fastboot over TCP.
 
 ### GblOsConfigurationProtocol
 
-* [`GBL_EFI_OS_CONFIGURATION_PROTOCOL`](./gbl_os_configuration_protocol.md)
+* [`GBL_EFI_OS_CONFIGURATION_PROTOCOL`](./gbl_efi_os_configuration_protocol.md)
 * optional: enables runtime fixups of OS data
 
 Used for device tree selection and bootconfig fixup. If not provided, the data
 from boot partitions will be used without FW-specific modifications.
 
-### GblSlotProtocol
+### GblABSlotProtocol
 
 * [`GBL_EFI_AB_SLOT_PROTOCOL`](./gbl_efi_ab_slot_protocol.md)
 * optional: enables A/B slotted booting
@@ -247,7 +268,7 @@ fastboot.
 
 ### GblImageLoadingProtocol
 
-* [`GBL_EFI_IMAGE_LOADING_PROTOCOL`](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md)
+* [`GBL_EFI_IMAGE_LOADING_PROTOCOL`](./gbl_efi_image_loading_protocol.md)
 * optional: enables loading images to predefined memory locations
 
 Used to provide buffers to load the images for verification and boot process.

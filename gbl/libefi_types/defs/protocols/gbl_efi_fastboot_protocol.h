@@ -29,6 +29,7 @@
 #ifndef __GBL_EFI_FASTBOOT_PROTOCOL_H__
 #define __GBL_EFI_FASTBOOT_PROTOCOL_H__
 
+#include "gbl_protocol_utils.h"
 #include "types.h"
 
 #define GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8 32
@@ -76,9 +77,10 @@ typedef enum GBL_EFI_FASTBOOT_PARTITION_PERMISSION_FLAGS {
   GBL_EFI_FASTBOOT_PARTITION_ERASE = 0x1 << 2,
 } GblEfiFastbootPartitionPermissionFlags;
 
+static const uint64_t GBL_EFI_FASTBOOT_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 1);
+
 typedef struct GblEfiFastbootProtocol {
-  // Revision of the protocol supported.
-  // Currently must contain 0x0000000300000000
   uint64_t revision;
   // Null-terminated UTF-8 encoded string
   char8_t serial_number[GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8];

@@ -28,7 +28,7 @@ use liberror::Result;
 use mockall::mock;
 use protocol::{
     dt_fixup::DtFixupProtocol,
-    gbl_efi_ab_slot::GblSlotProtocol,
+    gbl_efi_ab_slot::GblABSlotProtocol,
     gbl_efi_avb::GblAvbProtocol,
     gbl_efi_avf::GblAvfProtocol,
     gbl_efi_fastboot::GblFastbootProtocol,
@@ -247,9 +247,9 @@ fn passthrough_boot_services() -> MockBootServices {
             efi.as_mut().unwrap().boot_services.find_first_and_open::<GblAvbProtocol>()
         })
     });
-    services.expect_find_first_and_open::<GblSlotProtocol>().returning(|| {
+    services.expect_find_first_and_open::<GblABSlotProtocol>().returning(|| {
         MOCK_EFI.with_borrow_mut(|efi| {
-            efi.as_mut().unwrap().boot_services.find_first_and_open::<GblSlotProtocol>()
+            efi.as_mut().unwrap().boot_services.find_first_and_open::<GblABSlotProtocol>()
         })
     });
     services.expect_find_first_and_open::<GblFastbootProtocol>().returning(|| {

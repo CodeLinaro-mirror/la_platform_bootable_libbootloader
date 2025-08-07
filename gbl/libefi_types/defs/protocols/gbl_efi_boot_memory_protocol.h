@@ -28,9 +28,11 @@
 
 #include <stddef.h>
 
+#include "gbl_protocol_utils.h"
 #include "types.h"
 
-#define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION 0x0000000100000000
+static const uint64_t GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 1);
 
 typedef enum GBL_EFI_BOOT_BUFFER_TYPE {
   GENERAL_LOAD,
@@ -46,8 +48,6 @@ typedef enum GBL_EFI_PARTITION_BUFFER_FLAG {
 } GblEfiPartitionBufferFlag;
 
 typedef struct GblEfiBootMemoryProtocol {
-  // Revision of the protocol supported.
-  // Currently must contain 0x0000000100000000
   uint64_t revision;
   EfiStatus (*get_partition_buffer)(struct GblEfiBootMemoryProtocol* self,
                                     /* in */ const char8_t* base_name,

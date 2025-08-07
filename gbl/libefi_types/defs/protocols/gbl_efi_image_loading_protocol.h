@@ -28,9 +28,11 @@
 
 #include <stddef.h>
 
+#include "gbl_protocol_utils.h"
 #include "types.h"
 
-const uint64_t GBL_EFI_IMAGE_LOADING_PROTOCOL_REVISION = 0x00010000;
+static const uint64_t GBL_EFI_IMAGE_LOADING_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 1);
 
 #define PARTITION_NAME_LEN_U16 36
 
@@ -61,8 +63,6 @@ typedef struct GblEfiImageBuffer {
 } GblEfiImageBuffer;
 
 typedef struct GblEfiImageLoadingProtocol {
-  // Revision of the protocol supported.
-  // Currently must contain 0x0000000300000000
   uint64_t revision;
   EfiStatus (*get_buffer)(struct GblEfiImageLoadingProtocol* self,
                           const GblEfiImageInfo* ImageInfo,

@@ -34,11 +34,10 @@ devices.
 ### Revision Number
 
 ```c
-#define GBL_EFI_AVB_PROTOCOL_REVISION 0x00000001
+#define GBL_EFI_AB_SLOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
 ```
 
-Note: Revisions below 0x00010000 indicate that the protocol is not yet stable,
-and backward compatibility is not guaranteed.
+See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
 
 ### Protocol Interface Structure
 

@@ -29,9 +29,9 @@ use liberror::{Error, Result};
 use libgbl::slots::{Bootability, Slot, UnbootableReason};
 
 /// Wraps `GBL_EFI_SLOT_PROTOCOL`.
-pub struct GblSlotProtocol;
+pub struct GblABSlotProtocol;
 
-impl ProtocolInfo for GblSlotProtocol {
+impl ProtocolInfo for GblABSlotProtocol {
     type InterfaceType = GblEfiABSlotProtocol;
 
     const GUID: EfiGuid =
@@ -77,7 +77,7 @@ impl TryFrom<GblSlot> for libgbl::slots::Slot {
     }
 }
 
-impl<'a> Protocol<'a, GblSlotProtocol> {
+impl<'a> Protocol<'a, GblABSlotProtocol> {
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.load_boot_data()`
     pub fn load_boot_data(&self) -> Result<GblEfiSlotMetadataBlock> {
         let mut block: GblEfiSlotMetadataBlock = Default::default();

@@ -29,6 +29,7 @@
 #ifndef __GBL_OS_CONFIGURATION_PROTOCOL_H__
 #define __GBL_OS_CONFIGURATION_PROTOCOL_H__
 
+#include "gbl_protocol_utils.h"
 #include "types.h"
 
 typedef enum GBL_EFI_DEVICE_TREE_TYPE {
@@ -73,12 +74,10 @@ typedef struct {
   bool selected;
 } GblEfiVerifiedDeviceTree;
 
-// Warning: API is UNSTABLE
-// Documentation:
-// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
+static const uint64_t GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 1);
+
 typedef struct GblEfiOsConfigurationProtocol {
-  // Revision of the protocol supported.
-  // Currently must contain 0x0000000300000000
   uint64_t revision;
 
   // Generates fixups for the bootconfig built by GBL.

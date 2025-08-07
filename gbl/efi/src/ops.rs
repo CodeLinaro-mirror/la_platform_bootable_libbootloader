@@ -33,7 +33,7 @@ use efi::{
     profiling::EfiProfileBackend,
     protocol::{
         dt_fixup::DtFixupProtocol,
-        gbl_efi_ab_slot::GblSlotProtocol,
+        gbl_efi_ab_slot::GblABSlotProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
@@ -278,8 +278,8 @@ impl<'a, 'b> Ops<'a, 'b> {
         Ok(ImageBuffer::new(image_type, buf)?)
     }
 
-    /// Helper for opening GblSlotProtocol protocol. Maps `Error::NotFound` to `Error::Unsupported`
-    fn open_slot_protocol(&mut self) -> Result<Protocol<'a, GblSlotProtocol>> {
+    /// Helper for opening GblABSlotProtocol protocol. Maps `Error::NotFound` to `Error::Unsupported`
+    fn open_slot_protocol(&mut self) -> Result<Protocol<'a, GblABSlotProtocol>> {
         match self.efi_entry.system_table().boot_services().find_first_and_open() {
             Err(Error::NotFound) => Err(Error::Unsupported),
             v => Ok(v?),
@@ -833,7 +833,7 @@ fn gbl_to_efi_boot_mode(mode: RebootMode) -> GblEfiBootMode {
 mod test {
     use super::*;
     use efi_mocks::{
-        protocol::{gbl_efi_ab_slot::GblSlotProtocol, gbl_efi_avb::GblAvbProtocol},
+        protocol::{gbl_efi_ab_slot::GblABSlotProtocol, gbl_efi_avb::GblAvbProtocol},
         MockEfi,
     };
     use efi_types::{defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GBL_EFI_BOOT_MODE};
@@ -1414,9 +1414,9 @@ mod test {
     /// Helper for testing `set_boot_mode`
     fn test_set_reboot_mode(input: RebootMode, expect: GBL_EFI_BOOT_MODE) {
         let mut mock_efi = MockEfi::new();
-        mock_efi.boot_services.expect_find_first_and_open::<GblSlotProtocol>().return_once(
+        mock_efi.boot_services.expect_find_first_and_open::<GblABSlotProtocol>().return_once(
             move || {
-                let mut slot = GblSlotProtocol::default();
+                let mut slot = GblABSlotProtocol::default();
                 slot.expect_set_boot_mode().return_once(move |mode| {
                     assert_eq!(mode, expect);
                     Ok(())
@@ -1452,9 +1452,9 @@ mod test {
     /// Helper for testing `get_boot_mode`
     fn test_get_reboot_mode(input: GBL_EFI_BOOT_MODE, expect: RebootMode) {
         let mut mock_efi = MockEfi::new();
-        mock_efi.boot_services.expect_find_first_and_open::<GblSlotProtocol>().return_once(
+        mock_efi.boot_services.expect_find_first_and_open::<GblABSlotProtocol>().return_once(
             move || {
-                let mut slot = GblSlotProtocol::default();
+                let mut slot = GblABSlotProtocol::default();
                 slot.expect_get_boot_mode().return_once(move || Ok(input));
                 Ok(slot)
             },

@@ -32,8 +32,10 @@ implementation such as USB/TCP or other custom channels.
 ### Revision Number
 
 ```c
-#define GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION 0x00000000
+#define GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
 ```
+
+See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
 
 ### Protocol Interface Structure
 

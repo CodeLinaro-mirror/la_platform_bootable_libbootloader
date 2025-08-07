@@ -29,11 +29,10 @@ to, assemble kernel/ramdisk/fdt images, and download data in fastboot mode etc.
 ### Revision Number
 
 ```c
-#define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION 0x00000001
+#define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
 ```
 
-Note: Revisions smaller than 0x00010000 indicate that the protocol is not yet
-stable, and backward compatibility is not guaranteed.
+See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
 
 ### Protocol Interface Structure
 

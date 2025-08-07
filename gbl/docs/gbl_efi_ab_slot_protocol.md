@@ -43,14 +43,15 @@ preserved across warm reboots, but may not survive a cold reboot of the device.
 ### Protocol Revision
 
 ```c
-#define GBL_EFI_AB_SLOT_PROTOCOL_REVISION 0x0000000300000000
+#define GBL_EFI_AB_SLOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
 ```
+
+See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
 
 ### Protocol Interface Structure
 
 ```c
 typedef struct GBL_EFI_AB_SLOT_PROTOCOL {
-  // Currently must contain 0x0000000300000000
   UINT64                              Revision;
   GBL_EFI_AB_SLOT_LOAD_BOOT_DATA      LoadBootData;
   GBL_EFI_AB_SLOT_GET_SLOT_INFO       GetSlotInfo;

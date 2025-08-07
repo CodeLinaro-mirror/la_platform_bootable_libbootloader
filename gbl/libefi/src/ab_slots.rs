@@ -28,14 +28,14 @@ use liberror::{Error, Result};
 
 /// Implementation for A/B slot manager based on custom EFI protocol.
 pub struct ABManager<'a> {
-    protocol: Protocol<'a, ab_slot::GblSlotProtocol>,
+    protocol: Protocol<'a, ab_slot::GblABSlotProtocol>,
     boot_token: Option<BootToken>,
     last_set_active_idx: Option<u8>,
 }
 
 impl<'a> ABManager<'a> {
     #[cfg(test)]
-    fn new_without_token(protocol: Protocol<'a, ab_slot::GblSlotProtocol>) -> Self {
+    fn new_without_token(protocol: Protocol<'a, ab_slot::GblABSlotProtocol>) -> Self {
         Self { protocol, boot_token: None, last_set_active_idx: None }
     }
 }
@@ -243,7 +243,7 @@ mod test {
     }
 
     impl<'a> TestGblOps<'a> {
-        fn new(protocol: Protocol<'a, ab_slot::GblSlotProtocol>) -> Self {
+        fn new(protocol: Protocol<'a, ab_slot::GblABSlotProtocol>) -> Self {
             Self { manager: ABManager::new_without_token(protocol) }
         }
     }
@@ -492,7 +492,7 @@ mod test {
         run_test(|image_handle, systab_ptr| {
             let mut ab = GblEfiABSlotProtocol { flush: Some(flush), ..Default::default() };
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let protocol = generate_protocol::<ab_slot::GblSlotProtocol>(&efi_entry, &mut ab);
+            let protocol = generate_protocol::<ab_slot::GblABSlotProtocol>(&efi_entry, &mut ab);
 
             {
                 let mut persist = |_: &mut [u8]| Ok(());
@@ -513,7 +513,7 @@ mod test {
                 ..Default::default()
             };
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let protocol = generate_protocol::<ab_slot::GblSlotProtocol>(&efi_entry, &mut ab);
+            let protocol = generate_protocol::<ab_slot::GblABSlotProtocol>(&efi_entry, &mut ab);
             let mut persist = |_: &mut [u8]| Ok(());
             let mut test_ops = TestGblOps::new(protocol);
             let mut gbl = Gbl::<TestGblOps>::new(&mut test_ops);
@@ -593,7 +593,7 @@ mod test {
                 ..Default::default()
             };
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let protocol = generate_protocol::<ab_slot::GblSlotProtocol>(&efi_entry, &mut ab);
+            let protocol = generate_protocol::<ab_slot::GblABSlotProtocol>(&efi_entry, &mut ab);
             let mut persist = |_: &mut [u8]| Ok(());
             let mut test_ops = TestGblOps::new(protocol);
             let mut gbl = Gbl::<TestGblOps>::new(&mut test_ops);
@@ -621,7 +621,7 @@ mod test {
         run_test(|image_handle, systab_ptr| {
             let mut ab = GblEfiABSlotProtocol { flush: Some(flush), ..Default::default() };
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let protocol = generate_protocol::<ab_slot::GblSlotProtocol>(&efi_entry, &mut ab);
+            let protocol = generate_protocol::<ab_slot::GblABSlotProtocol>(&efi_entry, &mut ab);
             let mut persist = |_: &mut [u8]| Ok(());
             let mut test_ops = TestGblOps::new(protocol);
             let mut gbl = Gbl::<TestGblOps>::new(&mut test_ops);
@@ -663,7 +663,7 @@ mod test {
                 ..Default::default()
             };
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let protocol = generate_protocol::<ab_slot::GblSlotProtocol>(&efi_entry, &mut ab);
+            let protocol = generate_protocol::<ab_slot::GblABSlotProtocol>(&efi_entry, &mut ab);
             let mut persist = |_: &mut [u8]| Ok(());
             let mut test_ops = TestGblOps::new(protocol);
             let mut gbl = Gbl::<TestGblOps>::new(&mut test_ops);
@@ -692,7 +692,7 @@ mod test {
                 ..Default::default()
             };
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let protocol = generate_protocol::<ab_slot::GblSlotProtocol>(&efi_entry, &mut ab);
+            let protocol = generate_protocol::<ab_slot::GblABSlotProtocol>(&efi_entry, &mut ab);
             let mut persist = |_: &mut [u8]| Ok(());
             let mut test_ops = TestGblOps::new(protocol);
             let mut gbl = Gbl::<TestGblOps>::new(&mut test_ops);
@@ -732,7 +732,7 @@ mod test {
                 ..Default::default()
             };
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let protocol = generate_protocol::<ab_slot::GblSlotProtocol>(&efi_entry, &mut ab);
+            let protocol = generate_protocol::<ab_slot::GblABSlotProtocol>(&efi_entry, &mut ab);
             let mut persist = |_: &mut [u8]| Ok(());
             let mut test_ops = TestGblOps::new(protocol);
             let mut gbl = Gbl::<TestGblOps>::new(&mut test_ops);
@@ -780,7 +780,7 @@ mod test {
                 ..Default::default()
             };
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let protocol = generate_protocol::<ab_slot::GblSlotProtocol>(&efi_entry, &mut ab);
+            let protocol = generate_protocol::<ab_slot::GblABSlotProtocol>(&efi_entry, &mut ab);
             let mut persist = |_: &mut [u8]| Ok(());
             let mut test_ops = TestGblOps::new(protocol);
             let mut gbl = Gbl::<TestGblOps>::new(&mut test_ops);

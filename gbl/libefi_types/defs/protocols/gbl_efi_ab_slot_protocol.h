@@ -26,6 +26,7 @@
 #ifndef __GBL_EFI_AB_SLOT_PROTOCOL_H__
 #define __GBL_EFI_AB_SLOT_PROTOCOL_H__
 
+#include "gbl_protocol_utils.h"
 #include "system_table.h"
 #include "types.h"
 
@@ -73,9 +74,10 @@ typedef struct {
   uint8_t merge_status;
 } GblEfiSlotMetadataBlock;
 
+static const uint64_t GBL_EFI_AB_SLOT_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 1);
+
 typedef struct GblEfiABSlotProtocol {
-  // Revision of the protocol supported.
-  // Currently must contain 0x000003000000
   uint64_t revision;
   // Slot metadata query methods
   EfiStatus (*load_boot_data)(struct GblEfiABSlotProtocol* self,
