@@ -131,6 +131,17 @@ the `/reserved-memory` HLOS device tree node `pkvm_guest_firmware`, marked as
 `compatible="linux,pkvm-guest-firmware-memory"`, following the [pvmfw][pvmfw_firmware_memory]
 specification.
 
+GBL relies on the presence of this protocol to determine whether AVF is
+supported or not. If present, GBL will run AVF-related setup (loading pVM
+firmware and generating configuration data). In addition, GBL will add the
+corresponding bootconfig parameters used by AVF -
+`androidboot.hypervisor.protected_vm.supported`, and
+`androidboot.hypervisor.vm.supported`.
+
+The AVF protocol can be uninstalled at runtime if needed. In that case, GBL
+will skip all the AVF-related work. To uninstall AVF protocol, use the
+`UninstallProtocolInterface` function.
+
 TODO(b/391191885): be less specific about AVF DICE requrements once protocol is
 mainly adopted by the ecosystem.
 
