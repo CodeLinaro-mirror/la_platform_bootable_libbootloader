@@ -14,8 +14,8 @@
 
 use super::{cstr_bytes_to_str, BootBuffer};
 use crate::{
-    android_boot::avf::DEFAULT_PVMFW_PART_NAME_CSTR,
-    constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE},
+    android_boot::{avf::DEFAULT_PVMFW_PART_NAME_CSTR, pvmfw_place_in_memory},
+    constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
     decompress::decompress_kernel,
     gbl_println,
     ops::GblOps,
@@ -25,13 +25,13 @@ use arrayvec::ArrayString;
 use avb::SlotVerifyData;
 use bootimg::{defs::*, BootImage, VendorImageHeader};
 use core::{
-    cmp::max,
     ffi::CStr,
     fmt::Write,
+    mem::take,
     ops::{Deref, Range},
 };
 use liberror::Error;
-use libutils::aligned_subslice;
+use libutils::{aligned_offset, aligned_subslice};
 use safemath::SafeNum;
 use zerocopy::{IntoBytes, Ref};
 
@@ -205,6 +205,7 @@ impl VendorBootImageInfo {
 }
 
 /// Contains various loaded image components by `android_load_verify`
+#[derive(Default)]
 pub struct LoadedImages<'a> {
     /// Boot image header.
     pub boot_hdr: &'a [u8],
@@ -226,6 +227,10 @@ pub struct LoadedImages<'a> {
     pub dtb_part: &'a [u8],
     /// pVM firmware image.
     pub pvmfw: &'a [u8],
+    /// kernel from boot image,
+    pub kernel: &'a [u8],
+    /// ramdisks to be concatenated (vendor_boot+vendor_kernel_boot+init_boot/boot)
+    pub ramdisks: arrayvec::ArrayVec<&'a [u8], 3>,
 }
 
 impl LoadedImages<'_> {
@@ -242,23 +247,6 @@ impl LoadedImages<'_> {
                 _ => true,
             },
             BootImage::V4(_) => return true,
-        }
-    }
-}
-
-impl<'a> Default for LoadedImages<'a> {
-    fn default() -> Self {
-        Self {
-            boot_hdr: &[][..],
-            dtbo: &[][..],
-            boot_cmdline: "",
-            init_boot: &[][..],
-            vendor_boot: &[][..],
-            vendor_cmdline: "",
-            vendor_bootconfig: &[][..],
-            dtb: &[][..],
-            dtb_part: &[][..],
-            pvmfw: &[][..],
         }
     }
 }
@@ -329,7 +317,6 @@ pub(super) fn android_load_verified<'a, 'b, 'c>(
     slot: u8,
     unlocked: bool,
     verify_data: &'c SlotVerifyData,
-    loader: &mut BootBufferLoader<'_>,
 ) -> Result<LoadedImages<'c>, Error> {
     let mut images = LoadedImages::default();
     images.dtb_part = get_verified_partition(ops, c"dtb", slot, unlocked, true, verify_data)?;
@@ -342,10 +329,10 @@ pub(super) fn android_load_verified<'a, 'b, 'c>(
     images.boot_hdr = boot;
     match log_and_parse_bootimg(ops, boot)? {
         BootImage::V3(_) | BootImage::V4(_) => {
-            load_v3_and_v4_verified(ops, boot, slot, unlocked, verify_data, loader, &mut images)
+            load_v3_and_v4_verified(ops, boot, slot, unlocked, verify_data, &mut images)
         }
         BootImage::V0(_) | BootImage::V1(_) | BootImage::V2(_) => {
-            load_v2_or_lower_verified(ops, boot, loader, &mut images)
+            load_v2_or_lower_verified(boot, &mut images)
         }
     }?;
     Ok(images)
@@ -366,16 +353,15 @@ pub(super) fn android_load_verified<'a, 'b, 'c>(
 /// * Both kernel and ramdisk come from the boot image.
 /// * vendor_boot, init_boot are irrelevant.
 fn load_v2_or_lower_verified<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
     boot: &'c [u8],
-    loader: &mut BootBufferLoader<'_>,
     images: &mut LoadedImages<'c>,
 ) -> Result<(), Error> {
     let info = BootImageV2Info::new(boot).unwrap();
     images.boot_cmdline = info.cmdline;
     images.dtb = get_range(boot, &info.dtb_range)?;
-    loader.kernel_load(ops, get_range(boot, &info.kernel_range)?)?;
-    loader.ramdisk_append(get_range(boot, &info.ramdisk_range)?)
+    images.kernel = get_range(boot, &info.kernel_range)?;
+    images.ramdisks.push(get_range(boot, &info.ramdisk_range)?);
+    Ok(())
 }
 
 /// Loads android boot images of version 3 and 4 from avb verified partitions.
@@ -426,7 +412,6 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     slot: u8,
     unlocked: bool,
     verify_data: &'c SlotVerifyData,
-    loader: &mut BootBufferLoader<'_>,
     images: &mut LoadedImages<'c>,
 ) -> Result<(), Error> {
     let boot_info = BootImageV3Info::new(boot).unwrap();
@@ -441,9 +426,8 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     images.dtb = get_range(vendor_boot, &vendor_boot_info.dtb_range)?;
     images.vendor_bootconfig = get_range(vendor_boot, &vendor_boot_info.bootconfig_range)?;
 
-    loader.kernel_load(ops, get_range(boot, &boot_info.kernel_range)?)?;
-
-    loader.ramdisk_append(get_range(vendor_boot, &vendor_boot_info.ramdisk_range)?)?;
+    images.kernel = get_range(boot, &boot_info.kernel_range)?;
+    images.ramdisks.push(get_range(vendor_boot, &vendor_boot_info.ramdisk_range)?);
 
     // Finds and loads vendor_kernel_boot partition if provided.
     let vendor_kernel_boot =
@@ -452,7 +436,7 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
         let info = VendorBootImageInfo::new(vendor_kernel_boot)?;
         // DTB should be provided by vendor_kerenl_boot if it exists.
         images.dtb = get_range(vendor_kernel_boot, &info.dtb_range)?;
-        loader.ramdisk_append(get_range(vendor_kernel_boot, &info.ramdisk_range)?)?;
+        images.ramdisks.push(get_range(vendor_kernel_boot, &info.ramdisk_range)?);
     }
 
     // Loads generic ramdisk, which may come from either boot or init_boot.
@@ -465,7 +449,8 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
         false => boot,
     };
     let generic_ramdisk_range = BootImageV3Info::new(generic_ramdisk)?.ramdisk_range;
-    loader.ramdisk_append(get_range(generic_ramdisk, &generic_ramdisk_range)?)
+    images.ramdisks.push(get_range(generic_ramdisk, &generic_ramdisk_range)?);
+    Ok(())
 }
 
 /// Wrapper of `split_at_mut_checked` with error conversion.
@@ -526,7 +511,6 @@ pub(super) struct BootBufferLoader<'a> {
     pub(super) bootconfig_sz: usize,
     pub(super) kernel_sz: usize,
 
-    general_ramdisk: Range<usize>,
     general_fdt: Range<usize>,
     general_kernel: Range<usize>,
 }
@@ -536,8 +520,29 @@ impl<'a> BootBufferLoader<'a> {
         Self { bufs, ..Default::default() }
     }
 
+    /// Loads pvmfw image.
+    pub(super) fn pvmfw_load(&mut self, img: &[u8]) -> Result<&'a mut [u8], Error> {
+        // TODO(b/429168146): Handled configuration from AVF protocols.
+        Ok(match self.bufs.pvmfw_data.as_mut() {
+            Some(v) => pvmfw_place_in_memory(img, v, [&[]; 4]).map(|sz| &mut take(v)[..sz])?,
+            _ => {
+                // Split out buffer from general load for loading pvmfw.
+                // Buffer must not be used yet.
+                assert_eq!(self.ramdisk_sz, 0);
+                assert_eq!(self.bootconfig_sz, 0);
+                assert_eq!(self.general_fdt, 0..0);
+                assert_eq!(self.general_kernel, 0..0);
+                let off = aligned_offset(&self.bufs.general[..], PVMFW_DATA_ALIGNMENT)?;
+                let sz = pvmfw_place_in_memory(img, &mut self.bufs.general[off..], [&[]; 4])?;
+                let (pvmfw, general) = take(&mut self.bufs.general)[off..].split_at_mut(sz);
+                self.bufs.general = general;
+                pvmfw
+            }
+        })
+    }
+
     /// Decompresses and loads kernel into the kernel buffer.
-    fn kernel_load<'b, 'c>(
+    pub(super) fn kernel_load<'b, 'c>(
         &mut self,
         ops: &mut impl GblOps<'b, 'c>,
         kernel: &[u8],
@@ -548,12 +553,12 @@ impl<'a> BootBufferLoader<'a> {
             Some(v) => decompress_kernel(ops, kernel, v)?,
             // Use general buffer. decompresses at the tail of the buffer.
             _ => {
-                // We assume entire general buffer is available, which means other components
-                // shouldn't be loaded yet.
-                assert_eq!(self.general_ramdisk, 0..0);
+                // This step assumes ramdisk has been loaded, bootconfig and fdt haven't.
                 assert_eq!(self.bootconfig_sz, 0);
-                assert_eq!(self.general_fdt, 0..0);
-                let sz = decompress_kernel(ops, kernel, self.bufs.general)?;
+                assert_eq!(self.general_fdt.len(), 0);
+                let general_range = self.bufs.general.as_ptr_range();
+                let buffer = &mut self.bufs.general[self.ramdisk_sz..];
+                let sz = decompress_kernel(ops, kernel, &mut buffer[..])?;
                 // TODO(b/430068343): We place the kenrel at the tail because we haven't fixup
                 // FDT/bootconfig yet and don't know their exact size. However the fixup requires
                 // calling sync_partition_buffer() first which requires all partition buffers to
@@ -561,30 +566,36 @@ impl<'a> BootBufferLoader<'a> {
                 //
                 // Investigate if partition drop can be relaxed (i.e. adding a read-only mode for
                 // sync_partition_buffer()) so that this can be avoided.
-                let off = aligned_tail_offset(self.bufs.general, sz, KERNEL_ALIGNMENT)?;
-                self.bufs.general.copy_within(0..sz, off);
-                self.general_kernel = off..off + sz;
+                let off = aligned_tail_offset(&mut buffer[..], sz, KERNEL_ALIGNMENT)?;
+                buffer.copy_within(0..sz, off);
+                self.general_kernel =
+                    sub_slice_range(&general_range, &buffer[off..][..sz].as_ptr_range()).unwrap();
                 sz
             }
         };
         Ok(())
     }
 
-    /// Appends ramdisks to the ramdisk buffer.
-    fn ramdisk_append(&mut self, ramdisk: &[u8]) -> Result<(), Error> {
-        match self.bufs.ramdisk.as_mut() {
-            Some(v) => split(&mut v[self.ramdisk_sz..], ramdisk.len())?.0.clone_from_slice(ramdisk),
+    /// Loads ramdisks to the buffer.
+    pub(super) fn ramdisk_load(&mut self, ramdisks: &[&[u8]]) -> Result<(), Error> {
+        self.ramdisk_sz = ramdisks.iter().map(|v| v.len()).sum();
+        let mut rem = match self.bufs.ramdisk.as_mut() {
+            Some(v) => v,
             _ => {
-                // We assume all buffer before kernel is available. Thus bootconfig/fdt must not be
-                // loaded.
+                // This step assumes all buffer is available. Nothing should be loaded yet.
+                assert_eq!(self.kernel_sz, 0);
                 assert_eq!(self.bootconfig_sz, 0);
-                assert_eq!(self.general_fdt, 0..0);
-                let load = &mut self.bufs.general[..self.general_kernel.start][self.ramdisk_sz..];
-                split(load, ramdisk.len())?.0.clone_from_slice(ramdisk);
-                self.general_ramdisk.end = self.ramdisk_sz + ramdisk.len();
+                assert_eq!(self.general_fdt.len(), 0);
+                self.general_fdt = self.ramdisk_sz..self.ramdisk_sz;
+                self.bufs.general = aligned_subslice(take(&mut self.bufs.general), PAGE_SIZE)?;
+                split(self.bufs.general, self.ramdisk_sz)?.0
             }
+        };
+        let mut curr;
+        for v in ramdisks {
+            (curr, rem) = split(rem, v.len()).unwrap();
+            curr.clone_from_slice(v);
         }
-        self.ramdisk_sz += ramdisk.len();
         Ok(())
     }
 
@@ -614,7 +625,7 @@ impl<'a> BootBufferLoader<'a> {
         match self.bufs.ramdisk.is_some() {
             // Designated ramdisk. The segment is unused in general load buffer.
             true => Ok(0),
-            _ => Ok((SafeNum::from(self.general_ramdisk.end) + self.bootconfig_sz).try_into()?),
+            _ => Ok((SafeNum::from(self.ramdisk_sz) + self.bootconfig_sz).try_into()?),
         }
     }
 
@@ -675,11 +686,12 @@ impl<'a> BootBufferLoader<'a> {
         // Kernel may require additional memory after it for stuffs such as bss section. If kernel
         // is loaded in general buffer, moves it forward to reserve as much space as possible after
         // it.
-        if self.bufs.kernel.is_none() {
-            let bound = max(self.general_bootconfig_end().unwrap(), self.general_fdt.end);
-            self.general_kernel =
-                move_left(self.bufs.general, &self.general_kernel, bound, KERNEL_ALIGNMENT)
-                    .unwrap();
+        let bound = self.general_fdt.end;
+        self.general_kernel = match self.bufs.kernel {
+            Some(_) => bound..bound,
+            _ => {
+                move_left(self.bufs.general, &self.general_kernel, bound, KERNEL_ALIGNMENT).unwrap()
+            }
         }
     }
 
@@ -690,13 +702,13 @@ impl<'a> BootBufferLoader<'a> {
             kernel: self.bufs.kernel.as_mut().map(|v| v as _),
             ramdisk: self.bufs.ramdisk.as_mut().map(|v| v as _),
             fdt: self.bufs.fdt.as_mut().map(|v| v as _),
+            pvmfw_data: self.bufs.pvmfw_data.as_mut().map(|v| v as _),
         };
         BootBufferLoader {
             bufs,
             ramdisk_sz: self.ramdisk_sz,
             bootconfig_sz: self.bootconfig_sz,
             kernel_sz: self.kernel_sz,
-            general_ramdisk: self.general_ramdisk.clone(),
             general_fdt: self.general_fdt.clone(),
             general_kernel: self.general_kernel.clone(),
         }

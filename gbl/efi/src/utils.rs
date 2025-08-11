@@ -30,7 +30,7 @@ use efi::{
 };
 use efi_types::{
     EfiGuid, EfiInputKey, GBL_EFI_BOOT_BUFFER_TYPE_FDT, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
-    GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_IMAGE_TYPE_OS_LOAD,
+    GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_IMAGE_TYPE_OS_LOAD, GBL_IMAGE_TYPE_PVMFW_DATA,
 };
 use fdt::FdtHeader;
 use liberror::Error;
@@ -247,7 +247,8 @@ pub(crate) struct GblEfiBootBuffer {
     kernel: Option<GblVendorReservedMemory>,
     ramdisk: Option<GblVendorReservedMemory>,
     fdt: Option<GblVendorReservedMemory>,
-    // TODO(b/430068343): Support pvmfw.
+    // TODO(b/430068343): Switch to Option<GblVendorReservedMemory> from GblEfiBootMemoryProtocol.
+    pvmfw_data: Option<&'static mut [u8]>,
 }
 
 impl GblEfiBootBuffer {
@@ -257,6 +258,7 @@ impl GblEfiBootBuffer {
             kernel: self.kernel.as_mut().map(|v| v as _),
             ramdisk: self.ramdisk.as_mut().map(|v| v as _),
             fdt: self.fdt.as_mut().map(|v| v as _),
+            pvmfw_data: self.pvmfw_data.as_mut().map(|v| v as _),
         }
     }
 }
@@ -273,5 +275,11 @@ pub(crate) fn get_boot_buffer(entry: &EfiEntry, default: usize) -> Result<GblEfi
         v => v.map(|v| Some(v)),
     });
     let general = take_legacy_os_load(entry, default);
-    Ok(GblEfiBootBuffer { general, kernel: kernel?, ramdisk: ramdisk?, fdt: fdt? })
+    // TODO(b/430068343): Switch to `gbl_get_boot_buffer` and GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA.
+    let pvmfw_data =
+        match get_platform_buffer_info(entry, from_utf8(GBL_IMAGE_TYPE_PVMFW_DATA).unwrap(), 0) {
+            BufferInfo::Static(v) => Some(v),
+            _ => None,
+        };
+    Ok(GblEfiBootBuffer { general, kernel: kernel?, ramdisk: ramdisk?, fdt: fdt?, pvmfw_data })
 }
