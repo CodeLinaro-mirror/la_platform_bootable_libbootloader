@@ -446,6 +446,17 @@ pub trait GblOps<'a, 'd> {
         components: &mut device_tree::DeviceTreeComponentsRegistry,
     ) -> Result<(), Error>;
 
+    /// Selects FIT configuration from FIT FDT.
+    ///
+    /// Refer to the behavior specified for the corresponding UEFI
+    /// interface:
+    /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
+    fn select_fit_configuration(
+        &mut self,
+        fit: &[u8],
+        metadata: Option<&[u8]>,
+    ) -> Result<Option<usize>, Error>;
+
     /// Provide writtable buffer of the device tree built by GBL.
     ///
     /// Modified device tree will be verified and used to boot a device. Refer to the behavior
@@ -817,6 +828,14 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         components_registry: &mut device_tree::DeviceTreeComponentsRegistry,
     ) -> Result<(), Error> {
         self.ops.select_device_trees(components_registry)
+    }
+
+    fn select_fit_configuration(
+        &mut self,
+        fit: &[u8],
+        metadata: Option<&[u8]>,
+    ) -> Result<Option<usize>, Error> {
+        self.ops.select_fit_configuration(fit, metadata)
     }
 
     async fn read_from_partition<'b>(
@@ -1548,6 +1567,14 @@ pub(crate) mod test {
                 .for_each(|v| v.selected = true);
             // Select the first base device tree.
             device_tree.autoselect()
+        }
+
+        fn select_fit_configuration(
+            &mut self,
+            _fit: &[u8],
+            _metadata: Option<&[u8]>,
+        ) -> Result<Option<usize>, Error> {
+            Ok(None)
         }
 
         fn fastboot_variable<'arg>(

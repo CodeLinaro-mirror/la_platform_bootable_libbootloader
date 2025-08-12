@@ -697,6 +697,31 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
+    fn select_fit_configuration(
+        &mut self,
+        fit: &[u8],
+        metadata: Option<&[u8]>,
+    ) -> Result<Option<usize>> {
+        match self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblOsConfigurationProtocol>()
+        {
+            Ok(protocol) => {
+                let metadata_slice = metadata.unwrap_or(&[]);
+                match protocol.select_fit_configuration(fit, metadata_slice) {
+                    Ok(selected_config) => Ok(Some(selected_config)),
+                    Err(Error::NotImplemented) => Ok(None),
+                    Err(e) => Err(e),
+                }
+            }
+            // Protocol is optional.
+            Err(Error::NotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     fn fastboot_variable<'arg>(
         &mut self,
         name: &CStr,
