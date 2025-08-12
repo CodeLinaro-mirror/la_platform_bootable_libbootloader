@@ -24,7 +24,7 @@ use crate::{
         GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
     },
     gbl_println,
-    ops::RebootMode,
+    ops::{PartitionBuffer, RebootMode},
     GblOps, Result,
 };
 use bootparams::{
@@ -96,7 +96,14 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     // TODO(b/430068343): Also include vendor provided partitions for verification.
     for part in STANDARD_PARTITIONS {
         match ops.get_partition_buffer(*part) {
-            Ok(v) => preloaded.push((part, v)),
+            Ok(v) => {
+                let info = match v {
+                    PartitionBuffer::Preloaded(_) => "preloaded",
+                    PartitionBuffer::Designated(_) => "designated load",
+                };
+                gbl_println!(ops, "Found {info} buffer for {:?}", part.name());
+                preloaded.push((part, v))
+            }
             Err(Error::NotFound) => {
                 if ops.partition_size(&part.slotted(slot)?)?.is_some() {
                     partitions.try_push(part.name_cstr())?

@@ -20,7 +20,9 @@ use core::{slice::from_raw_parts_mut, str::from_utf8, time::Duration};
 use efi::{
     protocol::{
         device_path::{DevicePathProtocol, DevicePathText, DevicePathToTextProtocol},
-        gbl_efi_boot_memory::{gbl_get_boot_buffer, GblVendorReservedMemory},
+        gbl_efi_boot_memory::{
+            gbl_clear_boot_buffer, gbl_get_boot_buffer, GblVendorReservedMemory,
+        },
         gbl_efi_image_loading::EfiImageBufferInfo,
         loaded_image::LoadedImageProtocol,
         simple_text_input::SimpleTextInputProtocol,
@@ -29,8 +31,11 @@ use efi::{
     DeviceHandle, EfiEntry,
 };
 use efi_types::{
-    EfiGuid, EfiInputKey, GBL_EFI_BOOT_BUFFER_TYPE_FDT, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
-    GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_IMAGE_TYPE_OS_LOAD, GBL_IMAGE_TYPE_PVMFW_DATA,
+    EfiGuid, EfiInputKey, GblEfiBootBufferType, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD,
+    GBL_EFI_BOOT_BUFFER_TYPE_FDT, GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD,
+    GBL_EFI_BOOT_BUFFER_TYPE_KERNEL, GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA,
+    GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_IMAGE_TYPE_FASTBOOT, GBL_IMAGE_TYPE_OS_LOAD,
+    GBL_IMAGE_TYPE_PVMFW_DATA,
 };
 use fdt::FdtHeader;
 use liberror::Error;
@@ -227,38 +232,74 @@ pub(crate) fn get_platform_buffer_info(
 
 pub(crate) const SZ_MB: usize = 1024 * 1024;
 
-/// Take legacy os_load buffer using GblEfiImageLoading protocol.
-// TODO(b/430068343): Switch to `gbl_get_boot_buffer` and GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD.
-fn take_legacy_os_load(entry: &EfiEntry, default: usize) -> &'static mut [u8] {
-    let img_type_os_load = from_utf8(GBL_IMAGE_TYPE_OS_LOAD).unwrap();
-    match get_platform_buffer_info(&entry, img_type_os_load, default) {
-        BufferInfo::Static(v) => v,
-        BufferInfo::Alloc(sz) => {
-            let alloc = vec![0u8; sz];
-            efi_println!(entry, "Allocated {:#x} bytes for OS load buffer.", alloc.len());
-            alloc.leak()
+/// Represents a buffer from either GblEfiImageLoading protocol or GblEfiBootMemory protocol.
+// TODO(b/430068343): Switch to GblEfiBootMemory entirely.
+enum VendorReservedMemory {
+    /// From GblEfiImageLoading protocol.
+    Legacy(&'static mut [u8]),
+    /// From GblEfiBootMemory protocol.
+    Buffer(GblVendorReservedMemory),
+}
+
+impl VendorReservedMemory {
+    /// Gets the buffer
+    fn get(&mut self) -> &mut [u8] {
+        match self {
+            Self::Legacy(ref mut v) => v,
+            Self::Buffer(ref mut v) => v,
         }
     }
 }
 
+/// Finds boot buffer from GblEfiBootMemoryProtocol or GlbEfiImageLoadingProtocol.
+fn get_boot_buffer_check_legacy(
+    entry: &EfiEntry,
+    buffer_type: GblEfiBootBufferType,
+    legacy_type: &str,
+    default: usize,
+) -> Result<Option<VendorReservedMemory>> {
+    // Check if platform is using legacy GblEfiImageLoading protocol.
+    let res = match get_platform_buffer_info(&entry, legacy_type, 0) {
+        BufferInfo::Static(v) => Some(v),
+        BufferInfo::Alloc(sz) if sz != 0 => {
+            let alloc = vec![0u8; sz];
+            efi_println!(entry, "Allocated {sz:#x} bytes for {legacy_type:?} buffer.");
+            Some(alloc.leak())
+        }
+        _ => None,
+    };
+
+    Ok(match res {
+        Some(v) => {
+            efi_println!(entry, "Warning: GblEfiImageLoading protocol is being deprecated");
+            efi_println!(entry, "Please migrate to GblEfiBootMemory protocol");
+            Some(VendorReservedMemory::Legacy(v))
+        }
+        _ => match gbl_get_boot_buffer(entry, buffer_type, default) {
+            Err(Error::NotFound) => None,
+            v => Some(VendorReservedMemory::Buffer(v?)),
+        },
+    })
+}
+
 /// Intermediate strucutre that can generate a `BootBuffer` instance.
 pub(crate) struct GblEfiBootBuffer {
-    general: &'static mut [u8],
+    general: VendorReservedMemory,
     kernel: Option<GblVendorReservedMemory>,
     ramdisk: Option<GblVendorReservedMemory>,
     fdt: Option<GblVendorReservedMemory>,
     // TODO(b/430068343): Switch to Option<GblVendorReservedMemory> from GblEfiBootMemoryProtocol.
-    pvmfw_data: Option<&'static mut [u8]>,
+    pvmfw_data: Option<VendorReservedMemory>,
 }
 
 impl GblEfiBootBuffer {
     pub(crate) fn to_boot_buffer(&mut self) -> BootBuffer<'_> {
         BootBuffer {
-            general: self.general,
+            general: self.general.get(),
             kernel: self.kernel.as_mut().map(|v| v as _),
             ramdisk: self.ramdisk.as_mut().map(|v| v as _),
             fdt: self.fdt.as_mut().map(|v| v as _),
-            pvmfw_data: self.pvmfw_data.as_mut().map(|v| v as _),
+            pvmfw_data: self.pvmfw_data.as_mut().map(|v| v.get()),
         }
     }
 }
@@ -274,12 +315,56 @@ pub(crate) fn get_boot_buffer(entry: &EfiEntry, default: usize) -> Result<GblEfi
         Err(Error::NotFound) => Ok(None),
         v => v.map(|v| Some(v)),
     });
-    let general = take_legacy_os_load(entry, default);
-    // TODO(b/430068343): Switch to `gbl_get_boot_buffer` and GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA.
-    let pvmfw_data =
-        match get_platform_buffer_info(entry, from_utf8(GBL_IMAGE_TYPE_PVMFW_DATA).unwrap(), 0) {
-            BufferInfo::Static(v) => Some(v),
-            _ => None,
-        };
+
+    let general = get_boot_buffer_check_legacy(
+        entry,
+        GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD,
+        from_utf8(GBL_IMAGE_TYPE_OS_LOAD).unwrap(),
+        default,
+    )?
+    .unwrap();
+    let pvmfw_data = get_boot_buffer_check_legacy(
+        entry,
+        GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA,
+        from_utf8(GBL_IMAGE_TYPE_PVMFW_DATA).unwrap(),
+        0,
+    )?;
     Ok(GblEfiBootBuffer { general, kernel: kernel?, ramdisk: ramdisk?, fdt: fdt?, pvmfw_data })
+}
+
+/// Represents a fastboot buffer
+pub(crate) struct FastbootBuffer<'a> {
+    entry: &'a EfiEntry,
+    // Uses option so that we can manually drop it.
+    buffer: Option<VendorReservedMemory>,
+}
+
+impl<'a> FastbootBuffer<'a> {
+    /// Requests the buffer.
+    pub(crate) fn new(entry: &'a EfiEntry) -> Result<Self> {
+        let buffer = Some(
+            get_boot_buffer_check_legacy(
+                entry,
+                GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD,
+                from_utf8(GBL_IMAGE_TYPE_FASTBOOT).unwrap(),
+                512 * SZ_MB,
+            )?
+            .unwrap(),
+        );
+        Ok(FastbootBuffer { entry, buffer })
+    }
+
+    /// Gets the buffer
+    pub(crate) fn get(&mut self) -> &mut [u8] {
+        self.buffer.as_mut().unwrap().get()
+    }
+}
+
+impl Drop for FastbootBuffer<'_> {
+    fn drop(&mut self) {
+        if let VendorReservedMemory::Legacy(_) = self.buffer.take().unwrap() {
+            return;
+        }
+        gbl_clear_boot_buffer(self.entry, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD).unwrap();
+    }
 }

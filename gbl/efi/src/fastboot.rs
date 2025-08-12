@@ -17,9 +17,9 @@
 // `android_boot:android_boot_demo()` and `fuchsia_boot:fuchsia_boot_demo()` for
 // supported/unsupported features at the moment.
 
-use crate::utils::{get_platform_buffer_info, BufferInfo, SZ_MB};
+use crate::utils::FastbootBuffer;
 use alloc::{boxed::Box, vec::Vec};
-use core::{future::Future, mem::take, pin::Pin, str::from_utf8, time::Duration};
+use core::{future::Future, mem::take, pin::Pin, time::Duration};
 use efi::{
     efi_println,
     local_session::LocalFastbootSession,
@@ -29,7 +29,6 @@ use efi::{
     },
     EfiEntry, WatchdogTimerCode,
 };
-use efi_types::GBL_IMAGE_TYPE_FASTBOOT;
 use fastboot::{Transport, MAX_COMMAND_SIZE};
 use gbl_async::{poll, YieldCounter};
 use liberror::{Error, Result};
@@ -299,22 +298,10 @@ impl<'a> PinFutContainer<'a> for VecPinFut<'a> {
 pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
     entry: &EfiEntry,
     fb: GblFastbootEntry<'_, G>,
-    fastboot_buffer_info: &mut Option<BufferInfo>,
 ) {
-    let img_type_fastboot = from_utf8(GBL_IMAGE_TYPE_FASTBOOT).unwrap();
-    // Checks if we have a reserved buffer for fastboot
-    // Note: `get_or_insert_with` lazily evaluates closure (only when insert is necessary).
-    let buffer = fastboot_buffer_info
-        .get_or_insert_with(|| get_platform_buffer_info(&entry, img_type_fastboot, 512 * SZ_MB));
-    let mut alloc;
-    let buffer = match buffer {
-        BufferInfo::Static(v) => &mut v[..],
-        BufferInfo::Alloc(sz) => {
-            alloc = vec![0u8; *sz];
-            efi_println!(entry, "Allocated {:#x} bytes for fastboot buffer.", alloc.len());
-            &mut alloc
-        }
-    };
+    // Not expected to fail since this function is the only user of the buffer.
+    let mut buffer = FastbootBuffer::new(entry).unwrap();
+    let buffer = buffer.get();
 
     let local = LocalFastbootSession::start(entry, Duration::from_millis(1))
         .inspect(|_| efi_println!(entry, "Starting local bootmenu."))

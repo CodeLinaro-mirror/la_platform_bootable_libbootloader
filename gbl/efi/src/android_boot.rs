@@ -27,9 +27,8 @@ pub fn efi_android_load<'a>(
     load: BootBuffer<'a>,
 ) -> Result<(&'a mut [u8], &'a mut [u8], &'a mut [u8], &'a mut [u8])> {
     let entry = ops.efi_entry;
-    let mut fastboot_buffer_info = None;
     gbl_println!(ops, "Try booting as Android");
-    Ok(android_main(ops, load, |fb| efi_gbl_fastboot_entry(entry, fb, &mut fastboot_buffer_info))?)
+    Ok(android_main(ops, load, |fb| efi_gbl_fastboot_entry(entry, fb))?)
 }
 
 /// Exits boot services and boots loaded android images.

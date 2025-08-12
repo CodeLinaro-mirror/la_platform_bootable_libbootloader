@@ -36,6 +36,7 @@ use efi::{
         gbl_efi_ab_slot::GblABSlotProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
+        gbl_efi_boot_memory::{gbl_get_partition_buffer, gbl_sync_partition_buffer},
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
@@ -566,15 +567,19 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
     fn get_partition_buffer(
         &self,
-        _: Partition,
+        part: Partition,
     ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'b>> {
-        // TODO(b/430068343): Calls GblEfiBootMemoryProtocol API.
-        Err::<PartitionBuffer<&mut [u8]>, _>(Error::NotFound)
+        Ok(match gbl_get_partition_buffer(self.efi_entry, part.name())? {
+            v if v.is_preloaded() => PartitionBuffer::Preloaded(v),
+            v => PartitionBuffer::Designated(v),
+        })
     }
 
-    fn sync_partition_buffer(&mut self, _: bool) -> Result<()> {
-        // TODO(b/430068343): Calls GblEfiBootMemoryProtocol API.
-        Ok(())
+    fn sync_partition_buffer(&mut self, sync_preloaded: bool) -> Result<()> {
+        match gbl_sync_partition_buffer(self.efi_entry, sync_preloaded) {
+            Err(Error::NotFound) => Ok(()),
+            v => v,
+        }
     }
 
     fn get_image_buffer(

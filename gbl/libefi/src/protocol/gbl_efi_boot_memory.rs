@@ -313,7 +313,6 @@ fn boot_buffer_op(entry: &EfiEntry, op: BootBufferOp) -> Result<Option<GblVendor
     // The global pool is defined within this function to prevent it from being accidentally
     // accessed by code outside of this function.
     static BOOT_BUFFER_POOL: BufferPool<'static, BUFFER_TYPE_NUM> = BufferPool::new();
-    let protocol = get_protocol(entry)?;
     match op {
         BootBufferOp::Get(buf_type, default_alloc) => {
             let (name, align) = boot_buf_info(buf_type);
@@ -327,20 +326,22 @@ fn boot_buffer_op(entry: &EfiEntry, op: BootBufferOp) -> Result<Option<GblVendor
             // Finds an empty slot in the pool.
             let mut add = BOOT_BUFFER_POOL.get(name, true)?;
             let (mut addr, mut sz) = (null_mut(), Default::default());
-            // SAFETY:
-            // * `protocol.interface()?` guarantees protocol.interface is non-null and points to a
-            //   valid object established by `Protocol::new()`.
-            // * `addr`, `size` point to valid data and are output parameters. They outlive the
-            //   call and will not be retained.
-            let res = unsafe {
-                efi_call!(
-                    protocol.interface().get_boot_buffer,
-                    protocol.interface_ptr(),
-                    buf_type,
-                    &mut sz,
-                    &mut addr,
-                )
-            };
+
+            let res = get_protocol(entry).and_then(|v| {
+                // SAFETY:
+                // * `v.interface_ptr()` points to a valid object established by `Protocol::new()`.
+                // * `addr`, `sz` point to valid data and are output parameters. They outlive the
+                //   call and will not be retained.
+                unsafe {
+                    efi_call!(
+                        v.interface().get_boot_buffer,
+                        v.interface_ptr(),
+                        buf_type,
+                        &mut sz,
+                        &mut addr,
+                    )
+                }
+            });
             // Pattern matching must use constant variable, otherwise the compiler treats it as
             // binding.
             const NULL_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
@@ -349,9 +350,11 @@ fn boot_buffer_op(entry: &EfiEntry, op: BootBufferOp) -> Result<Option<GblVendor
                 (Ok((NULL_PTR, size)), _) | (Err(Error::NotFound), size) if size > 0 => {
                     let buffer = vec![0u8; size + align - 1];
                     let offset = buffer.as_ptr().align_offset(align);
+                    efi_println!(entry, "Allocated {size:#x} bytes for {name:?} buffer.");
                     Buffer::Allocated { buffer, offset, size }
                 }
                 (Ok((addr, sz)), _) => {
+                    efi_println!(entry, "Found {name:?} buffer: addr {addr:?}, sz: {sz:#x}.");
                     // SAFETY:
                     // * Protocol spec requires that the returned buffer must be valid for
                     //   read/write, have static lifetime and be exclusively accessed by GBL.
@@ -367,7 +370,16 @@ fn boot_buffer_op(entry: &EfiEntry, op: BootBufferOp) -> Result<Option<GblVendor
             };
             Ok(Some(add))
         }
-        BootBufferOp::Clear(v) => BOOT_BUFFER_POOL.clear(boot_buf_info(v).0).map(|_| None),
+        BootBufferOp::Clear(v) => {
+            let name = boot_buf_info(v).0;
+            match BOOT_BUFFER_POOL.clear(name)? {
+                Buffer::Allocated { .. } => {
+                    efi_println!(entry, "Released allocated buffer for {name:?}.");
+                }
+                _ => {}
+            }
+            Ok(None)
+        }
     }
 }
 
