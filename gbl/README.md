@@ -164,6 +164,11 @@ debugging x86_64 GBL EFI app on QEMU using rust-gdb. To try the example:
    sudo apt-get install qemu-system ovmf
    ```
 
+   For aarch64 target debugging, also install:
+   ```
+   sudo apt-get install gdb-multiarch
+   ```
+
 2. Runs the following script:
    ```
    ./qemu_gdb_example/launch_qemu_gdb.sh
@@ -171,6 +176,11 @@ debugging x86_64 GBL EFI app on QEMU using rust-gdb. To try the example:
 
    The above command builds a debug x86_64 GBL EFI app, launches it in QEMU
    and starts `rust-gdb` in a separate terminal for debugging.
+
+   For debugging aarch64 target, run:
+   ```
+   ./qemu_gdb_example/launch_qemu_gdb.sh aarch64
+   ```
 
 ### Boot Fuchsia on emulator
 

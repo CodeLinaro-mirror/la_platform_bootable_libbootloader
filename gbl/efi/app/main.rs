@@ -94,11 +94,12 @@ fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
     let image_base = gbl_efi::utils::image_base(entry)?;
     efi_println!(entry, "Image base: {:#x}", image_base);
     let mut buf = [0u8; 1];
-    if entry
-        .system_table()
-        .runtime_services()
-        .get_variable(&efi::EFI_GLOBAL_VARIABLE_GUID, "gbl_debug", &mut buf)
-        .is_ok()
+    if cfg!(feature = "always-wait-gdb")
+        || entry
+            .system_table()
+            .runtime_services()
+            .get_variable(&efi::EFI_GLOBAL_VARIABLE_GUID, "gbl_debug", &mut buf)
+            .is_ok()
     {
         #[cfg(target_arch = "x86_64")]
         {

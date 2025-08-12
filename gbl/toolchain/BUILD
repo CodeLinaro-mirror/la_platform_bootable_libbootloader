@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@bazel_skylib//rules:common_settings.bzl", "bool_setting")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "bool_setting")
 load(
     "@gbl_llvm_prebuilts//:info.bzl",
     "GBL_EFI_SYSROOT",
@@ -226,6 +226,22 @@ bool_setting(
 config_setting(
     name = "rust_no_sysroot_true",
     flag_values = {":rust_no_sysroot": "True"},
+)
+
+# For the end-to-end GDB example, we are using prebuilt UEFI firmware which doesn't have our custom
+# `gbl_debug` EFI variables. Thus for the example, we use a build flag to force enable waiting for
+# gdb connection.
+bool_flag(
+    name = "always_wait_gdb",
+    build_setting_default = False,
+    help = "Whether to enable always waiting for gdb connection",
+)
+
+config_setting(
+    name = "always_wait_gdb_enabled",
+    flag_values = {
+        ":always_wait_gdb": "True",
+    },
 )
 
 builtin_includes_common = [
@@ -556,6 +572,21 @@ toolchain(
     toolchain_type = "@rules_rust//rust:toolchain",
 )
 
+msvc_rustc_debug_common = [
+    "--cfg",
+    "feature=\"gdb_debug\"",
+    # This also generates symbols in the EFI app binary (in addition to DWARF files) and makes
+    # it easier to read its disassembly.
+    "-C",
+    "link-args=/debug:dwarf",
+] + select({
+    ":always_wait_gdb_enabled": [
+        "--cfg",
+        "feature=\"always-wait-gdb\"",
+    ],
+    "//conditions:default": [],
+})
+
 # x64 debug target
 rust_toolchain(
     name = "x86_64-unknown-uefi-debug",
@@ -567,9 +598,7 @@ rust_toolchain(
     extra_rustc_flags = [
         "-Z",
         "cf-protection=full",
-        "--cfg",
-        "feature=\"gdb_debug\"",
-    ] + rustc_common_flags,
+    ] + rustc_common_flags + msvc_rustc_debug_common,
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
     # Need to use our own built sysroot because we are using a custom spec below.
@@ -584,11 +613,9 @@ rust_toolchain(
     # changes for enabling debug symbols:
     #
     #   1. "debuginfo-kind" changed from "pdb" to "dwarf".
-    #   2. "split-debuginfo" changed from "packed" to "unpacked".
-    #   3. "is-like-msvc" changed from "true" to "false".
+    #   2. "split-debuginfo" and "supported-split-debuginfo" changed from "packed" to "unpacked".
     #
-    # Notes: 1 and 2 should be possible using commandline argument as well. 3 is not allowed but
-    # also not needed starting 1.87. Therefore, starting 1.87, it might be possible to reuse
+    # Notes: 1 and 2 should be possible using commandline argument as well. Investigate reusing
     # existing toolchain definition.
     #
     # The original spec can be obtained by:
@@ -613,7 +640,7 @@ rust_toolchain(
                     "entry-name": "efi_main",
                     "exe-suffix": ".efi",
                     "features": "-mmx,-sse,+soft-float",
-                    "is-like-msvc": false,
+                    "is-like-msvc": true,
                     "is-like-windows": true,
                     "linker": "rust-lld",
                     "linker-flavor": "msvc-lld",
@@ -707,9 +734,7 @@ rust_toolchain(
     extra_rustc_flags = [
         "-Z",
         "cf-protection=full",
-        "--cfg",
-        "feature=\"gdb_debug\"",
-    ] + rustc_common_flags,
+    ] + rustc_common_flags + msvc_rustc_debug_common,
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
     # Need to use our own built sysroot because we are using a custom spec below.
@@ -724,11 +749,9 @@ rust_toolchain(
     # changes for enabling debug symbols:
     #
     #   1. "debuginfo-kind" changed from "pdb" to "dwarf".
-    #   2. "split-debuginfo" changed from "packed" to "unpacked".
-    #   3. "is-like-msvc" changed from "true" to "false".
+    #   2. "split-debuginfo" and "supported-split-debuginfo" changed from "packed" to "unpacked".
     #
-    # Notes: 1 and 2 should be possible using commandline argument as well. 3 is not allowed but
-    # also not needed starting 1.87. Therefore, starting 1.87, it might be possible to reuse
+    # Notes: 1 and 2 should be possible using commandline argument as well. Investigate reusing
     # existing toolchain definition.
     #
     # The original spec can be obtained by:
@@ -741,8 +764,9 @@ rust_toolchain(
                     "allows-weak-linkage": false,
                     "arch": "aarch64",
                     "archive-format": "coff",
+                    "binary-format": "coff",
                     "crt-objects-fallback": "false",
-                    "data-layout": "e-m:w-p:64:64-i32:32-i64:64-i128:128-n32:64-S128-Fn32",
+                    "data-layout": "e-m:w-p270:32:32-p271:32:32-p272:64:64-p:64:64-i32:32-i64:64-i128:128-n32:64-S128-Fn32",
                     "debuginfo-kind": "dwarf",
                     "disable-redzone": true,
                     "dll-tls-export": false,
@@ -750,7 +774,7 @@ rust_toolchain(
                     "entry-name": "efi_main",
                     "exe-suffix": ".efi",
                     "features": "+v8a",
-                    "is-like-msvc": false,
+                    "is-like-msvc": true,
                     "is-like-windows": true,
                     "linker": "rust-lld",
                     "linker-flavor": "msvc-lld",
@@ -770,12 +794,14 @@ rust_toolchain(
                         "msvc": [
                         "/NOLOGO",
                         "/entry:efi_main",
-                        "/subsystem:efi_application"
+                        "/subsystem:efi_application",
+                        "/machine:arm64"
                         ],
                         "msvc-lld": [
                         "/NOLOGO",
                         "/entry:efi_main",
-                        "/subsystem:efi_application"
+                        "/subsystem:efi_application",
+                        "/machine:arm64"
                         ]
                     },
                     "singlethread": true,

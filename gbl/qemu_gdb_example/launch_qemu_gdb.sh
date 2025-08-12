@@ -20,11 +20,40 @@ set -e
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 readonly REPO_ROOT=$(readlink -f "${SCRIPT_DIR}/../../../..")
-readonly BAZEL_TARGET="@gbl//efi:aarch64_debug_dev"
-readonly BAZEL_OUT_BASE="${REPO_ROOT}/out_aarch64_debug_dev"
-# This UEFI prebuilt provides very limited stack and is not enough for the debug GBL build to run
-# fastboot. Consdier switching to u-boot or cuttlefish.
-readonly OVMF="/usr/share/OVMF/OVMF_CODE_4M.fd"
+
+if [[ -z $1 ]] || [[ $1 == "x64" ]]; then
+    # Default to x86_64
+    BAZEL_TARGET="@gbl//efi:x86_64_debug_dev"
+    BAZEL_OUT_BASE="${REPO_ROOT}/out_x86_64_debug_dev"
+    EFI_BIN_NAME="bootx64.efi"
+    QEMU_BIN="qemu-system-x86_64"
+    OVMF="/usr/share/OVMF/OVMF_CODE_4M.fd"
+    EXTRA_QEMU_OPTIONS=""
+    EXTRA_GDB_INIT_CMD=""
+    # Uses any version of rust-gdb that can be found from the prebuilts.
+    GDB=$(find ${REPO_ROOT}/prebuilts/rust/linux-x86/ -name rust-gdb -print -quit)
+    if [[ ! (-x "${GDB}" &&  -e "${GDB}") ]]; then
+        echo "Cannot find any rust-gdb from ${REPO_ROOT}/prebuilts/rust/linux-x86/"
+        exit 1;
+    fi
+elif [[ $1 == "aarch64" ]]; then
+    BAZEL_TARGET="@gbl//efi:aarch64_debug_dev"
+    BAZEL_OUT_BASE="${REPO_ROOT}/out_aarch64_debug_dev"
+    EFI_BIN_NAME="bootaa64.efi"
+    QEMU_BIN="qemu-system-aarch64"
+    OVMF="/usr/share/AAVMF/AAVMF_CODE.fd"
+    EXTRA_QEMU_OPTIONS="-machine virt -cpu cortex-a57"
+    EXTRA_GDB_INIT_CMD="set arch aarch64"
+    GDB="gdb-multiarch"
+    if [[ -z $(which "${GDB}") ]]; then
+        echo "${GDB} not installed."
+        echo "Please run 'sudo apt-get install ${GDB}'"
+        exit 1
+    fi
+else
+    echo "Unknown architecture option."
+    exit 1
+fi
 
 pushd "${REPO_ROOT}" > /dev/null
 
@@ -44,6 +73,7 @@ echo ""
 "${REPO_ROOT}/tools/bazel" "--output_base=${BAZEL_OUT_BASE}" build "${BAZEL_TARGET}" \
     --verbose_failures \
     --sandbox_debug \
+    --@gbl//toolchain:always_wait_gdb \
     --symlink_prefix=/
 # Copies the EFI binary to the top level output directory so that it's easier to access.
 BAZEL_OUT_BIN=$("${REPO_ROOT}/tools/bazel" cquery "${BAZEL_TARGET}" --output files 2>/dev/null)
@@ -87,6 +117,7 @@ fi
 DEBUG_PORT="1337"
 GDB_INIT_CMD="${BAZEL_OUT_BASE}/gdb_init_cmd"
 cat << EOF > "${GDB_INIT_CMD}"
+${EXTRA_GDB_INIT_CMD}
 echo Connecting to QEMU\n
 target remote localhost:${DEBUG_PORT}
 
@@ -99,8 +130,8 @@ load_gbl_debug_bin "${GBL_DBG_BIN}"
 EOF
 
 # Checks host QEMU dependencies.
-if [[ -z $(which qemu-system-x86_64) ]]; then
-    echo "qemu-system-x86_64 not installed."
+if [[ -z $(which "${QEMU_BIN}") ]]; then
+    echo "${QEMU_BIN} not installed."
     echo "Please run 'sudo apt-get install qemu-system ovmf'"
     exit 1
 elif [[ ! -f "${OVMF}" ]]; then
@@ -112,25 +143,19 @@ fi
 # Assembles EFI boot partition to be used by QEMU.
 EFI_OUTPUT_DIR="${BAZEL_OUT_BASE}/esp/EFI/BOOT"
 mkdir -p "${EFI_OUTPUT_DIR}"
-cp "${GBL_DBG_BIN}" "${EFI_OUTPUT_DIR}/bootx64.efi"
+cp "${GBL_DBG_BIN}" "${EFI_OUTPUT_DIR}/${EFI_BIN_NAME}"
 
 # Assembles QEMU commandline.
-QEMU_CMD="qemu-system-x86_64 -nographic -m 1G -smp 4"
-QEMU_CMD+=" -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd"
+QEMU_CMD="${QEMU_BIN} -nographic -m 1G -smp 4"
+QEMU_CMD+=" -drive if=pflash,format=raw,readonly=on,file=""${OVMF}"
 QEMU_CMD+=" -drive format=raw,file=fat:rw:""${EFI_OUTPUT_DIR}""/../.."
 QEMU_CMD+=" -drive format=raw,file=${SCRIPT_DIR}/gpt_with_misc.bin"
 QEMU_CMD+=" -gdb tcp::${DEBUG_PORT} -S"
-
-# Uses any version of rust-gdb that can be found from the prebuilts.
-RUST_GDB=$(find ${REPO_ROOT}/prebuilts/rust/linux-x86/ -name rust-gdb -print -quit)
-if [[ ! (-x "${RUST_GDB}" &&  -e "${RUST_GDB}") ]]; then
-    echo "Cannot find any rust-gdb from ${REPO_ROOT}/prebuilts/rust/linux-x86/"
-    exit 1;
-fi
+QEMU_CMD+=" ${EXTRA_QEMU_OPTIONS}"
 
 echo "Starting rust-gdb in a new terminal..."
 # Wait 2 seconds for QEMU to start first. Otherwise connect may hang if started too fast.
-(sleep 2 && gnome-terminal -- bash -c "${RUST_GDB} --command=${GDB_INIT_CMD}")&
+(sleep 2 && gnome-terminal -- bash -c "${GDB} --command=${GDB_INIT_CMD}")&
 
 echo ""
 echo "Starting QEMU..."
