@@ -1,53 +1,119 @@
 # Buffer Usage in GBL
 
-This doc discusses how GBL (EFI bootloader) gets and uses buffers for various
-functionalities.
+This doc discusses memory buffer usage by GBL.
 
-## OS Load Buffer
+## Boot Buffers
 
-GBL needs a sufficiently large and contiguous buffer for loading, fixing up and
-assembling various OS images such as boot, init_boot, vendor_boot, dtb, dtbo,
-misc etc. This buffer can either be from EFI memory allocation or memory space
-reserved by the platform. At run time, GBL performs the following for
-requesting an OS load buffer.
+At run time, GBL requests the following memory buffers via
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetbootbuffer)
+for assembling various boot images such as kernel, ramdisk, FDT and pvmfw.
 
-1. Via
-[GBL_EFI_IMAGE_LOADING_PROTOCOL.GetBuffer()](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md#gbl_efi_image_loading_protocolgetbuffer)
+### General Load Buffer
 
-   If [GBL_EFI_IMAGE_LOADING_PROTOCOL](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md) is
-   implemented, GBL will make a call to
-   `GBL_EFI_IMAGE_LOADING_PROTOCOL.GetBuffer()` with input image type set to
-   [GBL_IMAGE_TYPE_OS_LOAD](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md#related-definitions-1)
-   and input size set to 0 (size determined by vendor). Vendor returns the size
-   and address of the reserved memory if available or instructs GBL to
-   allocates a specific amount of memory via EFI memory allocation.
+GBL uses this buffer for:
 
-2. Via EFI Memory Allocation
+1. Assembling images that do not have a dedicated load buffer. (See below for
+image specific load buffers).
+1. Temporary scracth buffers for reading BCB boot mode, relocating DT
+components etc.
 
-   If [GBL_EFI_IMAGE_LOADING_PROTOCOL](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md) is
-   not implemented GBL allocates a 256MB size buffer via EFI memory allocation.
+GBL queries the buffer by calling
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetbootbuffer)
+with parameter `BootBufferType` set to `GENERAL_LOAD`. If buffer is not
+provided, GBL allocates a default 256MB memory via EFI allocation.
 
-## Fastboot Download Buffer
+### Kernel Load Buffer
 
-When booting to fastboot mode, GBL requires a buffer for download. The buffer
-is requested following the same process as the case of
-[OS Load Buffer](#os-load-buffer):
+GBL uses this buffer for placing the kernel image (after decompression) from
+the Android Boot image. This will also be the buffer GBL boots OS from.
 
-1. Via
-[GBL_EFI_IMAGE_LOADING_PROTOCOL.GetBuffer()](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md#gbl_efi_image_loading_protocolgetbuffer)
+GBL queries the buffer by calling
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetbootbuffer)
+with parameter `BootBufferType` set to `KERNEL`.  The buffer is optional. If
+not provided, GBL will look for space from the general load buffer.
 
-   If [GBL_EFI_IMAGE_LOADING_PROTOCOL](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md) is
-   implemented, GBL will make a call to
-   `GBL_EFI_IMAGE_LOADING_PROTOCOL.GetBuffer()` with input image type set to
-   [GBL_IMAGE_TYPE_FASTBOOT](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md#related-definitions-1)
-   and input size set to 0 (size determined by vendor). Vendor returns the size
-   and address of the reserved memory if available or instructs GBL to
-   allocates a specific amount of memory via EFI memory allocation.
+### Ramdisk Load Buffer
 
-2. Via EFI Memory Allocation
+GBL uses this buffer for assembling ramdisk image for boot.
 
-   If [GBL_EFI_IMAGE_LOADING_PROTOCOL](./GBL_EFI_IMAGE_LOADING_PROTOCOL.md) is
-   not implemented GBL allocates a 512MB size buffer via EFI memory allocation.
+GBL queries the buffer by calling
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetbootbuffer)
+with parameter `BootBufferType` set to `RAMDISK`. The buffer is optional. If
+not provided, GBL will look for space from the general load buffer.
+
+### FDT Load Buffer
+
+GBL uses this buffer for constructing and fixing up the final FDT for boot.
+
+GBL queries the buffer by calling
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetbootbuffer)
+with parameter `BootBufferType` set to `FDT`. The buffer is optional. If not
+provided, GBL will look for space from the general load buffer.
+
+### Pvmfw Load Buffer
+
+GBL uses this buffer assembling the pvmfw image.
+
+GBL queries the buffer by calling
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetbootbuffer)
+with parameter `BootBufferType` set to `PVMFW_DATA`. The buffer is optional. If
+not provided, GBL will look for space from the general load buffer.
+
+### Fastboot Download Buffer
+
+GBL uses this buffer as download buffer in fastboot mode.
+
+GBL queries the buffer by calling
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetbootbuffer)
+with parameter `BootBufferType` set to `FASTBOOT_DOWNLOAD`. If the buffer is
+not provided. GBL allocates a default 512MB memory via EFI allocation.
+
+## Partition Read Buffers
+
+By default, GBL allocates memory for reading disk partitions when assembling
+boot images. Firmware can override this for individual partitions by providing
+a dedicated read buffer via the
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetPartitionBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetpartitionbuffer)
+API. Before reading a partition, GBL queries the buffer using the slotless
+partition name. For example, before reading `"boot_a/b"` partition, GBL calls
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetPartitionBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetpartitionbuffer)
+with parameter `BaseName` set to `"boot"`.
+
+Firmware can also provide preloaded partition data in the buffer. The
+`PRELOADED` bit in the output parameter `Flag` should be set in this case. GBL
+skips reading the partition when preloaded data is available. This can be used
+for optimizing boot performance or overriding target boot images (images still
+need to pass AVB verification in locked mode).
+
+If GBL has entered fastboot mode in the same session, preloaded partition data
+may be outdated since new images may have been flashed and active slot may have
+been changed. In this case, GBL calls
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.SyncPartitionBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolsyncpartitionbuffer)
+with paramter `SyncPreloaded` set to true after exiting fastboot mode and
+before querying any partition buffer. Firmware should either reload the
+partitions, or simply clear the `PRELOADED` bit to instruct GBL to read from
+disk by itself.
+
+After GBL finishes assembling kernel/ramdisk/FDT from partition images, and
+before fixing up FDT/bootconfig via
+[GBL_EFI_OS_CONFIGURATION_PROTOCOL](./gbl_os_configuration_protocol.md), GBL calls [GBL_EFI_BOOT_MEMORY_PROTOCOL.SyncPartitionBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolsyncpartitionbuffer)
+with paramter `SyncPreloaded` set to false. Firmware can take this chance to
+inspect newly loaded images in the provided partition buffers and determines
+the needed FDT/bootconfig fixup if needed.
+
+The following summarizes the order of events discussed above.
+
+1. If GBL previously entered fastboot, calls
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.SyncPartitionBuffer(SyncPreloaded=TRUE)](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolsyncpartitionbuffer)
+1. Queries partition buffer with
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.GetPartitionBuffer()](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolgetpartitionbuffer).
+1. Reads, verifies partition images and assembles kernel/ramdisk/FDT.
+1. Calls
+[GBL_EFI_BOOT_MEMORY_PROTOCOL.SyncPartitionBuffer(SyncPreloaded=FALSE)](./gbl_efi_boot_memory_protocol.md#gbl_efi_boot_memory_protocolsyncpartitionbuffer).
+1. Fixes up FDT and bootcofnig via
+[GBL_EFI_OS_CONFIGURATION_PROTOCOL](./gbl_os_configuration_protocol.md).
+1. Boot.
+
 
 ## AARCH64 Kernel Decopmression
 

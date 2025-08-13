@@ -130,6 +130,21 @@ Note: GBL passes the output of
 to this API to query buffers for vendor specific partitions. Implementation
 should make sure to use consistent partition names for them.
 
+### Related Definitions
+
+#### GBL_EFI_BOOT_BUFFER_TYPE
+
+```c
+typedef enum {
+  PRELOADED = 1 << 0,
+} GBL_EFI_PARTITION_BUFFER_FLAG;
+```
+
+**PRELOADED** \
+If set, it indicates the buffer returned by `GetPartitionBuffer()` already
+contains the image loaded by the firwmare.
+
+
 ### Status Codes Returned
 
 |||
@@ -180,20 +195,6 @@ the partitions if supported, or invalidate existing ones by clearing the
 
 For the caller, all buffers previously obtained from `GetPartitionBuffer()`
 should not be considered valid anymore.
-
-### Related Definitions
-
-#### GBL_EFI_BOOT_BUFFER_TYPE
-
-```c
-typedef enum {
-  PRELOADED = 1 << 0,
-} GBL_EFI_PARTITION_BUFFER_FLAG;
-```
-
-**PRELOADED** \
-If set, it indicates the buffer returned by `GetPartitionBuffer()` already
-contains the image loaded by the firwmare.
 
 ### Status Codes Returned
 
@@ -283,12 +284,12 @@ when done.
 
 ```c
 typedef
-struct GBL_EFI_BOOT_BUFFER_TYPE {
+enum GBL_EFI_BOOT_BUFFER_TYPE {
   GENERAL_LOAD,
   KERNEL,
   RAMDISK,
   FDT,
-  PVM_FW,
+  PVMFW_DATA,
   FASTBOOT_DOWNLOAD,
 } GBL_EFI_BOOT_BUFFER_TYPE;
 ```
