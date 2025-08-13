@@ -153,7 +153,7 @@ fn zircon_verify_kernel_internal<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>(
             Descriptor::Property(p) if p.key.starts_with("zbi") => Some(p),
             _ => None,
         }) {
-            zbi_items.extend_unaligned(prop.value)?;
+            zbi_items.extend_unaligned(prop.value_with_nul.split_last().unwrap().1)?;
         }
     }
 
