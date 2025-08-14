@@ -280,6 +280,10 @@ cc_flags_uefi_common = cc_flags_common + [
     # This prevents clang C++ header from defining _LIBCPP_MSVCRT which requires MSVC runtime.
     "-U_MSC_VER",
     "-fstack-protector-all",
+    # Always stores frame pointers.
+    "-fno-omit-frame-pointer",
+    # Supports unwind table. (On arm, this makes sure x29 is stored on stack first).
+    "-funwind-tables",
 ]
 
 uefi_ld_flags_common = [
@@ -508,6 +512,12 @@ uefi_rustc_flags = [
     # infinite recursion.
     "-Z",
     "stack-protector=all",
+    # Always stores frame pointers.
+    "-C",
+    "force-frame-pointers=yes",
+    # Support unwind tables. (On arm, this make sures x29 is stored on stack first).
+    "-C",
+    "force-unwind-tables=yes",
 ]
 
 rustc_opt_flags = [
@@ -668,7 +678,10 @@ rust_toolchain(
     ] + rustc_common_flags + rustc_opt_flags,
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
-    rust_std = "@rust_prebuilts//:aarch64-unknown-uefi_prebuilt_stdlibs",
+    rust_std = select({
+        ":rust_no_sysroot_true": ":rust_stdlib_empty",
+        "//conditions:default": ":rust_std_source_build",
+    }),
     rustc = "@rust_prebuilts//:bin/rustc",
     staticlib_ext = ".a",
     stdlib_linkflags = [],
