@@ -570,13 +570,18 @@ where
                 resp.send_okay("").await?;
                 f()
             }
+            RebootMode::Fastboot => {
+                let f = self.gbl_ops.reboot_fastboot()?;
+                resp.send_info("Rebooting to userspace fastboot...").await?;
+                resp.send_okay("").await?;
+                f()
+            }
             RebootMode::Recovery => {
                 let f = self.gbl_ops.reboot_recovery()?;
                 resp.send_info("Rebooting to recovery...").await?;
                 resp.send_okay("").await?;
                 f()
             }
-            _ => return Err("Unsupported".into()),
         }
         Ok(())
     }

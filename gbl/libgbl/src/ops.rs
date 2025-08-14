@@ -144,6 +144,14 @@ pub trait GblOps<'a, 'd> {
         Ok(|| self.reboot())
     }
 
+    /// Reboots into userspace fastboot mode
+    ///
+    /// On success, returns a closure that performs the reboot.
+    fn reboot_fastboot(&mut self) -> Result<impl FnOnce() + '_, Error> {
+        self.set_reboot_mode(RebootMode::FastbootD)?;
+        Ok(|| self.reboot())
+    }
+
     /// Returns the list of disk devices on this platform.
     ///
     /// Notes that the return slice doesn't capture the life time of `&self`, meaning that the slice
