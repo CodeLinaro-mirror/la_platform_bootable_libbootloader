@@ -253,6 +253,12 @@ The pointer to the context passed to `GetVarAll()`.
 A pointer to an array of NULL-terminated strings that contains the name of the
 variable followed by additional arguments.
 
+The name and arguments correspond to the  `:` separated variable format by
+the fastboot protocol, i.e. `fastboot getvar <name>:<arg1>:<arg2>..`. However
+firmware may also choose to pass the entire `"<name>:<arg1>:<arg2>.."` string
+as a 1-size array if preferred. Caller should expect both cases.
+
+
 *NumArgs*
 
 The number of elements in the *Args* array.
