@@ -225,7 +225,10 @@ mod test {
             storage.add_raw_device(part, read_test_data(file));
         }
         let mut ops = FakeGblOps::new(&storage);
-        ops.avb_ops.unlock_state = device_unlocked.clone();
+        match device_unlocked {
+            Ok(unlocked) => ops.avb_device_status.is_unlocked = unlocked,
+            Err(ref e) => ops.avb_device_status_error = Some(e.clone()),
+        };
         ops.avb_ops.rollbacks = HashMap::from([(1, rollback_result)]);
         let mut out_color = None;
         let mut handler = |color,

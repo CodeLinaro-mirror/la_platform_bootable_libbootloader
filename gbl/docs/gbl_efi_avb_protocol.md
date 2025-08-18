@@ -70,6 +70,12 @@ Retrieves the list of additional partitions to be verified, beyond the standard
 set loaded and verified by GBL.
 [`ReadPartitionsToVerify()`][readpartitionstoverify].
 
+#### ReadDeviceStatus
+
+Retrieves the current device status, including its lock state and dm-verity
+error indication.
+[`ReadDeviceStatus()`](#gbl_efi_avb_protocolreaddevicestatus).
+
 #### ReadIsDmVerityError
 
 Retrieves whether the device is rebooted due to dm-verity error.
@@ -79,11 +85,6 @@ Retrieves whether the device is rebooted due to dm-verity error.
 
 Validates proper public key is used to sign HLOS artifacts.
 [`ValidateVbmetaPublicKey()`](#gbl_efi_avb_protocolvalidatevbmetapublickey).
-
-#### ReadIsDeviceUnlocked
-
-Retrieves whether the device is unlocked.
-[`ReadIsDeviceUnlocked()`](#gbl_efi_avb_protocolreadisdeviceunlocked).
 
 #### ReadRollbackIndex
 
@@ -205,22 +206,41 @@ following way:
 | `EFI_BUFFER_TOO_SMALL` | Provided list of `Partitions` is too small; `NumberOfPartitions` has been updated with the required amount. GBL will call this method again with extended `Partitions`. |
 | `EFI_BAD_BUFFER_SIZE` | One of provided `Partition.NameLen` values is not sufficient to hold the partition name. GBL will fail to boot. |
 
-## GBL_EFI_AVB_PROTOCOL.ReadIsDmVerityError()
+## GBL_EFI_AVB_PROTOCOL.ReadDeviceStatus()
 
 ### Summary
 
-Allows the firmware to provide the dm-verity error state to GBL in a
-firmware-specific way.
+Allows the firmware to provide current device status, including its lock state
+and dm-verity error indication in a vendor-specific way.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_READ_IS_DM_VERITY_ERROR) (
+(EFIAPI *GBL_EFI_AVB_READ_DEVICE_STATUS) (
   IN GBL_EFI_AVB_PROTOCOL *This,
-  OUT BOOLEAN *IsDmVerityError);
+  OUT UINT64 *StatusFlags);
 ```
+
+### Related Definitions
+
+#### GBL_EFI_AVB_KEY_VALIDATION_STATUS
+
+```c
+typedef enum {
+  GBL_EFI_AVB_STATUS_UNLOCKED = 0x1 << 0,
+  GBL_EFI_AVB_STATUS_DM_VERITY_FAILED = 0x1 << 1,
+} GBL_EFI_AVB_DEVICE_STATUS;
+```
+
+##### GBL_EFI_AVB_STATUS_UNLOCKED
+
+Flag indicating that the device is unlocked.
+
+##### GBL_EFI_AVB_STATUS_DM_VERITY_FAILED
+
+Flag indicating that the device rebooted due to a dm-verity error.
 
 ### Parameters
 
@@ -228,22 +248,36 @@ EFI_STATUS
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
-#### IsDmVerityError
+#### StatusFlags
 
-An output parameter that communicates the dm-verity error state to GBL.
+An output parameter to be updated by firmware with ORed flags detailing the AVB
+device status. All bits not explicitly defined must be set to zero. See related
+definitions above for the semantics of each flag value.
 
 ### Description
 
-If `IsDmVerityError` is set `True` by the FW, GBL will pass
-[`AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION`][dmv_error], so
-`RED_IO` status will be reported unless new OS images are detected by the
-`libavb`.
+This method allows the firmware to provide GBL with the current AVB device
+status, covering:
+
+1. `GBL_EFI_AVB_STATUS_UNLOCKED` - Indicates the device is [unlocked][unlocked].
+   GBL treats unlocked devices as being in the `orange` boot state, skipping
+   certain verification enforcement and allowing boot to proceed with reduced
+   security guarantees.
+1. `GBL_EFI_AVB_STATUS_DM_VERITY_FAILED` - Indicates the device rebooted due to
+   a dm-verity hashtree corruption [error][dmv_error]. In this case, GBL passes
+   `AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION` to `libavb`.
+   Unless the library detects new OS images, this results in a
+   `RED_EIO` (dm-verity error) boot state, requiring user confirmation before
+   proceeding in degraded mode.
+
+GBL may call this method multiple times within a single boot session. If the
+method returns an error, GBL rejects to boot.
 
 ### Status Codes Returned
 
 |||
 | --- | --- |
-| `EFI_SUCCESS` | A dm-verity error state is succesfully returned. |
+| `EFI_SUCCESS` | A device status is succesfully returned. |
 | `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey()
@@ -347,47 +381,6 @@ GBL calls this function once per AVB verification session.
 |||
 | --- | --- |
 | `EFI_SUCCESS` | A locked state is succesfully returned. |
-| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
-
-## GBL_EFI_AVB_PROTOCOL.ReadIsDeviceUnlocked()
-
-### Summary
-
-Allows the firmware to provide the device's locking state to GBL in a
-firmware-specific way.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_READ_IS_DEVICE_UNLOCKED) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
-  OUT BOOLEAN *IsUnlocked);
-```
-
-### Parameters
-
-#### This
-
-A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
-
-#### IsUnlocked
-
-An output parameter that communicates the device locking state to GBL.
-
-### Description
-
-An unlocked device state allows GBL not to force AVB and to boot the device with
-an `orange` boot state. GBL may call this method multiple times per boot
-session. GBL rejects continuing the boot process if this method returns any
-error.
-
-### Status Codes Returned
-
-|||
-| --- | --- |
-| `EFI_SUCCESS` | An unlocked state is succesfully returned. |
 | `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadRollbackIndex()
@@ -799,6 +792,7 @@ following UEFI error codes are used to communicate results back to the library:
 [readpartitionstoverify]: #gbl_efi_image_loading_protocolreadpartitionstoverify
 [protocolwriterollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
 [avb]: https://source.android.com/docs/security/features/verifiedboot/avb
+[unlocked]: https://android.googlesource.com/platform/external/avb/+/refs/heads/main/README.md#locked-and-unlocked-mode
 [dmv_error]: https://android.googlesource.com/platform/external/avb/+/master/README.md#handling-dm_verity-errors
 [rp]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#rollback-protection
 [update_ri]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes

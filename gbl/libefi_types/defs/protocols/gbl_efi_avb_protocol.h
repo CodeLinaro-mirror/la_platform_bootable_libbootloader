@@ -35,6 +35,13 @@
 static const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 1);
 
+typedef enum GBL_EFI_AVB_DEVICE_STATUS {
+  // Indecates device is unlocked.
+  GBL_EFI_AVB_STATUS_UNLOCKED = 0x1 << 0,
+  // Indecated dm-verity error is occurred.
+  GBL_EFI_AVB_STATUS_DM_VERITY_FAILED = 0x1 << 1,
+} GblEfiAvbDeviceStatus;
+
 // Os boot state color.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#communicating-verified-boot-state-to-users
@@ -91,8 +98,8 @@ typedef struct GblEfiAvbProtocol {
       /* in-out */ size_t* num_partitions,
       /* in-out */ GblEfiAvbPartition* partitions);
 
-  EfiStatus (*read_is_dm_verity_error)(struct GblEfiAvbProtocol* self,
-                                       /* out */ bool* is_dm_verity_error);
+  EfiStatus (*read_device_status)(struct GblEfiAvbProtocol* self,
+                                  /* out */ uint64_t* status_flags);
 
   EfiStatus (*validate_vbmeta_public_key)(
       struct GblEfiAvbProtocol* self,
@@ -101,9 +108,6 @@ typedef struct GblEfiAvbProtocol {
       /* in */ size_t public_key_metadata_length,
       /* in */ const uint8_t* public_key_metadata,
       /* out GblEfiAvbKeyValidationStatus */ uint32_t* validation_status);
-
-  EfiStatus (*read_is_device_unlocked)(struct GblEfiAvbProtocol* self,
-                                       /* out */ bool* is_unlocked);
 
   EfiStatus (*read_rollback_index)(struct GblEfiAvbProtocol* self,
                                    /* in */ size_t index_location,

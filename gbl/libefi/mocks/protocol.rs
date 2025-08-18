@@ -235,12 +235,10 @@ pub mod gbl_efi_avb {
     pub struct GblAvbProtocol {
         /// Expected return value from `read_partitions_to_verify`.
         pub read_partitions_to_verify_result: Option<Result<usize>>,
-        /// Expected return value from `read_is_dm_verity_error`.
-        pub read_is_dm_verity_error_result: Option<Result<bool>>,
+        /// Expected return value from `read_device_status`
+        pub read_device_status_result: Option<Result<u64>>,
         /// Expected return value from `validate_vbmeta_public_key`.
         pub validate_vbmeta_public_key_result: Option<Result<GblEfiAvbKeyValidationStatus>>,
-        /// Expected return value from `read_is_device_unlocked`.
-        pub read_is_device_unlocked_result: Option<Result<bool>>,
         /// Expected return value from `read_rollback_index`.
         pub read_rollback_index_result: Option<Result<u64>>,
         /// Expected return value from `write_rollback_index`.
@@ -260,9 +258,9 @@ pub mod gbl_efi_avb {
             self.read_partitions_to_verify_result.unwrap()
         }
 
-        /// Wraps `GBL_EFI_AVB_PROTOCOL.read_is_dm_verity_error()`.
-        pub fn read_is_dm_verity_error(&self) -> Result<bool> {
-            self.read_is_dm_verity_error_result.unwrap()
+        /// Wraps `GBL_EFI_AVB_PROTOCOL.read_device_status()`.
+        pub fn read_device_status(&self) -> Result<u64> {
+            self.read_device_status_result.unwrap()
         }
 
         /// Wraps `GBL_EFI_AVB_PROTOCOL.validate_vbmeta_public_key()`.
@@ -272,11 +270,6 @@ pub mod gbl_efi_avb {
             _public_key_metadata: Option<&[u8]>,
         ) -> Result<GblEfiAvbKeyValidationStatus> {
             self.validate_vbmeta_public_key_result.unwrap()
-        }
-
-        /// Wraps `GBL_EFI_AVB_PROTOCOL.read_is_device_unlocked()`.
-        pub fn read_is_device_unlocked(&self) -> Result<bool> {
-            self.read_is_device_unlocked_result.unwrap()
         }
 
         /// Wraps `GBL_EFI_AVB_PROTOCOL.read_rollback_index()`.

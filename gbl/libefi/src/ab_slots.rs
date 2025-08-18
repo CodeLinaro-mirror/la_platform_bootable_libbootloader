@@ -149,8 +149,8 @@ mod test {
     };
     use gbl::{
         ops::{
-            AvbIoResult, CertPermanentAttributes, FastbootEraseAction, Partition, PartitionBuffer,
-            RebootMode, SlotsMetadata, SHA256_DIGEST_SIZE,
+            AvbDeviceStatus, AvbIoResult, CertPermanentAttributes, FastbootEraseAction, Partition,
+            PartitionBuffer, RebootMode, SlotsMetadata, SHA256_DIGEST_SIZE,
         },
         partition::GblDisk,
         slots::{Bootability, Cursor, RecoveryTarget, UnbootableReason},
@@ -291,11 +291,7 @@ mod test {
             Ok(Cursor { ctx: &mut self.manager, persist })
         }
 
-        fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
-            unimplemented!();
-        }
-
-        fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
+        fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
             unimplemented!();
         }
 

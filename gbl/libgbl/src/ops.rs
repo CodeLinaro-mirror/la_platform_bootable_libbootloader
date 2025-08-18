@@ -84,6 +84,15 @@ pub enum FastbootEraseAction {
     EraseAsPhysicalPartition,
 }
 
+/// Represents AVB (Android Verified Boot) device status information.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AvbDeviceStatus {
+    /// Indicates if the device is currently in an unlocked state.
+    pub is_unlocked: bool,
+    /// Indicates if a dm-verity error has been detected.
+    pub is_dm_verity_error: bool,
+}
+
 // https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
 // should we use traits for this? or optional/box FnMut?
 //
@@ -268,13 +277,8 @@ pub trait GblOps<'a, 'd> {
     // by GBL's usage of AVB. The rest of the APIs are either not relevant to or are implemented and
     // managed by GBL APIs.
 
-    /// Returns if device rebooted due to dm_verify error is occurred.
-    fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool>;
-
-    /// Returns if device is in an unlocked state.
-    ///
-    /// The interface has the same requirement as `avb::Ops::read_is_device_unlocked`.
-    fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool>;
+    /// Reads the AVB device status.
+    fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus>;
 
     /// Reads the AVB rollback index at the given location
     ///
@@ -727,12 +731,8 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.load_slot_interface(_fnmut, _boot_token)
     }
 
-    fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
-        self.ops.avb_read_is_dm_verity_error()
-    }
-
-    fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
-        self.ops.avb_read_is_device_unlocked()
+    fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
+        self.ops.avb_read_device_status()
     }
 
     fn avb_read_rollback_index(&mut self, _rollback_index_location: usize) -> AvbIoResult<u64> {
@@ -1079,6 +1079,13 @@ pub(crate) mod test {
         RefMut::map(val, |f| &mut f[..])
     }
 
+    /// Default [AvbDeviceStatus] value across the tests
+    impl Default for AvbDeviceStatus {
+        fn default() -> Self {
+            Self { is_unlocked: false, is_dm_verity_error: false }
+        }
+    }
+
     /// Fake [GblOps] implementation for testing.
     #[derive(Default)]
     pub(crate) struct FakeGblOps<'a, 'd> {
@@ -1104,8 +1111,11 @@ pub(crate) mod test {
         /// For return by `Self::expected_os()`
         pub os: Option<Os>,
 
-        /// For return by `Self::avb_read_is_dm_verity_error`
-        pub avb_dm_verity_error_status: Option<AvbIoResult<bool>>,
+        /// For return by `Self::avb_read_device_status`
+        pub avb_device_status_error: Option<AvbIoError>,
+
+        /// For return by `Self::avb_read_device_status` in case `avb_device_status_error` is None
+        pub avb_device_status: AvbDeviceStatus,
 
         /// For return by `Self::avb_validate_vbmeta_public_key`
         pub avb_key_validation_status: Option<AvbIoResult<KeyValidationStatus>>,
@@ -1345,12 +1355,11 @@ pub(crate) mod test {
             unimplemented!();
         }
 
-        fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
-            self.avb_dm_verity_error_status.clone().unwrap()
-        }
-
-        fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
-            self.avb_ops.read_is_device_unlocked()
+        fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
+            match self.avb_device_status_error {
+                Some(ref err) => Err(err.clone()),
+                None => Ok(self.avb_device_status.clone()),
+            }
         }
 
         fn avb_read_rollback_index(&mut self, rollback_index_location: usize) -> AvbIoResult<u64> {

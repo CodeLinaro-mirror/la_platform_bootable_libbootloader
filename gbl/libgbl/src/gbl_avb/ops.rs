@@ -16,6 +16,7 @@
 
 use crate::{
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
+    ops::AvbDeviceStatus,
     GblOps,
 };
 use abr::SlotIndex;
@@ -192,6 +193,21 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
     /// Get vbmeta public key validation status reported by validate_vbmeta_public_key.
     pub fn key_validation_status(&self) -> IoResult<KeyValidationStatus> {
         self.key_validation_status.ok_or(IoError::NotImplemented)
+    }
+
+    /// Helper for getting AVB device status
+    pub fn avb_read_device_status(&mut self) -> IoResult<AvbDeviceStatus> {
+        let result = self.gbl_ops.avb_read_device_status();
+
+        // On dev boards default to unlocked and no dm_verity_error, which allows boot to succeed.
+        #[cfg(feature = "gbl_dev")]
+        let result = self.with_dev_fallback(
+            result,
+            Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
+            "read device status",
+        );
+
+        result
     }
 
     /// For dev builds only, transforms unimplemented ops into default behavior.
@@ -411,13 +427,7 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, 'c,
     }
 
     fn read_is_device_unlocked(&mut self) -> IoResult<bool> {
-        let result = self.gbl_ops.avb_read_is_device_unlocked();
-
-        // On dev boards default to unlocked, which allows boot to succeed.
-        #[cfg(feature = "gbl_dev")]
-        let result = self.with_dev_fallback(result, Ok(true), "read device unlocked");
-
-        result
+        self.avb_read_device_status().map(|s| s.is_unlocked)
     }
 
     fn get_unique_guid_for_partition(&mut self, partition: &CStr) -> IoResult<Uuid> {
@@ -1007,7 +1017,7 @@ mod test {
     #[test]
     fn read_is_device_unlocked_value_obtained() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        gbl_ops.avb_ops.unlock_state = Ok(true);
+        gbl_ops.avb_device_status.is_unlocked = true;
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
 
@@ -1017,7 +1027,7 @@ mod test {
     #[test]
     fn read_is_device_unlocked_error_handled() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        gbl_ops.avb_ops.unlock_state = Err(IoError::Io);
+        gbl_ops.avb_device_status_error = Some(IoError::Io);
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.read_is_device_unlocked(), Err(IoError::Io));
@@ -1026,7 +1036,7 @@ mod test {
     #[test]
     fn read_is_device_unlocked_not_implemented() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        gbl_ops.avb_ops.unlock_state = Err(IoError::NotImplemented);
+        gbl_ops.avb_device_status_error = Some(IoError::NotImplemented);
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         // Dev should report unlocked, prod should fail.
