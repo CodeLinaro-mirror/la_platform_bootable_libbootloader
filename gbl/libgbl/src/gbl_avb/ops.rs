@@ -151,6 +151,8 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
                 let vendor_data = vbmeta_vendor.unwrap_or(data);
 
                 (
+                    // TODO(b/337846185): get properties values with null terminator and convert to
+                    // CStr to make sure aligned with the AVB protocol requirements.
                     boot_data.get_property_value("com.android.build.boot.os_version"),
                     boot_data.get_property_value("com.android.build.boot.security_patch"),
                     system_data.get_property_value("com.android.build.system.os_version"),

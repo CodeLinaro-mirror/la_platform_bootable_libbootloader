@@ -81,28 +81,6 @@ use zerocopy::IntoBytes;
 // name length in GBL ops.
 const_assert_eq!(PARTITION_NAME_LEN_U16 as usize, IMAGE_NAME_MAX_LEN);
 
-fn to_avb_validation_status_or_panic(status: GblEfiAvbKeyValidationStatus) -> KeyValidationStatus {
-    match status {
-        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID => KeyValidationStatus::Valid,
-        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY => {
-            KeyValidationStatus::ValidCustomKey
-        }
-        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID => KeyValidationStatus::Invalid,
-        _ => panic!("Unrecognized avb key validation status: {}", status),
-    }
-}
-
-fn avb_color_to_efi_color(color: BootStateColor) -> u32 {
-    // bindgen may make enum i32 or u32. because we only care about bits, cast to u32 is ok.
-    (match color {
-        BootStateColor::Green => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_GREEN,
-        BootStateColor::Yellow => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_YELLOW,
-        BootStateColor::Orange => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_ORANGE,
-        BootStateColor::RedEio => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_RED_EIO,
-        BootStateColor::Red => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_RED,
-    }) as _
-}
-
 fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDeviceTree {
     let metadata = component.metadata.unwrap_or_default();
 
@@ -132,28 +110,6 @@ fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDevi
         },
         device_tree: component.dt.as_ptr() as _,
         selected: component.selected,
-    }
-}
-
-fn efi_error_to_avb_error(error: Error) -> AvbIoError {
-    match error {
-        // EFI_STATUS_OUT_OF_RESOURCES
-        Error::OutOfResources => AvbIoError::Oom,
-        // EFI_STATUS_DEVICE_ERROR
-        Error::DeviceError => AvbIoError::Io,
-        // EFI_STATUS_NOT_FOUND
-        Error::NotFound => AvbIoError::NoSuchValue,
-        // EFI_STATUS_END_OF_FILE
-        Error::EndOfFile => AvbIoError::RangeOutsidePartition,
-        // EFI_STATUS_INVALID_PARAMETER
-        Error::InvalidInput => AvbIoError::InvalidValueSize,
-        // EFI_STATUS_BUFFER_TOO_SMALL
-        Error::BufferTooSmall(required) => {
-            AvbIoError::InsufficientSpace(required.unwrap_or_default())
-        }
-        // EFI_STATUS_UNSUPPORTED
-        Error::Unsupported => AvbIoError::NotImplemented,
-        _ => AvbIoError::NotImplemented,
     }
 }
 
@@ -503,6 +459,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             Ok(protocol) => protocol
                 .handle_verification_result(&GblEfiAvbVerificationResult {
                     color: avb_color_to_efi_color(color),
+                    reserved1: Default::default(),
                     digest: digest.map_or(null(), |p| p.as_ptr() as _),
                     boot_version: boot_os_version.map_or(null(), |p| p.as_ptr()),
                     boot_security_patch: boot_security_patch.map_or(null(), |p| p.as_ptr()),
@@ -510,6 +467,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
                     system_security_patch: system_security_patch.map_or(null(), |p| p.as_ptr()),
                     vendor_version: vendor_os_version.map_or(null(), |p| p.as_ptr()),
                     vendor_security_patch: vendor_security_patch.map_or(null(), |p| p.as_ptr()),
+                    reserved2: Default::default(),
                 })
                 .map_err(efi_error_to_avb_error),
             _ => Ok(()),
@@ -872,6 +830,54 @@ fn gbl_to_efi_boot_mode(mode: RebootMode) -> GblEfiBootMode {
     }
 }
 
+fn to_avb_validation_status_or_panic(status: GblEfiAvbKeyValidationStatus) -> KeyValidationStatus {
+    match status {
+        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID => {
+            KeyValidationStatus::Valid
+        }
+        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY => {
+            KeyValidationStatus::ValidCustomKey
+        }
+        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_INVALID => {
+            KeyValidationStatus::Invalid
+        }
+        _ => panic!("Unrecognized avb key validation status: {}", status),
+    }
+}
+
+fn avb_color_to_efi_color(color: BootStateColor) -> u32 {
+    // bindgen may make enum i32 or u32. because we only care about bits, cast to u32 is ok.
+    (match color {
+        BootStateColor::Green => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_GREEN,
+        BootStateColor::Yellow => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_YELLOW,
+        BootStateColor::Orange => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_ORANGE,
+        BootStateColor::RedEio => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_RED_EIO,
+        BootStateColor::Red => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_RED,
+    }) as _
+}
+
+fn efi_error_to_avb_error(error: Error) -> AvbIoError {
+    match error {
+        // EFI_STATUS_OUT_OF_RESOURCES
+        Error::OutOfResources => AvbIoError::Oom,
+        // EFI_STATUS_DEVICE_ERROR
+        Error::DeviceError => AvbIoError::Io,
+        // EFI_STATUS_NOT_FOUND
+        Error::NotFound => AvbIoError::NoSuchValue,
+        // EFI_STATUS_END_OF_FILE
+        Error::EndOfFile => AvbIoError::RangeOutsidePartition,
+        // EFI_STATUS_INVALID_PARAMETER
+        Error::InvalidInput => AvbIoError::InvalidValueSize,
+        // EFI_STATUS_BUFFER_TOO_SMALL
+        Error::BufferTooSmall(required) => {
+            AvbIoError::InsufficientSpace(required.unwrap_or_default())
+        }
+        // EFI_STATUS_UNSUPPORTED
+        Error::Unsupported => AvbIoError::NotImplemented,
+        _ => AvbIoError::Io,
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -953,7 +959,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         let mut avb = GblAvbProtocol::default();
         avb.validate_vbmeta_public_key_result =
-            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID));
+            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID));
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
@@ -967,7 +973,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         let mut avb = GblAvbProtocol::default();
         avb.validate_vbmeta_public_key_result =
-            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY));
+            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY));
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
@@ -984,7 +990,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         let mut avb = GblAvbProtocol::default();
         avb.validate_vbmeta_public_key_result =
-            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID));
+            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_INVALID));
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();

@@ -98,7 +98,8 @@ impl Protocol<'_, GblAvbProtocol> {
         public_key: &[u8],
         public_key_metadata: Option<&[u8]>,
     ) -> Result<GblEfiAvbKeyValidationStatus> {
-        let mut validation_status = efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID as _;
+        let mut validation_status =
+            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_INVALID as _;
 
         // SAFETY:
         // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`
@@ -109,10 +110,10 @@ impl Protocol<'_, GblAvbProtocol> {
             efi_call!(
                 self.interface().validate_vbmeta_public_key,
                 self.interface_ptr(),
-                public_key.as_ptr() as *const _,
                 public_key.len(),
-                public_key_metadata.map_or(null(), |m| m.as_ptr() as *const _),
+                public_key.as_ptr() as *const _,
                 public_key_metadata.map_or(0, |m| m.len()),
+                public_key_metadata.map_or(null(), |m| m.as_ptr() as *const _),
                 &mut validation_status,
             )?
         }
@@ -189,17 +190,17 @@ impl Protocol<'_, GblAvbProtocol> {
         // * `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid
         //   object established by `Protocol::new()`.
         // * `name` is a valid pointer to a null-terminated string used only within the call.
+        // * `value_buffer_size` holds a mutable reference to `usize`, used only within the call.
         // * `value_ptr` is either a valid pointer to a writable buffer or a null pointer, used only
         //   within the call
-        // * `value_buffer_size` holds a mutable reference to `usize`, used only within the call.
         unsafe {
             efi_call!(
                 @bufsize value_buffer_size,
                 self.interface().read_persistent_value,
                 self.interface_ptr(),
                 name.as_ptr() as _,
-                value_ptr,
                 &mut value_buffer_size,
+                value_ptr,
             )?
         }
 
@@ -224,8 +225,8 @@ impl Protocol<'_, GblAvbProtocol> {
                 self.interface().write_persistent_value,
                 self.interface_ptr(),
                 name.as_ptr() as _,
-                value_ptr,
                 value_len,
+                value_ptr,
             )?
         }
 
@@ -460,15 +461,15 @@ mod test {
     fn validate_vbmeta_public_key_status_provided() {
         const EXPECTED_PUBLIC_KEY: &[u8] = b"test_key";
         const EXPECTED_STATUS: GblEfiAvbKeyValidationStatus =
-            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY;
+            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY;
 
         // C callback implementation that returns an error
         unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
-            public_key_ptr: *const u8,
             public_key_len: usize,
-            _metadata_ptr: *const u8,
+            public_key_ptr: *const u8,
             _metadata_len: usize,
+            _metadata_ptr: *const u8,
             validation_status_ptr: *mut GblEfiAvbKeyValidationStatus,
         ) -> EfiStatus {
             // SAFETY:
@@ -505,10 +506,10 @@ mod test {
         // C callback implementation that returns an error
         unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
-            _public_key_ptr: *const u8,
             _public_key_len: usize,
-            _metadata_ptr: *const u8,
+            _public_key_ptr: *const u8,
             _metadata_len: usize,
+            _metadata_ptr: *const u8,
             _validation_status_ptr: *mut GblEfiAvbKeyValidationStatus,
         ) -> EfiStatus {
             EFI_STATUS_INVALID_PARAMETER
@@ -526,7 +527,7 @@ mod test {
 
     #[test]
     fn handle_verification_result_data_provided() {
-        const COLOR: u32 = efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_RED;
+        const COLOR: u32 = efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_RED;
 
         // C callback implementation that returns success.
         unsafe extern "efiapi" fn c_return_success(
@@ -755,15 +756,15 @@ mod test {
         ///
         /// # Safety:
         /// * Caller must guaranteed that `name` points to a valid null-terminated string.
-        /// * Caller must guaranteed that `value` points to non-null `value_size` sized bytes
-        ///   buffer.
         /// * Caller must guaranteed that `value_size` points to a valid usize available to write
         ///   value buffer.
+        /// * Caller must guaranteed that `value` points to non-null `value_size` sized bytes
+        ///   buffer.
         unsafe extern "efiapi" fn c_read_persistent_value_success(
             _: *mut GblEfiAvbProtocol,
             name: *const u8,
-            value: *mut u8,
             value_size: *mut usize,
+            value: *mut u8,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
@@ -814,8 +815,8 @@ mod test {
         unsafe extern "efiapi" fn c_read_persistent_value_buffer_too_small(
             _: *mut GblEfiAvbProtocol,
             _: *const u8,
-            _: *mut u8,
             value_size: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `value_size` is a valid non-null pointer to `usize` value.
@@ -852,8 +853,8 @@ mod test {
         unsafe extern "efiapi" fn c_write_persistent_value_success(
             _: *mut GblEfiAvbProtocol,
             name: *const u8,
-            value: *const u8,
             value_size: usize,
+            value: *const u8,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
@@ -895,8 +896,8 @@ mod test {
         unsafe extern "efiapi" fn c_write_persistent_value_delete(
             _: *mut GblEfiAvbProtocol,
             name: *const u8,
-            value: *const u8,
             value_size: usize,
+            value: *const u8,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
@@ -932,8 +933,8 @@ mod test {
         unsafe extern "efiapi" fn c_write_persistent_value_error(
             _: *mut GblEfiAvbProtocol,
             name: *const u8,
-            _: *const u8,
             _: usize,
+            _: *const u8,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
