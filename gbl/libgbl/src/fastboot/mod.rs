@@ -1336,8 +1336,8 @@ pub(crate) mod test {
             args: impl IntoIterator<Item = &'_ str>,
             val: &str,
         ) -> Result<(), Error> {
-            let args = args.into_iter().collect::<Vec<_>>();
-            self.0.push(format!("{}:{}: {}", name, args.join(":"), val));
+            let args = [vec![name], args.into_iter().collect::<Vec<_>>()].concat();
+            self.0.push(format!("{}: {}", args.join(":"), val));
             Ok(())
         }
     }
@@ -1361,9 +1361,9 @@ pub(crate) mod test {
         assert_eq!(
             logger.0,
             [
-                "version-bootloader:: 1.0",
-                "slot-count:: 0",
-                "max-fetch-size:: 0x7fffffff",
+                "version-bootloader: 1.0",
+                "slot-count: 0",
+                "max-fetch-size: 0x7fffffff",
                 "block-device:0:total-blocks: 0x80",
                 "block-device:0:block-size: 0x200",
                 "block-device:0:status: idle",
@@ -1376,7 +1376,7 @@ pub(crate) mod test {
                 "block-device:3:total-blocks: 0x2000",
                 "block-device:3:block-size: 0x1",
                 "block-device:3:status: idle",
-                "gbl-default-block:: None",
+                "gbl-default-block: None",
                 "partition-size:boot_a/0: 0x2000",
                 "partition-type:boot_a/0: raw",
                 "partition-size:boot_b/0: 0x3000",
@@ -1393,6 +1393,12 @@ pub(crate) mod test {
                     .as_str(),
                 format!("{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_str(),
+                format!(
+                    "{}: {}",
+                    FakeGblOps::GBL_TEST_VAR_UNSPLIT,
+                    FakeGblOps::GBL_TEST_VAR_UNSPLIT_VAL
+                )
+                .as_str(),
             ]
         );
     }
@@ -2535,6 +2541,12 @@ pub(crate) mod test {
                     .as_bytes(),
                 format!("INFO{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
+                format!(
+                    "INFO{}: {}",
+                    FakeGblOps::GBL_TEST_VAR_UNSPLIT,
+                    FakeGblOps::GBL_TEST_VAR_UNSPLIT_VAL
+                )
+                .as_bytes(),
                 b"OKAY",
                 b"DATA00004400",
                 b"OKAY",
@@ -2565,6 +2577,12 @@ pub(crate) mod test {
                     .as_bytes(),
                 format!("INFO{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
+                format!(
+                    "INFO{}: {}",
+                    FakeGblOps::GBL_TEST_VAR_UNSPLIT,
+                    FakeGblOps::GBL_TEST_VAR_UNSPLIT_VAL
+                )
+                .as_bytes(),
                 b"OKAY",
                 b"INFOSyncing storage...",
                 b"OKAY",

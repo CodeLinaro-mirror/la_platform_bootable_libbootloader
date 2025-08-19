@@ -1221,6 +1221,8 @@ pub(crate) mod test {
         pub const TEST_BOOTLOADER_FILE_2: &'static [u8] = b"\x06test_2bar";
         pub const GBL_TEST_VAR: &'static str = "gbl-test-var";
         pub const GBL_TEST_VAR_VAL: &'static str = "gbl-test-var-val";
+        pub const GBL_TEST_VAR_UNSPLIT: &'static str = "gbl:test:var:unsplit";
+        pub const GBL_TEST_VAR_UNSPLIT_VAL: &'static str = "gbl-test-var-val-unsplit";
         pub const GBL_TEST_BOOTCONFIG: &'static str = "arg1=val1\x0aarg2=val2\x0a";
         pub const GBL_TEST_FDT_FIXUP: &'static [u8] = &[1];
         /// TODO(b/391191885): Generate real dice handover or use prebuilt
@@ -1582,6 +1584,10 @@ pub(crate) mod test {
             cb(
                 &[CString::new(Self::GBL_TEST_VAR).unwrap().as_c_str(), c"2"],
                 CString::new(format!("{}:2", Self::GBL_TEST_VAR_VAL)).unwrap().as_c_str(),
+            );
+            cb(
+                &[&CString::new(Self::GBL_TEST_VAR_UNSPLIT).unwrap()],
+                &CString::new(Self::GBL_TEST_VAR_UNSPLIT_VAL).unwrap(),
             );
             Ok(())
         }
