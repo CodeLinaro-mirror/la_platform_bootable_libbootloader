@@ -16,14 +16,14 @@
 
 use crate::{
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
-    ops::AvbDeviceStatus,
+    ops::{AvbDeviceStatus, AvbProperty},
     GblOps,
 };
 use abr::SlotIndex;
 use arrayvec::ArrayString;
 use avb::{
-    cert_validate_vbmeta_public_key, CertOps, CertPermanentAttributes, IoError, IoResult,
-    Ops as AvbOps, PublicKeyForPartitionInfo, SlotVerifyData, SHA256_DIGEST_SIZE,
+    cert_validate_vbmeta_public_key, CertOps, CertPermanentAttributes, Descriptor, IoError,
+    IoResult, Ops as AvbOps, PublicKeyForPartitionInfo, SlotVerifyData, SHA256_DIGEST_SIZE,
     SHA512_DIGEST_SIZE,
 };
 use core::{
@@ -110,60 +110,7 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
         color: BootStateColor,
         digest: Option<&str>,
     ) -> IoResult<()> {
-        // The Android build system automatically generates only the main vbmeta, but also allows
-        // to have separate chained partitions like vbmeta_system (for system, product, system_ext,
-        // etc.) or vbmeta_vendor (for vendor).
-        // https://android.googlesource.com/platform/external/avb/+/master/README.md#build-system-integration
-        //
-        // It may also integrate chained vbmeta into system level metadata partitions such as boot
-        // or init_boot, so they can be updated separately.
-        // https://android.googlesource.com/platform/external/avb/+/master/README.md#gki-2_0-integration
-        //
-        // Custom chained partitions are also supported by the Android build system, but we expect
-        // OEMs to follow about the same pattern.
-        // https://android-review.googlesource.com/q/Id671e2c3aee9ada90256381cce432927df03169b
-        let (
-            boot_os_version,
-            boot_security_patch,
-            system_os_version,
-            system_security_patch,
-            vendor_os_version,
-            vendor_security_patch,
-        ) = match slot_verify {
-            Some(slot_verify) => {
-                let mut vbmeta = None;
-                let mut vbmeta_boot = None;
-                let mut vbmeta_system = None;
-                let mut vbmeta_vendor = None;
-
-                for data in slot_verify.vbmeta_data() {
-                    match data.partition_name().to_str().unwrap_or_default() {
-                        "vbmeta" => vbmeta = Some(data),
-                        "boot" => vbmeta_boot = Some(data),
-                        "vbmeta_system" => vbmeta_system = Some(data),
-                        "vbmeta_vendor" => vbmeta_vendor = Some(data),
-                        _ => {}
-                    }
-                }
-
-                let data = vbmeta.ok_or(IoError::NoSuchPartition)?;
-                let boot_data = vbmeta_boot.unwrap_or(data);
-                let system_data = vbmeta_system.unwrap_or(data);
-                let vendor_data = vbmeta_vendor.unwrap_or(data);
-
-                (
-                    // TODO(b/337846185): get properties values with null terminator and convert to
-                    // CStr to make sure aligned with the AVB protocol requirements.
-                    boot_data.get_property_value("com.android.build.boot.os_version"),
-                    boot_data.get_property_value("com.android.build.boot.security_patch"),
-                    system_data.get_property_value("com.android.build.system.os_version"),
-                    system_data.get_property_value("com.android.build.system.security_patch"),
-                    vendor_data.get_property_value("com.android.build.vendor.os_version"),
-                    vendor_data.get_property_value("com.android.build.vendor.security_patch"),
-                )
-            }
-            None => (None, None, None, None, None, None),
-        };
+        // TODO(b/337846185): Cover this logic with unittests.
 
         // Convert digest rust string to null-terminated string by copying it into separate buffer.
         let mut digest_buffer = ArrayString::<{ 2 * SHA512_DIGEST_SIZE + 1 }>::new();
@@ -178,16 +125,23 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
             None => None,
         };
 
-        self.gbl_ops.avb_handle_verification_result(
-            color,
-            digest_cstr,
-            boot_os_version,
-            boot_security_patch,
-            system_os_version,
-            system_security_patch,
-            vendor_os_version,
-            vendor_security_patch,
-        )
+        // Extracts all the provided properties.
+        let properties = slot_verify.map(|slot_verify| {
+            slot_verify.vbmeta_data().iter().flat_map(|data| {
+                let partition = data.partition_name();
+
+                data.descriptors().unwrap().into_iter().filter_map(|descriptor| match descriptor {
+                    Descriptor::Property(descriptor) => Some(AvbProperty {
+                        partition,
+                        key: descriptor.key_cstr,
+                        value_with_nul: descriptor.value_with_nul,
+                    }),
+                    _ => None,
+                })
+            })
+        });
+
+        self.gbl_ops.avb_handle_verification_result(color, digest_cstr, properties)
     }
 
     /// Get vbmeta public key validation status reported by validate_vbmeta_public_key.

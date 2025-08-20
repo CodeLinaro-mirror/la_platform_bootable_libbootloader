@@ -45,8 +45,8 @@ use efi::{
     EfiEntry,
 };
 use efi_types::{
-    EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootMode,
-    GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbProperty, GblEfiAvbVerificationResult,
+    GblEfiBootMode, GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
     EFI_FASTBOOT_MESSAGE_TYPE_FAIL, EFI_FASTBOOT_MESSAGE_TYPE_INFO, EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
     GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_DM_VERITY_FAILED as GBL_EFI_AVB_STATUS_DM_VERITY_FAILED,
     GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_UNLOCKED as GBL_EFI_AVB_STATUS_UNLOCKED,
@@ -64,8 +64,9 @@ use libgbl::{
         DeviceTreeComponentsRegistry, MAXIMUM_DEVICE_TREE_COMPONENTS,
     },
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
+    gbl_println,
     ops::{
-        AvbDeviceStatus, AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender,
+        AvbDeviceStatus, AvbIoError, AvbIoResult, AvbProperty, CertPermanentAttributes, FailSender,
         FastbootEraseAction, ImageBuffer, InfoSender, LockState, LockType, OkaySender, Partition,
         PartitionBuffer, RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
     },
@@ -75,6 +76,7 @@ use libgbl::{
 };
 use libprofile::ProfileBackend;
 use safemath::SafeNum;
+use spin::Mutex;
 use static_assertions::const_assert_eq;
 use zbi::ZbiContainer;
 use zerocopy::IntoBytes;
@@ -440,33 +442,73 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         Ok(hash.try_into().map_err(|_| AvbIoError::Io)?)
     }
 
-    fn avb_handle_verification_result(
+    fn avb_handle_verification_result<'c>(
         &mut self,
         color: BootStateColor,
         digest: Option<&CStr>,
-        boot_os_version: Option<&[u8]>,
-        boot_security_patch: Option<&[u8]>,
-        system_os_version: Option<&[u8]>,
-        system_security_patch: Option<&[u8]>,
-        vendor_os_version: Option<&[u8]>,
-        vendor_security_patch: Option<&[u8]>,
+        properties: Option<impl Iterator<Item = AvbProperty<'c>>>,
     ) -> AvbIoResult<()> {
+        // TODO(b/337846185): Cover `avb_handle_verification_result` with unittests.
+
+        // The maximum number of AVB properties that can be provided to the AVB protocol.
+        // If more properties are detected across vbmeta, GBL rejects to boot.
+        const AVB_PROPERTIES_MAX_NUM: usize = 128;
+        struct AvbPropertiesStorage(ArrayVec<GblEfiAvbProperty, AVB_PROPERTIES_MAX_NUM>);
+
+        /// # Safety
+        ///
+        /// `GblEfiAvbProperty` raw pointers are re-initialized from the const-borrowed `properties`
+        /// data at the start of each lock session and never reused afterward. This ensures the
+        /// pointed-to data is accessed only by the current thread, making `Send` safe for this
+        /// case.
+        unsafe impl Send for AvbPropertiesStorage {}
+
+        // Storage for extracted AVB properties to be provided as a sequential array through the AVB
+        // protocol. Mutable static memory is used to avoid large stack allocations.
+        static AVB_PROPERTIES_STORAGE: Mutex<AvbPropertiesStorage> =
+            Mutex::new(AvbPropertiesStorage(ArrayVec::new_const()));
+
         match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
         {
-            Ok(protocol) => protocol
-                .handle_verification_result(&GblEfiAvbVerificationResult {
-                    color: avb_color_to_efi_color(color),
-                    reserved1: Default::default(),
-                    digest: digest.map_or(null(), |p| p.as_ptr() as _),
-                    boot_version: boot_os_version.map_or(null(), |p| p.as_ptr()),
-                    boot_security_patch: boot_security_patch.map_or(null(), |p| p.as_ptr()),
-                    system_version: system_os_version.map_or(null(), |p| p.as_ptr()),
-                    system_security_patch: system_security_patch.map_or(null(), |p| p.as_ptr()),
-                    vendor_version: vendor_os_version.map_or(null(), |p| p.as_ptr()),
-                    vendor_security_patch: vendor_security_patch.map_or(null(), |p| p.as_ptr()),
-                    reserved2: Default::default(),
-                })
-                .map_err(efi_error_to_avb_error),
+            Ok(protocol) => {
+                #[cfg(not(test))]
+                let mut avb_properties_efi = AVB_PROPERTIES_STORAGE.try_lock().unwrap();
+                // Blocking lock is used in unittests to ensure this function can be safely called
+                // from the separate threads, which must cause an error in UEFI environment.
+                #[cfg(test)]
+                let mut avb_properties_efi = AVB_PROPERTIES_STORAGE.lock();
+                avb_properties_efi.0.clear();
+
+                if let Some(properties) = properties {
+                    for prop in properties {
+                        avb_properties_efi
+                            .0
+                            .try_push(gbl_to_efi_avb_property(prop))
+                            .inspect_err(|_| {
+                                gbl_println!(
+                                    self,
+                                    "A maximum of {} AVB properties can be provided.",
+                                    AVB_PROPERTIES_MAX_NUM
+                                )
+                            })
+                            .map_err(|_| AvbIoError::Io)?;
+                    }
+                }
+
+                protocol
+                    .handle_verification_result(&GblEfiAvbVerificationResult {
+                        color: avb_color_to_efi_color(color),
+                        reserved1: Default::default(),
+                        digest: digest.map_or(null(), |p| p.as_ptr() as _),
+                        num_properties: avb_properties_efi.0.len(),
+                        properties: match avb_properties_efi.0.is_empty() {
+                            false => avb_properties_efi.0.as_ptr(),
+                            true => null(),
+                        },
+                        reserved2: Default::default(),
+                    })
+                    .map_err(efi_error_to_avb_error)
+            }
             _ => Ok(()),
         }
     }
@@ -824,6 +866,17 @@ fn gbl_to_efi_boot_mode(mode: RebootMode) -> GblEfiBootMode {
         RebootMode::Recovery => efi_types::GBL_EFI_BOOT_MODE_RECOVERY,
         RebootMode::FastbootD => efi_types::GBL_EFI_BOOT_MODE_FASTBOOTD,
         RebootMode::Bootloader => efi_types::GBL_EFI_BOOT_MODE_BOOTLOADER,
+    }
+}
+
+/// Converts a [AvbProperty] to [GblEfiAvbProperty]
+fn gbl_to_efi_avb_property(property: AvbProperty) -> GblEfiAvbProperty {
+    GblEfiAvbProperty {
+        base_partition_name: property.partition.as_ptr() as _,
+        key: property.key.as_ptr() as _,
+        // Exclude null terminator.
+        value_size: property.value_with_nul.len() - 1,
+        value: property.value_with_nul.as_ptr(),
     }
 }
 
@@ -1279,6 +1332,40 @@ mod test {
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_erase_persistent_value(c"test"), Err(AvbIoError::NotImplemented));
+    }
+
+    #[test]
+    fn test_gbl_to_efi_avb_property() {
+        let partition = c"boot";
+        let key = c"bootkey";
+        let value_with_nul = b"value\0";
+
+        assert_eq!(
+            gbl_to_efi_avb_property(AvbProperty { partition, key, value_with_nul }),
+            GblEfiAvbProperty {
+                base_partition_name: partition.as_ptr() as _,
+                key: key.as_ptr() as _,
+                value_size: value_with_nul.len() - 1,
+                value: value_with_nul.as_ptr(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_gbl_to_efi_avb_property_empty() {
+        let partition = c"";
+        let key = c"";
+        let value_with_nul = b"\0";
+
+        assert_eq!(
+            gbl_to_efi_avb_property(AvbProperty { partition, key, value_with_nul }),
+            GblEfiAvbProperty {
+                base_partition_name: partition.as_ptr() as _,
+                key: key.as_ptr() as _,
+                value_size: value_with_nul.len() - 1,
+                value: value_with_nul.as_ptr(),
+            }
+        );
     }
 
     #[test]

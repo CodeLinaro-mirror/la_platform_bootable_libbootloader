@@ -93,6 +93,16 @@ pub struct AvbDeviceStatus {
     pub is_dm_verity_error: bool,
 }
 
+/// Represents AVB vbmeta property.
+pub struct AvbProperty<'a> {
+    /// Name of the source partition.
+    pub partition: &'a CStr,
+    /// Property key name.
+    pub key: &'a CStr,
+    /// Property value.
+    pub value_with_nul: &'a [u8],
+}
+
 // https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
 // should we use traits for this? or optional/box FnMut?
 //
@@ -334,16 +344,11 @@ pub trait GblOps<'a, 'd> {
     /// Handle AVB result.
     ///
     /// Set device state (rot / version binding), show UI, etc.
-    fn avb_handle_verification_result(
+    fn avb_handle_verification_result<'b>(
         &mut self,
         color: BootStateColor,
         digest: Option<&CStr>,
-        boot_os_version: Option<&[u8]>,
-        boot_security_patch: Option<&[u8]>,
-        system_os_version: Option<&[u8]>,
-        system_security_patch: Option<&[u8]>,
-        vendor_os_version: Option<&[u8]>,
-        vendor_security_patch: Option<&[u8]>,
+        properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
     ) -> AvbIoResult<()>;
 
     /// Check AVF vendor implementations are provided.
@@ -849,27 +854,13 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         }
     }
 
-    fn avb_handle_verification_result(
+    fn avb_handle_verification_result<'b>(
         &mut self,
         color: BootStateColor,
         digest: Option<&CStr>,
-        boot_os_version: Option<&[u8]>,
-        boot_security_patch: Option<&[u8]>,
-        system_os_version: Option<&[u8]>,
-        system_security_patch: Option<&[u8]>,
-        vendor_os_version: Option<&[u8]>,
-        vendor_security_patch: Option<&[u8]>,
+        properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
     ) -> AvbIoResult<()> {
-        self.ops.avb_handle_verification_result(
-            color,
-            digest,
-            boot_os_version,
-            boot_security_patch,
-            system_os_version,
-            system_security_patch,
-            vendor_os_version,
-            vendor_security_patch,
-        )
+        self.ops.avb_handle_verification_result(color, digest, properties)
     }
 
     fn avb_validate_vbmeta_public_key(
@@ -1131,12 +1122,7 @@ pub(crate) mod test {
             &'a mut dyn FnMut(
                 BootStateColor,
                 Option<&CStr>,
-                Option<&[u8]>,
-                Option<&[u8]>,
-                Option<&[u8]>,
-                Option<&[u8]>,
-                Option<&[u8]>,
-                Option<&[u8]>,
+                Option<Vec<AvbProperty<'_>>>,
             ) -> AvbIoResult<()>,
         >,
 
@@ -1421,28 +1407,14 @@ pub(crate) mod test {
             self.avb_ops.erase_persistent_value(name)
         }
 
-        fn avb_handle_verification_result(
+        fn avb_handle_verification_result<'b>(
             &mut self,
             color: BootStateColor,
             digest: Option<&CStr>,
-            boot_os_version: Option<&[u8]>,
-            boot_security_patch: Option<&[u8]>,
-            system_os_version: Option<&[u8]>,
-            system_security_patch: Option<&[u8]>,
-            vendor_os_version: Option<&[u8]>,
-            vendor_security_patch: Option<&[u8]>,
+            properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
         ) -> AvbIoResult<()> {
             match self.avb_handle_verification_result.as_mut() {
-                Some(f) => (*f)(
-                    color,
-                    digest,
-                    boot_os_version,
-                    boot_security_patch,
-                    system_os_version,
-                    system_security_patch,
-                    vendor_os_version,
-                    vendor_security_patch,
-                ),
+                Some(f) => (*f)(color, digest, properties.map(|p| p.collect())),
                 _ => Ok(()),
             }
         }

@@ -660,21 +660,46 @@ proceeding with the boot.
 
 Device is locked and verification passed. Boot can proceed
 
+#### GBL_EFI_AVB_PROPERTY
+
+```c
+typedef struct {
+  CONST CHAR8 *BasePartitionName;
+  CONST CHAR8 *Key;
+  UINTN       ValueSize;
+  CONST UINT8 *Value;
+} GBL_EFI_AVB_PROPERTY;
+```
+
+##### BasePartitionName
+
+A pointer to a null-terminated UTF-8 slotless partition name (e.g `vbmeta` for
+`vbmeta_a`).
+
+##### Key
+
+Pointer to a null-terminated UTF-8 string representing the property key name.
+
+##### ValueSize
+
+Size of the provided property `Value` buffer, excluding a null terminator.
+
+##### Value
+
+Points to a buffer containing the property value of `ValueSize` bytes.
+Guaranteed to be followed by a null terminator.
+
 #### GBL_EFI_AVB_VERIFICATION_RESULT
 
 ```c
 typedef struct {
   // GBL_EFI_AVB_BOOT_COLOR
-  UINT32       Color;
-  UINT32       Reserved1;
-  CONST CHAR8  *Digest;
-  CONST CHAR8  *BootVersion;
-  CONST CHAR8  *BootSecurityPatch;
-  CONST CHAR8  *SystemVersion;
-  CONST CHAR8  *SystemSecurityPatch;
-  CONST CHAR8  *VendorVersion;
-  CONST CHAR8  *VendorSecurityPatch;
-  UINT32       Reserved2[12];
+  UINT32                     Color;
+  UINT32                     Reserved1;
+  CONST CHAR8                *Digest;
+  UINTN                      NumProperties;
+  CONST GBL_EFI_AVB_PROPERTY *Properties;
+  UINT32                     Reserved2[8];
 } GBL_EFI_AVB_VERIFICATION_RESULT;
 ```
 
@@ -693,47 +718,18 @@ cases.
 Points to null-terminated UTF-8 hex string with the result digest calculated by
 the `libavb`.
 
-##### BootVersion
+##### NumProperties
 
-Points to null-terminated UTF-8 string with `com.android.build.boot.os_version`
-property value extracted from `boot` footer or `vbmeta` header. May be NULL in
-case such property isn't presented or failed verification (so `RED` state
+The number of properties contained in the `Properties` array. May be `0` if no
+properties are present in the partition data or if verification fails (so `RED`
+state color).
+
+##### Properties
+
+Pointer to an array of `NumProperties` `GBL_EFI_AVB_PROPERTY` items containing
+all AVB properties extracted from `vbmeta` and chained partition footers. May be
+`NULL` if no properties are provided or verification fails (so `RED` state
 color).
-
-##### BootSecurityPatch
-
-Points to null-terminated UTF-8 string with
-`com.android.build.boot.security_patch` property value extracted from `boot`
-footer or `vbmeta` header. May be NULL in case such property isn't presented or
-failed verification (so `RED` state color).
-
-##### SystemVersion
-
-Points to null-terminated UTF-8 string with
-`com.android.build.system.os_version` property value extracted from
-`vbmeta_system` or `vbmeta` headers. May be NULL in case such property isn't
-presented or failed verification (so `RED` state color).
-
-##### SystemSecurityPatch
-
-Points to null-terminated UTF-8 string with
-`com.android.build.system.security_patch` property value extracted from
-`vbmeta_system` or `vbmeta` headers. May be NULL in case such property isn't
-presented or failed verification (so `RED` state color).
-
-##### VendorVersion
-
-Points to null-terminated UTF-8 string with
-`com.android.build.vendor.os_version` property value extracted from
-`vbmeta_vendor` or `vbmeta` headers. May be NULL in case such property isn't
-presented or failed verification (so `RED` state color).
-
-##### VendorSecurityPatch
-
-Points to null-terminated UTF-8 string with
-`com.android.build.vendor.security_patch` property value extracted from
-`vbmeta_vendor` or `vbmeta` headers. May be NULL in case such property isn't
-presented or failed verification (so `RED` state color).
 
 ##### Reserved2
 

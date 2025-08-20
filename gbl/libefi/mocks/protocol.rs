@@ -247,6 +247,8 @@ pub mod gbl_efi_avb {
         pub read_persistent_value_result: Option<Result<usize>>,
         /// Expected return value from `write_persistent_value`.
         pub write_persistent_value_result: Option<Result<()>>,
+        /// Expected return value from `handle_verification_result`.
+        pub handle_verification_result_result: Option<Result<()>>,
     }
 
     impl GblAvbProtocol {
@@ -301,7 +303,7 @@ pub mod gbl_efi_avb {
             &self,
             _verification_result: &GblEfiAvbVerificationResult,
         ) -> Result<()> {
-            unimplemented!();
+            self.handle_verification_result_result.unwrap()
         }
     }
 }

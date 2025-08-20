@@ -205,7 +205,10 @@ mod test {
     use super::*;
     use crate::{
         android_boot::tests::read_test_data,
-        ops::test::{FakeGblOps, FakeGblOpsStorage},
+        ops::{
+            test::{FakeGblOps, FakeGblOpsStorage},
+            AvbProperty,
+        },
         IntegrationError::AvbIoError,
     };
     use avb::{IoError, SlotVerifyError};
@@ -231,14 +234,7 @@ mod test {
         };
         ops.avb_ops.rollbacks = HashMap::from([(1, rollback_result)]);
         let mut out_color = None;
-        let mut handler = |color,
-                           _: Option<&CStr>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>| {
+        let mut handler = |color, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
             out_color = Some(color);
             Ok(())
         };

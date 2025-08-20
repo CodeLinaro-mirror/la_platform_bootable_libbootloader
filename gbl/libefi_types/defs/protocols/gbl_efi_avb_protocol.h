@@ -63,6 +63,16 @@ typedef enum GBL_EFI_AVB_KEY_VALIDATION_STATUS {
 } GblEfiAvbKeyValidationStatus;
 
 typedef struct {
+  // UTF-8, null terminated
+  const char8_t* base_partition_name;
+  // UTF-8, null terminated
+  const char8_t* key;
+  // Excluding null terminator
+  size_t value_size;
+  const uint8_t* value;
+} GblEfiAvbProperty;
+
+typedef struct {
   // GblEfiAvbBootColor
   uint32_t color;
   // To ensure 8 bytes pointers alignment.
@@ -70,17 +80,9 @@ typedef struct {
   // Pointer to nul-terminated ASCII hex digest calculated by libavb. May be
   // null in case of verification failed (RED boot state color).
   const char8_t* digest;
-  // Pointers to nul-terminated os versions and security_patches for different
-  // boot components. NULL is provided in case value isn't presented in the boot
-  // artifacts or fatal AVB failure.
-  // https://source.android.com/docs/core/architecture/bootloader/version-info-avb
-  const char8_t* boot_version;
-  const char8_t* boot_security_patch;
-  const char8_t* system_version;
-  const char8_t* system_security_patch;
-  const char8_t* vendor_version;
-  const char8_t* vendor_security_patch;
-  uint64_t reserved2[16];
+  size_t num_properties;
+  const GblEfiAvbProperty* properties;
+  uint64_t reserved2[8];
 } GblEfiAvbVerificationResult;
 
 typedef struct {

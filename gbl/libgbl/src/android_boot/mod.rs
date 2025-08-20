@@ -622,7 +622,7 @@ pub(crate) mod tests {
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
         ops::{
             test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage},
-            PartitionBuffer,
+            AvbProperty, PartitionBuffer,
         },
     };
     use avf::test::dummy_pvmfw_partition;
@@ -911,14 +911,7 @@ androidboot.veritymode=enforcing
         ops.avb_device_status.is_unlocked = unlock;
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(rollback_idx))]);
         let mut out_color = None;
-        let mut handler = |color,
-                           _: Option<&CStr>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>| {
+        let mut handler = |color, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
             out_color = Some(color);
             Ok(())
         };
@@ -1638,14 +1631,7 @@ androidboot.veritymode=enforcing
         ops.avb_device_status.is_unlocked = unlocked;
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         let mut out_color = None;
-        let mut handler = |color,
-                           _: Option<&CStr>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>| {
+        let mut handler = |color, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
             out_color = Some(color);
             Ok(())
         };

@@ -149,8 +149,9 @@ mod test {
     };
     use gbl::{
         ops::{
-            AvbDeviceStatus, AvbIoResult, CertPermanentAttributes, FastbootEraseAction, Partition,
-            PartitionBuffer, RebootMode, SlotsMetadata, SHA256_DIGEST_SIZE,
+            AvbDeviceStatus, AvbIoResult, AvbProperty, CertPermanentAttributes,
+            FastbootEraseAction, Partition, PartitionBuffer, RebootMode, SlotsMetadata,
+            SHA256_DIGEST_SIZE,
         },
         partition::GblDisk,
         slots::{Bootability, Cursor, RecoveryTarget, UnbootableReason},
@@ -344,16 +345,11 @@ mod test {
             unimplemented!();
         }
 
-        fn avb_handle_verification_result(
+        fn avb_handle_verification_result<'b>(
             &mut self,
             _color: BootStateColor,
             _digest: Option<&CStr>,
-            _boot_os_version: Option<&[u8]>,
-            _boot_security_patch: Option<&[u8]>,
-            _system_os_version: Option<&[u8]>,
-            _system_security_patch: Option<&[u8]>,
-            _vendor_os_version: Option<&[u8]>,
-            _vendor_security_patch: Option<&[u8]>,
+            _properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
         ) -> AvbIoResult<()> {
             unimplemented!();
         }
