@@ -34,7 +34,7 @@ devices.
 ### Revision Number
 
 ```c
-#define GBL_EFI_AB_SLOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
+#define GBL_EFI_AB_SLOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 2)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -110,9 +110,9 @@ Writes or clears the persistent value for the provided name.
 
 Handles the AVB verification result (e.g., updating the Root of Trust, setting
 device state, displaying UI warnings/errors, handling anti-tampering, etc.).
-[`HandleVerificationResult()`](#gbl_efi_avb_protocolhandleverificationresult).
+[`HandleVerificationResult()`][handleverificationresult].
 
-## GBL_EFI_IMAGE_LOADING_PROTOCOL.ReadPartitionsToVerify()
+## GBL_EFI_AVB_PROTOCOL.ReadPartitionsToVerify()
 
 ### Summary
 
@@ -181,8 +181,11 @@ For example, in case of Android, GBL loads and verifies the following standard
 set of partitions: `boot`, `init_boot`, `vendor_boot`, `vendor_kernel_boot`,
 `dtb`, `dtbo`, and `pvmfw`, which are used to boot the system.
 
-This method allows the firmware specify extra non-standard partitions that GBL
-will also load and verify to extend the integrity check.
+This method allows the firmware to specify extra non-standard partitions that
+GBL will also load and verify, both to extend the integrity check and to enable
+the firmware to handle device-specific partitions content via
+[`HandleVerificationResult()`][handleverificationresult] once verification is
+complete.
 
 For example, to provide N additional partitions, firmware must update the
 `NumberOfPartitions` to N and fill first N elements of `Partitions` following
@@ -689,17 +692,42 @@ Size of the provided property `Value` buffer, excluding a null terminator.
 Points to a buffer containing the property value of `ValueSize` bytes.
 Guaranteed to be followed by a null terminator.
 
+#### GBL_EFI_AVB_LOADED_PARTITION
+
+```c
+typedef struct {
+  CONST CHAR8 *BaseName;
+  UINTN       DataSize;
+  CONST UINT8 *Data;
+} GBL_EFI_AVB_LOADED_PARTITION;
+```
+
+##### BaseName
+
+A pointer to a null-terminated UTF-8 slotless partition name (e.g `custom` for
+`custom_a`).
+
+##### DataSize
+
+Size of the loaded partition `Data` buffer.
+
+##### Data
+
+Points to a buffer containing the loaded parititon data of `DataSize` bytes.
+
 #### GBL_EFI_AVB_VERIFICATION_RESULT
 
 ```c
 typedef struct {
   // GBL_EFI_AVB_BOOT_COLOR
-  UINT32                     Color;
-  UINT32                     Reserved1;
-  CONST CHAR8                *Digest;
-  UINTN                      NumProperties;
-  CONST GBL_EFI_AVB_PROPERTY *Properties;
-  UINT32                     Reserved2[8];
+  UINT32                             Color;
+  UINT32                             Reserved1;
+  CONST CHAR8                        *Digest;
+  UINTN                              NumLoadedPartitions;
+  CONST GBL_EFI_AVB_LOADED_PARTITION *LoadedPartitions;
+  UINTN                              NumProperties;
+  CONST GBL_EFI_AVB_PROPERTY         *Properties;
+  UINT32                             Reserved2[8];
 } GBL_EFI_AVB_VERIFICATION_RESULT;
 ```
 
@@ -717,6 +745,19 @@ cases.
 
 Points to null-terminated UTF-8 hex string with the result digest calculated by
 the `libavb`.
+
+##### NumLoadedPartitions
+
+The number of loaded partitions referenced by the `LoadedPartitions` array. May
+be `0` if no extra partitions were requested or if verification fails (so `RED`
+state color).
+
+##### LoadedPartitions
+
+Pointer to an array of `NumLoadedPartitions` `GBL_EFI_AVB_LOADED_PARTITION`
+items containing the loaded data for extra partitions that were requested by
+[`ReadPartitionsToVerify()`][readpartitionstoverify]. May be `NULL` if no extra
+partitions are requested or if verification fails (so `RED` state color).
 
 ##### NumProperties
 
@@ -752,13 +793,16 @@ Regardless of the verification result, GBL invokes this method to allow the
 firmware to handle it along with the provided metadata. It is intended to be
 used for:
 
-1. Updating the root of trust along with the device state.
-2. Handling anti-tampering mechanisms.
-3. Displaying the appropriate UI and obtaining user confirmation for states
+1. Update the root of trust along with the device state.
+2. Handle anti-tampering mechanisms.
+3. Handle device-specific partitions data requested via
+   [`ReadPartitionsToVerify()`][readpartitionstoverify].
+4. Display the appropriate UI and obtaining user confirmation for states
    that may affect the device's security guarantees.
 
-Note: The data pointed to by `Result` is only valid during this call and becomes
-unavailable afterward.
+Note: The data pointed to by `Result` (including the loaded partitions and
+properties buffers) is valid only for the duration of this call and becomes
+invalid afterward.
 
 ### Status Codes Returned
 
@@ -785,7 +829,8 @@ following UEFI error codes are used to communicate results back to the library:
 | `EFI_STATUS_UNSUPPORTED`       | Operation isn't implemented / supported                                                                                                                 |
 | Others                         | Treated as `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                                                                                |
 
-[readpartitionstoverify]: #gbl_efi_image_loading_protocolreadpartitionstoverify
+[readpartitionstoverify]: #gbl_efi_avb_protocolreadpartitionstoverify
+[handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
 [protocolwriterollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
 [avb]: https://source.android.com/docs/security/features/verifiedboot/avb
 [unlocked]: https://android.googlesource.com/platform/external/avb/+/refs/heads/main/README.md#locked-and-unlocked-mode
