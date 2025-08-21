@@ -85,7 +85,7 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
     async fn erase_blocks(&mut self, blk_off: u64, num_blks: u64) -> Result<(), Error> {
         let protocol = self.erase.as_ref().ok_or(Error::Unsupported)?;
         let sz = SafeNum::from(num_blks) * protocol.erase_length_granularity();
-        protocol.erase(self.media_id, blk_off, sz.try_into()?).await
+        protocol.erase_blocks(self.media_id, blk_off, sz.try_into()?).await
     }
 
     fn read_blocks_sync<'a>(

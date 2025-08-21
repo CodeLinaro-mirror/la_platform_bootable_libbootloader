@@ -20,6 +20,8 @@
 
 #include "types.h"
 
+static const uint64_t EFI_ERASE_BLOCK_PROTOCOL_REVISION = ((2<<16) | (60));
+
 typedef struct EfiEraseBlockProtocol EfiEraseBlockProtocol;
 
 typedef struct {
@@ -30,8 +32,9 @@ typedef struct {
 struct EfiEraseBlockProtocol {
   uint64_t revision;
   uint32_t erase_length_granularity;
-  EfiStatus (*erase)(EfiEraseBlockProtocol* self, uint32_t media_id,
-                     uint64_t lba, EfiEraseBlockToken* token, size_t size);
+  EfiStatus (*erase_blocks)(EfiEraseBlockProtocol* self, uint32_t media_id,
+                            uint64_t lba, EfiEraseBlockToken* token,
+                            size_t size);
 };
 
 #endif  //__ERASE_BLOCK_PROTOCOL_H__

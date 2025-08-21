@@ -41,8 +41,8 @@ impl Protocol<'_, EraseBlockProtocol> {
         self.interface().erase_length_granularity
     }
 
-    /// Wrapper of `EFI_ERASE_BLOCK_PROTOCOL.erase`
-    pub async fn erase(&self, media_id: u32, lba: u64, size: usize) -> Result<()> {
+    /// Wrapper of `EFI_ERASE_BLOCK_PROTOCOL.erase_blocks`
+    pub async fn erase_blocks(&self, media_id: u32, lba: u64, size: usize) -> Result<()> {
         let bs = self.efi_entry().system_table().boot_services();
         let complete = AtomicBool::new(false);
         let mut notify_fn = &mut |_| complete.store(true, Ordering::Relaxed);
@@ -63,7 +63,7 @@ impl Protocol<'_, EraseBlockProtocol> {
         //   Future getting dropped before it can execute to completion.
         unsafe {
             efi_call!(
-                self.interface().erase,
+                self.interface().erase_blocks,
                 self.interface_ptr(),
                 media_id,
                 lba,
