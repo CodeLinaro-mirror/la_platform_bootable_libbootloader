@@ -73,23 +73,17 @@ impl Protocol<'_, GblAvbProtocol> {
         Ok(num_partitions)
     }
 
-    /// Wraps `GBL_EFI_AVB_PROTOCOL.read_is_dm_verity_error()`.
-    pub fn read_is_dm_verity_error(&self) -> Result<bool> {
-        let mut is_dm_verity_error = false;
+    /// Wraps `GBL_EFI_AVB_PROTOCOL.read_device_status()`.
+    pub fn read_device_status(&self) -> Result<u64> {
+        let mut flags: u64 = 0;
 
         // SAFETY:
         // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`
-        // * `is_dm_verity_error` is non-null buffer to a `bool` available to write, must be used
+        // * `flags` is non-null buffer points to a `u64` available to write, must be used
         //   only within the call
-        unsafe {
-            efi_call!(
-                self.interface().read_is_dm_verity_error,
-                self.interface_ptr(),
-                &mut is_dm_verity_error,
-            )?
-        }
+        unsafe { efi_call!(self.interface().read_device_status, self.interface_ptr(), &mut flags)? }
 
-        Ok(is_dm_verity_error)
+        Ok(flags)
     }
 
     /// Wraps `GBL_EFI_AVB_PROTOCOL.validate_vbmeta_public_key()`.
@@ -98,7 +92,8 @@ impl Protocol<'_, GblAvbProtocol> {
         public_key: &[u8],
         public_key_metadata: Option<&[u8]>,
     ) -> Result<GblEfiAvbKeyValidationStatus> {
-        let mut validation_status = efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID as _;
+        let mut validation_status =
+            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_INVALID as _;
 
         // SAFETY:
         // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`
@@ -109,34 +104,15 @@ impl Protocol<'_, GblAvbProtocol> {
             efi_call!(
                 self.interface().validate_vbmeta_public_key,
                 self.interface_ptr(),
-                public_key.as_ptr() as *const _,
                 public_key.len(),
-                public_key_metadata.map_or(null(), |m| m.as_ptr() as *const _),
+                public_key.as_ptr() as *const _,
                 public_key_metadata.map_or(0, |m| m.len()),
+                public_key_metadata.map_or(null(), |m| m.as_ptr() as *const _),
                 &mut validation_status,
             )?
         }
 
         Ok(validation_status as _)
-    }
-
-    /// Wraps `GBL_EFI_AVB_PROTOCOL.read_is_device_unlocked()`.
-    pub fn read_is_device_unlocked(&self) -> Result<bool> {
-        let mut is_unlocked: bool = false;
-
-        // SAFETY:
-        // * `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid
-        // object established by `Protocol::new()`.
-        // * `is_unlocked` is a non-null pointer to a `bool` available for write.
-        unsafe {
-            efi_call!(
-                self.interface().read_is_device_unlocked,
-                self.interface_ptr(),
-                &mut is_unlocked
-            )?
-        }
-
-        Ok(is_unlocked)
     }
 
     /// Wraps `GBL_EFI_AVB_PROTOCOL.read_rollback_index()`.
@@ -189,17 +165,17 @@ impl Protocol<'_, GblAvbProtocol> {
         // * `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid
         //   object established by `Protocol::new()`.
         // * `name` is a valid pointer to a null-terminated string used only within the call.
+        // * `value_buffer_size` holds a mutable reference to `usize`, used only within the call.
         // * `value_ptr` is either a valid pointer to a writable buffer or a null pointer, used only
         //   within the call
-        // * `value_buffer_size` holds a mutable reference to `usize`, used only within the call.
         unsafe {
             efi_call!(
                 @bufsize value_buffer_size,
                 self.interface().read_persistent_value,
                 self.interface_ptr(),
                 name.as_ptr() as _,
-                value_ptr,
                 &mut value_buffer_size,
+                value_ptr,
             )?
         }
 
@@ -224,8 +200,8 @@ impl Protocol<'_, GblAvbProtocol> {
                 self.interface().write_persistent_value,
                 self.interface_ptr(),
                 name.as_ptr() as _,
-                value_ptr,
                 value_len,
+                value_ptr,
             )?
         }
 
@@ -415,44 +391,46 @@ mod test {
     }
 
     #[test]
-    fn read_is_dm_verity_error_returns_false() {
-        /// C callback implementation that sets is_dm_verity_error to false.
-        unsafe extern "efiapi" fn c_return_false(
+    fn read_device_status_returns_unlocked() {
+        /// C callback implementation that sets the flags for unlocked status.
+        unsafe extern "efiapi" fn c_return_unlocked_and_ok(
             _: *mut GblEfiAvbProtocol,
-            is_dm_verity_error_ptr: *mut bool,
+            flags_ptr: *mut u64,
         ) -> EfiStatus {
-            // SAFETY: is_dm_verity_error_ptr is a valid bool pointer available to write.
-            unsafe { *is_dm_verity_error_ptr = false };
+            // SAFETY: flags_ptr is a valid u64 pointer available to write.
+            unsafe {
+                *flags_ptr = efi_types::GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_UNLOCKED as u64
+            };
             EFI_STATUS_SUCCESS
         }
 
         let c_interface = GblEfiAvbProtocol {
-            read_is_dm_verity_error: Some(c_return_false),
+            read_device_status: Some(c_return_unlocked_and_ok),
             ..Default::default()
         };
 
         run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            assert_eq!(avb_protocol.read_is_dm_verity_error(), Ok(false));
+            let expected_flags =
+                efi_types::GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_UNLOCKED as u64;
+            assert_eq!(avb_protocol.read_device_status(), Ok(expected_flags));
         });
     }
 
     #[test]
-    fn read_is_dm_verity_error_error_handled() {
+    fn read_device_status_error_handled() {
         /// C callback implementation that returns an error.
         unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
-            _: *mut bool,
+            _: *mut u64,
         ) -> EfiStatus {
             EFI_STATUS_INVALID_PARAMETER
         }
 
-        let c_interface = GblEfiAvbProtocol {
-            read_is_dm_verity_error: Some(c_return_error),
-            ..Default::default()
-        };
+        let c_interface =
+            GblEfiAvbProtocol { read_device_status: Some(c_return_error), ..Default::default() };
 
         run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            assert_eq!(avb_protocol.read_is_dm_verity_error(), Err(Error::InvalidInput));
+            assert_eq!(avb_protocol.read_device_status(), Err(Error::InvalidInput));
         });
     }
 
@@ -460,15 +438,15 @@ mod test {
     fn validate_vbmeta_public_key_status_provided() {
         const EXPECTED_PUBLIC_KEY: &[u8] = b"test_key";
         const EXPECTED_STATUS: GblEfiAvbKeyValidationStatus =
-            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY;
+            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY;
 
         // C callback implementation that returns an error
         unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
-            public_key_ptr: *const u8,
             public_key_len: usize,
-            _metadata_ptr: *const u8,
+            public_key_ptr: *const u8,
             _metadata_len: usize,
+            _metadata_ptr: *const u8,
             validation_status_ptr: *mut GblEfiAvbKeyValidationStatus,
         ) -> EfiStatus {
             // SAFETY:
@@ -505,10 +483,10 @@ mod test {
         // C callback implementation that returns an error
         unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
-            _public_key_ptr: *const u8,
             _public_key_len: usize,
-            _metadata_ptr: *const u8,
+            _public_key_ptr: *const u8,
             _metadata_len: usize,
+            _metadata_ptr: *const u8,
             _validation_status_ptr: *mut GblEfiAvbKeyValidationStatus,
         ) -> EfiStatus {
             EFI_STATUS_INVALID_PARAMETER
@@ -526,7 +504,7 @@ mod test {
 
     #[test]
     fn handle_verification_result_data_provided() {
-        const COLOR: u32 = efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_RED;
+        const COLOR: u32 = efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_RED;
 
         // C callback implementation that returns success.
         unsafe extern "efiapi" fn c_return_success(
@@ -571,78 +549,6 @@ mod test {
             let verification_result = GblEfiAvbVerificationResult::default();
 
             assert!(avb_protocol.handle_verification_result(&verification_result).is_err());
-        });
-    }
-
-    #[test]
-    fn read_is_device_unlocked_returns_true() {
-        /// C callback implementation that sets is_unlocked to true.
-        ///
-        /// # Safety:
-        /// Caller must guaranteed that `is_unlocked_ptr` points to a valid bool variable available
-        /// for write.
-        unsafe extern "efiapi" fn c_return_true(
-            _: *mut GblEfiAvbProtocol,
-            is_unlocked_ptr: *mut bool,
-        ) -> EfiStatus {
-            // SAFETY: By safety requirement of this function, is_unlocked_ptr is a valid pointer.
-            unsafe { *is_unlocked_ptr = true };
-            EFI_STATUS_SUCCESS
-        }
-
-        let c_interface = GblEfiAvbProtocol {
-            read_is_device_unlocked: Some(c_return_true),
-            ..Default::default()
-        };
-
-        run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            assert_eq!(avb_protocol.read_is_device_unlocked(), Ok(true));
-        });
-    }
-
-    #[test]
-    fn read_is_device_unlocked_returns_false() {
-        /// C callback implementation that sets is_unlocked to false.
-        ///
-        /// # Safety:
-        /// Caller must guaranteed that `is_unlocked_ptr` points to a valid bool variable available
-        /// for write.
-        unsafe extern "efiapi" fn c_return_false(
-            _: *mut GblEfiAvbProtocol,
-            is_unlocked_ptr: *mut bool,
-        ) -> EfiStatus {
-            // SAFETY: By safety requirement of this function, is_unlocked_ptr is a valid pointer.
-            unsafe { *is_unlocked_ptr = false };
-            EFI_STATUS_SUCCESS
-        }
-
-        let c_interface = GblEfiAvbProtocol {
-            read_is_device_unlocked: Some(c_return_false),
-            ..Default::default()
-        };
-
-        run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            assert_eq!(avb_protocol.read_is_device_unlocked(), Ok(false));
-        });
-    }
-
-    #[test]
-    fn read_is_device_unlocked_error_handled() {
-        /// C callback implementation that returns an error.
-        unsafe extern "efiapi" fn c_return_error(
-            _: *mut GblEfiAvbProtocol,
-            _: *mut bool,
-        ) -> EfiStatus {
-            EFI_STATUS_INVALID_PARAMETER
-        }
-
-        let c_interface = GblEfiAvbProtocol {
-            read_is_device_unlocked: Some(c_return_error),
-            ..Default::default()
-        };
-
-        run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            assert!(avb_protocol.read_is_device_unlocked().is_err());
         });
     }
 
@@ -755,15 +661,15 @@ mod test {
         ///
         /// # Safety:
         /// * Caller must guaranteed that `name` points to a valid null-terminated string.
-        /// * Caller must guaranteed that `value` points to non-null `value_size` sized bytes
-        ///   buffer.
         /// * Caller must guaranteed that `value_size` points to a valid usize available to write
         ///   value buffer.
+        /// * Caller must guaranteed that `value` points to non-null `value_size` sized bytes
+        ///   buffer.
         unsafe extern "efiapi" fn c_read_persistent_value_success(
             _: *mut GblEfiAvbProtocol,
             name: *const u8,
-            value: *mut u8,
             value_size: *mut usize,
+            value: *mut u8,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
@@ -814,8 +720,8 @@ mod test {
         unsafe extern "efiapi" fn c_read_persistent_value_buffer_too_small(
             _: *mut GblEfiAvbProtocol,
             _: *const u8,
-            _: *mut u8,
             value_size: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `value_size` is a valid non-null pointer to `usize` value.
@@ -852,8 +758,8 @@ mod test {
         unsafe extern "efiapi" fn c_write_persistent_value_success(
             _: *mut GblEfiAvbProtocol,
             name: *const u8,
-            value: *const u8,
             value_size: usize,
+            value: *const u8,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
@@ -895,8 +801,8 @@ mod test {
         unsafe extern "efiapi" fn c_write_persistent_value_delete(
             _: *mut GblEfiAvbProtocol,
             name: *const u8,
-            value: *const u8,
             value_size: usize,
+            value: *const u8,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:
@@ -932,8 +838,8 @@ mod test {
         unsafe extern "efiapi" fn c_write_persistent_value_error(
             _: *mut GblEfiAvbProtocol,
             name: *const u8,
-            _: *const u8,
             _: usize,
+            _: *const u8,
         ) -> EfiStatus {
             assert_eq!(
                 // SAFETY:

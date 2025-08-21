@@ -621,7 +621,7 @@ pub(crate) mod tests {
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
         ops::{
             test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage},
-            PartitionBuffer,
+            AvbProperty, PartitionBuffer,
         },
     };
     use avf::test::dummy_pvmfw_partition;
@@ -907,17 +907,10 @@ androidboot.veritymode=enforcing
         let mut ops = FakeGblOps::new(&storage);
         let slot_suffix = char::from_u32('a' as u32 + slot_nr as u32).unwrap();
         ops.current_slot = Some(Ok(slot(slot_suffix)));
-        ops.avb_ops.unlock_state = Ok(unlock);
+        ops.avb_device_status.is_unlocked = unlock;
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(rollback_idx))]);
         let mut out_color = None;
-        let mut handler = |color,
-                           _: Option<&CStr>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>| {
+        let mut handler = |color, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
             out_color = Some(color);
             Ok(())
         };
@@ -1634,17 +1627,10 @@ androidboot.veritymode=enforcing
         // vbmeta_noop.img has no partition descriptors. Thus nothing should be loaded by avb.
         storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_noop.img"));
         let mut ops = FakeGblOps::new(&storage);
-        ops.avb_ops.unlock_state = Ok(unlocked);
+        ops.avb_device_status.is_unlocked = unlocked;
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         let mut out_color = None;
-        let mut handler = |color,
-                           _: Option<&CStr>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>,
-                           _: Option<&[u8]>| {
+        let mut handler = |color, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
             out_color = Some(color);
             Ok(())
         };
@@ -1820,7 +1806,6 @@ androidboot.veritymode=enforcing
     /// Helper for getting default FakeGblOps for tests.
     pub(crate) fn default_test_gbl_ops(storage: &FakeGblOpsStorage) -> FakeGblOps {
         let mut ops = FakeGblOps::new(&storage);
-        ops.avb_ops.unlock_state = Ok(false);
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
         ops.current_slot = Some(Ok(slot('a')));

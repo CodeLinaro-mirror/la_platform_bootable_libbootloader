@@ -345,7 +345,6 @@ pub(crate) mod test {
 
     pub(crate) fn create_gbl_ops<'a>(partitions: &'a [TestGblDisk]) -> FakeGblOps<'a, 'static> {
         let mut ops = FakeGblOps::new(&partitions);
-        ops.avb_ops.unlock_state = Ok(false);
         ops.avb_ops.rollbacks = HashMap::from([
             (TEST_ROLLBACK_INDEX_LOCATION, Ok(0)),
             (AVB_CERT_PSK_VERSION_LOCATION.try_into().unwrap(), Ok(0)),
@@ -722,11 +721,11 @@ pub(crate) mod test {
     fn test_load_verify_abr_verify_failure_unlocked() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        ops.avb_device_status.is_unlocked = true;
         let mut image_buffers_pool =
             ImageBuffersPool::builder().number((1 + 2 * ABR_MAX_TRIES_REMAINING).into()).build();
         ops.image_buffers = image_buffers_pool.get();
 
-        ops.avb_ops.unlock_state = Ok(true);
         corrupt_data(&mut ops, "zircon_a");
         corrupt_data(&mut ops, "zircon_b");
 

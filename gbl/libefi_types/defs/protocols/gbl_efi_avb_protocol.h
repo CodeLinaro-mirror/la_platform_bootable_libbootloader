@@ -33,47 +33,34 @@
 #include "types.h"
 
 static const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 1);
+    GBL_PROTOCOL_REVISION(0, 2);
+
+typedef enum GBL_EFI_AVB_DEVICE_STATUS {
+  // Indecates device is unlocked.
+  GBL_EFI_AVB_STATUS_UNLOCKED = 0x1 << 0,
+  // Indecated dm-verity error is occurred.
+  GBL_EFI_AVB_STATUS_DM_VERITY_FAILED = 0x1 << 1,
+} GblEfiAvbDeviceStatus;
 
 // Os boot state color.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#communicating-verified-boot-state-to-users
-typedef enum GBL_EFI_AVB_BOOT_STATE_COLOR {
-  GREEN,
-  YELLOW,
-  ORANGE,
-  RED_EIO,
-  RED,
-} GblEfiAvbBootStateColor;
+typedef enum GBL_EFI_AVB_BOOT_COLOR {
+  GBL_EFI_AVB_COLOR_RED,
+  GBL_EFI_AVB_COLOR_RED_EIO,
+  GBL_EFI_AVB_COLOR_ORANGE,
+  GBL_EFI_AVB_COLOR_YELLOW,
+  GBL_EFI_AVB_COLOR_GREEN,
+} GblEfiAvbBootColor;
 
 // Vbmeta key validation status.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
 typedef enum GBL_EFI_AVB_KEY_VALIDATION_STATUS {
-  VALID,
-  VALID_CUSTOM_KEY,
-  INVALID,
+  GBL_EFI_AVB_KEY_INVALID,
+  GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY,
+  GBL_EFI_AVB_KEY_VALID,
 } GblEfiAvbKeyValidationStatus;
-
-typedef struct {
-  // GblEfiAvbBootStateColor
-  uint32_t color;
-
-  // Pointer to nul-terminated ASCII hex digest calculated by libavb. May be
-  // null in case of verification failed (RED boot state color).
-  const char8_t* digest;
-
-  // Pointers to nul-terminated os versions and security_patches for different
-  // boot components. NULL is provided in case value isn't presented in the boot
-  // artifacts or fatal AVB failure.
-  // https://source.android.com/docs/core/architecture/bootloader/version-info-avb
-  const char8_t* boot_version;
-  const char8_t* boot_security_patch;
-  const char8_t* system_version;
-  const char8_t* system_security_patch;
-  const char8_t* vendor_version;
-  const char8_t* vendor_security_patch;
-} GblEfiAvbVerificationResult;
 
 typedef struct {
   // On input - `base_name` buffer size
@@ -81,6 +68,38 @@ typedef struct {
   size_t base_name_len;
   char8_t* base_name;
 } GblEfiAvbPartition;
+
+typedef struct {
+  // UTF-8, null terminated
+  const char8_t* base_name;
+  size_t data_size;
+  const uint8_t* data;
+} GblEfiAvbLoadedPartition;
+
+typedef struct {
+  // UTF-8, null terminated
+  const char8_t* base_partition_name;
+  // UTF-8, null terminated
+  const char8_t* key;
+  // Excluding null terminator
+  size_t value_size;
+  const uint8_t* value;
+} GblEfiAvbProperty;
+
+typedef struct {
+  // GblEfiAvbBootColor
+  uint32_t color;
+  // To ensure 8 bytes pointers alignment.
+  uint32_t reserved1;
+  // Pointer to nul-terminated ASCII hex digest calculated by libavb. May be
+  // null in case of verification failed (RED boot state color).
+  const char8_t* digest;
+  size_t num_loaded_partitions;
+  const GblEfiAvbLoadedPartition* loaded_partitions;
+  size_t num_properties;
+  const GblEfiAvbProperty* properties;
+  uint64_t reserved2[8];
+} GblEfiAvbVerificationResult;
 
 typedef struct GblEfiAvbProtocol {
   uint64_t revision;
@@ -90,19 +109,16 @@ typedef struct GblEfiAvbProtocol {
       /* in-out */ size_t* num_partitions,
       /* in-out */ GblEfiAvbPartition* partitions);
 
-  EfiStatus (*read_is_dm_verity_error)(struct GblEfiAvbProtocol* self,
-                                       /* out */ bool* is_dm_verity_error);
+  EfiStatus (*read_device_status)(struct GblEfiAvbProtocol* self,
+                                  /* out */ uint64_t* status_flags);
 
   EfiStatus (*validate_vbmeta_public_key)(
       struct GblEfiAvbProtocol* self,
-      /* in */ const uint8_t* public_key_data,
       /* in */ size_t public_key_length,
-      /* in */ const uint8_t* public_key_metadata,
+      /* in */ const uint8_t* public_key_data,
       /* in */ size_t public_key_metadata_length,
+      /* in */ const uint8_t* public_key_metadata,
       /* out GblEfiAvbKeyValidationStatus */ uint32_t* validation_status);
-
-  EfiStatus (*read_is_device_unlocked)(struct GblEfiAvbProtocol* self,
-                                       /* out */ bool* is_unlocked);
 
   EfiStatus (*read_rollback_index)(struct GblEfiAvbProtocol* self,
                                    /* in */ size_t index_location,
@@ -114,13 +130,13 @@ typedef struct GblEfiAvbProtocol {
 
   EfiStatus (*read_persistent_value)(struct GblEfiAvbProtocol* self,
                                      /* in */ const char8_t* name,
-                                     /* out */ uint8_t* value,
-                                     /* in-out */ size_t* value_size);
+                                     /* in-out */ size_t* value_size,
+                                     /* out */ uint8_t* value);
 
   EfiStatus (*write_persistent_value)(struct GblEfiAvbProtocol* self,
                                       /* in */ const char8_t* name,
-                                      /* in */ const uint8_t* value,
-                                      /* in */ size_t value_size);
+                                      /* in */ size_t value_size,
+                                      /* in */ const uint8_t* value);
 
   EfiStatus (*handle_verification_result)(
       struct GblEfiAvbProtocol* self,

@@ -412,9 +412,8 @@ mod test {
     fn verify_with_corrupted_kernel_unlocked_succeeds() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        ops.avb_device_status.is_unlocked = true;
         let expect_rollback = ops.avb_ops.rollbacks.clone();
-
-        ops.avb_ops.unlock_state = Ok(true);
 
         let (_, zbi_items_buffer) =
             test_verify_zircon(&mut ops, true, KernelState::Corrupted).unwrap();
@@ -430,10 +429,10 @@ mod test {
     fn verify_with_corrupted_vbmetadata_unlocked_succeeds() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        // Unlock and corrupt vbmeta.
+        ops.avb_device_status.is_unlocked = true;
         let expect_rollback = ops.avb_ops.rollbacks.clone();
 
-        // Unlock and corrupt vbmeta.
-        ops.avb_ops.unlock_state = Ok(true);
         corrupt_data(&mut ops, "vbmeta_a");
 
         let (_, zbi_items_buffer) = test_verify_zircon(&mut ops, true, KernelState::Valid).unwrap();
@@ -450,7 +449,7 @@ mod test {
         let mut ops = create_gbl_ops(&storage);
 
         // Unlocked, but some verification callback returns I/O error.
-        ops.avb_ops.unlock_state = Ok(true);
+        ops.avb_device_status.is_unlocked = true;
         ops.avb_ops.rollbacks.insert(TEST_ROLLBACK_INDEX_LOCATION, Err(IoError::Io));
 
         // Even when unlocked, I/O error represents a critical failure and
@@ -465,7 +464,7 @@ mod test {
         let mut ops = create_gbl_ops(&storage);
 
         // Set all AVB ops to return `NotImplemented`.
-        ops.avb_ops.unlock_state = Err(IoError::NotImplemented);
+        ops.avb_device_status_error = Some(IoError::NotImplemented);
         ops.avb_cert_read_permanent_attributes_not_implemented = true;
         ops.avb_cert_read_permanent_attributes_hash_not_implemented = true;
         ops.avb_ops.rollbacks.insert(TEST_ROLLBACK_INDEX_LOCATION, Err(IoError::NotImplemented));
@@ -492,7 +491,7 @@ mod test {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
 
-        ops.avb_ops.unlock_state = Err(IoError::NotImplemented);
+        ops.avb_device_status_error = Some(IoError::NotImplemented);
 
         assert!(test_verify_zircon(&mut ops, true, KernelState::Valid).is_err());
     }

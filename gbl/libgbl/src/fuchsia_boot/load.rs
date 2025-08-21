@@ -428,7 +428,7 @@ mod test {
     fn test_zircon_main_unlock_ignore_avb_failures(slot: SlotIndex) {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
-        ops.avb_ops.unlock_state = Ok(true);
+        ops.avb_device_status.is_unlocked = true;
         ops.avb_ops
             .rollbacks
             .insert(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_VALUE + 1));
@@ -477,7 +477,7 @@ mod test {
     fn test_zircon_main_unlock_ignore_vbmeta_items_if_corrupted(slot: SlotIndex) {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
-        ops.avb_ops.unlock_state = Ok(true);
+        ops.avb_device_status.is_unlocked = true;
         let part = format!("vbmeta_{}", char::from(slot));
         ops.flip_partition_bytes(&part, 0, 64);
         let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
@@ -635,10 +635,10 @@ mod test {
         let listener = SharedTestListener::default();
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        ops.avb_device_status.is_unlocked = true;
         ops.avb_ops
             .rollbacks
             .insert(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_VALUE + 1));
-        ops.avb_ops.unlock_state = Ok(true);
         let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
         let bootimg = read_test_data("zircon_fastboot_bootimg");
         let LoadedVerifiedZircon { zbi_items, kernel, .. } =
@@ -666,10 +666,10 @@ mod test {
         let listener = SharedTestListener::default();
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        ops.avb_device_status.is_unlocked = true;
         ops.avb_ops
             .rollbacks
             .insert(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_VALUE + 1));
-        ops.avb_ops.unlock_state = Ok(true);
         let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
         let mut bootimg = read_test_data("zircon_fastboot_bootimg");
         let kernel_len = read_test_data("zircon_slotless.zbi").len();

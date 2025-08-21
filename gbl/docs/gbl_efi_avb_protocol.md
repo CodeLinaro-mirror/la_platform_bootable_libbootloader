@@ -34,7 +34,7 @@ devices.
 ### Revision Number
 
 ```c
-#define GBL_EFI_AB_SLOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
+#define GBL_EFI_AB_SLOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 2)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -70,6 +70,12 @@ Retrieves the list of additional partitions to be verified, beyond the standard
 set loaded and verified by GBL.
 [`ReadPartitionsToVerify()`][readpartitionstoverify].
 
+#### ReadDeviceStatus
+
+Retrieves the current device status, including its lock state and dm-verity
+error indication.
+[`ReadDeviceStatus()`](#gbl_efi_avb_protocolreaddevicestatus).
+
 #### ReadIsDmVerityError
 
 Retrieves whether the device is rebooted due to dm-verity error.
@@ -79,11 +85,6 @@ Retrieves whether the device is rebooted due to dm-verity error.
 
 Validates proper public key is used to sign HLOS artifacts.
 [`ValidateVbmetaPublicKey()`](#gbl_efi_avb_protocolvalidatevbmetapublickey).
-
-#### ReadIsDeviceUnlocked
-
-Retrieves whether the device is unlocked.
-[`ReadIsDeviceUnlocked()`](#gbl_efi_avb_protocolreadisdeviceunlocked).
 
 #### ReadRollbackIndex
 
@@ -109,9 +110,9 @@ Writes or clears the persistent value for the provided name.
 
 Handles the AVB verification result (e.g., updating the Root of Trust, setting
 device state, displaying UI warnings/errors, handling anti-tampering, etc.).
-[`HandleVerificationResult()`](#gbl_efi_avb_protocolhandleverificationresult).
+[`HandleVerificationResult()`][handleverificationresult].
 
-## GBL_EFI_IMAGE_LOADING_PROTOCOL.ReadPartitionsToVerify()
+## GBL_EFI_AVB_PROTOCOL.ReadPartitionsToVerify()
 
 ### Summary
 
@@ -180,8 +181,11 @@ For example, in case of Android, GBL loads and verifies the following standard
 set of partitions: `boot`, `init_boot`, `vendor_boot`, `vendor_kernel_boot`,
 `dtb`, `dtbo`, and `pvmfw`, which are used to boot the system.
 
-This method allows the firmware specify extra non-standard partitions that GBL
-will also load and verify to extend the integrity check.
+This method allows the firmware to specify extra non-standard partitions that
+GBL will also load and verify, both to extend the integrity check and to enable
+the firmware to handle device-specific partitions content via
+[`HandleVerificationResult()`][handleverificationresult] once verification is
+complete.
 
 For example, to provide N additional partitions, firmware must update the
 `NumberOfPartitions` to N and fill first N elements of `Partitions` following
@@ -205,22 +209,41 @@ following way:
 | `EFI_BUFFER_TOO_SMALL` | Provided list of `Partitions` is too small; `NumberOfPartitions` has been updated with the required amount. GBL will call this method again with extended `Partitions`. |
 | `EFI_BAD_BUFFER_SIZE` | One of provided `Partition.NameLen` values is not sufficient to hold the partition name. GBL will fail to boot. |
 
-## GBL_EFI_AVB_PROTOCOL.ReadIsDmVerityError()
+## GBL_EFI_AVB_PROTOCOL.ReadDeviceStatus()
 
 ### Summary
 
-Allows the firmware to provide the dm-verity error state to GBL in a
-firmware-specific way.
+Allows the firmware to provide current device status, including its lock state
+and dm-verity error indication in a vendor-specific way.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_READ_IS_DM_VERITY_ERROR) (
+(EFIAPI *GBL_EFI_AVB_READ_DEVICE_STATUS) (
   IN GBL_EFI_AVB_PROTOCOL *This,
-  OUT BOOLEAN *IsDmVerityError);
+  OUT UINT64 *StatusFlags);
 ```
+
+### Related Definitions
+
+#### GBL_EFI_AVB_KEY_VALIDATION_STATUS
+
+```c
+typedef enum {
+  GBL_EFI_AVB_STATUS_UNLOCKED = 0x1 << 0,
+  GBL_EFI_AVB_STATUS_DM_VERITY_FAILED = 0x1 << 1,
+} GBL_EFI_AVB_DEVICE_STATUS;
+```
+
+##### GBL_EFI_AVB_STATUS_UNLOCKED
+
+Flag indicating that the device is unlocked.
+
+##### GBL_EFI_AVB_STATUS_DM_VERITY_FAILED
+
+Flag indicating that the device rebooted due to a dm-verity error.
 
 ### Parameters
 
@@ -228,22 +251,36 @@ EFI_STATUS
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
-#### IsDmVerityError
+#### StatusFlags
 
-An output parameter that communicates the dm-verity error state to GBL.
+An output parameter to be updated by firmware with ORed flags detailing the AVB
+device status. All bits not explicitly defined must be set to zero. See related
+definitions above for the semantics of each flag value.
 
 ### Description
 
-If `IsDmVerityError` is set `True` by the FW, GBL will pass
-[`AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION`][dmv_error], so
-`RED_IO` status will be reported unless new OS images are detected by the
-`libavb`.
+This method allows the firmware to provide GBL with the current AVB device
+status, covering:
+
+1. `GBL_EFI_AVB_STATUS_UNLOCKED` - Indicates the device is [unlocked][unlocked].
+   GBL treats unlocked devices as being in the `orange` boot state, skipping
+   certain verification enforcement and allowing boot to proceed with reduced
+   security guarantees.
+1. `GBL_EFI_AVB_STATUS_DM_VERITY_FAILED` - Indicates the device rebooted due to
+   a dm-verity hashtree corruption [error][dmv_error]. In this case, GBL passes
+   `AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION` to `libavb`.
+   Unless the library detects new OS images, this results in a
+   `RED_EIO` (dm-verity error) boot state, requiring user confirmation before
+   proceeding in degraded mode.
+
+GBL may call this method multiple times within a single boot session. If the
+method returns an error, GBL rejects to boot.
 
 ### Status Codes Returned
 
 |||
 | --- | --- |
-| `EFI_SUCCESS` | A dm-verity error state is succesfully returned. |
+| `EFI_SUCCESS` | A device status is succesfully returned. |
 | `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey()
@@ -260,10 +297,10 @@ typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_VALIDATE_VBMETA_PUBLIC_KEY) (
   IN GBL_EFI_AVB_PROTOCOL *This,
-  IN CONST UINT8 *PublicKeyData,
   IN UINTN PublicKeyLength,
-  IN CONST UINT8 *PublicKeyMetadata,
+  IN CONST UINT8 *PublicKeyData,
   IN UINTN PublicKeyMetadataLength,
+  IN CONST UINT8 *PublicKeyMetadata,
   /* GBL_EFI_AVB_KEY_VALIDATION_STATUS */ OUT UINT32 *ValidationStatus);
 ```
 
@@ -276,27 +313,27 @@ EFI_STATUS
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
 typedef enum {
-  VALID,
-  VALID_CUSTOM_KEY,
-  INVALID,
+  GBL_EFI_AVB_KEY_INVALID,
+  GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY,
+  GBL_EFI_AVB_KEY_VALID,
 } GBL_EFI_AVB_KEY_VALIDATION_STATUS;
 ```
 
-##### VALID
-
-The public key is valid and trusted, so the device can continue the boot process
-for both locked and unlocked states.
-
-##### VALID_CUSTOM_KEY
-
-The public key is valid but not fully trusted. GBL continues booting a locked
-device with a `YELLOW` state and an unlocked device with an `ORANGE` state.
-
-##### INVALID
+##### GBL_EFI_AVB_KEY_INVALID
 
 The public key is not valid. The device cannot continue the boot process for
 locked devices; GBL reports a `RED` status and resets. Unlocked devices can
 still boot with an `ORANGE` state.
+
+##### GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY
+
+The public key is valid but not fully trusted. GBL continues booting a locked
+device with a `YELLOW` state and an unlocked device with an `ORANGE` state.
+
+##### GBL_EFI_AVB_KEY_VALID
+
+The public key is valid and trusted, so the device can continue the boot process
+for both locked and unlocked states.
 
 ### Parameters
 
@@ -304,24 +341,24 @@ still boot with an `ORANGE` state.
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
+#### PublicKeyLength
+
+Specifies the length of the public key provided by `PublicKeyData`.
+
 #### PublicKeyData
 
 A pointer to the public key extracted from `vbmeta`. Guaranteed to contain valid
 data of length `PublicKeyLength`.
 
-#### PublicKeyLength
+#### PublicKeyMetadataLength
 
-Specifies the length of the public key provided by `PublicKeyData`.
+Specifies the length of the public key metadata provided by `PublicKeyMetadata`.
+Guaranteed to be 0 in case of `NULL` `PublicKeyMetadata`.
 
 #### PublicKeyMetadata
 
 A pointer to public key metadata provided using the `--public_key_metadata`
 `avbtool`'s flag. May be `NULL` if no public key metadata is provided.
-
-#### PublicKeyMetadataLength
-
-Specifies the length of the public key metadata provided by `PublicKeyMetadata`.
-Guaranteed to be 0 in case of `NULL` `PublicKeyMetadata`.
 
 #### ValidationStatus
 
@@ -347,47 +384,6 @@ GBL calls this function once per AVB verification session.
 |||
 | --- | --- |
 | `EFI_SUCCESS` | A locked state is succesfully returned. |
-| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
-
-## GBL_EFI_AVB_PROTOCOL.ReadIsDeviceUnlocked()
-
-### Summary
-
-Allows the firmware to provide the device's locking state to GBL in a
-firmware-specific way.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_READ_IS_DEVICE_UNLOCKED) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
-  OUT BOOLEAN *IsUnlocked);
-```
-
-### Parameters
-
-#### This
-
-A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
-
-#### IsUnlocked
-
-An output parameter that communicates the device locking state to GBL.
-
-### Description
-
-An unlocked device state allows GBL not to force AVB and to boot the device with
-an `orange` boot state. GBL may call this method multiple times per boot
-session. GBL rejects continuing the boot process if this method returns any
-error.
-
-### Status Codes Returned
-
-|||
-| --- | --- |
-| `EFI_SUCCESS` | An unlocked state is succesfully returned. |
 | `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadRollbackIndex()
@@ -512,8 +508,8 @@ EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_READ_PERSISTENT_VALUE) (
   IN GBL_EFI_AVB_PROTOCOL *This,
   IN CONST CHAR8 *Name,
-  OUT UINT8 *Value,
-  IN OUT USIZE *ValueSize);
+  IN OUT USIZE *ValueSize,
+  OUT UINT8 *Value);
 ```
 
 ### Parameters
@@ -526,16 +522,16 @@ A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
 Points to null-terminated UTF-8 name for the requested persistent value.
 
-#### Value
-
-Points to the buffer of `ValueSize` bytes to be filled by FW with a requested
-value. May be `NULL` if GBL only wants to check value's availability.
-
 #### ValueSize
 
 On input, points to the size of the provided `Value` buffer, or `0` if GBL only
 wants to check the value's availability. On output, the firmware should update
 it to reflect the actual size of the value.
+
+#### Value
+
+Points to the buffer of `ValueSize` bytes to be filled by FW with a requested
+value. May be `NULL` if GBL only wants to check value's availability.
 
 ### Description
 
@@ -568,8 +564,8 @@ EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_WRITE_PERSISTENT_VALUE) (
   IN GBL_EFI_AVB_PROTOCOL *This,
   IN CONST CHAR8 *Name,
-  IN CONST UINT8 *Value,
-  IN USIZE ValueSize);
+  IN USIZE ValueSize,
+  IN CONST UINT8 *Value);
 ```
 
 ### Parameters
@@ -582,15 +578,15 @@ A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
 Points to null-terminated UTF-8 name for the persistent value to update.
 
-#### Value
-
-Points to a buffer of `ValueSize` bytes containing the value to set.
-
 #### ValueSize
 
 Points to the size of the `Value` to be set. May be `0`, in which case the
 corresponding persistent value must be treated as not present after such
 operation.
+
+#### Value
+
+Points to a buffer of `ValueSize` bytes containing the value to set.
 
 ### Description
 
@@ -627,116 +623,158 @@ EFI_STATUS
 
 ### Related Definitions
 
-#### GBL_EFI_AVB_BOOT_STATE_COLOR
+#### GBL_EFI_AVB_BOOT_COLOR
 
 ```c
 typedef enum {
-  GBL_EFI_AVB_BOOT_STATE_GREEN,
-  GBL_EFI_AVB_BOOT_STATE_YELLOW,
-  GBL_EFI_AVB_BOOT_STATE_ORANGE,
-  GBL_EFI_AVB_BOOT_STATE_RED_EIO,
-  GBL_EFI_AVB_BOOT_STATE_RED,
-} GBL_EFI_AVB_BOOT_STATE_COLOR;
+  GBL_EFI_AVB_COLOR_RED,
+  GBL_EFI_AVB_COLOR_RED_EIO,
+  GBL_EFI_AVB_COLOR_ORANGE,
+  GBL_EFI_AVB_COLOR_YELLOW,
+  GBL_EFI_AVB_COLOR_GREEN,
+} GBL_EFI_AVB_BOOT_COLOR;
 ```
 
-##### STATE_GREEN
+##### GBL_EFI_AVB_COLOR_RED
 
-Device is locked and verification passed. Boot can proceed.
+Verification failed (including fatal errors on an unlocked device). Boot cannot
+proceed.
 
-##### STATE_YELLOW
-
-Device is locked and verification passed using a user-provided custom key. A
-corresponding notification must be shown to obtain user confirmation before
-proceeding with the boot.
-
-##### STATE_ORANGE
-
-Used regardless of the verification result to indicate that the device is
-unlocked. A corresponding notification must be shown to obtain user confirmation
-before proceeding with the boot. HLOS functionality may be limited.
-
-##### STATE_RED_EIO
+##### GBL_EFI_AVB_COLOR_RED_EIO
 
 A dm-verity [error][dmv_error] has been detected. A corresponding notification
 must be shown to obtain user confirmation before proceeding with the boot in
 degraded mode, allowing the device to receive a future update that resolves the
 issue.
 
-##### STATE_RED
+##### GBL_EFI_AVB_COLOR_ORANGE
 
-Verification failed (including fatal errors on an unlocked device). Boot cannot
-proceed.
+Used regardless of the verification result to indicate that the device is
+unlocked. A corresponding notification must be shown to obtain user confirmation
+before proceeding with the boot. HLOS functionality may be limited.
+
+##### GBL_EFI_AVB_COLOR_YELLOW
+
+Device is locked and verification passed using a user-provided custom key. A
+corresponding notification must be shown to obtain user confirmation before
+proceeding with the boot.
+
+##### GBL_EFI_AVB_COLOR_GREEN
+
+Device is locked and verification passed. Boot can proceed
+
+#### GBL_EFI_AVB_PROPERTY
+
+```c
+typedef struct {
+  CONST CHAR8 *BasePartitionName;
+  CONST CHAR8 *Key;
+  UINTN       ValueSize;
+  CONST UINT8 *Value;
+} GBL_EFI_AVB_PROPERTY;
+```
+
+##### BasePartitionName
+
+A pointer to a null-terminated UTF-8 slotless partition name (e.g `vbmeta` for
+`vbmeta_a`).
+
+##### Key
+
+Pointer to a null-terminated UTF-8 string representing the property key name.
+
+##### ValueSize
+
+Size of the provided property `Value` buffer, excluding a null terminator.
+
+##### Value
+
+Points to a buffer containing the property value of `ValueSize` bytes.
+Guaranteed to be followed by a null terminator.
+
+#### GBL_EFI_AVB_LOADED_PARTITION
+
+```c
+typedef struct {
+  CONST CHAR8 *BaseName;
+  UINTN       DataSize;
+  CONST UINT8 *Data;
+} GBL_EFI_AVB_LOADED_PARTITION;
+```
+
+##### BaseName
+
+A pointer to a null-terminated UTF-8 slotless partition name (e.g `custom` for
+`custom_a`).
+
+##### DataSize
+
+Size of the loaded partition `Data` buffer.
+
+##### Data
+
+Points to a buffer containing the loaded parititon data of `DataSize` bytes.
 
 #### GBL_EFI_AVB_VERIFICATION_RESULT
 
 ```c
 typedef struct {
-  // GBL_EFI_AVB_BOOT_STATE_COLOR
-  UINT32       Color;
-  CONST CHAR8  *Digest;
-
-  CONST CHAR8  *BootVersion;
-  CONST CHAR8  *BootSecurityPatch;
-  CONST CHAR8  *SystemVersion;
-  CONST CHAR8  *SystemSecurityPatch;
-  CONST CHAR8  *VendorVersion;
-  CONST CHAR8  *VendorSecurityPatch;
+  // GBL_EFI_AVB_BOOT_COLOR
+  UINT32                             Color;
+  UINT32                             Reserved1;
+  CONST CHAR8                        *Digest;
+  UINTN                              NumLoadedPartitions;
+  CONST GBL_EFI_AVB_LOADED_PARTITION *LoadedPartitions;
+  UINTN                              NumProperties;
+  CONST GBL_EFI_AVB_PROPERTY         *Properties;
+  UINT32                             Reserved2[8];
 } GBL_EFI_AVB_VERIFICATION_RESULT;
 ```
 
 ##### Color
 
-The verification result `GBL_EFI_AVB_BOOT_STATE_COLOR`. See corresponding
-section from above for more details.
+The verification result `GBL_EFI_AVB_BOOT_COLOR`. See corresponding section from
+above for more details.
+
+##### Reserved1
+
+Reserved to ensure 8-byte alignment for the pointers and potential future use
+cases.
 
 ##### Digest
 
-Points to UTF-8 string with the result digest calculated by the `libavb`.
+Points to null-terminated UTF-8 hex string with the result digest calculated by
+the `libavb`.
 
-TODO(b/337846185): Add Digest len (along with other breaking changes) to make it
-easier for vendors to diff between 64 and 32 bytes digest types.
+##### NumLoadedPartitions
 
-##### BootVersion
+The number of loaded partitions referenced by the `LoadedPartitions` array. May
+be `0` if no extra partitions were requested or if verification fails (so `RED`
+state color).
 
-Points to null-terminated UTF-8 string with `com.android.build.boot.os_version`
-property value extracted from `boot` footer or `vbmeta` header. May be NULL in
-case such property isn't presented or failed verification (so `RED` state
+##### LoadedPartitions
+
+Pointer to an array of `NumLoadedPartitions` `GBL_EFI_AVB_LOADED_PARTITION`
+items containing the loaded data for extra partitions that were requested by
+[`ReadPartitionsToVerify()`][readpartitionstoverify]. May be `NULL` if no extra
+partitions are requested or if verification fails (so `RED` state color).
+
+##### NumProperties
+
+The number of properties contained in the `Properties` array. May be `0` if no
+properties are present in the partition data or if verification fails (so `RED`
+state color).
+
+##### Properties
+
+Pointer to an array of `NumProperties` `GBL_EFI_AVB_PROPERTY` items containing
+all AVB properties extracted from `vbmeta` and chained partition footers. May be
+`NULL` if no properties are provided or verification fails (so `RED` state
 color).
 
-##### BootSecurityPatch
+##### Reserved2
 
-Points to null-terminated UTF-8 string with
-`com.android.build.boot.security_patch` property value extracted from `boot`
-footer or `vbmeta` header. May be NULL in case such property isn't presented or
-failed verification (so `RED` state color).
-
-##### SystemVersion
-
-Points to null-terminated UTF-8 string with
-`com.android.build.system.os_version` property value extracted from
-`vbmeta_system` or `vbmeta` headers. May be NULL in case such property isn't
-presented or failed verification (so `RED` state color).
-
-##### SystemSecurityPatch
-
-Points to null-terminated UTF-8 string with
-`com.android.build.system.security_patch` property value extracted from
-`vbmeta_system` or `vbmeta` headers. May be NULL in case such property isn't
-presented or failed verification (so `RED` state color).
-
-##### VendorVersion
-
-Points to null-terminated UTF-8 string with
-`com.android.build.vendor.os_version` property value extracted from
-`vbmeta_vendor` or `vbmeta` headers. May be NULL in case such property isn't
-presented or failed verification (so `RED` state color).
-
-##### VendorSecurityPatch
-
-Points to null-terminated UTF-8 string with
-`com.android.build.vendor.security_patch` property value extracted from
-`vbmeta_vendor` or `vbmeta` headers. May be NULL in case such property isn't
-presented or failed verification (so `RED` state color).
+Reserved for potential future use cases.
 
 ### Parameters
 
@@ -755,13 +793,16 @@ Regardless of the verification result, GBL invokes this method to allow the
 firmware to handle it along with the provided metadata. It is intended to be
 used for:
 
-1. Updating the root of trust along with the device state.
-2. Handling anti-tampering mechanisms.
-3. Displaying the appropriate UI and obtaining user confirmation for states
+1. Update the root of trust along with the device state.
+2. Handle anti-tampering mechanisms.
+3. Handle device-specific partitions data requested via
+   [`ReadPartitionsToVerify()`][readpartitionstoverify].
+4. Display the appropriate UI and obtaining user confirmation for states
    that may affect the device's security guarantees.
 
-Note: The data pointed to by `Result` is only valid during this call and becomes
-unavailable afterward.
+Note: The data pointed to by `Result` (including the loaded partitions and
+properties buffers) is valid only for the duration of this call and becomes
+invalid afterward.
 
 ### Status Codes Returned
 
@@ -786,10 +827,13 @@ following UEFI error codes are used to communicate results back to the library:
 | `EFI_STATUS_INVALID_PARAMETER` | Named persistent value size is not supported or does not match the expected size `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INVALID_VALUE_SIZE`          |
 | `EFI_STATUS_BUFFER_TOO_SMALL`  | Buffer is too small for the requested operation `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INSUFFICIENT_SPACE`                                           |
 | `EFI_STATUS_UNSUPPORTED`       | Operation isn't implemented / supported                                                                                                                 |
+| Others                         | Treated as `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                                                                                |
 
-[readpartitionstoverify]: #gbl_efi_image_loading_protocolreadpartitionstoverify
+[readpartitionstoverify]: #gbl_efi_avb_protocolreadpartitionstoverify
+[handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
 [protocolwriterollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
 [avb]: https://source.android.com/docs/security/features/verifiedboot/avb
+[unlocked]: https://android.googlesource.com/platform/external/avb/+/refs/heads/main/README.md#locked-and-unlocked-mode
 [dmv_error]: https://android.googlesource.com/platform/external/avb/+/master/README.md#handling-dm_verity-errors
 [rp]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#rollback-protection
 [update_ri]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes

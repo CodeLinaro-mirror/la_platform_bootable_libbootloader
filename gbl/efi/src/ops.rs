@@ -45,9 +45,11 @@ use efi::{
     EfiEntry,
 };
 use efi_types::{
-    EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbVerificationResult, GblEfiBootMode,
-    GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbProperty, GblEfiAvbVerificationResult,
+    GblEfiBootMode, GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
     EFI_FASTBOOT_MESSAGE_TYPE_FAIL, EFI_FASTBOOT_MESSAGE_TYPE_INFO, EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
+    GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_DM_VERITY_FAILED as GBL_EFI_AVB_STATUS_DM_VERITY_FAILED,
+    GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_UNLOCKED as GBL_EFI_AVB_STATUS_UNLOCKED,
     GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION, GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP,
     PARTITION_NAME_LEN_U16,
 };
@@ -62,10 +64,11 @@ use libgbl::{
         DeviceTreeComponentsRegistry, MAXIMUM_DEVICE_TREE_COMPONENTS,
     },
     gbl_avb::state::{BootStateColor, KeyValidationStatus},
+    gbl_println,
     ops::{
-        AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
-        ImageBuffer, InfoSender, LockState, LockType, OkaySender, Partition, PartitionBuffer,
-        RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
+        AvbDeviceStatus, AvbIoError, AvbIoResult, AvbProperty, CertPermanentAttributes, FailSender,
+        FastbootEraseAction, ImageBuffer, InfoSender, LockState, LockType, OkaySender, Partition,
+        PartitionBuffer, RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -73,6 +76,7 @@ use libgbl::{
 };
 use libprofile::ProfileBackend;
 use safemath::SafeNum;
+use spin::Mutex;
 use static_assertions::const_assert_eq;
 use zbi::ZbiContainer;
 use zerocopy::IntoBytes;
@@ -80,28 +84,6 @@ use zerocopy::IntoBytes;
 // Ensure the max partition name length in the image loading protocol matches the max image type
 // name length in GBL ops.
 const_assert_eq!(PARTITION_NAME_LEN_U16 as usize, IMAGE_NAME_MAX_LEN);
-
-fn to_avb_validation_status_or_panic(status: GblEfiAvbKeyValidationStatus) -> KeyValidationStatus {
-    match status {
-        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID => KeyValidationStatus::Valid,
-        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY => {
-            KeyValidationStatus::ValidCustomKey
-        }
-        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID => KeyValidationStatus::Invalid,
-        _ => panic!("Unrecognized avb key validation status: {}", status),
-    }
-}
-
-fn avb_color_to_efi_color(color: BootStateColor) -> u32 {
-    // bindgen may make enum i32 or u32. because we only care about bits, cast to u32 is ok.
-    (match color {
-        BootStateColor::Green => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_GREEN,
-        BootStateColor::Yellow => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_YELLOW,
-        BootStateColor::Orange => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_ORANGE,
-        BootStateColor::RedEio => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_RED_EIO,
-        BootStateColor::Red => efi_types::GBL_EFI_AVB_BOOT_STATE_COLOR_RED,
-    }) as _
-}
 
 fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDeviceTree {
     let metadata = component.metadata.unwrap_or_default();
@@ -132,28 +114,6 @@ fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDevi
         },
         device_tree: component.dt.as_ptr() as _,
         selected: component.selected,
-    }
-}
-
-fn efi_error_to_avb_error(error: Error) -> AvbIoError {
-    match error {
-        // EFI_STATUS_OUT_OF_RESOURCES
-        Error::OutOfResources => AvbIoError::Oom,
-        // EFI_STATUS_DEVICE_ERROR
-        Error::DeviceError => AvbIoError::Io,
-        // EFI_STATUS_NOT_FOUND
-        Error::NotFound => AvbIoError::NoSuchValue,
-        // EFI_STATUS_END_OF_FILE
-        Error::EndOfFile => AvbIoError::RangeOutsidePartition,
-        // EFI_STATUS_INVALID_PARAMETER
-        Error::InvalidInput => AvbIoError::InvalidValueSize,
-        // EFI_STATUS_BUFFER_TOO_SMALL
-        Error::BufferTooSmall(required) => {
-            AvbIoError::InsufficientSpace(required.unwrap_or_default())
-        }
-        // EFI_STATUS_UNSUPPORTED
-        Error::Unsupported => AvbIoError::NotImplemented,
-        _ => AvbIoError::NotImplemented,
     }
 }
 
@@ -382,18 +342,13 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         unimplemented!();
     }
 
-    fn avb_read_is_dm_verity_error(&mut self) -> AvbIoResult<bool> {
+    fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
         match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
         {
-            Ok(protocol) => protocol.read_is_dm_verity_error().map_err(efi_error_to_avb_error),
-            Err(_) => Err(AvbIoError::NotImplemented),
-        }
-    }
-
-    fn avb_read_is_device_unlocked(&mut self) -> AvbIoResult<bool> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
-            Ok(protocol) => protocol.read_is_device_unlocked().map_err(efi_error_to_avb_error),
+            Ok(protocol) => protocol
+                .read_device_status()
+                .map(efi_to_gbl_avb_device_status)
+                .map_err(efi_error_to_avb_error),
             Err(_) => Err(AvbIoError::NotImplemented),
         }
     }
@@ -487,31 +442,76 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         Ok(hash.try_into().map_err(|_| AvbIoError::Io)?)
     }
 
-    fn avb_handle_verification_result(
+    fn avb_handle_verification_result<'c>(
         &mut self,
         color: BootStateColor,
         digest: Option<&CStr>,
-        boot_os_version: Option<&[u8]>,
-        boot_security_patch: Option<&[u8]>,
-        system_os_version: Option<&[u8]>,
-        system_security_patch: Option<&[u8]>,
-        vendor_os_version: Option<&[u8]>,
-        vendor_security_patch: Option<&[u8]>,
+        properties: Option<impl Iterator<Item = AvbProperty<'c>>>,
     ) -> AvbIoResult<()> {
+        // TODO(b/337846185): Cover `avb_handle_verification_result` with unittests.
+
+        // The maximum number of AVB properties that can be provided to the AVB protocol.
+        // If more properties are detected across vbmeta, GBL rejects to boot.
+        const AVB_PROPERTIES_MAX_NUM: usize = 128;
+        struct AvbPropertiesStorage(ArrayVec<GblEfiAvbProperty, AVB_PROPERTIES_MAX_NUM>);
+
+        /// # Safety
+        ///
+        /// `GblEfiAvbProperty` raw pointers are re-initialized from the const-borrowed `properties`
+        /// data at the start of each lock session and never reused afterward. This ensures the
+        /// pointed-to data is accessed only by the current thread, making `Send` safe for this
+        /// case.
+        unsafe impl Send for AvbPropertiesStorage {}
+
+        // Storage for extracted AVB properties to be provided as a sequential array through the AVB
+        // protocol. Mutable static memory is used to avoid large stack allocations.
+        static AVB_PROPERTIES_STORAGE: Mutex<AvbPropertiesStorage> =
+            Mutex::new(AvbPropertiesStorage(ArrayVec::new_const()));
+
         match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
         {
-            Ok(protocol) => protocol
-                .handle_verification_result(&GblEfiAvbVerificationResult {
-                    color: avb_color_to_efi_color(color),
-                    digest: digest.map_or(null(), |p| p.as_ptr() as _),
-                    boot_version: boot_os_version.map_or(null(), |p| p.as_ptr()),
-                    boot_security_patch: boot_security_patch.map_or(null(), |p| p.as_ptr()),
-                    system_version: system_os_version.map_or(null(), |p| p.as_ptr()),
-                    system_security_patch: system_security_patch.map_or(null(), |p| p.as_ptr()),
-                    vendor_version: vendor_os_version.map_or(null(), |p| p.as_ptr()),
-                    vendor_security_patch: vendor_security_patch.map_or(null(), |p| p.as_ptr()),
-                })
-                .map_err(efi_error_to_avb_error),
+            Ok(protocol) => {
+                #[cfg(not(test))]
+                let mut avb_properties_efi = AVB_PROPERTIES_STORAGE.try_lock().unwrap();
+                // Blocking lock is used in unittests to ensure this function can be safely called
+                // from the separate threads, which must cause an error in UEFI environment.
+                #[cfg(test)]
+                let mut avb_properties_efi = AVB_PROPERTIES_STORAGE.lock();
+                avb_properties_efi.0.clear();
+
+                if let Some(properties) = properties {
+                    for prop in properties {
+                        avb_properties_efi
+                            .0
+                            .try_push(gbl_to_efi_avb_property(prop))
+                            .inspect_err(|_| {
+                                gbl_println!(
+                                    self,
+                                    "A maximum of {} AVB properties can be provided.",
+                                    AVB_PROPERTIES_MAX_NUM
+                                )
+                            })
+                            .map_err(|_| AvbIoError::Io)?;
+                    }
+                }
+
+                protocol
+                    .handle_verification_result(&GblEfiAvbVerificationResult {
+                        color: avb_color_to_efi_color(color),
+                        reserved1: Default::default(),
+                        digest: digest.map_or(null(), |p| p.as_ptr() as _),
+                        // TODO(b/337846185): Provide loaded partitions to the FW.
+                        num_loaded_partitions: 0,
+                        loaded_partitions: null(),
+                        num_properties: avb_properties_efi.0.len(),
+                        properties: match avb_properties_efi.0.is_empty() {
+                            false => avb_properties_efi.0.as_ptr(),
+                            true => null(),
+                        },
+                        reserved2: Default::default(),
+                    })
+                    .map_err(efi_error_to_avb_error)
+            }
             _ => Ok(()),
         }
     }
@@ -872,6 +872,73 @@ fn gbl_to_efi_boot_mode(mode: RebootMode) -> GblEfiBootMode {
     }
 }
 
+/// Converts a [AvbProperty] to [GblEfiAvbProperty]
+fn gbl_to_efi_avb_property(property: AvbProperty) -> GblEfiAvbProperty {
+    GblEfiAvbProperty {
+        base_partition_name: property.partition.as_ptr() as _,
+        key: property.key.as_ptr() as _,
+        // Exclude null terminator.
+        value_size: property.value_with_nul.len() - 1,
+        value: property.value_with_nul.as_ptr(),
+    }
+}
+
+/// Converts [GblEfiAvbDeviceStatus] bitmask to [AvbDeviceStatus]
+fn efi_to_gbl_avb_device_status(mask: u64) -> AvbDeviceStatus {
+    AvbDeviceStatus {
+        is_unlocked: (mask & GBL_EFI_AVB_STATUS_UNLOCKED as u64) != 0,
+        is_dm_verity_error: (mask & GBL_EFI_AVB_STATUS_DM_VERITY_FAILED as u64) != 0,
+    }
+}
+
+fn to_avb_validation_status_or_panic(status: GblEfiAvbKeyValidationStatus) -> KeyValidationStatus {
+    match status {
+        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID => {
+            KeyValidationStatus::Valid
+        }
+        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY => {
+            KeyValidationStatus::ValidCustomKey
+        }
+        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_INVALID => {
+            KeyValidationStatus::Invalid
+        }
+        _ => panic!("Unrecognized avb key validation status: {}", status),
+    }
+}
+
+fn avb_color_to_efi_color(color: BootStateColor) -> u32 {
+    // bindgen may make enum i32 or u32. because we only care about bits, cast to u32 is ok.
+    (match color {
+        BootStateColor::Green => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_GREEN,
+        BootStateColor::Yellow => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_YELLOW,
+        BootStateColor::Orange => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_ORANGE,
+        BootStateColor::RedEio => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_RED_EIO,
+        BootStateColor::Red => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_RED,
+    }) as _
+}
+
+fn efi_error_to_avb_error(error: Error) -> AvbIoError {
+    match error {
+        // EFI_STATUS_OUT_OF_RESOURCES
+        Error::OutOfResources => AvbIoError::Oom,
+        // EFI_STATUS_DEVICE_ERROR
+        Error::DeviceError => AvbIoError::Io,
+        // EFI_STATUS_NOT_FOUND
+        Error::NotFound => AvbIoError::NoSuchValue,
+        // EFI_STATUS_END_OF_FILE
+        Error::EndOfFile => AvbIoError::RangeOutsidePartition,
+        // EFI_STATUS_INVALID_PARAMETER
+        Error::InvalidInput => AvbIoError::InvalidValueSize,
+        // EFI_STATUS_BUFFER_TOO_SMALL
+        Error::BufferTooSmall(required) => {
+            AvbIoError::InsufficientSpace(required.unwrap_or_default())
+        }
+        // EFI_STATUS_UNSUPPORTED
+        Error::Unsupported => AvbIoError::NotImplemented,
+        _ => AvbIoError::Io,
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -885,9 +952,9 @@ mod test {
 
     /// Represents possible outcomes for protocol method call.
     #[derive(Copy, Clone)]
-    enum ProtocolCallStatus {
+    enum ProtocolCallStatus<T> {
         /// Protocol found. Method call succeeded.
-        Success,
+        Success(T),
         /// Protocol not found.
         ProtocolLookupError(Error),
         /// Protocol found. Method call failed.
@@ -906,46 +973,88 @@ mod test {
         assert!(write!(&mut ops, "{} {}", "foo", "bar").is_ok());
     }
 
-    #[test]
-    fn ops_avb_read_is_dm_verity_error_returns_true() {
+    /// Helper for testing `avb_read_device_status`.
+    fn test_avb_read_device_status(
+        call_status: ProtocolCallStatus<u64>,
+    ) -> AvbIoResult<AvbDeviceStatus> {
         let mut mock_efi = MockEfi::new();
-        let mut avb = GblAvbProtocol::default();
-        avb.read_is_dm_verity_error_result = Some(Ok(true));
 
-        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
+        let mut avb = GblAvbProtocol::default();
+        avb.read_device_status_result = match call_status {
+            ProtocolCallStatus::Success(mask) => Some(Ok(mask)),
+            ProtocolCallStatus::ProtocolCallError(err) => Some(Err(err)),
+            _ => None,
+        };
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(
+            match call_status {
+                ProtocolCallStatus::ProtocolLookupError(err) => Err(err),
+                _ => Ok(avb),
+            },
+        );
 
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
-
-        assert_eq!(ops.avb_read_is_dm_verity_error(), Ok(true));
+        ops.avb_read_device_status()
     }
 
     #[test]
-    fn ops_avb_read_is_dm_verity_error_returns_false() {
-        let mut mock_efi = MockEfi::new();
-        let mut avb = GblAvbProtocol::default();
-        avb.read_is_dm_verity_error_result = Some(Ok(false));
-
-        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
-
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
-
-        assert_eq!(ops.avb_read_is_dm_verity_error(), Ok(false));
+    fn ops_avb_read_device_status_unlocked() {
+        let mask = GBL_EFI_AVB_STATUS_UNLOCKED as u64;
+        assert_eq!(
+            test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
+            Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false })
+        );
     }
 
     #[test]
-    fn ops_avb_read_is_dm_verity_error_protocol_not_found() {
-        let mut mock_efi = MockEfi::new();
-        mock_efi
-            .boot_services
-            .expect_find_first_and_open::<GblAvbProtocol>()
-            .return_const(Err(Error::NotFound));
+    fn ops_avb_read_device_status_dm_verity_error() {
+        let mask = GBL_EFI_AVB_STATUS_DM_VERITY_FAILED as u64;
+        assert_eq!(
+            test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
+            Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: true })
+        );
+    }
 
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+    #[test]
+    fn ops_avb_read_device_status_unlocked_and_dm_verity_error() {
+        let mask =
+            (GBL_EFI_AVB_STATUS_UNLOCKED as u64) | (GBL_EFI_AVB_STATUS_DM_VERITY_FAILED as u64);
+        assert_eq!(
+            test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
+            Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: true })
+        );
+    }
 
-        assert_eq!(ops.avb_read_is_dm_verity_error(), Err(AvbIoError::NotImplemented));
+    #[test]
+    fn ops_avb_read_device_status_empty() {
+        assert_eq!(
+            test_avb_read_device_status(ProtocolCallStatus::Success(0)),
+            Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false })
+        );
+    }
+
+    #[test]
+    fn ops_avb_read_device_status_protocol_not_found() {
+        assert_eq!(
+            test_avb_read_device_status(ProtocolCallStatus::ProtocolLookupError(Error::NotFound)),
+            Err(AvbIoError::NotImplemented)
+        );
+    }
+
+    #[test]
+    fn ops_avb_read_device_status_method_not_implemented() {
+        assert_eq!(
+            test_avb_read_device_status(ProtocolCallStatus::ProtocolCallError(Error::Unsupported)),
+            Err(AvbIoError::NotImplemented)
+        );
+    }
+
+    #[test]
+    fn ops_avb_read_device_status_method_error() {
+        assert_eq!(
+            test_avb_read_device_status(ProtocolCallStatus::ProtocolCallError(Error::InvalidInput)),
+            Err(AvbIoError::InvalidValueSize)
+        );
     }
 
     #[test]
@@ -953,7 +1062,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         let mut avb = GblAvbProtocol::default();
         avb.validate_vbmeta_public_key_result =
-            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID));
+            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID));
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
@@ -967,7 +1076,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         let mut avb = GblAvbProtocol::default();
         avb.validate_vbmeta_public_key_result =
-            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY));
+            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY));
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
@@ -984,7 +1093,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         let mut avb = GblAvbProtocol::default();
         avb.validate_vbmeta_public_key_result =
-            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID));
+            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_INVALID));
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
@@ -1018,46 +1127,6 @@ mod test {
         let ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_validate_vbmeta_public_key(&[], None), Err(AvbIoError::NotImplemented));
-    }
-
-    #[test]
-    fn ops_avb_read_is_device_unlocked_returns_true() {
-        let mut mock_efi = MockEfi::new();
-        let mut avb = GblAvbProtocol::default();
-        avb.read_is_device_unlocked_result = Some(Ok(true));
-        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
-
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
-
-        assert_eq!(ops.avb_read_is_device_unlocked(), Ok(true));
-    }
-
-    #[test]
-    fn ops_avb_read_is_device_unlocked_returns_false() {
-        let mut mock_efi = MockEfi::new();
-        let mut avb = GblAvbProtocol::default();
-        avb.read_is_device_unlocked_result = Some(Ok(false));
-        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
-
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
-
-        assert_eq!(ops.avb_read_is_device_unlocked(), Ok(false));
-    }
-
-    #[test]
-    fn ops_avb_read_is_device_unlocked_protocol_not_found() {
-        let mut mock_efi = MockEfi::new();
-        mock_efi
-            .boot_services
-            .expect_find_first_and_open::<GblAvbProtocol>()
-            .return_const(Err(Error::NotFound));
-
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
-
-        assert_eq!(ops.avb_read_is_device_unlocked(), Err(AvbIoError::NotImplemented));
     }
 
     #[test]
@@ -1269,6 +1338,40 @@ mod test {
     }
 
     #[test]
+    fn test_gbl_to_efi_avb_property() {
+        let partition = c"boot";
+        let key = c"bootkey";
+        let value_with_nul = b"value\0";
+
+        assert_eq!(
+            gbl_to_efi_avb_property(AvbProperty { partition, key, value_with_nul }),
+            GblEfiAvbProperty {
+                base_partition_name: partition.as_ptr() as _,
+                key: key.as_ptr() as _,
+                value_size: value_with_nul.len() - 1,
+                value: value_with_nul.as_ptr(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_gbl_to_efi_avb_property_empty() {
+        let partition = c"";
+        let key = c"";
+        let value_with_nul = b"\0";
+
+        assert_eq!(
+            gbl_to_efi_avb_property(AvbProperty { partition, key, value_with_nul }),
+            GblEfiAvbProperty {
+                base_partition_name: partition.as_ptr() as _,
+                key: key.as_ptr() as _,
+                value_size: value_with_nul.len() - 1,
+                value: value_with_nul.as_ptr(),
+            }
+        );
+    }
+
+    #[test]
     fn ops_avf_is_supported() {
         let mut mock_efi = MockEfi::new();
         let avf = GblAvfProtocol::default();
@@ -1300,27 +1403,26 @@ mod test {
     /// Helper for testing `GblAvfProtocol.read_vendor_dice_handover`
     fn test_read_vendor_dice_handover<'a>(
         handover_buffer: &'a mut [u8],
-        handover_to_apply: &'static [u8],
-        call_status: ProtocolCallStatus,
+        call_status: ProtocolCallStatus<&'static [u8]>,
     ) -> Result<&'a [u8]> {
         let mut mock_efi = MockEfi::new();
         let call_status_scoped = call_status;
 
         let mut avf = GblAvfProtocol::default();
-        avf.expect_read_vendor_dice_handover().return_once(move |buffer| {
-            if let ProtocolCallStatus::ProtocolCallError(err) = call_status_scoped {
-                return Err(err);
-            }
-            buffer[..handover_to_apply.len()].copy_from_slice(handover_to_apply);
-            Ok(handover_to_apply.len())
-        });
-
-        mock_efi.boot_services.expect_find_first_and_open::<GblAvfProtocol>().return_once(
-            move || {
-                if let ProtocolCallStatus::ProtocolLookupError(err) = call_status {
-                    return Err(err);
+        avf.expect_read_vendor_dice_handover().return_once(
+            move |buffer| match call_status_scoped {
+                ProtocolCallStatus::Success(handover_to_apply) => {
+                    buffer[..handover_to_apply.len()].copy_from_slice(handover_to_apply);
+                    Ok(handover_to_apply.len())
                 }
-                Ok(avf)
+                ProtocolCallStatus::ProtocolCallError(err) => Err(err),
+                _ => panic!("Unexpected ProtocolCallStatus"),
+            },
+        );
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvfProtocol>().return_once(
+            move || match call_status {
+                ProtocolCallStatus::ProtocolLookupError(err) => Err(err),
+                _ => Ok(avf),
             },
         );
 
@@ -1337,8 +1439,7 @@ mod test {
         assert_eq!(
             test_read_vendor_dice_handover(
                 &mut handover_buffer,
-                HANDOVER_TO_APPLY,
-                ProtocolCallStatus::Success
+                ProtocolCallStatus::Success(HANDOVER_TO_APPLY)
             ),
             Ok(HANDOVER_TO_APPLY)
         );
@@ -1349,7 +1450,6 @@ mod test {
         assert_eq!(
             test_read_vendor_dice_handover(
                 &mut [],
-                &[],
                 ProtocolCallStatus::ProtocolLookupError(Error::NotFound),
             ),
             Err(Error::NotFound),
@@ -1363,7 +1463,6 @@ mod test {
         assert_eq!(
             test_read_vendor_dice_handover(
                 &mut [],
-                &[],
                 ProtocolCallStatus::ProtocolCallError(Error::BufferTooSmall(Some(EXPECTED_SIZE))),
             ),
             Err(Error::BufferTooSmall(Some(EXPECTED_SIZE))),
@@ -1373,28 +1472,28 @@ mod test {
     /// Helper for testing `GblAvfProtocol.read_secretkeeper_public_key`
     fn test_read_secretkeeper_public_key<'a>(
         key_buffer: &'a mut [u8],
-        key_to_apply: &'static [u8],
-        call_status: ProtocolCallStatus,
+        call_status: ProtocolCallStatus<&'static [u8]>,
     ) -> Result<Option<&'a [u8]>> {
         let mut mock_efi = MockEfi::new();
         mock_efi.con_out.expect_write_str().return_const(Ok(()));
         let call_status_scoped = call_status;
 
         let mut avf = GblAvfProtocol::default();
-        avf.expect_read_secretkeeper_public_key().return_once(move |buffer| {
-            if let ProtocolCallStatus::ProtocolCallError(err) = call_status_scoped {
-                return Err(err);
-            }
-            buffer[..key_to_apply.len()].copy_from_slice(key_to_apply);
-            Ok(key_to_apply.len())
-        });
 
-        mock_efi.boot_services.expect_find_first_and_open::<GblAvfProtocol>().return_once(
-            move || {
-                if let ProtocolCallStatus::ProtocolLookupError(err) = call_status {
-                    return Err(err);
+        avf.expect_read_secretkeeper_public_key().return_once(
+            move |buffer| match call_status_scoped {
+                ProtocolCallStatus::Success(key_to_apply) => {
+                    buffer[..key_to_apply.len()].copy_from_slice(key_to_apply);
+                    Ok(key_to_apply.len())
                 }
-                Ok(avf)
+                ProtocolCallStatus::ProtocolCallError(err) => Err(err),
+                _ => panic!("Unexpected ProtocolCallStatus"),
+            },
+        );
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvfProtocol>().return_once(
+            move || match call_status {
+                ProtocolCallStatus::ProtocolLookupError(err) => Err(err),
+                _ => Ok(avf),
             },
         );
 
@@ -1410,8 +1509,7 @@ mod test {
         assert_eq!(
             test_read_secretkeeper_public_key(
                 &mut key_buffer,
-                PUBLIC_KEY,
-                ProtocolCallStatus::Success
+                ProtocolCallStatus::Success(PUBLIC_KEY)
             ),
             Ok(Some(PUBLIC_KEY)),
         );
@@ -1422,7 +1520,6 @@ mod test {
         assert_eq!(
             test_read_secretkeeper_public_key(
                 &mut [],
-                &[],
                 ProtocolCallStatus::ProtocolCallError(Error::NotImplemented)
             ),
             Ok(None),
@@ -1434,7 +1531,6 @@ mod test {
         assert_eq!(
             test_read_secretkeeper_public_key(
                 &mut [],
-                &[],
                 ProtocolCallStatus::ProtocolLookupError(Error::NotFound)
             ),
             Err(Error::NotFound),
@@ -1447,7 +1543,6 @@ mod test {
         assert_eq!(
             test_read_secretkeeper_public_key(
                 &mut [],
-                &[],
                 ProtocolCallStatus::ProtocolCallError(Error::BufferTooSmall(Some(EXPECTED_SIZE)))
             ),
             Err(Error::BufferTooSmall(Some(EXPECTED_SIZE))),
