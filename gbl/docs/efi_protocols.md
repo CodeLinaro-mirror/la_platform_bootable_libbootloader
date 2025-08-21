@@ -268,14 +268,7 @@ fastboot.
 
 ### GblImageLoadingProtocol
 
-* [`GBL_EFI_IMAGE_LOADING_PROTOCOL`](./gbl_efi_image_loading_protocol.md)
-* optional: enables loading images to predefined memory locations
-
-Used to provide buffers to load the images for verification and boot process.
-
-In addition this protocol provides a list of additional custom partitions to be
-verified before booting, for boards that want to verify data in addition to the
-standard boot partitions.
+Deprecated. Please use GblBootMemoryProtocol.
 
 ### GblAvbProtocol
 
