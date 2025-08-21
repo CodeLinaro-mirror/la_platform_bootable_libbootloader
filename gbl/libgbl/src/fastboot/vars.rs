@@ -142,7 +142,11 @@ where
                 let part = ptn.name()?;
                 // Assumes max partition name length of 72 plus max u64 hex string length 18.
                 let mut part_id_buf = [0u8; 128];
-                let part = snprintf!(part_id_buf, "{}/{:x}", part, idx);
+                // If partition is not unique, append block ID suffix.
+                let part = match crate::partition::check_part_unique(disks, part) {
+                    Ok(_) => snprintf!(part_id_buf, "{}", part),
+                    Err(_) => snprintf!(part_id_buf, "{}/{:x}", part, idx),
+                };
                 responder
                     .send_var_info(Self::PARTITION_SIZE, [part], snprintf!(size_str, "{:#x}", sz))
                     .await?;

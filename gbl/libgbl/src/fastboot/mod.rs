@@ -691,6 +691,29 @@ where
         .await?;
         Ok(())
     }
+
+    /// Helper for dumping all partition info
+    async fn oem_dump_partition_info(&mut self, mut resp: impl InfoSender) -> CommandResult<()> {
+        let disks = self.disks;
+        resp.send_formatted_info(|f| {
+            write!(f, "<block ID>: <partition>, <range>, <size>").unwrap()
+        })
+        .await?;
+        for (idx, blk) in disks.iter().enumerate() {
+            for ptn_idx in 0..blk.num_partitions().unwrap_or(0) {
+                let ptn = blk.get_partition_by_idx(ptn_idx)?;
+                let sz: u64 = ptn.size()?;
+                let part = ptn.name()?;
+                let (start, end) = ptn.absolute_range()?;
+                // Format  block ID, <partition name>, <range>, <size>
+                resp.send_formatted_info(|f| {
+                    write!(f, "{idx}: {part}, [{start:#x}, {end:#x}), {sz:#x}").unwrap()
+                })
+                .await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
@@ -917,6 +940,7 @@ where
                 self.add_staged_bootloader_file(file_name).await?;
                 Ok(())
             }
+            "gbl-partition-info" => self.oem_dump_partition_info(responder).await,
             #[cfg(feature = "gbl_dev")]
             "stack-smash-demo" => {
                 smash::stack_smash_demo(self.gbl_ops);
@@ -1066,7 +1090,7 @@ pub async fn run_gbl_fastboot<'a: 'c, 'b: 'c, 'c, 'd>(
 /// `n` storage devices that can independently perform non-blocking IO, it will required `N = n`
 /// and a `buffer_pool` that can allocate at least n+1 buffers at the same time in order to achieve
 /// parallel flashing to all storages plus a parallel downloading. However, it is common for
-/// disks that need to be flashed to be on the same block deviece so flashing of them becomes
+/// partitions that need to be flashed to be on the same block deviece so flashing of them becomes
 /// sequential, in which case N can be smaller. Caller should take into consideration usage pattern
 /// for determining N.
 ///
@@ -1348,7 +1372,9 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         storage.add_raw_device(c"raw_0", [0xaau8; KiB!(4)]);
+        storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
         storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         let tasks = vec![].into();
@@ -1370,25 +1396,37 @@ pub(crate) mod test {
                 "block-device:1:total-blocks: 0x100",
                 "block-device:1:block-size: 0x200",
                 "block-device:1:status: idle",
-                "block-device:2:total-blocks: 0x1000",
-                "block-device:2:block-size: 0x1",
+                "block-device:2:total-blocks: 0x100",
+                "block-device:2:block-size: 0x200",
                 "block-device:2:status: idle",
-                "block-device:3:total-blocks: 0x2000",
+                "block-device:3:total-blocks: 0x1000",
                 "block-device:3:block-size: 0x1",
                 "block-device:3:status: idle",
+                "block-device:4:total-blocks: 0x2000",
+                "block-device:4:block-size: 0x1",
+                "block-device:4:status: idle",
+                "block-device:5:total-blocks: 0x2000",
+                "block-device:5:block-size: 0x1",
+                "block-device:5:status: idle",
                 "gbl-default-block: None",
-                "partition-size:boot_a/0: 0x2000",
-                "partition-type:boot_a/0: raw",
-                "partition-size:boot_b/0: 0x3000",
-                "partition-type:boot_b/0: raw",
+                "partition-size:boot_a: 0x2000",
+                "partition-type:boot_a: raw",
+                "partition-size:boot_b: 0x3000",
+                "partition-type:boot_b: raw",
                 "partition-size:vendor_boot_a/1: 0x1000",
                 "partition-type:vendor_boot_a/1: raw",
                 "partition-size:vendor_boot_b/1: 0x1800",
                 "partition-type:vendor_boot_b/1: raw",
-                "partition-size:raw_0/2: 0x1000",
-                "partition-type:raw_0/2: raw",
-                "partition-size:raw_1/3: 0x2000",
-                "partition-type:raw_1/3: raw",
+                "partition-size:vendor_boot_a/2: 0x1000",
+                "partition-type:vendor_boot_a/2: raw",
+                "partition-size:vendor_boot_b/2: 0x1800",
+                "partition-type:vendor_boot_b/2: raw",
+                "partition-size:raw_0: 0x1000",
+                "partition-type:raw_0: raw",
+                "partition-size:raw_1/4: 0x2000",
+                "partition-type:raw_1/4: raw",
+                "partition-size:raw_1/5: 0x2000",
+                "partition-type:raw_1/5: raw",
                 format!("{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_str(),
                 format!("{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -2533,10 +2571,10 @@ pub(crate) mod test {
                 b"INFOblock-device:1:block-size: 0x200",
                 b"INFOblock-device:1:status: idle",
                 b"INFOgbl-default-block: None",
-                b"INFOpartition-size:vendor_boot_a/1: 0x1000",
-                b"INFOpartition-type:vendor_boot_a/1: raw",
-                b"INFOpartition-size:vendor_boot_b/1: 0x1800",
-                b"INFOpartition-type:vendor_boot_b/1: raw",
+                b"INFOpartition-size:vendor_boot_a: 0x1000",
+                b"INFOpartition-type:vendor_boot_a: raw",
+                b"INFOpartition-size:vendor_boot_b: 0x1800",
+                b"INFOpartition-type:vendor_boot_b: raw",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
                 format!("INFO{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -2565,14 +2603,14 @@ pub(crate) mod test {
                 b"INFOblock-device:1:block-size: 0x200",
                 b"INFOblock-device:1:status: idle",
                 b"INFOgbl-default-block: None",
-                b"INFOpartition-size:boot_a/0: 0x2000",
-                b"INFOpartition-type:boot_a/0: raw",
-                b"INFOpartition-size:boot_b/0: 0x3000",
-                b"INFOpartition-type:boot_b/0: raw",
-                b"INFOpartition-size:vendor_boot_a/1: 0x1000",
-                b"INFOpartition-type:vendor_boot_a/1: raw",
-                b"INFOpartition-size:vendor_boot_b/1: 0x1800",
-                b"INFOpartition-type:vendor_boot_b/1: raw",
+                b"INFOpartition-size:boot_a: 0x2000",
+                b"INFOpartition-type:boot_a: raw",
+                b"INFOpartition-size:boot_b: 0x3000",
+                b"INFOpartition-type:boot_b: raw",
+                b"INFOpartition-size:vendor_boot_a: 0x1000",
+                b"INFOpartition-type:vendor_boot_a: raw",
+                b"INFOpartition-size:vendor_boot_b: 0x1800",
+                b"INFOpartition-type:vendor_boot_b: raw",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
                 format!("INFO{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -3749,5 +3787,46 @@ pub(crate) mod test {
         );
 
         assert_eq!(download_trace, vec![vec![], download_data.to_vec(), vec![], vec![]]);
+    }
+
+    #[test]
+    fn test_gbl_oem_dump_partition_info() {
+        let mut storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
+        storage.add_raw_device(c"raw_0", [0xaau8; KiB!(4)]);
+        storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"oem gbl-partition-info");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            &mut [],
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"INFO<block ID>: <partition>, <range>, <size>",
+                b"INFO0: boot_a, [0x4400, 0x6400), 0x2000",
+                b"INFO0: boot_b, [0x6400, 0x9400), 0x3000",
+                b"INFO1: vendor_boot_a, [0x4400, 0x5400), 0x1000",
+                b"INFO1: vendor_boot_b, [0x5400, 0x6c00), 0x1800",
+                b"INFO2: raw_0, [0x0, 0x1000), 0x1000",
+                b"INFO3: raw_1, [0x0, 0x2000), 0x2000",
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
     }
 }
