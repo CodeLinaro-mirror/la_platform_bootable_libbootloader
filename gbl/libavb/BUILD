@@ -23,7 +23,7 @@ exports_files(glob(["**/*"]))
 
 rust_library(
     name = "sysdeps",
-    srcs = glob(["**/*.rs"]),
+    srcs = glob(["src/sysdeps/**/*.rs"]),
     crate_name = "avb_sysdeps",
     edition = "2021",
     rustc_flags = ANDROID_RUST_LINTS,

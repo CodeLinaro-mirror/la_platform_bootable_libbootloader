@@ -45,6 +45,7 @@ build_and_run_tests(
         "@gbl//libc:libc_c_test",
         "@gbl//libc:libc_test",
         "@gbl//libdttable:libdttable_test",
+        "@gbl//libefi:efi_avb_test",
         "@gbl//libefi:libefi_test",
         "@gbl//libefi:mocks_test",
         "@gbl//libefi_types:gbl_protocols_license_test",

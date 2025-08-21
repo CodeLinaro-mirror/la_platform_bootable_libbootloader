@@ -493,7 +493,7 @@ where
 }
 
 /// Contains various boot buffers
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub struct BootBuffer<'a> {
     /// Buffer for loading images without designated buffers.
     pub general: &'a mut [u8],

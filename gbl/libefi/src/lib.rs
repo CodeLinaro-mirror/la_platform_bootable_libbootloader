@@ -56,6 +56,40 @@ use alloc::vec::Vec;
 #[cfg(not(test))]
 mod allocation;
 
+#[cfg(test)]
+thread_local! {
+    static GLOBAL_EFI_ENTRY: std::cell::RefCell<Option<*const EfiEntry>> = std::cell::RefCell::new(None);
+}
+
+/// Escape valve for operations that need the global EfiEntry
+/// but cannot be provided with it as a parameter.
+///
+/// Safety:
+/// * It is the responsibility of whatever code initializes the global efi entry
+///   to guarantee that it is well formed and valid for as long as any caller might
+///   see it, usually 'static or for the duration of the unit test.
+pub(crate) unsafe fn with_global_efi_entry<F, T>(mut func: F) -> Result<T>
+where
+    F: FnMut(&'static EfiEntry) -> T,
+{
+    let entry;
+    cfg_if! {
+        if #[cfg(test)] {
+            entry = GLOBAL_EFI_ENTRY
+            // Safety:
+            // * It is the responsibility of initialization code to guarantee that
+            //   `e_ptr` is valid and live.
+                .with(|e| e.borrow_mut().map(|e_ptr| unsafe { e_ptr.as_ref() }))
+                .flatten()
+                .ok_or(Error::InvalidState)?;
+        } else {
+            entry = allocation::internal_efi_entry_and_rt().0.ok_or(Error::InvalidState)?;
+        }
+    }
+
+    Ok(func(entry))
+}
+
 #[cfg(not(test))]
 pub mod libc;
 
@@ -64,6 +98,8 @@ pub use allocation::EfiAllocator;
 
 /// The Android EFI protocol implementation of an A/B slot manager.
 pub mod ab_slots;
+/// C wrappers for EFI based hashing.
+pub mod efi_hash_c;
 /// Local fastboot/bootmenu support.
 pub mod local_session;
 /// EFI backed implementations for profiling framework.
@@ -75,6 +111,7 @@ pub mod utils;
 #[cfg(not(test))]
 use core::panic::PanicInfo;
 
+use cfg_if::cfg_if;
 use core::{marker::PhantomData, ptr::null_mut, slice::from_raw_parts, time::Duration};
 use efi_types::{
     defs::{
@@ -1114,13 +1151,14 @@ mod allocation {
 mod test {
     use super::*;
     use crate::protocol::{block_io::BlockIoProtocol, ProtocolInfo, Requirement};
+    use crate::DeviceHandle;
     use alloc::string::String;
     use core::ptr::{from_mut, NonNull};
     use efi_types::{
-        EfiBlockIoProtocol, EfiEventNotify, EfiLocateHandleSearchType, EfiSimpleTextOutputProtocol,
-        EfiStatus, EfiTpl, EFI_MEMORY_TYPE_LOADER_CODE, EFI_MEMORY_TYPE_LOADER_DATA,
-        EFI_STATUS_DEVICE_ERROR, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_NOT_FOUND,
-        EFI_STATUS_NOT_READY, EFI_STATUS_SUCCESS, EFI_STATUS_UNSUPPORTED,
+        EfiBlockIoProtocol, EfiEventNotify, EfiHandle, EfiLocateHandleSearchType,
+        EfiSimpleTextOutputProtocol, EfiStatus, EfiTpl, EFI_MEMORY_TYPE_LOADER_CODE,
+        EFI_MEMORY_TYPE_LOADER_DATA, EFI_STATUS_DEVICE_ERROR, EFI_STATUS_INVALID_PARAMETER,
+        EFI_STATUS_NOT_FOUND, EFI_STATUS_NOT_READY, EFI_STATUS_SUCCESS, EFI_STATUS_UNSUPPORTED,
         EFI_TIMER_DELAY_TIMER_PERIODIC,
     };
     use std::{cell::RefCell, collections::VecDeque, mem::size_of, slice::from_raw_parts_mut};

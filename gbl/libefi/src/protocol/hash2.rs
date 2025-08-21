@@ -31,6 +31,7 @@ use efi_types::{
     EfiGuid, EfiHash2Output, EfiHash2Protocol, EfiSha1Hash2, EfiSha256Hash2, EfiSha512Hash2,
 };
 use liberror::Result;
+use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 /// Definition for a hash algorithm used by the EfiHash2Protocol.
 ///
@@ -47,7 +48,7 @@ pub unsafe trait HashAlgorithm: private::Sealed {
     const GUID: EfiGuid;
 
     /// The type of the digest.
-    type DigestType;
+    type DigestType: IntoBytes + FromBytes + Immutable;
 
     /// Access the relevant hash digest field in a `EfiHash2Output` union.
     ///
@@ -259,7 +260,7 @@ impl<'a, H: HashAlgorithm> Hasher<'a, H> {
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use super::*;
     use crate::protocol::hash2::Hash2ServiceBindingProtocol;
     use crate::protocol::{
@@ -275,9 +276,40 @@ mod test {
         EfiGuid, EfiHash2Output, EfiHash2Protocol, EfiServiceBindingProtocol, EfiSha256Hash2,
         EfiStatus, EFI_STATUS_SUCCESS,
     };
-    use std::collections::VecDeque;
+    use std::{cell::RefCell, collections::VecDeque};
 
-    extern "efiapi" fn hash_func(
+    #[derive(Default)]
+    pub(crate) struct Hash2InitTrace {
+        pub call_count: usize,
+    }
+
+    #[derive(Default)]
+    pub(crate) struct Hash2UpdateTrace {
+        pub call_count: usize,
+    }
+
+    #[derive(Default)]
+    pub(crate) struct Hash2FinalTrace {
+        pub call_count: usize,
+    }
+
+    #[derive(Default)]
+    pub(crate) struct Hash2CallTraces {
+        pub init: Hash2InitTrace,
+        pub update: Hash2UpdateTrace,
+        pub r#final: Hash2FinalTrace,
+    }
+
+    thread_local! {
+        static HASH2_CALL_TRACES: RefCell<Hash2CallTraces> =
+            RefCell::new(Default::default());
+    }
+
+    pub(crate) fn hash2_call_traces() -> &'static std::thread::LocalKey<RefCell<Hash2CallTraces>> {
+        &HASH2_CALL_TRACES
+    }
+
+    pub(crate) extern "efiapi" fn hash_func(
         _: *const EfiHash2Protocol,
         _: *const EfiGuid,
         _: *const u8,
@@ -287,19 +319,34 @@ mod test {
         EFI_STATUS_SUCCESS
     }
 
-    extern "efiapi" fn hash_init(_: *const EfiHash2Protocol, _: *const EfiGuid) -> EfiStatus {
+    pub(crate) extern "efiapi" fn hash_init(
+        _: *const EfiHash2Protocol,
+        _: *const EfiGuid,
+    ) -> EfiStatus {
+        hash2_call_traces().with(|traces| {
+            traces.borrow_mut().init.call_count += 1;
+        });
         EFI_STATUS_SUCCESS
     }
 
-    extern "efiapi" fn hash_update(
+    pub(crate) extern "efiapi" fn hash_update(
         _: *const EfiHash2Protocol,
         _: *const u8,
         _: usize,
     ) -> EfiStatus {
+        hash2_call_traces().with(|traces| {
+            traces.borrow_mut().update.call_count += 1;
+        });
         EFI_STATUS_SUCCESS
     }
 
-    extern "efiapi" fn hash_final(_: *const EfiHash2Protocol, _: *mut EfiHash2Output) -> EfiStatus {
+    pub(crate) extern "efiapi" fn hash_final(
+        _: *const EfiHash2Protocol,
+        _: *mut EfiHash2Output,
+    ) -> EfiStatus {
+        hash2_call_traces().with(|traces| {
+            traces.borrow_mut().r#final.call_count += 1;
+        });
         EFI_STATUS_SUCCESS
     }
 

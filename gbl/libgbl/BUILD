@@ -77,9 +77,9 @@ rust_test(
     data = ["@gbl//libgbl/testdata"],
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
-        "@avb//:avb_crypto_ops_sha_impl_staticlib",
+        "@avb//:avb_crypto_ops_for_test",
         "@avb//:avb_test",
-        "@boringssl//:libcrypto_c_baremetal_static",
+        "@avb//:libavb_c_bindgen",
         "@gbl//libasync:cyclic_executor",
         "@gbl//libavb:sysdeps",
         "@gbl//libboringssl:sysdeps",

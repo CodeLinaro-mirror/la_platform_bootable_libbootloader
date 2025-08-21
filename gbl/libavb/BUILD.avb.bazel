@@ -25,8 +25,112 @@ package(
 
 exports_files(glob(["**/*"]))
 
+avb_headers = [
+    "@gbl//libavb:avb_crypto_ops_impl.h",
+    "libavb/avb_chain_partition_descriptor.h",
+    "libavb/avb_cmdline.h",
+    "libavb/avb_crypto.h",
+    "libavb/avb_descriptor.h",
+    "libavb/avb_footer.h",
+    "libavb/avb_hash_descriptor.h",
+    "libavb/avb_hashtree_descriptor.h",
+    "libavb/avb_kernel_cmdline_descriptor.h",
+    "libavb/avb_ops.h",
+    "libavb/avb_property_descriptor.h",
+    "libavb/avb_rsa.h",
+    "libavb/avb_sha.h",
+    "libavb/avb_slot_verify.h",
+    "libavb/avb_sysdeps.h",
+    "libavb/avb_util.h",
+    "libavb/avb_vbmeta_image.h",
+    "libavb/avb_version.h",
+    "libavb/libavb.h",
+    "libavb_cert/avb_cert_ops.h",
+    "libavb_cert/avb_cert_types.h",
+    "libavb_cert/avb_cert_validate.h",
+    "libavb_cert/libavb_cert.h",
+]
+
+# The rust_bindgen rule only accepts a single header for definitions,
+# so combine all the headers we care about into a single synthetic header
+# and use that for bindgen.
+genrule(
+    name = "bindgen_unified_header",
+    outs = ["bindgen_unified_header.h"],
+    cmd = """
+cat << EOF > $(OUTS)
+/*
+ * Copyright (C) 2025 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// Note: this is a generated header. Do not modify it.
+
+#ifndef __BINDGEN_UNIFIED_HEADER_H__
+#define __BINDGEN_UNIFIED_HEADER_H__
+
+#include "libavb/avb_crypto_ops_impl.h"
+#include "libavb/libavb.h"
+#include "libavb_cert/libavb_cert.h"
+#include "libavb/avb_rsa.h"
+#include "libavb/avb_sha.h"
+#include "libavb/avb_sysdeps.h"
+
+#endif // __BINDGEN_UNIFIED_HEADER_H__
+EOF
+    """,
+)
+
+# Even though the implementation requires functions defined in libefi,
+# don't add a direct dependency on libefi.
+# This causes symbol collisions due to definitions used for unit tests.
+#
+#The solution is to add the libefi dependency in the GBL binary and let the linker
+# take care of everything at the end.
+cc_library(
+    name = "avb_crypto_ops",
+    srcs = [
+        "@gbl//libavb:avb_sha.c",
+    ],
+    defines = ["AVB_COMPILATION"],
+    deps = [
+        ":headers",
+        "@boringssl//:libcrypto_c_baremetal",
+        "@gbl//libefi:efi_sha_header",
+    ],
+)
+
+link_static_cc_library(
+    name = "libavb_c_sha_staticlib",
+    cc_library = ":avb_crypto_ops",
+)
+
+# Add this dependency for unit tests that should NOT depend on libefi.
+# These definitions do not use the libefi provided symbols.
+cc_library(
+    name = "avb_crypto_ops_for_test",
+    srcs = [
+        "@gbl//libavb:avb_sha_for_test.c",
+    ],
+    deps = [
+        ":headers",
+        "@boringssl//:libcrypto_c_baremetal",
+    ],
+)
+
 # Newer version of `rust_bindgen` requires a `cc_library` target that actually produces a static
-# library and instead of only headers. Thus we generate a placeholder source file to meet the
+# library instead of only headers. Thus we generate a placeholder source file to meet the
 # requirement.
 genrule(
     name = "bindgen_noop_cc",
@@ -37,33 +141,15 @@ genrule(
 cc_library(
     name = "headers",
     srcs = [":bindgen_noop_cc"],
-    hdrs = [
-        "libavb/avb_chain_partition_descriptor.h",
-        "libavb/avb_cmdline.h",
-        "libavb/avb_crypto.h",
-        "libavb/avb_descriptor.h",
-        "libavb/avb_footer.h",
-        "libavb/avb_hash_descriptor.h",
-        "libavb/avb_hashtree_descriptor.h",
-        "libavb/avb_kernel_cmdline_descriptor.h",
-        "libavb/avb_ops.h",
-        "libavb/avb_property_descriptor.h",
-        "libavb/avb_rsa.h",
-        "libavb/avb_sha.h",
-        "libavb/avb_slot_verify.h",
-        "libavb/avb_sysdeps.h",
-        "libavb/avb_util.h",
-        "libavb/avb_vbmeta_image.h",
-        "libavb/avb_version.h",
-        "libavb/boringssl/avb_crypto_ops_impl.h",
-        "libavb/libavb.h",
-        "libavb_cert/avb_cert_ops.h",
-        "libavb_cert/avb_cert_types.h",
-        "libavb_cert/avb_cert_validate.h",
-        "libavb_cert/libavb_cert.h",
+    hdrs = avb_headers + [
+        ":bindgen_unified_header",
+    ],
+    defines = [
+        "AVB_COMPILATION",
     ],
     includes = [
         ".",
+        "../gbl/libavb/",
         "libavb/boringssl/",
     ],
     deps = [
@@ -119,23 +205,6 @@ link_static_cc_library(
     cc_library = ":libavb_c",
 )
 
-cc_library(
-    name = "avb_crypto_ops_sha_impl",
-    srcs = [
-        "libavb/boringssl/sha.c",
-    ],
-    copts = ["-DAVB_COMPILATION"],
-    deps = [
-        ":headers",
-        "@boringssl//:libcrypto_c_baremetal",
-    ],
-)
-
-link_static_cc_library(
-    name = "avb_crypto_ops_sha_impl_staticlib",
-    cc_library = ":avb_crypto_ops_sha_impl",
-)
-
 rust_bindgen(
     name = "libavb_c_bindgen",
     # Flags should match Soong definition in external/avb/rust/Android.bp.
@@ -143,19 +212,37 @@ rust_bindgen(
         "--constified-enum-module=AvbDescriptorTag",
         "--bitfield-enum=Avb.*Flags",
         "--default-enum-style=rust",
+        "--newtype-global-enum=AvbSHACtxTag",
+        "--with-derive-partialeq",
         "--with-derive-default",
         "--with-derive-custom=Avb.*Descriptor=FromBytes,Immutable,KnownLayout",
         "--with-derive-custom=AvbVBMetaImageHeader=FromBytes,Immutable,KnownLayout",
         "--with-derive-custom=AvbCertPermanentAttributes=FromBytes,IntoBytes",
         "--with-derive-custom=AvbCertCertificate.*=FromBytes,IntoBytes",
         "--with-derive-custom=AvbCertUnlock.*=FromBytes,IntoBytes",
-        "--allowlist-type=AvbDescriptorTag",
+        "--allowlist-function=avb_abort",
+        "--allowlist-function=avb_(chain_partition|hash|hashtree|kernel_cmdline|property)_descriptor_validate_and_byteswap",
+        "--allowlist-function=avb_cert_(generate_unlock_challenge|validate_unlock_credential|validate_vbmeta_public_key)",
+        "--allowlist-function=avb_descriptor_(foreach|validate_and_byteswap)",
+        "--allowlist-function=avb_sha(256|512)_(init|update|final)",
+        "--allowlist-function=avb_slot_verify(_data_calculate_vbmeta_digest|_data_free)?",
+        "--allowlist-type=AVB_CERT_.*",
         "--allowlist-type=Avb.*Flags",
-        "--allowlist-function=.*",
+        "--allowlist-type=Avb(HashtreeErrorMode|PartitionData|SlotVerifyData|VBMetaData)",
+        "--allowlist-type=Avb(ChainPartition|Hash|Hashtree|KernelCmdline)Descriptor",
+        "--allowlist-type=AvbDescriptor(Tag)?",
+        "--allowlist-type=AvbPropertyDescriptor",
+        "--allowlist-type=AvbSHA(256|512)(Impl)?Ctx",
+        "--allowlist-type=AvbSHACtxTag",
         "--allowlist-var=AVB.*",
         "--use-core",
-        "--raw-line=#![no_std]",
-        "--raw-line=use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout};",
+        "--raw-line",
+        """
+#![cfg_attr(not(test), no_std)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout};
+        """,
         "--ctypes-prefix=core::ffi",
     ],
     cc_lib = "headers",
@@ -163,7 +250,7 @@ rust_bindgen(
         "-I{}".format(LLVM_PREBUILTS_C_INCLUDE),
         "-nostdinc",
     ],
-    header = "libavb_cert/libavb_cert.h",
+    header = ":bindgen_unified_header",
 )
 
 rust_library(
