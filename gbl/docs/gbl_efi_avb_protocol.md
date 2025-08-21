@@ -119,7 +119,7 @@ set loaded and verified by GBL.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_READ_PARTITIONS_TO_VERIFY) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN GBL_EFI_AVB_PROTOCOL *Self,
   IN OUT UINTN *NumberOfPartitions,
   IN OUT GBL_EFI_AVB_PARTITION *Partitions);
 ```
@@ -151,7 +151,7 @@ terminator is not required be included.
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
@@ -215,7 +215,7 @@ and dm-verity error indication in a vendor-specific way.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_READ_DEVICE_STATUS) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN GBL_EFI_AVB_PROTOCOL *Self,
   OUT UINT64 *StatusFlags);
 ```
 
@@ -240,7 +240,7 @@ Flag indicating that the device rebooted due to a dm-verity error.
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
@@ -289,7 +289,7 @@ in a vendor-specific way.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_VALIDATE_VBMETA_PUBLIC_KEY) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN GBL_EFI_AVB_PROTOCOL *Self,
   IN UINTN PublicKeyLength,
   IN CONST UINT8 *PublicKeyData,
   IN UINTN PublicKeyMetadataLength,
@@ -330,7 +330,7 @@ for both locked and unlocked states.
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
@@ -392,14 +392,14 @@ GBL in a vendor-specific way.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_READ_ROLLBACK_INDEX) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN GBL_EFI_AVB_PROTOCOL *Self,
   IN UINTN IndexLocation,
   OUT UINT64 *RollbackIndex);
 ```
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
@@ -446,14 +446,14 @@ a vendor-specific way.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_WRITE_ROLLBACK_INDEX) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN GBL_EFI_AVB_PROTOCOL *Self,
   IN UINTN IndexLocation,
   IN UINT64 RollbackIndex);
 ```
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
@@ -499,7 +499,7 @@ a vendor-specific manner.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_READ_PERSISTENT_VALUE) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN GBL_EFI_AVB_PROTOCOL *Self,
   IN CONST CHAR8 *Name,
   IN OUT UINTN *ValueSize,
   OUT UINT8 *Value);
@@ -507,7 +507,7 @@ EFI_STATUS
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
@@ -555,7 +555,7 @@ vendor-specific way.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_WRITE_PERSISTENT_VALUE) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN GBL_EFI_AVB_PROTOCOL *Self,
   IN CONST CHAR8 *Name,
   IN UINTN ValueSize,
   IN CONST UINT8 *Value);
@@ -563,7 +563,7 @@ EFI_STATUS
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
@@ -610,7 +610,7 @@ manner.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_HANDLE_VERIFICATION_RESULT) (
-  IN GBL_EFI_AVB_PROTOCOL *This,
+  IN GBL_EFI_AVB_PROTOCOL *Self,
   IN CONST GBL_EFI_AVB_VERIFICATION_RESULT *Result);
 ```
 
@@ -771,7 +771,7 @@ Reserved for potential future use cases.
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 

@@ -95,13 +95,13 @@ Start the transport channel.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_START)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *This,
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self,
   );
 ```
 
 ### Parameters
 
-#### *This*
+#### *Self*
 A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
 instance.
 
@@ -130,13 +130,13 @@ Stops the transport interface.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_STOP)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *This
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self
   );
 ```
 
 ### Parameters
 
-#### *This*
+#### *Self*
 A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
 instance.
 
@@ -165,7 +165,7 @@ Receives data from the transport channel
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_RECEIVE)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *This,
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self,
   IN OUT UINTN                            *BufferSize,
   OUT VOID                                *Buffer,
   IN GBL_EFI_FASTBOOT_RX_MODE             Mode,
@@ -174,7 +174,7 @@ EFI_STATUS
 
 ### Parameters
 
-#### *This*
+#### *Self*
 A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
 instance.
 
@@ -262,7 +262,7 @@ Sends data to the transport channel.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_SEND)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *This,
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self,
   IN OUT UINTN                            *BufferSize,
   IN CONST VOID                           *Buffer,
   );
@@ -270,7 +270,7 @@ EFI_STATUS
 
 ### Parameters
 
-#### *This*
+#### *Self*
 A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
 instance.
 
@@ -313,13 +313,13 @@ Waits until all pending TX transfers are completed.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_FLUSH)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *This
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self
   );
 ```
 
 ### Parameters
 
-#### *This*
+#### *Self*
 A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
 instance.
 

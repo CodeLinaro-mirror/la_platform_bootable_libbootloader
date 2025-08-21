@@ -74,7 +74,7 @@ wrapped by GBL with pvmfw layer.
 
 ```c
 typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_VENDOR_DICE_HANDOVER)(
-  IN GBL_EFI_AVF_PROTOCOL *This,
+  IN GBL_EFI_AVF_PROTOCOL *Self,
   IN OUT UINTN            *HandoverSize,
   OUT CONST UINT8         *Handover,
   );
@@ -82,7 +82,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_VENDOR_DICE_HANDOVER)(
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVF_PROTOCOL` instance.
 
@@ -164,7 +164,7 @@ by GBL.
 
 ```c
 typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_SECRET_KEEPER_PUBLIC_KEY)(
-  IN GBL_EFI_AVF_PROTOCOL *This,
+  IN GBL_EFI_AVF_PROTOCOL *Self,
   IN OUT UINTN            *PublicKeySize,
   OUT CONST UINT8         *PublicKey,
   );
@@ -172,7 +172,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_SECRET_KEEPER_PUBLIC_KEY)(
 
 ### Parameters
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_AVF_PROTOCOL` instance.
 

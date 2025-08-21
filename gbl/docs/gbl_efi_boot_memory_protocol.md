@@ -77,7 +77,7 @@ Get the reserved memory for assembling different boot images. See
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_GET_PARTITION_BUFFER) (
-  IN GBL_EFI_BOOT_MEMORY_PROTOCOL *This,
+  IN GBL_EFI_BOOT_MEMORY_PROTOCOL *Self,
   IN CONST CHAR                   *BaseName,
   OUT UINTN                       *Size,
   OUT VOID                        **Addr,
@@ -87,7 +87,7 @@ EFI_STATUS
 
 ### Parameters
 
-**This** \
+**Self** \
 A pointer to the
 [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol) instance.
 
@@ -151,7 +151,7 @@ contains the image loaded by the firwmare.
 | --- | --- |
 | EFI_SUCCESS | Buffer provided successfully |
 | EFI_NOT_FOUND | The platform does not have reserved memory for this image. |
-| EFI_INVALID_PARAMETER | `This` is invalid or any of `ImageType`, `Addr`, `Size` and `IsPreloaded` is NULL. |
+| EFI_INVALID_PARAMETER | `Self` is invalid or any of `ImageType`, `Addr`, `Size` and `IsPreloaded` is NULL. |
 
 ## GBL_EFI_BOOT_MEMORY_PROTOCOL.SyncPartitionBuffer()
 
@@ -166,14 +166,14 @@ return by `GetPartitionBuffer()`.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_SYNC_PARTITION_BUFFER) (
-  IN GBL_EFI_BOOT_MEMORY_PROTOCOL *This,
+  IN GBL_EFI_BOOT_MEMORY_PROTOCOL *Self,
   IN BOOL                         SyncPreloaded,
 )
 ```
 
 ### Parameters
 
-**This** \
+**Self** \
 A pointer to the
 [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol) instance.
 
@@ -202,7 +202,7 @@ should not be considered valid anymore.
 | --- | --- |
 | EFI_SUCCESS | Sync completed successfully |
 | EFI_DEVICE_ERROR | An internal error occurred. |
-| EFI_INVALID_PARAMETER | `This` is invalid. |
+| EFI_INVALID_PARAMETER | `Self` is invalid. |
 
 ### Examples
 
@@ -238,7 +238,7 @@ images.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_GET_BOOT_BUFFER) (
-  IN GBL_EFI_BOOT_MEMORY_PROTOCOL *This,
+  IN GBL_EFI_BOOT_MEMORY_PROTOCOL *Self,
   IN GBL_EFI_BOOT_BUFFER_TYPE     BootBufferType,
   OUT UINTN                       *Size,
   OUT VOID                        **Addr,
@@ -247,7 +247,7 @@ EFI_STATUS
 
 ### Parameters
 
-**This** \
+**Self** \
 A pointer to the
 [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol) instance.
 
@@ -321,4 +321,4 @@ Memory for use as download buffer in fastboot mode.
 | --- | --- |
 | EFI_SUCCESS | Buffer provided successfully |
 | EFI_NOT_FOUND | The platform does not have reserved memory, or has no suggested allocation size for this type. |
-| EFI_INVALID_PARAMETER | `This` is invalid or any of `Addr` and `Size` is NULL. |
+| EFI_INVALID_PARAMETER | `Self` is invalid or any of `Addr` and `Size` is NULL. |

@@ -23,9 +23,9 @@
 typedef struct EfiServiceBindingProtocol EfiServiceBindingProtocol;
 
 struct EfiServiceBindingProtocol {
-  EfiStatus (*create_child)(EfiServiceBindingProtocol* this,
+  EfiStatus (*create_child)(EfiServiceBindingProtocol* self,
                             EfiHandle* child_handle);
-  EfiStatus (*destroy_child)(EfiServiceBindingProtocol* this,
+  EfiStatus (*destroy_child)(EfiServiceBindingProtocol* self,
                              EfiHandle child_handle);
 };
 

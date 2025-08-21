@@ -138,7 +138,7 @@ Loads metadata about system boot slots.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_LOAD_BOOT_DATA)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL*     This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL*     Self,
     OUT GBL_EFI_SLOT_METADATA_BLOCK* Metadata,
 );
 ```
@@ -166,7 +166,7 @@ typedef struct _GBL_EFI_SLOT_METADATA_BLOCK {
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -195,7 +195,7 @@ the documentation
 | Return Code             | Semantics                                                                                                     |
 |:------------------------|:--------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | Slot metadata was successfully read from persistent storage.                                                  |
-| `EFI_INVALID_PARAMETER` | One of *This* or *Metadata* is `NULL` or improperly aligned.                                                  |
+| `EFI_INVALID_PARAMETER` | One of *Self* or *Metadata* is `NULL` or improperly aligned.                                                  |
 | `EFI_DEVICE_ERROR`      | There was an error while performing the read operation.                                                       |
 | `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions. |
 
@@ -211,7 +211,7 @@ Queries info about a boot slot by index.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_GET_SLOT_INFO)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
     IN UINT8                     Idx,
     OUT GBL_EFI_SLOT_INFO*       Info,
 )
@@ -244,7 +244,7 @@ typedef struct _GBL_EFI_SLOT_INFO {
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -269,7 +269,7 @@ slots as part of debugging or logging.
 | Return Code             | Semantics                                                                                                     |
 |:------------------------|:--------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                                                                              |
-| `EFI_INVALID_PARAMETER` | One of *This* or *Info* is `NULL` or improperly aligned, or the value of *Idx* invalid.                       |
+| `EFI_INVALID_PARAMETER` | One of *Self* or *Info* is `NULL` or improperly aligned, or the value of *Idx* invalid.                       |
 | `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                  |
 | `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions. |
 
@@ -285,14 +285,14 @@ Returns the slot information of the currently booted bootloader.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_GET_CURRENT_SLOT)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
     OUT GBL_EFI_SLOT_INFO*       Info,
 );
 ```
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -318,7 +318,7 @@ This is identical to knowing the index of the current slot and calling
 |:------------------------|:---------------------------------- |
 | `EFI_SUCCESS`           | The call completed successfully.   |
 | `EFI_UNSUPPORTED`       | Bootloader is not slotted.         |
-| `EFI_INVALID_PARAMETER` | One of *This* or *Info* is `NULL`. |
+| `EFI_INVALID_PARAMETER` | One of *Self* or *Info* is `NULL`. |
 
 ## `GBL_EFI_AB_SLOT_PROTOCOL.GetNextSlot()`
 
@@ -332,7 +332,7 @@ Returns the slot information of the next slot decision.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_GET_NEXT_SLOT)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
     IN BOOL                      MarkBootAttempt,
     OUT GBL_EFI_SLOT_INFO*       Info,
 );
@@ -340,7 +340,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -374,7 +374,7 @@ If there are no bootable slots, the function **MUST** returns `EFI_NOT_FOUND`.
 |:------------------------|:--------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                                                                              |
 | `EFI_NOT_FOUND`         | There are no bootable slots for the next decision.                                                            |
-| `EFI_INVALID_PARAMETER` | One of *This* or *Info* is `NULL` or improperly aligned.                                                      |
+| `EFI_INVALID_PARAMETER` | One of *Self* or *Info* is `NULL` or improperly aligned.                                                      |
 | `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                  |
 | `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions. |
 
@@ -390,14 +390,14 @@ Sets the active slot by index. Makes it the highest priority bootable slot.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_SET_ACTIVE_SLOT)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
     IN UINT8                     Idx,
 );
 ```
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -422,7 +422,7 @@ explicitly may be prohibited.
 | Return Code             | Semantics                                                                                                     |
 |:------------------------|:--------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                                                                              |
-| `EFI_INVALID_PARAMETER` | One of *This* or *Info* is `NULL` or improperly aligned, or the value of *Idx* was invalid.                   |
+| `EFI_INVALID_PARAMETER` | One of *Self* or *Info* is `NULL` or improperly aligned, or the value of *Idx* was invalid.                   |
 | `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                  |
 | `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions. |
 | `EFI_ACCESS_DENIED`     | Device policy prohibited the boot slot target change.                                                         |
@@ -439,7 +439,7 @@ Marks a slot as unbootable for the provided reason.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_SET_SLOT_UNBOOTABLE)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
     IN UINT8                     Idx,
     IN UINT32                    UnbootableReason,
 );
@@ -447,7 +447,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -485,7 +485,7 @@ the info structure.
 | Return Code             | Semantics                                                                                                             |
 |:------------------------|:----------------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                                                                                      |
-| `EFI_INVALID_PARAMETER` | *This* is `NULL` or improperly aligned, the value of *Idx* is invalid, or the value of *UnbootableReason* is invalid. |
+| `EFI_INVALID_PARAMETER` | *Self* is `NULL` or improperly aligned, the value of *Idx* is invalid, or the value of *UnbootableReason* is invalid. |
 | `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                          |
 | `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions.         |
 
@@ -501,13 +501,13 @@ Marks a boot attempt on the current slot.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_MARK_BOOT_ATTEMPT)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
 );
 ```
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -529,7 +529,7 @@ the decremented tries.
 | Return Code             | Semantics                                                                                                     |
 |:------------------------|:--------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                                                                              |
-| `EFI_INVALID_PARAMETER` | *This* is `NULL` or improperly aligned.                                                                       |
+| `EFI_INVALID_PARAMETER` | *Self* is `NULL` or improperly aligned.                                                                       |
 | `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                  |
 | `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions. |
 | `EFI_ACCESS_DENIED`     | The current slot has no more tries remaining.                                                                 |
@@ -546,13 +546,13 @@ Reinitializes all boot slot metadata to a known initial state.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_REINITIALIZE)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
 );
 ```
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -577,7 +577,7 @@ This may change the next target boot slot.
 | Return Code             | Semantics                                              |
 |:------------------------|:-------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                       |
-| `EFI_INVALID_PARAMETER` | *This* is `NULL` or improperly aligned.                |
+| `EFI_INVALID_PARAMETER` | *Self* is `NULL` or improperly aligned.                |
 | `EFI_ACCESS_DENIED`     | Device policy prohibited resetting boot slot metadata. |
 
 ## `GBL_EFI_AB_SLOT_PROTOCOL.GetBootMode()`
@@ -592,7 +592,7 @@ Gets the current boot mode.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_GET_BOOT_MODE)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
     OUT UINT32*                  Mode,
 );
 ```
@@ -610,7 +610,7 @@ typedef enum _GBL_EFI_AB_SLOT_BOOT_MODE {
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -666,7 +666,7 @@ is `BOOTLOADER`.
 | Return Code             | Semantics                                                                                                     |
 |:------------------------|:--------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                                                                              |
-| `EFI_INVALID_PARAMETER` | One of *This*, *Mode*, is `NULL`, improperly aligned, or has unexpected value.                                |
+| `EFI_INVALID_PARAMETER` | One of *Self*, *Mode*, is `NULL`, improperly aligned, or has unexpected value.                                |
 
 ## `GBL_EFI_AB_SLOT_PROTOCOL.SetBootMode()`
 
@@ -680,14 +680,14 @@ Sets the current boot mode.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_SET_BOOT_MODE)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
     IN UINT32                    Mode,
 );
 ```
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.
@@ -714,7 +714,7 @@ commands.
 | Return Code             | Semantics                                                                               |
 |:------------------------|:----------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                                                        |
-| `EFI_INVALID_PARAMETER` | One of *This* or *Mode* is `NULL`, improperly aligned, or has unexpected value.         |
+| `EFI_INVALID_PARAMETER` | One of *Self* or *Mode* is `NULL`, improperly aligned, or has unexpected value.         |
 
 ## `GBL_EFI_AB_SLOT_PROTOCOL.Flush()`
 
@@ -728,13 +728,13 @@ Writes any slot metadata modifications to persistent storage.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_AB_SLOT_FLUSH)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* This,
+    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
 );
 ```
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
 instance.

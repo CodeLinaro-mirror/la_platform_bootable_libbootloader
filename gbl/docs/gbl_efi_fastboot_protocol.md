@@ -134,7 +134,7 @@ Gets the value for a fastboot variable.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_GET_VAR)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL*         This,
+    IN GBL_EFI_FASTBOOT_PROTOCOL*         Self,
     IN CONST CHAR8* CONST*                Args,
     IN UINTN                              NumArgs,
     OUT CHAR8*                            Buf,
@@ -144,7 +144,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
 instance.
@@ -192,7 +192,7 @@ OKAY0x800000000000
 | Return Code             | Semantics                                                                                                                                                                |
 |:------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The variable was found and its value successfully serialized.                                                                                                            |
-| `EFI_INVALID_PARAMETER` | One of *This*, *Args*, *Buf*, or *BufSize* is `NULL`                                                                                                                     |
+| `EFI_INVALID_PARAMETER` | One of *Self*, *Args*, *Buf*, or *BufSize* is `NULL`                                                                                                                     |
 | `EFI_NOT_FOUND`         | The first element of *Args* does not contain a known variable.                                                                                                           |
 | `EFI_UNSUPPORTED`       | The contents of *Args* do not contain a known variable with valid aruments. Any of the subarguments may be unknown, or too many or too few subarguments may be provided. |
 | `EFI_BUFFER_TOO_SMALL`  | *Buf* is too small to store the serialized variable string. The value of *BufSize* is modified to contain the minimum necessary buffer size.                             |
@@ -209,7 +209,7 @@ Iterates all combinations of variables and values.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_GET_VAR_ALL)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL*         This,
+    IN GBL_EFI_FASTBOOT_PROTOCOL*         Self,
     IN VOID*                              Context
     IN GBL_EFI_GET_VAR_ALL_CALLBACK       GetVarAllCallback,
 );
@@ -217,7 +217,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
 instance.
@@ -278,7 +278,7 @@ callback `GetVarAllCallback()` and passes the context, arguments and value.
 | Return Code             | Semantics                                       |
 |:------------------------|:------------------------------------------------|
 | `EFI_SUCCESS`           | Operation is successful.                        |
-| `EFI_INVALID_PARAMETER` | One of *This* or *GetVarAllCallback* is `NULL`. |
+| `EFI_INVALID_PARAMETER` | One of *Self* or *GetVarAllCallback* is `NULL`. |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.RunOemFunction()`
 
@@ -292,7 +292,7 @@ Runs a vendor defined function that requires firmware support.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_RUN_OEM_FUNCTION)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
+    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
     IN CHAR8*                     Command,
     IN UINTN                      CommandLen,
     IN UINT8*                     DownloadData,
@@ -304,7 +304,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 
@@ -407,7 +407,7 @@ Oversized message may be truncated by the caller when sent to the host.
 | Return Code             | Semantics
 |:------------------------|:---------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                         |
-| `EFI_INVALID_PARAMETER` | Any of *This*, *Command*, *Sender* is `NULL`.            |
+| `EFI_INVALID_PARAMETER` | Any of *Self*, *Command*, *Sender* is `NULL`.            |
 | `EFI_NOT_FOUND`         | The command is not supported.                            |
 | `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state.|
 
@@ -425,7 +425,7 @@ Read OEM provided payload for uploading to the host during command
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_GET_STAGED)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
+    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
     IN UINT8*                     Out,
     IN OUT UINTN*                 OutLen,
     OUT UINTN*                    RemainingSize,
@@ -434,7 +434,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 
@@ -487,7 +487,7 @@ Sets device partition locks.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_SET_LOCK)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
+    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
     IN BOOL                       Critical,
     IN BOOL                       Lock,
 );
@@ -495,7 +495,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 
@@ -518,7 +518,7 @@ Device lock state determines what operations can be performed on device partitio
 | Return Code             | Semantics                                          |
 |:------------------------|:---------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                   |
-| `EFI_INVALID_PARAMETER` | *This* is invalid or improperly aligned.           |
+| `EFI_INVALID_PARAMETER` | *Self* is invalid or improperly aligned.           |
 | `EFI_ACCESS_DENIED`     | Caller intends to lock/unlock device or critical partition but device prohibits the operation. |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.GetLock()`
@@ -533,7 +533,7 @@ Qeury lock status.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_GET_LOCK)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
+    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
     IN BOOL                       Critical,
     OUT BOOL                      *Lock,
 );
@@ -541,7 +541,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 
@@ -564,7 +564,7 @@ otherwise.
 | Return Code             | Semantics                                          |
 |:------------------------|:---------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                   |
-| `EFI_INVALID_PARAMETER` | *This* is invalid or improperly aligned.           |
+| `EFI_INVALID_PARAMETER` | *Self* is invalid or improperly aligned.           |
 | `EFI_UNSUPPORTED`       | The corresponding lock is unsupported. |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`
@@ -579,7 +579,7 @@ Performs vendor specific erase for a partition.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_VENDOR_ERASE)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL*       This,
+    IN GBL_EFI_FASTBOOT_PROTOCOL*       Self,
     IN CHAR8*                           PartName,
     IN UINTN                            PartNameLen,
     OUT GBL_EFI_FASTBOOT_ERASE_ACTION   *Action,
@@ -588,7 +588,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 
@@ -652,13 +652,13 @@ Checks custom inputs to determine whether the device should stop in fastboot on 
 typedef
 BOOL
 (EFIAPI * GBL_EFI_FASTBOOT_SHOULD_STOP_IN_FASTBOOT)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
+    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
 );
 ```
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 
@@ -691,7 +691,7 @@ Checks whether a fastboot command is allowed.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_IS_COMMAND_ALLOWED)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* This,
+    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
     IN UINTN                      NumArgs,
     IN CONST CHAR8* CONST*        Args,
     IN UINTN                      DownloadDataLen,
@@ -704,7 +704,7 @@ EFI_STATUS
 
 ### Parameters
 
-*This*
+*Self*
 
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
 

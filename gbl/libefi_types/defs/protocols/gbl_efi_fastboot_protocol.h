@@ -76,39 +76,39 @@ typedef struct GblEfiFastbootProtocol {
                            GetVarAllCallback cb);
 
   // Fastboot oem function methods
-  EfiStatus (*run_oem_function)(struct GblEfiFastbootProtocol* this,
+  EfiStatus (*run_oem_function)(struct GblEfiFastbootProtocol* self,
                                 const char* cmd, size_t len,
                                 uint8_t* download_buffer,
                                 size_t download_data_size,
                                 FastbootMessageSender sender, void* ctx);
 
   // Fastboot get_staged backend
-  EfiStatus (*get_staged)(struct GblEfiFastbootProtocol* this, uint8_t* out,
+  EfiStatus (*get_staged)(struct GblEfiFastbootProtocol* self, uint8_t* out,
                           size_t* out_size, size_t* out_remain);
 
   // Device lock methods
-  EfiStatus (*set_lock)(struct GblEfiFastbootProtocol* this, bool critical,
+  EfiStatus (*set_lock)(struct GblEfiFastbootProtocol* self, bool critical,
                         bool lock);
-  EfiStatus (*get_lock)(struct GblEfiFastbootProtocol* this, bool critical,
+  EfiStatus (*get_lock)(struct GblEfiFastbootProtocol* self, bool critical,
                         bool* out_lock);
 
   // Misc methods
-  EfiStatus (*vendor_erase)(struct GblEfiFastbootProtocol* this,
+  EfiStatus (*vendor_erase)(struct GblEfiFastbootProtocol* self,
                             const char8_t* part_name, size_t part_name_len,
                             GblEfiFastbootEraseAction* action);
-  bool (*should_stop_in_fastboot)(struct GblEfiFastbootProtocol* this);
-  EfiStatus (*is_command_allowed)(struct GblEfiFastbootProtocol* this,
+  bool (*should_stop_in_fastboot)(struct GblEfiFastbootProtocol* self);
+  EfiStatus (*is_command_allowed)(struct GblEfiFastbootProtocol* self,
                                   size_t num_args, const char* const* args,
                                   size_t download_data_len,
                                   uint8_t* download_data, bool* allowed,
                                   size_t msg_buf_size, uint8_t* msg_buf);
 
   // Local session methods
-  EfiStatus (*start_local_session)(struct GblEfiFastbootProtocol* this,
+  EfiStatus (*start_local_session)(struct GblEfiFastbootProtocol* self,
                                    void** ctx);
-  EfiStatus (*update_local_session)(struct GblEfiFastbootProtocol* this,
+  EfiStatus (*update_local_session)(struct GblEfiFastbootProtocol* self,
                                     void* ctx, uint8_t* buf, size_t* buf_size);
-  EfiStatus (*close_local_session)(struct GblEfiFastbootProtocol* this,
+  EfiStatus (*close_local_session)(struct GblEfiFastbootProtocol* self,
                                    void* ctx);
 } GblEfiFastbootProtocol;
 

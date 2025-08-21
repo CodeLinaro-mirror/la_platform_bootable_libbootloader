@@ -70,7 +70,7 @@ RAM.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_GET_IMAGE_BUFFER) (
-  IN GBL_EFI_IMAGE_LOADING_PROTOCOL *This,
+  IN GBL_EFI_IMAGE_LOADING_PROTOCOL *Self,
   IN GBL_EFI_IMAGE_INFO             *ImageInfo,
   OUT GBL_EFI_IMAGE_BUFFER          *Buffer,
 )
@@ -78,7 +78,7 @@ EFI_STATUS
 
 ### Parameters
 
-**This** \
+**Self** \
 A pointer to the
 [`GBL_EFI_IMAGE_LOADING_PROTOCOL`](#gbl_efi_image_loading_protocol) instance.
 

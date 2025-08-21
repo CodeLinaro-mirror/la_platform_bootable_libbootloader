@@ -84,7 +84,7 @@ Provides runtime fixups to the bootconfig.
 
 ```c
 typedef EFI_STATUS (EFIAPI *GBL_EFI_FIXUP_BOOTCONFIG)(
-  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *This,
+  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *Self,
   IN CONST CHAR8                       *BootConfig,
   IN UINTN                             BootConfigSize,
   OUT CHAR8                            *Fixup,
@@ -97,7 +97,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_FIXUP_BOOTCONFIG)(
 Ownership of all the parameters is loaned only for the duration of the function
 call, and must not be retained by the protocol after returning.
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
 
@@ -212,7 +212,7 @@ typedef struct {
 } GBL_EFI_VERIFIED_DEVICE_TREE;
 
 typedef EFI_STATUS (EFIAPI *GBL_EFI_SELECT_DEVICE_TREES)(
-  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *This,
+  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *Self,
   IN OUT GBL_EFI_VERIFIED_DEVICE_TREE  *DeviceTrees,
   IN UINTN                             NumDeviceTrees
   );
@@ -223,7 +223,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_SELECT_DEVICE_TREES)(
 Ownership of all the parameters is loaned only for the duration of the function
 call, and must not be retained by the protocol after returning.
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
 
