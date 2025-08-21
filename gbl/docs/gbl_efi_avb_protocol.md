@@ -34,7 +34,7 @@ devices.
 ### Revision Number
 
 ```c
-#define GBL_EFI_AB_SLOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 2)
+#define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 2)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -45,9 +45,8 @@ See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisio
 typedef struct _GBL_EFI_AVB_PROTOCOL {
   UINT64 Revision;
   GBL_EFI_AVB_READ_PARTITIONS_TO_VERIFY ReadPartitionsToVerify;
-  GBL_EFI_AVB_READ_IS_DM_VERITY_ERROR ReadIsDmVerityError;
+  GBL_EFI_AVB_READ_DEVICE_STATUS ReadDeviceStatus;
   GBL_EFI_AVB_VALIDATE_VBMETA_PUBLIC_KEY ValidateVbmetaPublicKey;
-  GBL_EFI_AVB_READ_IS_DEVICE_UNLOCKED ReadIsDeviceUnlocked;
   GBL_EFI_AVB_READ_ROLLBACK_INDEX ReadRollbackIndex;
   GBL_EFI_AVB_WRITE_ROLLBACK_INDEX WriteRollbackIndex;
   GBL_EFI_AVB_READ_PERSISTENT_VALUE ReadPersistentValue;
@@ -75,11 +74,6 @@ set loaded and verified by GBL.
 Retrieves the current device status, including its lock state and dm-verity
 error indication.
 [`ReadDeviceStatus()`](#gbl_efi_avb_protocolreaddevicestatus).
-
-#### ReadIsDmVerityError
-
-Retrieves whether the device is rebooted due to dm-verity error.
-[`ReadIsDmVerityError()`](#gbl_efi_avb_protocolreadisdmverityerror).
 
 #### ValidateVbmetaPublicKey
 
@@ -124,11 +118,10 @@ set loaded and verified by GBL.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_READ_PARTITIONS_TO_VERIFY) (
+(EFIAPI *GBL_EFI_AVB_READ_PARTITIONS_TO_VERIFY) (
   IN GBL_EFI_AVB_PROTOCOL *This,
   IN OUT UINTN *NumberOfPartitions,
-  IN OUT GBL_EFI_AVB_PARTITION *Partitions,
-);
+  IN OUT GBL_EFI_AVB_PARTITION *Partitions);
 ```
 
 ### Related Definitions
@@ -228,7 +221,7 @@ EFI_STATUS
 
 ### Related Definitions
 
-#### GBL_EFI_AVB_KEY_VALIDATION_STATUS
+#### GBL_EFI_AVB_DEVICE_STATUS
 
 ```c
 typedef enum {
@@ -280,15 +273,15 @@ method returns an error, GBL rejects to boot.
 
 |||
 | --- | --- |
-| `EFI_SUCCESS` | A device status is succesfully returned. |
-| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| `EFI_SUCCESS` | A device status is successfully returned. |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey()
 
 ### Summary
 
 Allows the firmware to verify the public key used to sign the `vbmeta` partition
-in a vendor-specifc way.
+in a vendor-specific way.
 
 ### Prototype
 
@@ -383,8 +376,8 @@ GBL calls this function once per AVB verification session.
 
 |||
 | --- | --- |
-| `EFI_SUCCESS` | A locked state is succesfully returned. |
-| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| `EFI_SUCCESS` | Public key validation was successfully completed. |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadRollbackIndex()
 
@@ -400,7 +393,7 @@ typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_READ_ROLLBACK_INDEX) (
   IN GBL_EFI_AVB_PROTOCOL *This,
-  IN USIZE IndexLocation,
+  IN UINTN IndexLocation,
   OUT UINT64 *RollbackIndex);
 ```
 
@@ -436,9 +429,9 @@ locked devices.
 
 |||
 | --- | --- |
-| `EFI_SUCCESS` | The rollback index value is succesfully returned. |
-| `EFI_STATUS_NOT_FOUND` | The requested rollback index isn't supported, so cannot be returned. GBL rejects to boot. |
-| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| `EFI_SUCCESS` | The rollback index value is successfully returned. |
+| `EFI_NOT_FOUND` | The requested rollback index isn't supported, so cannot be returned. GBL rejects to boot. |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.WriteRollbackIndex()
 
@@ -454,7 +447,7 @@ typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_WRITE_ROLLBACK_INDEX) (
   IN GBL_EFI_AVB_PROTOCOL *This,
-  IN USIZE IndexLocation,
+  IN UINTN IndexLocation,
   IN UINT64 RollbackIndex);
 ```
 
@@ -476,7 +469,7 @@ A rollback index value to be set for the provided `IndexLocation`.
 
 For a locked device, if a known-good slot is successfully verified, GBL updates
 rollback indexes to the value provided in the vbmeta header in accordance with
-`libavb` [requrements][update_ri]. This prevents a locked device from booting a
+`libavb` [requirements][update_ri]. This prevents a locked device from booting a
 previous version of HLOS on the next boot, ensuring [rollback protection][rp] in
 case of an OTA.
 
@@ -489,9 +482,9 @@ locked devices.
 
 |||
 | --- | --- |
-| `EFI_SUCCESS` | The rollback index value is succesfully updated. |
-| `EFI_STATUS_NOT_FOUND` | The requested rollback index isn't supported, so cannot be updated. GBL rejects to boot. |
-| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| `EFI_SUCCESS` | The rollback index value is successfully updated. |
+| `EFI_NOT_FOUND` | The requested rollback index isn't supported, so cannot be updated. GBL rejects to boot. |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadPersistentValue()
 
@@ -508,7 +501,7 @@ EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_READ_PERSISTENT_VALUE) (
   IN GBL_EFI_AVB_PROTOCOL *This,
   IN CONST CHAR8 *Name,
-  IN OUT USIZE *ValueSize,
+  IN OUT UINTN *ValueSize,
   OUT UINT8 *Value);
 ```
 
@@ -544,10 +537,10 @@ handle [dm-verity][dmv_error] errors and EIO mode.
 
 |||
 | --- | --- |
-| `EFI_SUCCESS` | The requested persistent value is presented and succesfully provided in case `Value` buffer isn't NULL. |
-| `EFI_STATUS_NOT_FOUND` | The requested persistent value is not yet populated or supported. GBL will try to initialize it using `WritePersistentValue`. |
-| `EFI_STATUS_BUFFER_TOO_SMALL` | The provided `Value` buffer is too small. GBL rejects to boot. |
-| `EFI_STATUS_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| `EFI_SUCCESS` | The requested persistent value is presented and successfully provided in case `Value` buffer isn't NULL. |
+| `EFI_NOT_FOUND` | The requested persistent value is not yet populated or supported. GBL will try to initialize it using `WritePersistentValue`. |
+| `EFI_BUFFER_TOO_SMALL` | The provided `Value` buffer is too small. GBL rejects to boot. |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.WritePersistentValue()
 
@@ -564,7 +557,7 @@ EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_WRITE_PERSISTENT_VALUE) (
   IN GBL_EFI_AVB_PROTOCOL *This,
   IN CONST CHAR8 *Name,
-  IN USIZE ValueSize,
+  IN UINTN ValueSize,
   IN CONST UINT8 *Value);
 ```
 
@@ -600,9 +593,9 @@ updates in order to disable EIO mode.
 
 |||
 | --- | --- |
-| `EFI_SUCCESS` | The value for `Name` is succesfully updated. |
-| `EFI_STATUS_NOT_FOUND` | Updating the value for `Name` isn't supported. GBL rejects to boot. |
-| `EFI_STATUS_INVALID_PARAMETER` | The `ValueSize` is too big or any other unexpected arguments combination. GBL rejects to boot. |
+| `EFI_SUCCESS` | The value for `Name` is successfully updated. |
+| `EFI_NOT_FOUND` | Updating the value for `Name` isn't supported. GBL rejects to boot. |
+| `EFI_INVALID_PARAMETER` | The `ValueSize` is too big or any other unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.HandleVerificationResult()
 
@@ -713,7 +706,7 @@ Size of the loaded partition `Data` buffer.
 
 ##### Data
 
-Points to a buffer containing the loaded parititon data of `DataSize` bytes.
+Points to a buffer containing the loaded partition data of `DataSize` bytes.
 
 #### GBL_EFI_AVB_VERIFICATION_RESULT
 
@@ -809,7 +802,7 @@ invalid afterward.
 |||
 | --- | --- |
 | `EFI_SUCCESS` | Verification result is successfully handled. |
-| `EFI_STATUS_INVALID_PARAMETER` | Invalid data is provided by the `Result`. GBL rejects to boot. |
+| `EFI_INVALID_PARAMETER` | Invalid data is provided by the `Result`. GBL rejects to boot. |
 | `EFI_ACCESS_DENIED` | Failed to update root of trust or other secure world issues occurred. GBL rejects to boot. |
 
 ## Status codes returned to `libavb`
@@ -817,17 +810,17 @@ invalid afterward.
 Some of the methods across this protocol are initiated by the `libavb`. The
 following UEFI error codes are used to communicate results back to the library:
 
-|                                |                                                                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`                  | Requested operation was successful `libavb::AvbIOResult::AVB_IO_RESULT_OK`                                                                              |
-| `EFI_STATUS_OUT_OF_RESOURCES`  | Unable to allocate memory `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_OOM`                                                                                |
-| `EFI_STATUS_DEVICE_ERROR`      | Underlying hardware (disk or other subsystem) encountered an I/O error `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                    |
-| `EFI_STATUS_NOT_FOUND`         | Named persistent value or rollback index does not exist for the corresponding key `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_NO_SUCH_VALUE`              |
-| `EFI_STATUS_END_OF_FILE`       | Range of bytes requested to be read or written is outside the range of the partition `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_RANGE_OUTSIDE_PARTITION` |
-| `EFI_STATUS_INVALID_PARAMETER` | Named persistent value size is not supported or does not match the expected size `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INVALID_VALUE_SIZE`          |
-| `EFI_STATUS_BUFFER_TOO_SMALL`  | Buffer is too small for the requested operation `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INSUFFICIENT_SPACE`                                           |
-| `EFI_STATUS_UNSUPPORTED`       | Operation isn't implemented / supported                                                                                                                 |
-| Others                         | Treated as `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                                                                                |
+|                                |                                                                                                                                                          |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`                  | Requested operation was successful `libavb::AvbIOResult::AVB_IO_RESULT_OK`                                                                               |
+| `EFI_OUT_OF_RESOURCES`         | Unable to allocate memory `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_OOM`                                                                                 |
+| `EFI_DEVICE_ERROR`             | Underlying hardware (disk or other subsystem) encountered an I/O error `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                     |
+| `EFI_NOT_FOUND`                | Named persistent value or rollback index does not exist for the corresponding key `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_NO_SUCH_VALUE`               |
+| `EFI_END_OF_FILE`              | Range of bytes requested to be read or written is outside the range of the partition `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_RANGE_OUTSIDE_PARTITION`  |
+| `EFI_INVALID_PARAMETER`        | Named persistent value size is not supported or does not match the expected size `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INVALID_VALUE_SIZE`           |
+| `EFI_BUFFER_TOO_SMALL`         | Buffer is too small for the requested operation `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INSUFFICIENT_SPACE`                                            |
+| `EFI_UNSUPPORTED`              | Operation isn't implemented / supported                                                                                                                  |
+| Others                         | Treated as `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                                                                                 |
 
 [readpartitionstoverify]: #gbl_efi_avb_protocolreadpartitionstoverify
 [handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
