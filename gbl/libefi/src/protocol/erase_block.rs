@@ -15,7 +15,7 @@
 //! Rust wrapper for `EFI_ERASE_BLOCK_PROTOCOL`.
 
 use crate::{
-    efi_call,
+    efi_call, efi_println,
     protocol::{block_io2::wait_completion, Protocol, ProtocolInfo},
     EventNotify, EventType, Tpl,
 };
@@ -43,6 +43,42 @@ impl Protocol<'_, EraseBlockProtocol> {
 
     /// Wrapper of `EFI_ERASE_BLOCK_PROTOCOL.erase_blocks`
     pub async fn erase_blocks(&self, media_id: u32, lba: u64, size: usize) -> Result<()> {
+        if let Err(e) = self.erase_blocks_nonblocking(media_id, lba, size).await {
+            // The UEFI spec is unclear about what error should be returned if the protocol did not
+            // support non-blocking mode, so just retry if any error is encountered.
+            efi_println!(
+                self.efi_entry(),
+                "Nonblocking erase_blocks failed with: {e}\nRetry with blocking mode."
+            );
+            self.erase_blocks_blocking(media_id, lba, size)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn erase_blocks_blocking(&self, media_id: u32, lba: u64, size: usize) -> Result<()> {
+        // SAFETY:
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // * `self.interface_ptr()` is an input parameter and will not be retained.
+        //   It outlives the call.
+        // * Blocking I/O is performed if `event` is NULL, so `token` are not being retained by the
+        //   UEFI firmware.
+        unsafe {
+            efi_call!(
+                self.interface().erase_blocks,
+                self.interface_ptr(),
+                media_id,
+                lba,
+                &mut EfiEraseBlockToken {
+                    event: core::ptr::null_mut(),
+                    transaction_status: EFI_STATUS_NOT_READY,
+                },
+                size
+            )
+        }
+    }
+
+    async fn erase_blocks_nonblocking(&self, media_id: u32, lba: u64, size: usize) -> Result<()> {
         let bs = self.efi_entry().system_table().boot_services();
         let complete = AtomicBool::new(false);
         let mut notify_fn = &mut |_| complete.store(true, Ordering::Relaxed);
