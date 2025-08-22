@@ -6,21 +6,25 @@ This document describes Fastboot in the [GBL UEFI bootloader](../efi/BUILD).
 
 The GBL UEFI bootloader supports both Fastboot over TCP and USB. To enable
 Fastboot over TCP, the UEFI loader needs to implement the
-`EFI_SIMPLE_NETWORK_PROTOCOL` protocol. To enable Fastboot over USB, the
-[GBL_EFI_FASTBOOT_USB_PROTOCOL](./GBL_EFI_FASTBOOT_USB_PROTOCOL.md) protocol is
-needed. GBL automatically establishes the corresponding transport channel if
-the needed protocol is available.
+`EFI_SIMPLE_NETWORK_PROTOCOL` protocol. To enable Fastboot on other platform
+specific channels such as USB, the
+[GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL](./gbl_efi_fastboot_transport_protocol.md)
+protocol is required. GBL automatically establishes the corresponding transport
+channel if the required protocol is available.
 
 ## The Partition Argument
 
 Fastboot commands such as `fastboot flash`, `fastboot fetch` and
 `fastboot getvar partition-size` operate on partitions and requires a partition
 name argument. See this [doc](./partitions.md) for how GBL defines and handles
-partitions on storage devices. GBL fastboot additionaly supports accessing sub
-ranges of partitions and disambiguating betweeen same name partitions on
-multiple storage devices (i.e. in the presence of external or removable boot
-storage). The following summarizes the supported syntaxes for partition name
-argument in fastboot.
+partitions on storage devices. The information of detected storage devices is
+included in the output of `getvar all`. The partition layout for each of them
+can be displayed by `oem gbl-partition-info`.
+
+GBL fastboot additionaly supports accessing sub ranges of partitions and
+disambiguating betweeen same name partitions on multiple storage devices (i.e.
+in the presence of external or removable boot storage). The following
+summarizes the supported syntaxes for partition name argument in fastboot.
 
 * Partition
   ```sh
