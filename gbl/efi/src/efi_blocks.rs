@@ -54,7 +54,7 @@ pub struct EfiBlockDeviceIo<'a> {
 // requested, or return error.
 // For async `read_blocks_ex()` blocking wait guarantees that read finishes.
 unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
-    fn info(&mut self) -> BlockInfo {
+    fn info(&self) -> BlockInfo {
         self.block_info
     }
 
@@ -84,8 +84,11 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
 
     async fn erase_blocks(&mut self, blk_off: u64, num_blks: u64) -> Result<(), Error> {
         let protocol = self.erase.as_ref().ok_or(Error::Unsupported)?;
-        let sz = SafeNum::from(num_blks) * protocol.erase_length_granularity();
-        protocol.erase_blocks(self.media_id, blk_off, sz.try_into()?).await
+        let block_info = self.info();
+        let erase_block_size = block_info.erase_block_size()?;
+        let lba = SafeNum::from(blk_off) * erase_block_size / block_info.block_size;
+        let sz = SafeNum::from(num_blks) * erase_block_size;
+        protocol.erase_blocks(self.media_id, lba.try_into()?, sz.try_into()?).await
     }
 
     fn read_blocks_sync<'a>(
@@ -130,11 +133,11 @@ pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, E
         }
         let block_io2 = bs.open_protocol::<BlockIo2Protocol>(*handle).ok();
         let erase = bs.open_protocol::<EraseBlockProtocol>(*handle).ok();
-        let erase_blocks = erase.as_ref().map(|v| v.erase_length_granularity()).unwrap_or(1);
+        let erase_blocks = erase.as_ref().map(|v| v.erase_length_granularity()).unwrap_or_default();
         let block_info = BlockInfo {
             // `block_size` is u32 so can always convert to u64
             block_size: media.block_size as u64,
-            erase_blocks: erase_blocks.into(),
+            erase_blocks_num: max(1, erase_blocks).into(),
             num_blocks: (SafeNum::from(media.last_block) + 1).try_into()?,
             // `io_align` is u32 so can always convert to u64
             alignment: max(1, media.io_align as u64),

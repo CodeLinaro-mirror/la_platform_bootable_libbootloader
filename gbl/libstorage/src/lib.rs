@@ -110,7 +110,7 @@ pub struct BlockInfo {
     /// Native block size of the block device.
     pub block_size: u64,
     /// The size of an erase block in number of blocks.
-    pub erase_blocks: u64,
+    pub erase_blocks_num: u64,
     /// Total number of blocks of the block device.
     pub num_blocks: u64,
     /// The alignment requirement for IO buffers. For example, many block device drivers use DMA
@@ -127,7 +127,7 @@ impl BlockInfo {
 
     /// Returns the erase block size in bytes.
     pub fn erase_block_size(&self) -> Result<u64> {
-        Ok((SafeNum::from(self.erase_blocks) * self.block_size).try_into()?)
+        Ok((SafeNum::from(self.erase_blocks_num) * self.block_size).try_into()?)
     }
 }
 
@@ -141,7 +141,7 @@ impl BlockInfo {
 /// initialized on success and can safely be converted to a `&[u8]` and read normally.
 pub unsafe trait BlockIo {
     /// Returns the `BlockInfo` for this block device.
-    fn info(&mut self) -> BlockInfo;
+    fn info(&self) -> BlockInfo;
 
     /// Read blocks of data from the block device
     ///
@@ -266,7 +266,7 @@ pub struct BlockIoSync<T>(T);
 // The implementation simply forwards from another implementation of `BlockIO` which is assumed
 // safely implemented.
 unsafe impl<T: BlockIo> BlockIo for BlockIoSync<T> {
-    fn info(&mut self) -> BlockInfo {
+    fn info(&self) -> BlockInfo {
         self.0.info()
     }
 
@@ -294,8 +294,8 @@ unsafe impl<T: DerefMut> BlockIo for T
 where
     T::Target: BlockIo,
 {
-    fn info(&mut self) -> BlockInfo {
-        self.deref_mut().info()
+    fn info(&self) -> BlockInfo {
+        self.deref().info()
     }
 
     async fn read_blocks<'a>(
@@ -337,7 +337,7 @@ pub struct BlockIoNull {}
 // SAFETY:
 // `read_blocks` never succeeds since it is not implemented and will panic.
 unsafe impl BlockIo for BlockIoNull {
-    fn info(&mut self) -> BlockInfo {
+    fn info(&self) -> BlockInfo {
         unimplemented!();
     }
 

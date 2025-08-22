@@ -82,10 +82,10 @@ impl<T: DerefMut<Target = [u8]>> RamBlockIo<T> {
 // SAFETY:
 // `read_blocks` clones `out.len()` bytes to output which initializes all elements in `out`
 unsafe impl<T: DerefMut<Target = [u8]>> BlockIo for RamBlockIo<T> {
-    fn info(&mut self) -> BlockInfo {
+    fn info(&self) -> BlockInfo {
         BlockInfo {
             block_size: self.block_size,
-            erase_blocks: 2,
+            erase_blocks_num: 2,
             num_blocks: u64::try_from(self.storage.len()).unwrap() / self.block_size,
             alignment: self.alignment,
         }
