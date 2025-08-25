@@ -420,7 +420,7 @@ pub(crate) fn get_boot_slot<'a, 'b, 'c>(
 /// Provides methods to run GBL fastboot.
 pub struct GblFastbootEntry<'d, G> {
     pub(crate) ops: &'d mut G,
-    pub(crate) load: &'d mut [u8],
+    pub(crate) boot_buffer: BootBuffer<'d>,
     pub(crate) result: &'d mut GblFastbootResult,
 }
 
@@ -453,7 +453,7 @@ where
         'd: 'c,
     {
         *self.result =
-            run_gbl_fastboot(self.ops, buffer_pool, tasks, local, usb, tcp, self.load).await;
+            run_gbl_fastboot(self.ops, buffer_pool, tasks, local, usb, tcp, self.boot_buffer).await;
     }
 
     /// Runs fastboot with N pre-allocated async worker tasks.
@@ -487,8 +487,14 @@ where
             arr[i] = v;
         }
         let bufs = &mut arr[..];
-        *self.result =
-            block_on(run_gbl_fastboot_stack::<N>(self.ops, bufs, local, usb, tcp, self.load));
+        *self.result = block_on(run_gbl_fastboot_stack::<N>(
+            self.ops,
+            bufs,
+            local,
+            usb,
+            tcp,
+            self.boot_buffer,
+        ));
     }
 }
 
@@ -505,6 +511,19 @@ pub struct BootBuffer<'a> {
     pub fdt: Option<&'a mut [u8]>,
     /// Optional designated pvmfw load buffer.
     pub pvmfw_data: Option<&'a mut [u8]>,
+}
+
+impl BootBuffer<'_> {
+    /// Creates an instance that borrows internal fields.
+    pub fn as_borrowed(&mut self) -> BootBuffer {
+        BootBuffer {
+            general: &mut self.general[..],
+            kernel: self.kernel.as_mut().map(|v| v as _),
+            ramdisk: self.ramdisk.as_mut().map(|v| v as _),
+            fdt: self.fdt.as_mut().map(|v| v as _),
+            pvmfw_data: self.pvmfw_data.as_mut().map(|v| v as _),
+        }
+    }
 }
 
 impl<'a> From<&'a mut [u8]> for BootBuffer<'a> {
@@ -530,7 +549,7 @@ impl<'a> From<&'a mut [u8]> for BootBuffer<'a> {
 /// On success, returns a tuple of slices corresponding to `(ramdisk, FDT, kernel, unused)`
 pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     ops: &mut G,
-    boot_buffer: BootBuffer<'c>,
+    mut boot_buffer: BootBuffer<'c>,
     run_fastboot: impl FnOnce(GblFastbootEntry<'_, G>),
 ) -> Result<(&'c mut [u8], &'c mut [u8], &'c mut [u8], &'c mut [u8])> {
     let (bcb_buffer, _) = boot_buffer
@@ -580,12 +599,12 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     {
         gbl_println!(ops, "Entering fastboot mode...");
         // TODO(b/430068343): Support designated buffers for `fastboot boot`.
-        run_fastboot(GblFastbootEntry { ops, load: boot_buffer.general, result });
+        run_fastboot(GblFastbootEntry { ops, boot_buffer: boot_buffer.as_borrowed(), result });
         gbl_println!(ops, "Leaving fastboot mode...");
         // Checks if "fastboot boot" has loaded an android image.
         if matches!(&result.loaded_image_info, Some(LoadedImageInfo::Android { .. })) {
             gbl_println!(ops, "Booting from \"fastboot boot\"");
-            return Ok(result.split_loaded_android(boot_buffer.general).unwrap());
+            return Ok(result.split_loaded_android(boot_buffer).unwrap());
         }
 
         // Device state or disk content might have changed. Re-sync preloaded partition buffer.
@@ -616,7 +635,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 pub(crate) mod tests {
     use super::*;
     use crate::{
-        constants::{KERNEL_ALIGNMENT, PVMFW_DATA_ALIGNMENT},
+        constants::{KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
         fastboot::test::{make_expected_usb_out, SharedTestListener, TestLocalSession},
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
         ops::{
@@ -924,6 +943,7 @@ androidboot.veritymode=enforcing
             android_load_verify_fixup(&mut ops, slot_nr, false, boot_buffer).unwrap();
         assert_eq!(kernel, expected_kernel);
         check_ramdisk(ramdisk, expected_ramdisk, expected_bootconfig);
+        assert_eq!(ramdisk.as_ptr() as usize % PAGE_SIZE, 0);
         assert_eq!(designated_ramdisk.unwrap_or(ramdisk.as_ptr()), ramdisk.as_ptr());
         assert_eq!(designated_fdt.unwrap_or(fdt.as_ptr()), fdt.as_ptr());
         assert_eq!(designated_kernel.unwrap_or(kernel.as_ptr()), kernel.as_ptr());
@@ -2159,6 +2179,62 @@ androidboot.veritymode=enforcing
         );
 
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+    }
+
+    #[test]
+    fn test_android_main_fastboot_boot_designated_buffers() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.stop_in_fastboot = Some(Ok(true));
+        ops.current_slot = Some(Ok(slot('a')));
+
+        let general = &mut AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut kernel = AlignedBuffer::<u8>::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let kernel_addr = kernel.as_ptr();
+        let mut ramdisk = AlignedBuffer::<u8>::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let ramdisk_addr = ramdisk.as_ptr();
+        let mut fdt = AlignedBuffer::<u8>::new(1 * 1024 * 1024, FDT_ALIGNMENT);
+        let fdt_addr = fdt.as_ptr();
+        let buffers = BootBuffer {
+            general,
+            kernel: Some(&mut kernel),
+            ramdisk: Some(&mut ramdisk),
+            fdt: Some(&mut fdt),
+            pvmfw_data: None,
+        };
+        let listener: SharedTestListener = Default::default();
+        let (ramdisk, fdt, kernel, _) = android_main(&mut ops, buffers, |fb| {
+            let data = read_test_data(format!("boot_v2_a.img"));
+            listener.add_usb_input(format!("download:{:#x}", data.len()).as_bytes());
+            listener.add_usb_input(&data);
+            listener.add_usb_input(b"boot");
+            listener.add_usb_input(b"continue");
+            fb.run_n::<2>(
+                &mut vec![0u8; 256 * 1024],
+                Some(&mut TestLocalSession::default()),
+                Some(&listener),
+                Some(&listener),
+            )
+        })
+        .unwrap();
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"DATA00004000",
+                b"OKAY",
+                b"INFOBoot image as Android slot a",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+        checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+        assert_eq!(kernel.as_ptr(), kernel_addr);
+        assert_eq!(ramdisk.as_ptr(), ramdisk_addr);
+        assert_eq!(fdt.as_ptr(), fdt_addr);
     }
 
     #[test]
