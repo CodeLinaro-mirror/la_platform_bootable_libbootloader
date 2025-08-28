@@ -19,7 +19,12 @@ use crate::{efi_println, EfiEntry};
 use core::ffi::CStr;
 use core::fmt::Display;
 use core::marker::PhantomData;
-use efi_types::{EfiDevicePathProtocol, EfiDevicePathToTextProtocol, EfiGuid};
+use efi_types::{
+    EfiDevicePathProtocol, EfiDevicePathToTextProtocol, EfiGuid,
+    EFI_DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH, EFI_DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH,
+    EFI_END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH,
+    EFI_MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR,
+};
 use liberror::{Error, Result};
 use zerocopy::byteorder::little_endian;
 use zerocopy::FromBytes;
@@ -35,14 +40,6 @@ impl ProtocolInfo for DevicePathProtocol {
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }
-
-const DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH: u8 = 0x7F;
-
-const END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH: u8 = 0xFF;
-
-const DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH: u8 = 0x04;
-
-const MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR: u8 = 0x03;
 
 const GBL_VENDOR_MEDIA_DEVICE_PATH_GUID: EfiGuid =
     EfiGuid::new(0xa09773e3, 0xf027, 0x4f33, [0xad, 0xb3, 0xbd, 0x8d, 0xcf, 0x4b, 0x38, 0x54]);
@@ -68,8 +65,8 @@ impl<'a> Iterator for EfiDevicePathNodeIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // SAFETY: `self.0` points to a valid `EfiDevicePathProtocol` object.
         let header = unsafe { self.0.as_ref()? };
-        if header.type_ == DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH
-            && header.sub_type == END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH
+        if header.type_ == EFI_DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH
+            && header.sub_type == EFI_END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH
         {
             return None;
         }
@@ -90,8 +87,8 @@ impl<'a> Protocol<'a, DevicePathProtocol> {
         // SAFETY: UEFI firmware requires that `self.interface_ptr()` is non-null and points to a
         // series of Device Path nodes that ends with a End of Hardware Device Path node.
         for (header, aux) in unsafe { EfiDevicePathNodeIter::new(self.interface_ptr()) } {
-            if header.type_ == DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH
-                && header.sub_type == MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR
+            if header.type_ == EFI_DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH
+                && header.sub_type == EFI_MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR
             {
                 // Mustn't use ref_from_prefix() because `aux` could be unaligned to `EfiGuid` size.
                 match EfiGuid::read_from_prefix(aux) {
@@ -259,13 +256,13 @@ mod test {
                 [GBL_VENDOR_MEDIA_DEVICE_PATH_GUID.as_bytes(), c"device_name".to_bytes_with_nul()]
                     .concat();
             let dp3 = EfiDevicePathProtocol {
-                type_: 0x04,
-                sub_type: 0x03,
+                type_: EFI_DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH,
+                sub_type: EFI_MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR,
                 length: little_endian::U16::new((4 + dp3_data.len()) as u16).to_bytes(),
             };
             let dp_end = EfiDevicePathProtocol {
-                type_: 0x7F,
-                sub_type: 0xFF,
+                type_: EFI_DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH,
+                sub_type: EFI_END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH,
                 length: little_endian::U16::new(4).to_bytes(),
             };
 
@@ -315,13 +312,13 @@ mod test {
                 [GBL_VENDOR_MEDIA_DEVICE_PATH_GUID.as_bytes(), c"device_name".to_bytes_with_nul()]
                     .concat();
             let dp3 = EfiDevicePathProtocol {
-                type_: 0x04,
-                sub_type: 0x03,
+                type_: EFI_DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH,
+                sub_type: EFI_MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR,
                 length: little_endian::U16::new((4 + dp3_data.len()) as u16).to_bytes(),
             };
             let dp_end = EfiDevicePathProtocol {
-                type_: 0x7F,
-                sub_type: 0xFF,
+                type_: EFI_DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH,
+                sub_type: EFI_END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH,
                 length: little_endian::U16::new(4).to_bytes(),
             };
 
@@ -352,8 +349,8 @@ mod test {
                 length: little_endian::U16::new(4).to_bytes(),
             };
             let dp_end = EfiDevicePathProtocol {
-                type_: 0x7F,
-                sub_type: 0xFF,
+                type_: EFI_DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH,
+                sub_type: EFI_END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH,
                 length: little_endian::U16::new(4).to_bytes(),
             };
 

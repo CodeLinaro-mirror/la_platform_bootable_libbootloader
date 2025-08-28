@@ -50,7 +50,7 @@ rust_bindgen(
         "--with-derive-custom-struct=EfiMemoryDescriptor=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--with-derive-custom-struct=EfiMemoryAttributesTableHeader=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--with-derive-custom-struct=EfiGuid=Immutable,IntoBytes,FromBytes,KnownLayout",
-        "--with-derive-custom-struct=EfiDevicePathProtocol=Immutable,IntoBytes,FromBytes,KnownLayout",
+        "--with-derive-custom-struct=EfiDevicePathProtocol=Immutable,IntoBytes,FromBytes,KnownLayout,Unaligned",
         # newtype-global-enum allows us to implement traits on EfiStatus but
         # still use the EFI_STATUS_* codes as unscoped constants. Looks like:
         #   pub struct EfiStatus(pub usize);
@@ -69,7 +69,7 @@ rust_bindgen(
 #![allow(non_snake_case)]
 #![allow(missing_docs)]
 
-use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout};""",
+use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout, Unaligned};""",
     ],
     cc_lib = ":efi_c_headers",
     clang_flags = [

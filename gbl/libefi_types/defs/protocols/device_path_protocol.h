@@ -36,4 +36,12 @@ typedef struct EfiDevicePathToTextProtocol {
                                            bool display_only, bool allow_shortcuts);
 } EfiDevicePathToTextProtocol;
 
+static const uint8_t EFI_DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH = 0x7F;
+
+static const uint8_t EFI_DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH = 0x04;
+
+static const uint8_t EFI_END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH = 0xFF;
+
+static const uint8_t EFI_MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR = 0x03;
+
 #endif  //__DEVICE_PATH_PROTOCOL_H__
