@@ -82,8 +82,13 @@ impl<'a> Iterator for EfiDevicePathNodeIter<'a> {
 }
 
 impl<'a> Protocol<'a, DevicePathProtocol> {
-    /// Get the GBL vendor-defined media device path
-    pub fn gbl_vendor_media_device_path(&self) -> Result<&'a CStr> {
+    /// Get the GBL vendor-defined media device path.
+    ///
+    /// # Returns
+    /// * `Ok(Some)` the GBL vendor-defined media device path.
+    /// * `Ok(None)` if not found.
+    /// * `Err(Error::InvalidInput)` if failed to parse EFI data.
+    pub fn gbl_vendor_media_device_path(&self) -> Result<Option<&'a CStr>> {
         // SAFETY: UEFI firmware requires that `self.interface_ptr()` is non-null and points to a
         // series of Device Path nodes that ends with a End of Hardware Device Path node.
         for (header, aux) in unsafe { EfiDevicePathNodeIter::new(self.interface_ptr()) } {
@@ -97,16 +102,16 @@ impl<'a> Protocol<'a, DevicePathProtocol> {
                             self.efi_entry(),
                             "Failed to parse vendor-defined media device path GUID: {e:?}"
                         );
-                        return Err(Error::Unsupported);
+                        return Err(Error::InvalidInput);
                     }
                     Ok((GBL_VENDOR_MEDIA_DEVICE_PATH_GUID, data)) => {
-                        return Ok(core::ffi::CStr::from_bytes_until_nul(data)?);
+                        return Ok(Some(core::ffi::CStr::from_bytes_until_nul(data)?));
                     }
                     Ok(_) => {}
                 };
             }
         }
-        Err(Error::Unsupported)
+        Ok(None)
     }
 }
 
@@ -335,7 +340,7 @@ mod test {
                 generate_protocol::<DevicePathProtocol>(&efi_entry, efi_protocol.as_mut().unwrap())
             };
 
-            assert_eq!(protocol.gbl_vendor_media_device_path(), Ok(c"device_name"));
+            assert_eq!(protocol.gbl_vendor_media_device_path(), Ok(Some(c"device_name")));
         })
     }
 
@@ -360,7 +365,7 @@ mod test {
                 generate_protocol::<DevicePathProtocol>(&efi_entry, efi_protocol.as_mut().unwrap())
             };
 
-            assert_eq!(protocol.gbl_vendor_media_device_path(), Err(Error::Unsupported));
+            assert_eq!(protocol.gbl_vendor_media_device_path(), Ok(None));
         })
     }
 }

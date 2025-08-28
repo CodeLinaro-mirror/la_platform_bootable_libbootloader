@@ -131,38 +131,51 @@ pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, E
         if media.logical_partition {
             continue;
         }
-        let block_io2 = bs.open_protocol::<BlockIo2Protocol>(*handle).ok();
-        let erase = bs.open_protocol::<EraseBlockProtocol>(*handle).ok();
-        let erase_blocks = erase.as_ref().map(|v| v.erase_length_granularity()).unwrap_or_default();
-        let block_info = BlockInfo {
-            // `block_size` is u32 so can always convert to u64
-            block_size: media.block_size as u64,
-            erase_blocks_num: max(1, erase_blocks).into(),
-            num_blocks: (SafeNum::from(media.last_block) + 1).try_into()?,
-            // `io_align` is u32 so can always convert to u64
-            alignment: max(1, media.io_align as u64),
+        let open_disk = || -> Result<_, Error> {
+            let block_io2 = bs.open_protocol::<BlockIo2Protocol>(*handle).ok();
+            let erase = bs.open_protocol::<EraseBlockProtocol>(*handle).ok();
+            let erase_blocks =
+                erase.as_ref().map(|v| v.erase_length_granularity()).unwrap_or_default();
+            let block_info = BlockInfo {
+                // `block_size` is u32 so can always convert to u64
+                block_size: media.block_size as u64,
+                erase_blocks_num: max(1, erase_blocks).into(),
+                num_blocks: (SafeNum::from(media.last_block) + 1).try_into()?,
+                // `io_align` is u32 so can always convert to u64
+                alignment: max(1, media.io_align as u64),
+            };
+            let disk_io = Disk::new_alloc_scratch(EfiBlockDeviceIo {
+                block_io,
+                block_io2,
+                erase,
+                media_id: media.media_id,
+                block_info,
+            })?;
+            let disk = match bs.open_protocol::<DevicePathProtocol>(*handle) {
+                Ok(dpp) => {
+                    if let Some(device_name) = dpp.gbl_vendor_media_device_path()? {
+                        efi_println!(
+                            efi_entry,
+                            "Block #{idx} raw device vendor-defined name: {device_name:?}"
+                        );
+                        GblDisk::new_raw(disk_io, device_name)?
+                    } else {
+                        GblDisk::new_gpt(disk_io, Gpt::new(vec![0u8; gpt_buffer_size])?)
+                    }
+                }
+                _ => GblDisk::new_gpt(disk_io, Gpt::new(vec![0u8; gpt_buffer_size])?),
+            };
+            match block_on(disk.as_sync()?.sync_gpt()) {
+                Ok(Some(v)) => efi_println!(efi_entry, "Block #{idx} GPT sync result: {v}"),
+                Err(e) => efi_println!(efi_entry, "Block #{idx} error while syncing GPT: {e}"),
+                _ => {}
+            };
+            Ok(disk)
         };
-        let disk_io = Disk::new_alloc_scratch(EfiBlockDeviceIo {
-            block_io,
-            block_io2,
-            erase,
-            media_id: media.media_id,
-            block_info,
-        })
-        .unwrap();
-        let dpp = bs.open_protocol::<DevicePathProtocol>(*handle);
-        let device_name = dpp.and_then(|p| p.gbl_vendor_media_device_path());
-        efi_println!(efi_entry, "Block #{idx} vendor-defined device name: {device_name:?}");
-        let disk = match device_name {
-            Ok(name) => GblDisk::new_raw(disk_io, name).unwrap(),
-            _ => GblDisk::new_gpt(disk_io, Gpt::new(vec![0u8; gpt_buffer_size]).unwrap()),
-        };
-        match block_on(disk.as_sync().unwrap().sync_gpt()) {
-            Ok(Some(v)) => efi_println!(efi_entry, "Block #{idx} GPT sync result: {v}"),
-            Err(e) => efi_println!(efi_entry, "Block #{idx} error while syncing GPT: {e}"),
-            _ => {}
-        };
-        gbl_disks.push(disk);
+        match open_disk() {
+            Ok(disk) => gbl_disks.push(disk),
+            Err(e) => efi_println!(efi_entry, "Block #{idx} failed to open device: {e}"),
+        }
     }
     Ok(gbl_disks)
 }
