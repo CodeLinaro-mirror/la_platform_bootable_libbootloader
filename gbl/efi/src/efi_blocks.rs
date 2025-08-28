@@ -19,8 +19,8 @@ use efi::{
     efi_println,
     profiling::EfiProfileBackend,
     protocol::{
-        block_io::BlockIoProtocol, block_io2::BlockIo2Protocol, erase_block::EraseBlockProtocol,
-        Protocol,
+        block_io::BlockIoProtocol, block_io2::BlockIo2Protocol, device_path::DevicePathProtocol,
+        erase_block::EraseBlockProtocol, Protocol,
     },
     EfiEntry,
 };
@@ -142,13 +142,21 @@ pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, E
             // `io_align` is u32 so can always convert to u64
             alignment: max(1, media.io_align as u64),
         };
-        let blk_io =
-            EfiBlockDeviceIo { block_io, block_io2, erase, media_id: media.media_id, block_info };
-        // TODO(b/357688291): Support raw partition based on device path info.
-        let disk = GblDisk::new_gpt(
-            Disk::new_alloc_scratch(blk_io).unwrap(),
-            Gpt::new(vec![0u8; gpt_buffer_size]).unwrap(),
-        );
+        let disk_io = Disk::new_alloc_scratch(EfiBlockDeviceIo {
+            block_io,
+            block_io2,
+            erase,
+            media_id: media.media_id,
+            block_info,
+        })
+        .unwrap();
+        let dpp = bs.open_protocol::<DevicePathProtocol>(*handle);
+        let device_name = dpp.and_then(|p| p.gbl_vendor_media_device_path());
+        efi_println!(efi_entry, "Block #{idx} vendor-defined device name: {device_name:?}");
+        let disk = match device_name {
+            Ok(name) => GblDisk::new_raw(disk_io, name).unwrap(),
+            _ => GblDisk::new_gpt(disk_io, Gpt::new(vec![0u8; gpt_buffer_size]).unwrap()),
+        };
         match block_on(disk.as_sync().unwrap().sync_gpt()) {
             Ok(Some(v)) => efi_println!(efi_entry, "Block #{idx} GPT sync result: {v}"),
             Err(e) => efi_println!(efi_entry, "Block #{idx} error while syncing GPT: {e}"),

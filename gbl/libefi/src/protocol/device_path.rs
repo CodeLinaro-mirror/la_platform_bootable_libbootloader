@@ -15,10 +15,14 @@
 //! Rust wrapper for `EFI_DEVICE_PATH_PROTOCOL`.
 
 use crate::protocol::{Protocol, ProtocolInfo, Requirement};
-use crate::EfiEntry;
+use crate::{efi_println, EfiEntry};
+use core::ffi::CStr;
 use core::fmt::Display;
+use core::marker::PhantomData;
 use efi_types::{EfiDevicePathProtocol, EfiDevicePathToTextProtocol, EfiGuid};
 use liberror::{Error, Result};
+use zerocopy::byteorder::little_endian;
+use zerocopy::FromBytes;
 
 /// `EFI_DEVICE_PATH_PROTOCOL`
 pub struct DevicePathProtocol;
@@ -30,6 +34,83 @@ impl ProtocolInfo for DevicePathProtocol {
         EfiGuid::new(0x09576e91, 0x6d3f, 0x11d2, [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
+}
+
+const DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH: u8 = 0x7F;
+
+const END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH: u8 = 0xFF;
+
+const DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH: u8 = 0x04;
+
+const MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR: u8 = 0x03;
+
+const GBL_VENDOR_MEDIA_DEVICE_PATH_GUID: EfiGuid =
+    EfiGuid::new(0xa09773e3, 0xf027, 0x4f33, [0xad, 0xb3, 0xbd, 0x8d, 0xcf, 0x4b, 0x38, 0x54]);
+
+/// Iterates a series of `EfiDevicePathProtocol`
+struct EfiDevicePathNodeIter<'a>(
+    *const EfiDevicePathProtocol,
+    PhantomData<&'a EfiDevicePathProtocol>,
+);
+
+impl<'a> EfiDevicePathNodeIter<'a> {
+    /// # Safety
+    /// The pointer must point to the start of a series of Device Path nodes and the series must be
+    /// terminated by an End of Hardware Device Path node (sub-type End Entire Device Path).
+    unsafe fn new(ptr: *const EfiDevicePathProtocol) -> Self {
+        EfiDevicePathNodeIter(ptr, PhantomData)
+    }
+}
+
+impl<'a> Iterator for EfiDevicePathNodeIter<'a> {
+    type Item = (&'a EfiDevicePathProtocol, &'a [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: `self.0` points to a valid `EfiDevicePathProtocol` object.
+        let header = unsafe { self.0.as_ref()? };
+        if header.type_ == DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH
+            && header.sub_type == END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH
+        {
+            return None;
+        }
+        let length = little_endian::U16::from_bytes(header.length).get() as usize;
+        // SAFETY: Buffer was established by UEFI firmware. Buffer outlives the call.
+        let aux = unsafe { core::slice::from_raw_parts(self.0 as *const u8, length) };
+        let aux = aux.get(core::mem::size_of::<EfiDevicePathProtocol>()..)?;
+        // SAFETY: UEFI spec requires `EfiDevicePathProtocol` to be byte-packed and shifting by
+        // `length` bytes would point to the next `EfiDevicePathProtocol` object.
+        unsafe { self.0 = self.0.byte_add(length) };
+        Some((header, aux))
+    }
+}
+
+impl<'a> Protocol<'a, DevicePathProtocol> {
+    /// Get the GBL vendor-defined media device path
+    pub fn gbl_vendor_media_device_path(&self) -> Result<&'a CStr> {
+        // SAFETY: UEFI firmware requires that `self.interface_ptr()` is non-null and points to a
+        // series of Device Path nodes that ends with a End of Hardware Device Path node.
+        for (header, aux) in unsafe { EfiDevicePathNodeIter::new(self.interface_ptr()) } {
+            if header.type_ == DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH
+                && header.sub_type == MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR
+            {
+                // Mustn't use ref_from_prefix() because `aux` could be unaligned to `EfiGuid` size.
+                match EfiGuid::read_from_prefix(aux) {
+                    Err(e) => {
+                        efi_println!(
+                            self.efi_entry(),
+                            "Failed to parse vendor-defined media device path GUID: {e:?}"
+                        );
+                        return Err(Error::Unsupported);
+                    }
+                    Ok((GBL_VENDOR_MEDIA_DEVICE_PATH_GUID, data)) => {
+                        return Ok(core::ffi::CStr::from_bytes_until_nul(data)?);
+                    }
+                    Ok(_) => {}
+                };
+            }
+        }
+        Err(Error::Unsupported)
+    }
 }
 
 /// `EFI_DEVICE_PATH_TO_TEXT_PROTOCOL`
@@ -125,6 +206,7 @@ mod test {
     use super::*;
     use crate::test::*;
     use core::ptr::null_mut;
+    use zerocopy::IntoBytes;
 
     #[test]
     fn test_device_path_text_drop() {
@@ -154,6 +236,134 @@ mod test {
             efi_call_traces().with(|traces| {
                 assert_eq!(traces.borrow_mut().free_pool_trace.inputs.len(), 0);
             });
+        })
+    }
+
+    #[test]
+    fn test_device_path_node_iter() {
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+            let dp1_data = [1, 2];
+            let dp1 = EfiDevicePathProtocol {
+                type_: 0x00,
+                sub_type: 0x00,
+                length: little_endian::U16::new((4 + dp1_data.len()) as u16).to_bytes(),
+            };
+            let dp2_data = [1, 2, 3, 4, 5];
+            let dp2 = EfiDevicePathProtocol {
+                type_: 0x01,
+                sub_type: 0x01,
+                length: little_endian::U16::new((4 + dp2_data.len()) as u16).to_bytes(),
+            };
+            let dp3_data =
+                [GBL_VENDOR_MEDIA_DEVICE_PATH_GUID.as_bytes(), c"device_name".to_bytes_with_nul()]
+                    .concat();
+            let dp3 = EfiDevicePathProtocol {
+                type_: 0x04,
+                sub_type: 0x03,
+                length: little_endian::U16::new((4 + dp3_data.len()) as u16).to_bytes(),
+            };
+            let dp_end = EfiDevicePathProtocol {
+                type_: 0x7F,
+                sub_type: 0xFF,
+                length: little_endian::U16::new(4).to_bytes(),
+            };
+
+            let mut buf = [
+                vec![dp1.as_bytes(), &dp1_data],
+                vec![dp2.as_bytes(), &dp2_data],
+                vec![dp3.as_bytes(), &dp3_data],
+                vec![dp_end.as_bytes()],
+            ]
+            .concat()
+            .concat();
+            let protocol = unsafe {
+                let efi_protocol = buf.as_mut_ptr() as *mut EfiDevicePathProtocol;
+                generate_protocol::<DevicePathProtocol>(&efi_entry, efi_protocol.as_mut().unwrap())
+            };
+
+            assert_eq!(core::mem::size_of::<EfiDevicePathProtocol>(), 4);
+            assert_eq!(core::mem::size_of::<EfiGuid>(), 16);
+            assert_eq!(
+                unsafe { EfiDevicePathNodeIter::new(protocol.interface_ptr()) }.collect::<Vec<_>>(),
+                vec![
+                    (&dp1, dp1_data.as_ref()),
+                    (&dp2, dp2_data.as_ref()),
+                    (&dp3, dp3_data.as_ref()),
+                ]
+            );
+        })
+    }
+
+    #[test]
+    fn test_gbl_vendor_media_device_path() {
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+            let dp1_data = [1, 2];
+            let dp1 = EfiDevicePathProtocol {
+                type_: 0x00,
+                sub_type: 0x00,
+                length: little_endian::U16::new((4 + dp1_data.len()) as u16).to_bytes(),
+            };
+            let dp2_data = [1, 2, 3, 4, 5];
+            let dp2 = EfiDevicePathProtocol {
+                type_: 0x01,
+                sub_type: 0x01,
+                length: little_endian::U16::new((4 + dp2_data.len()) as u16).to_bytes(),
+            };
+            let dp3_data =
+                [GBL_VENDOR_MEDIA_DEVICE_PATH_GUID.as_bytes(), c"device_name".to_bytes_with_nul()]
+                    .concat();
+            let dp3 = EfiDevicePathProtocol {
+                type_: 0x04,
+                sub_type: 0x03,
+                length: little_endian::U16::new((4 + dp3_data.len()) as u16).to_bytes(),
+            };
+            let dp_end = EfiDevicePathProtocol {
+                type_: 0x7F,
+                sub_type: 0xFF,
+                length: little_endian::U16::new(4).to_bytes(),
+            };
+
+            let mut buf = [
+                vec![dp1.as_bytes(), &dp1_data],
+                vec![dp2.as_bytes(), &dp2_data],
+                vec![dp3.as_bytes(), &dp3_data],
+                vec![dp_end.as_bytes()],
+            ]
+            .concat()
+            .concat();
+            let protocol = unsafe {
+                let efi_protocol = buf.as_mut_ptr() as *mut EfiDevicePathProtocol;
+                generate_protocol::<DevicePathProtocol>(&efi_entry, efi_protocol.as_mut().unwrap())
+            };
+
+            assert_eq!(protocol.gbl_vendor_media_device_path(), Ok(c"device_name"));
+        })
+    }
+
+    #[test]
+    fn test_gbl_vendor_media_device_path_unsupported() {
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+            let dp1 = EfiDevicePathProtocol {
+                type_: 0x00,
+                sub_type: 0x00,
+                length: little_endian::U16::new(4).to_bytes(),
+            };
+            let dp_end = EfiDevicePathProtocol {
+                type_: 0x7F,
+                sub_type: 0xFF,
+                length: little_endian::U16::new(4).to_bytes(),
+            };
+
+            let mut buf = [dp1.as_bytes(), dp_end.as_bytes()].concat();
+            let protocol = unsafe {
+                let efi_protocol = buf.as_mut_ptr() as *mut EfiDevicePathProtocol;
+                generate_protocol::<DevicePathProtocol>(&efi_entry, efi_protocol.as_mut().unwrap())
+            };
+
+            assert_eq!(protocol.gbl_vendor_media_device_path(), Err(Error::Unsupported));
         })
     }
 }
