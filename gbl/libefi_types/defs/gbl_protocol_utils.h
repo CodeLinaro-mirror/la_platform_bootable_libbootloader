@@ -24,4 +24,37 @@
 #define GBL_PROTOCOL_REVISION(major, minor) \
   ((((major) & 0xFFFF) << 16) | ((minor) & 0xFFFF))
 
+// Macro for defining enums with explicit width.
+//
+// It is an ergonomics and safety benefit to explicitly define
+// the width of enums in the EFI interfaces defined and used by GBL.
+//
+// The following conventions are for enums:
+// * The enum is named using ALL_CAPS.
+// * Enum variants are defined in ALL_CAPS and are prefixed
+//   with the ALL_CAPS enum name.
+// * There is a CamelCase typedef for the enum.
+// * By default enum variants start at `0` and increment.
+// * If the value for the first enum variant is `0` it is omitted.
+//
+// e.g.
+//
+// EFI_ENUM(EFI_MOLLUSC, EfiMollusc, uintptr_t,
+//          EFI_MOLLUSC_UNKNOWN,
+//          EFI_MOLLUSC_SQUID = 1 << 0,
+//          EFI_MOLLUSC_CLAM = 1 << 1,
+//          EFI_MOLLUSC_WHELK = 1 << 2);
+//
+// If you are using C++ and your compiler does not support C++11,
+// you can explicitly disable the strongly typed enum by
+// defining `GBL_EFI_DISABLE_CPP_ENUMS`.
+#if defined(__cplusplus) && !defined(GBL_EFI_DISABLE_CPP_ENUMS)
+#define EFI_ENUM(capname, camelname, width, ...) \
+  typedef enum capname : width { __VA_ARGS__ } camelname
+#else
+#define EFI_ENUM(capname, camelname, width, ...) \
+  enum capname { __VA_ARGS__ };                  \
+  typedef width camelname
+#endif
+
 #endif  // __GBL_PROTOCOL_UTILS_H__

@@ -32,31 +32,27 @@
 #include "gbl_protocol_utils.h"
 #include "types.h"
 
-typedef enum GBL_EFI_DEVICE_TREE_TYPE {
-  // HLOS device tree.
-  DEVICE_TREE,
-  // HLOS device tree overlay.
-  OVERLAY,
-  // pVM device assignment overlay.
-  PVM_DA_OVERLAY,
-} GblEfiDeviceTreeType;
+EFI_ENUM(GBL_EFI_DEVICE_TREE_TYPE, GblEfiDeviceTreeType, uint32_t,
+         // HLOS device tree.
+         GBL_EFI_DEVICE_TREE_TYPE_DEVICE_TREE,
+         // HLOS device tree overlay.
+         GBL_EFI_DEVICE_TREE_TYPE_OVERLAY,
+         // pVM device assignment overlay.
+         GBL_EFI_DEVICE_TREE_TYPE_PVM_DA_OVERLAY);
 
-typedef enum GBL_EFI_DEVICE_TREE_SOURCE {
-  // Device tree loaded from boot partition.
-  BOOT,
-  // Device tree loaded from vendor_boot partition.
-  VENDOR_BOOT,
-  // Device tree loaded from dtbo partition.
-  DTBO,
-  // Device tree loaded from dtb partition.
-  DTB,
-} GblEfiDeviceTreeSource;
+EFI_ENUM(GBL_EFI_DEVICE_TREE_SOURCE, GblEfiDeviceTreeSource, uint32_t,
+         // Device tree loaded from boot partition.
+         GBL_EFI_DEVICE_TREE_SOURCE_BOOT,
+         // Device tree loaded from vendor_boot partition.
+         GBL_EFI_DEVICE_TREE_SOURCE_VENDOR_BOOT,
+         // Device tree loaded from dtbo partition.
+         GBL_EFI_DEVICE_TREE_SOURCE_DTBO,
+         // Device tree loaded from dtb partition.
+         GBL_EFI_DEVICE_TREE_SOURCE_DTB);
 
 typedef struct {
-  // GblDeviceTreeSource
-  uint32_t source;
-  // GblDeviceTreeType
-  uint32_t type;
+  GblEfiDeviceTreeSource source;
+  GblEfiDeviceTreeType type;
   // Values are zeroed and must not be used in case of BOOT / VENDOR_BOOT source
   uint32_t id;
   uint32_t rev;

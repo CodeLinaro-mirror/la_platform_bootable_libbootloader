@@ -18,7 +18,8 @@ extern crate libgbl as gbl;
 use crate::protocol::{gbl_efi_ab_slot as ab_slot, Protocol};
 use core::convert::TryInto;
 use efi_types::{
-    GBL_EFI_BOOT_MODE_BOOTLOADER as MODE_BOOTLOADER, GBL_EFI_BOOT_MODE_RECOVERY as MODE_RECOVERY,
+    GblEfiUnbootableReason, GBL_EFI_BOOT_MODE_BOOTLOADER as MODE_BOOTLOADER,
+    GBL_EFI_BOOT_MODE_RECOVERY as MODE_RECOVERY,
 };
 use gbl::slots::{
     BootTarget, BootToken, Manager, OneShot, RecoveryTarget, Slot, SlotIterator, Suffix, Tries,
@@ -101,7 +102,7 @@ impl Manager for ABManager<'_> {
             // This 'or' is technically unreachable because the protocol
             // can't give us an index larger than a u8.
             .or(Err(Error::Other(None)))?;
-        self.protocol.set_slot_unbootable(idx, u8::from(reason).into())
+        self.protocol.set_slot_unbootable(idx, GblEfiUnbootableReason(u8::from(reason)))
     }
 
     fn get_max_retries(&self) -> Result<Tries> {
@@ -144,8 +145,10 @@ mod test {
     use crate::EfiEntry;
     use core::{ops::DerefMut, time::Duration};
     use efi_types::{
-        EfiStatus, GblEfiABSlotProtocol, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
-        EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS, GBL_EFI_BOOT_MODE_NORMAL as MODE_NORMAL,
+        EfiStatus, GblEfiABSlotProtocol, GblEfiBootMode, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
+        GblEfiUnbootableReason, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS,
+        GBL_EFI_BOOT_MODE_NORMAL as MODE_NORMAL, GBL_EFI_SLOT_MERGE_STATUS_NONE,
+        GBL_EFI_UNBOOTABLE_REASON_UNKNOWN_REASON,
     };
     use gbl::{
         ops::{
@@ -184,7 +187,7 @@ mod test {
     }
 
     thread_local! {
-        static BOOT_MODE: AtomicU32 = AtomicU32::new(MODE_NORMAL);
+        static BOOT_MODE: AtomicU32 = AtomicU32::new(MODE_NORMAL.0);
     }
 
     // This provides reasonable defaults for all tests that need to get slot info.
@@ -199,7 +202,7 @@ mod test {
         if !info.is_null() && info.is_aligned() && idx < 3 {
             let slot_info = GblEfiSlotInfo {
                 suffix: ('a' as u8 + idx).into(),
-                unbootable_reason: 0,
+                unbootable_reason: GBL_EFI_UNBOOTABLE_REASON_UNKNOWN_REASON,
                 priority: idx + 1,
                 tries: idx,
                 successful: 2 & idx,
@@ -562,7 +565,7 @@ mod test {
             }
             let slot_info = GblEfiSlotInfo {
                 suffix: 'a' as u32,
-                unbootable_reason: 0,
+                unbootable_reason: GBL_EFI_UNBOOTABLE_REASON_UNKNOWN_REASON,
                 priority: 7,
                 tries: 15,
                 successful: 1,
@@ -576,7 +579,7 @@ mod test {
         // `mode` must point to non-null u32 buffer available to write.
         unsafe extern "efiapi" fn get_boot_mode(
             _: *mut GblEfiABSlotProtocol,
-            mode: *mut u32,
+            mode: *mut GblEfiBootMode,
         ) -> EfiStatus {
             if mode.is_null() || !mode.is_aligned() {
                 return EFI_STATUS_INVALID_PARAMETER;
@@ -585,7 +588,7 @@ mod test {
             // SAFETY:
             // `mode` is non null and points to a u32 buffer available to write.
             unsafe {
-                *mode = BOOT_MODE.with(|r| r.load(Ordering::Relaxed));
+                *mode = GblEfiBootMode(BOOT_MODE.with(|r| r.load(Ordering::Relaxed)));
             }
             EFI_STATUS_SUCCESS
         }
@@ -612,7 +615,7 @@ mod test {
             assert_eq!(cursor.ctx.get_boot_target().unwrap(), BootTarget::NormalBoot(slot));
             assert_eq!(cursor.ctx.get_slot_last_set_active().unwrap(), slot);
 
-            BOOT_MODE.with(|r| r.store(MODE_RECOVERY, Ordering::Relaxed));
+            BOOT_MODE.with(|r| r.store(MODE_RECOVERY.0, Ordering::Relaxed));
 
             assert_eq!(
                 cursor.ctx.get_boot_target().unwrap(),
@@ -654,7 +657,7 @@ mod test {
                 unbootable_metadata: 1,
                 max_retries: 66,
                 slot_count: 32, // why not?
-                merge_status: 0,
+                merge_status: GBL_EFI_SLOT_MERGE_STATUS_NONE,
             };
 
             unsafe { *meta = meta_block };
@@ -716,7 +719,7 @@ mod test {
         extern "efiapi" fn set_slot_unbootable(
             _: *mut GblEfiABSlotProtocol,
             idx: u8,
-            _: u32,
+            _: GblEfiUnbootableReason,
         ) -> EfiStatus {
             // Same thing here as with set_active_slot.
             // We want to make sure that iteration over the slots
@@ -761,19 +764,22 @@ mod test {
         // `mode` must point to non-null u32 buffer available to write.
         unsafe extern "efiapi" fn get_boot_mode(
             _: *mut GblEfiABSlotProtocol,
-            mode: *mut u32,
+            mode: *mut GblEfiBootMode,
         ) -> EfiStatus {
             if mode.is_null() || !mode.is_aligned() {
                 return EFI_STATUS_INVALID_PARAMETER;
             }
 
-            unsafe { *mode = BOOT_MODE.with(|r| r.load(Ordering::Relaxed)) };
+            unsafe { *mode = GblEfiBootMode(BOOT_MODE.with(|r| r.load(Ordering::Relaxed))) };
 
             EFI_STATUS_SUCCESS
         }
 
-        extern "efiapi" fn set_boot_mode(_: *mut GblEfiABSlotProtocol, mode: u32) -> EfiStatus {
-            BOOT_MODE.with(|r| r.store(mode, Ordering::Relaxed));
+        extern "efiapi" fn set_boot_mode(
+            _: *mut GblEfiABSlotProtocol,
+            mode: GblEfiBootMode,
+        ) -> EfiStatus {
+            BOOT_MODE.with(|r| r.store(mode.0, Ordering::Relaxed));
             EFI_STATUS_SUCCESS
         }
 

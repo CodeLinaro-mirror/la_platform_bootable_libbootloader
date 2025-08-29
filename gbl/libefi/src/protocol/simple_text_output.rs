@@ -17,7 +17,7 @@
 use crate::efi_call;
 use crate::protocol::{Protocol, ProtocolInfo};
 use core::fmt::{Error, Write};
-use efi_types::{char16_t, EfiGuid, EfiSimpleTextOutputProtocol};
+use efi_types::{EfiGuid, EfiSimpleTextOutputProtocol};
 use liberror::Result;
 
 /// EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL
@@ -32,7 +32,7 @@ impl ProtocolInfo for SimpleTextOutputProtocol {
 
 impl Protocol<'_, SimpleTextOutputProtocol> {
     /// Wrapper of `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL.OutputString()`
-    pub fn output_string(&self, msg: &mut [char16_t]) -> Result<()> {
+    pub fn output_string(&self, msg: &mut [u16]) -> Result<()> {
         // SAFETY:
         // `self.interface_ptr()` guarantees `self.interface_ptr()` is non-null and points to a valid object
         // established by `Protocol::new()`.

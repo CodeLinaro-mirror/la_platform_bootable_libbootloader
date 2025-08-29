@@ -28,7 +28,7 @@ use core::{
     slice::from_raw_parts_mut,
 };
 use efi_types::defs::{
-    EfiGuid, GblEfiBootBufferType, GblEfiBootMemoryProtocol,
+    EfiGuid, GblEfiBootBufferType, GblEfiBootMemoryProtocol, GblEfiPartitionBufferFlag,
     GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD, GBL_EFI_BOOT_BUFFER_TYPE_FDT,
     GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
     GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA, GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK,
@@ -214,7 +214,7 @@ fn partition_buffer_op(
                 Ok(v) => return Ok(Some(v)),
             };
 
-            let (mut addr, mut sz, mut flags) = (null_mut(), 0, Default::default());
+            let (mut addr, mut sz, mut flags) = (null_mut(), 0, GblEfiPartitionBufferFlag(0));
             let mut part_cstr = ArrayString::<{ (PARTITION_NAME_LEN_U16 + 1) as usize }>::new();
             part_cstr.try_push_str(part).map_err(|_| Error::InvalidInput)?;
             part_cstr.try_push('\0').map_err(|_| Error::InvalidInput)?;
@@ -235,7 +235,7 @@ fn partition_buffer_op(
             }
 
             let mut add = PARTITION_BUFFER_POOL.get(part, true)?;
-            let is_preloaded_partition = (flags & GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED) != 0;
+            let is_preloaded_partition = (flags & GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED).0 != 0;
             if addr.is_null() {
                 efi_println!(entry, "NULL partition buffer pointer is not allowed");
                 return Err(Error::InvalidInput);

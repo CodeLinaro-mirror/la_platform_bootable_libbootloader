@@ -19,12 +19,12 @@ use crate::efi_call;
 use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use efi_types::{
     EfiGuid, GblEfiABSlotProtocol, GblEfiBootMode, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
-    GblEfiUnbootableReason, GBL_EFI_UNBOOTABLE_REASON_GBL_EFI_NO_MORE_TRIES as NO_MORE_TRIES,
-    GBL_EFI_UNBOOTABLE_REASON_GBL_EFI_SYSTEM_UPDATE as SYSTEM_UPDATE,
-    GBL_EFI_UNBOOTABLE_REASON_GBL_EFI_USER_REQUESTED as USER_REQUESTED,
-    GBL_EFI_UNBOOTABLE_REASON_GBL_EFI_VERIFICATION_FAILURE as VERIFICATION_FAILURE,
+    GblEfiUnbootableReason, GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
+    GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE as SYSTEM_UPDATE,
+    GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED as USER_REQUESTED,
+    GBL_EFI_UNBOOTABLE_REASON_VERIFICATION_FAILURE as VERIFICATION_FAILURE,
 };
-use liberror::{Error, Result};
+use liberror::Result;
 
 use libgbl::slots::{Bootability, Slot, UnbootableReason};
 
@@ -139,7 +139,6 @@ impl<'a> Protocol<'a, GblABSlotProtocol> {
 
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_slot_unbootable()`
     pub fn set_slot_unbootable(&self, idx: u8, reason: GblEfiUnbootableReason) -> Result<()> {
-        let reason: u32 = reason.try_into().or(Err(Error::InvalidInput))?;
         // SAFETY:
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
@@ -158,14 +157,14 @@ impl<'a> Protocol<'a, GblABSlotProtocol> {
 
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.get_boot_mode()`
     pub fn get_boot_mode(&self) -> Result<GblEfiBootMode> {
-        let mut mode: u32 = 0;
+        let mut mode = GblEfiBootMode(0);
         // SAFETY:
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `mode` is an output parameter. It is not retained, and it outlives the call.
         unsafe { efi_call!(self.interface().get_boot_mode, self.interface_ptr(), &mut mode)? }
 
-        Ok(mode.try_into().or(Err(Error::InvalidInput))?)
+        Ok(mode)
     }
 
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_boot_mode()`

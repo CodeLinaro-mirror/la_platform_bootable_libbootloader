@@ -151,7 +151,7 @@ where
             .ok_or(Error::BadBufferSize)?;
 
     for efi_memory_desc in efi_memory_map.into_iter() {
-        if efi_memory_desc.attributes & EFI_MEMORY_ATTRIBUTE_EMA_RUNTIME == 0 {
+        if (efi_memory_desc.attributes & EFI_MEMORY_ATTRIBUTE_EMA_RUNTIME).0 == 0 {
             continue;
         }
 

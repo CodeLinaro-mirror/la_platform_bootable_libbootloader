@@ -47,20 +47,26 @@ rust_bindgen(
         "--use-core",
         "--with-derive-partialeq",
         "--with-derive-default",
+        "--with-derive-custom-enum=EFI_MEMORY_ATTRIBUTE=Immutable,IntoBytes,FromBytes,KnownLayout",
+        "--with-derive-custom-enum=EFI_MEMORY_TYPE=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--with-derive-custom-struct=EfiMemoryDescriptor=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--with-derive-custom-struct=EfiMemoryAttributesTableHeader=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--with-derive-custom-struct=EfiGuid=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--with-derive-custom-struct=EfiDevicePathProtocol=Immutable,IntoBytes,FromBytes,KnownLayout,Unaligned",
-        # newtype-global-enum allows us to implement traits on EfiStatus but
-        # still use the EFI_STATUS_* codes as unscoped constants. Looks like:
-        #   pub struct EfiStatus(pub usize);
-        #   pub const EFI_STATUS_SUCCESS: EFI_STATUS = EFI_STATUS(0);
-        #   ... etc for other status codes ...
-        "--newtype-global-enum=EFI_STATUS",
+        "--no-prepend-enum-name",
+        # Note: don't use newtype, constified-module, or bitfield
+        #       because the upcase enum name becomes a necessary prefix
+        #       via the module/impl name.
+        "--default-enum-style",
+        "newtype_global",
+        # Cannot yet use arbitrary types as const generics.
+        "--constified-enum",
+        "EFI_TPL",
+        "--no-layout-tests",
         "--override-abi",
         ".*=efiapi",
         "--allowlist-type",
-        "(Efi.*)|(GblEfi.*)|(GBL_EFI_.*)",
+        "(Efi.*)|(EFI.*)|(GblEfi.*)|(GBL_EFI_.*)",
         "--allowlist-var",
         "PARTITION_NAME_LEN_U16|EFI_.*|GBL_.*",
         "--raw-line",
@@ -75,6 +81,9 @@ use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout, Unaligned};""",
     clang_flags = [
         "-I{}".format(LLVM_PREBUILTS_C_INCLUDE),
         "-nostdinc",
+        # It's much, much easier to enable newtype enums with C++ explicit enum width
+        "-x",
+        "c++",
     ],
     header = "defs/efi.h",
 )

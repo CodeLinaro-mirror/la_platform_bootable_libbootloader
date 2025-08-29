@@ -53,7 +53,7 @@ static const uint64_t GBL_EFI_IMAGE_LOADING_PROTOCOL_REVISION =
 #define GBL_IMAGE_TYPE_PVMFW_DATA L"pvmfw_data"
 
 typedef struct GblEfiImageInfo {
-  char16_t ImageType[PARTITION_NAME_LEN_U16];
+  uint16_t ImageType[PARTITION_NAME_LEN_U16];
   size_t SizeBytes;
 } GblEfiImageInfo;
 

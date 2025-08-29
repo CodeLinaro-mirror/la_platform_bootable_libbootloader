@@ -21,9 +21,9 @@ use crate::{DeviceHandle, MOCK_EFI};
 use core::{ffi::CStr, fmt::Write};
 pub use efi::protocol::gbl_efi_image_loading::EfiImageBufferInfo;
 use efi_types::{
-    EfiInputKey, EfiTimestampProperties, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition,
-    GblEfiAvbVerificationResult, GblEfiFastbootEraseAction, GblEfiImageInfo,
-    GblEfiVerifiedDeviceTree,
+    EfiInputKey, EfiTimestampProperties, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
+    GblEfiAvbPartition, GblEfiAvbVerificationResult, GblEfiFastbootEraseAction,
+    GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
 };
 use liberror::Result;
 use mockall::mock;
@@ -236,7 +236,7 @@ pub mod gbl_efi_avb {
         /// Expected return value from `read_partitions_to_verify`.
         pub read_partitions_to_verify_result: Option<Result<usize>>,
         /// Expected return value from `read_device_status`
-        pub read_device_status_result: Option<Result<u64>>,
+        pub read_device_status_result: Option<Result<GblEfiAvbDeviceStatus>>,
         /// Expected return value from `validate_vbmeta_public_key`.
         pub validate_vbmeta_public_key_result: Option<Result<GblEfiAvbKeyValidationStatus>>,
         /// Expected return value from `read_rollback_index`.
@@ -261,7 +261,7 @@ pub mod gbl_efi_avb {
         }
 
         /// Wraps `GBL_EFI_AVB_PROTOCOL.read_device_status()`.
-        pub fn read_device_status(&self) -> Result<u64> {
+        pub fn read_device_status(&self) -> Result<GblEfiAvbDeviceStatus> {
             self.read_device_status_result.unwrap()
         }
 
@@ -345,7 +345,7 @@ pub mod gbl_efi_fastboot {
             &self,
             _: &str,
             _: &mut [u8],
-            _: impl FnMut(i32, &str) -> Result<()>,
+            _: impl FnMut(GblEfiFastbootMessageType, &str) -> Result<()>,
         ) -> Result<()> {
             unimplemented!()
         }

@@ -53,8 +53,8 @@ static void libstack_debug_print(uint16_t* str) {
 }
 
 static void libstack_system_reset() {
-  system_table->runtime_services->reset_system(EFI_RESET_COLD, ACCESS_DENIED, 0,
-                                               NULL);
+  system_table->runtime_services->reset_system(
+      EFI_RESET_TYPE_COLD, EFI_STATUS_ACCESS_DENIED, 0, NULL);
   libstack_debug_print(u"Failed to reset system\n");
   for (;;) {
   }

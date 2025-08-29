@@ -35,32 +35,27 @@
 static const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 2);
 
-typedef enum GBL_EFI_AVB_DEVICE_STATUS {
-  // Indecates device is unlocked.
-  GBL_EFI_AVB_STATUS_UNLOCKED = 0x1 << 0,
-  // Indecated dm-verity error is occurred.
-  GBL_EFI_AVB_STATUS_DM_VERITY_FAILED = 0x1 << 1,
-} GblEfiAvbDeviceStatus;
+EFI_ENUM(GBL_EFI_AVB_DEVICE_STATUS, GblEfiAvbDeviceStatus, uint64_t,
+         // Indicates device is unlocked.
+         GBL_EFI_AVB_STATUS_UNLOCKED = 0x1 << 0,
+         // Indecated dm-verity error is occurred.
+         GBL_EFI_AVB_STATUS_DM_VERITY_FAILED = 0x1 << 1);
 
 // Os boot state color.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#communicating-verified-boot-state-to-users
-typedef enum GBL_EFI_AVB_BOOT_COLOR {
-  GBL_EFI_AVB_COLOR_RED,
-  GBL_EFI_AVB_COLOR_RED_EIO,
-  GBL_EFI_AVB_COLOR_ORANGE,
-  GBL_EFI_AVB_COLOR_YELLOW,
-  GBL_EFI_AVB_COLOR_GREEN,
-} GblEfiAvbBootColor;
+EFI_ENUM(GBL_EFI_AVB_BOOT_COLOR, GblEfiAvbBootColor, uint32_t,
+         GBL_EFI_AVB_BOOT_COLOR_RED, GBL_EFI_AVB_BOOT_COLOR_RED_EIO,
+         GBL_EFI_AVB_BOOT_COLOR_ORANGE, GBL_EFI_AVB_BOOT_COLOR_YELLOW,
+         GBL_EFI_AVB_BOOT_COLOR_GREEN);
 
 // Vbmeta key validation status.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
-typedef enum GBL_EFI_AVB_KEY_VALIDATION_STATUS {
-  GBL_EFI_AVB_KEY_INVALID,
-  GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY,
-  GBL_EFI_AVB_KEY_VALID,
-} GblEfiAvbKeyValidationStatus;
+EFI_ENUM(GBL_EFI_AVB_KEY_VALIDATION_STATUS, GblEfiAvbKeyValidationStatus,
+         uint32_t, GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID,
+         GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY,
+         GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID);
 
 typedef struct {
   // On input - `base_name` buffer size
@@ -87,8 +82,7 @@ typedef struct {
 } GblEfiAvbProperty;
 
 typedef struct {
-  // GblEfiAvbBootColor
-  uint32_t color;
+  GblEfiAvbBootColor color;
   // To ensure 8 bytes pointers alignment.
   uint32_t reserved1;
   // Pointer to nul-terminated ASCII hex digest calculated by libavb. May be
@@ -109,8 +103,9 @@ typedef struct GblEfiAvbProtocol {
       /* in-out */ size_t* num_partitions,
       /* in-out */ GblEfiAvbPartition* partitions);
 
-  EfiStatus (*read_device_status)(struct GblEfiAvbProtocol* self,
-                                  /* out */ uint64_t* status_flags);
+  EfiStatus (*read_device_status)(
+      struct GblEfiAvbProtocol* self,
+      /* out */ GblEfiAvbDeviceStatus* status_flags);
 
   EfiStatus (*validate_vbmeta_public_key)(
       struct GblEfiAvbProtocol* self,
@@ -118,7 +113,7 @@ typedef struct GblEfiAvbProtocol {
       /* in */ const uint8_t* public_key_data,
       /* in */ size_t public_key_metadata_length,
       /* in */ const uint8_t* public_key_metadata,
-      /* out GblEfiAvbKeyValidationStatus */ uint32_t* validation_status);
+      /* out */ GblEfiAvbKeyValidationStatus* validation_status);
 
   EfiStatus (*read_rollback_index)(struct GblEfiAvbProtocol* self,
                                    /* in */ size_t index_location,
