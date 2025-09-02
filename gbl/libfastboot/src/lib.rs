@@ -757,7 +757,8 @@ pub mod test_utils {
     }
 }
 
-const MAX_DOWNLOAD_SIZE_NAME: &'static str = "max-download-size";
+/// "max-download-size" variable.
+pub const MAX_DOWNLOAD_SIZE_NAME: &'static str = "max-download-size";
 
 /// Converts a null-terminated command line string where arguments are separated by ':' into an
 /// iterator of individual argument as CStr.

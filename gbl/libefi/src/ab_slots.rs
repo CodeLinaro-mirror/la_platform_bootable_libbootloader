@@ -420,7 +420,10 @@ mod test {
             unimplemented!()
         }
 
-        fn fastboot_visit_all_variables(&mut self, _: impl FnMut(&[&CStr], &CStr)) -> Result<()> {
+        fn fastboot_visit_all_variables(
+            &mut self,
+            _: impl FnMut(&mut Self, &[&CStr], &CStr),
+        ) -> Result<()> {
             unimplemented!()
         }
 

@@ -52,7 +52,7 @@ use libutils::FormattedBytes;
 use safemath::SafeNum;
 use zbi::{ZbiContainer, ZbiType};
 
-mod vars;
+pub(crate) mod vars;
 
 pub(crate) mod sparse;
 use sparse::is_sparse_image;

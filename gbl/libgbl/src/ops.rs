@@ -470,7 +470,7 @@ pub trait GblOps<'a, 'd> {
     ///   any additional arguments and 2) a CStr representing the value.
     fn fastboot_visit_all_variables(
         &mut self,
-        cb: impl FnMut(&[&CStr], &CStr),
+        cb: impl FnMut(&mut Self, &[&CStr], &CStr),
     ) -> Result<(), Error>;
 
     /// Handler for `fastboot flashing lock|unlock` and
@@ -936,7 +936,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 
     fn fastboot_visit_all_variables(
         &mut self,
-        _: impl FnMut(&[&CStr], &CStr),
+        _: impl FnMut(&mut Self, &[&CStr], &CStr),
     ) -> Result<(), Error> {
         // Ramboot should not need this.
         unreachable!();
@@ -1556,20 +1556,30 @@ pub(crate) mod test {
 
         fn fastboot_visit_all_variables(
             &mut self,
-            mut cb: impl FnMut(&[&CStr], &CStr),
+            mut cb: impl FnMut(&mut Self, &[&CStr], &CStr),
         ) -> Result<(), Error> {
             cb(
+                self,
                 &[CString::new(Self::GBL_TEST_VAR).unwrap().as_c_str(), c"1"],
                 CString::new(format!("{}:1", Self::GBL_TEST_VAR_VAL)).unwrap().as_c_str(),
             );
             cb(
+                self,
                 &[CString::new(Self::GBL_TEST_VAR).unwrap().as_c_str(), c"2"],
                 CString::new(format!("{}:2", Self::GBL_TEST_VAR_VAL)).unwrap().as_c_str(),
             );
             cb(
+                self,
                 &[&CString::new(Self::GBL_TEST_VAR_UNSPLIT).unwrap()],
                 &CString::new(Self::GBL_TEST_VAR_UNSPLIT_VAL).unwrap(),
             );
+
+            for v in crate::fastboot::vars::GETVAR_ALL_FILTER {
+                cb(self, &[&CString::new(*v).unwrap()], c"dont-care");
+            }
+            // Concatenated reserved variables should also be filtered.
+            cb(self, &[c"block-device:1"], c"dont-care");
+
             Ok(())
         }
 

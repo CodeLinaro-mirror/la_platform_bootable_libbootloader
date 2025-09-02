@@ -12,16 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::fastboot::PinFutContainerTyped;
 use crate::{
+    fastboot::PinFutContainerTyped,
     fastboot::{BufferPool, GblFastboot},
-    GblOps,
+    gbl_println, GblOps,
 };
 use core::{ffi::CStr, future::Future, ops::DerefMut, str::from_utf8};
 use fastboot::{next_arg, next_arg_u64, CommandResult, VarInfoSender};
 use gbl_async::{block_on, select, yield_now};
 use gbl_storage::BlockIo;
 use libutils::snprintf;
+
+const VERSION_BOOTLOADER: &'static str = "version-bootloader";
+const VERSION_BOOTLOADER_VAL: &'static str = "1.0";
+
+const SLOT_COUNT: &'static str = "slot-count";
+
+const MAX_FETCH_SIZE: &'static str = "max-fetch-size";
+// Limited by DATA message which only allows 8 hex digits.
+// Additionally fastboot upstream parses this value as int, so we only have 31 bits.
+const MAX_FETCH_SIZE_VAL: &'static str = "0x7fffffff";
+
+const PARTITION_SIZE: &'static str = "partition-size";
+const PARTITION_TYPE: &'static str = "partition-type";
+
+const BLOCK_DEVICE: &'static str = "block-device";
+const TOTAL_BLOCKS: &'static str = "total-blocks";
+const BLOCK_SIZE: &'static str = "block-size";
+const BLOCK_DEVICE_STATUS: &'static str = "status";
+
+const DEFAULT_BLOCK: &'static str = "gbl-default-block";
+
+pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
+    VERSION_BOOTLOADER,
+    SLOT_COUNT,
+    MAX_FETCH_SIZE,
+    PARTITION_SIZE,
+    PARTITION_TYPE,
+    BLOCK_DEVICE,
+    DEFAULT_BLOCK,
+    fastboot::MAX_DOWNLOAD_SIZE_NAME,
+];
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
 impl<'a: 'c, 'b: 'c, 'c, 'd, 'e, G, B, S, T, P, C, F>
@@ -35,16 +66,6 @@ where
     C: PinFutContainerTyped<'c, F>,
     F: Future<Output = ()> + 'c,
 {
-    const VERSION_BOOTLOADER: &'static str = "version-bootloader";
-    const VERSION_BOOTLOADER_VAL: &'static str = "1.0";
-
-    const SLOT_COUNT: &'static str = "slot-count";
-
-    const MAX_FETCH_SIZE: &'static str = "max-fetch-size";
-    // Limited by DATA message which only allows 8 hex digits.
-    // Additionally fastboot upstream parses this value as int, so we only have 31 bits.
-    const MAX_FETCH_SIZE_VAL: &'static str = "0x7fffffff";
-
     /// Entry point for "fastboot getvar <variable>..."
     pub(crate) fn get_var_internal<'s, 't>(
         &mut self,
@@ -57,13 +78,13 @@ where
         args_str.clone().find(|v| v.is_err()).unwrap_or(Ok(""))?;
         let args_str = args_str.map(|v| v.unwrap());
         Ok(match name.to_str()? {
-            Self::VERSION_BOOTLOADER => snprintf!(out, "{}", Self::VERSION_BOOTLOADER_VAL),
-            Self::SLOT_COUNT => self.get_var_slot_count(out)?,
-            Self::MAX_FETCH_SIZE => snprintf!(out, "{}", Self::MAX_FETCH_SIZE_VAL),
-            Self::PARTITION_SIZE => self.get_var_partition_size(args_str, out)?,
-            Self::PARTITION_TYPE => self.get_var_partition_type(args_str, out)?,
-            Self::BLOCK_DEVICE => self.get_var_block_device(args_str, out)?,
-            Self::DEFAULT_BLOCK => self.get_var_default_block(out)?,
+            VERSION_BOOTLOADER => snprintf!(out, "{}", VERSION_BOOTLOADER_VAL),
+            SLOT_COUNT => self.get_var_slot_count(out)?,
+            MAX_FETCH_SIZE => snprintf!(out, "{}", MAX_FETCH_SIZE_VAL),
+            PARTITION_SIZE => self.get_var_partition_size(args_str, out)?,
+            PARTITION_TYPE => self.get_var_partition_type(args_str, out)?,
+            BLOCK_DEVICE => self.get_var_block_device(args_str, out)?,
+            DEFAULT_BLOCK => self.get_var_default_block(out)?,
             _ => {
                 let sz = self.gbl_ops.fastboot_variable(name, args, out)?;
                 from_utf8(out.get(..sz).ok_or("Invalid variable value size")?)?
@@ -77,18 +98,29 @@ where
         send: &mut impl VarInfoSender,
     ) -> CommandResult<()> {
         let mut buf = [0u8; 32];
-        send.send_var_info(Self::VERSION_BOOTLOADER, [], Self::VERSION_BOOTLOADER_VAL).await?;
-        send.send_var_info(Self::SLOT_COUNT, [], self.get_var_slot_count(&mut buf)?).await?;
-        send.send_var_info(Self::MAX_FETCH_SIZE, [], Self::MAX_FETCH_SIZE_VAL).await?;
+        send.send_var_info(VERSION_BOOTLOADER, [], VERSION_BOOTLOADER_VAL).await?;
+        send.send_var_info(SLOT_COUNT, [], self.get_var_slot_count(&mut buf)?).await?;
+        send.send_var_info(MAX_FETCH_SIZE, [], MAX_FETCH_SIZE_VAL).await?;
         self.get_all_block_device(send).await?;
-        send.send_var_info(Self::DEFAULT_BLOCK, [], self.get_var_default_block(&mut buf)?).await?;
+        send.send_var_info(DEFAULT_BLOCK, [], self.get_var_default_block(&mut buf)?).await?;
         self.get_all_partition_size_type(send).await?;
 
         // Gets platform specific variables
         let tasks = self.tasks();
-        Ok(self.gbl_ops.fastboot_visit_all_variables(|args, val| {
+        Ok(self.gbl_ops.fastboot_visit_all_variables(|ops, args, val| {
             if let Some((name, args)) = args.split_first_chunk::<1>() {
                 let name = name[0].to_str().unwrap_or("?");
+                // Needs to split because the interface allows backend to pass ':' concatenated
+                // string as a whole.
+                let var = name.split(':').next().unwrap_or(name);
+                if GETVAR_ALL_FILTER.iter().find(|v| **v == var).is_some() {
+                    // Its possible that backend might have its own special non-gpt/raw block
+                    // partitions (i.e. virtual) and therefore needs to expose
+                    // `partition-size/partition-type` vars for them. If this will be the case,
+                    // allow `partition-size/partition-type` when partition doesn't exist.
+                    gbl_println!(ops, "Variable {var:?} is reserved by GBL.");
+                    return;
+                }
                 let args = args.iter().map(|v| v.to_str().unwrap_or("?"));
                 let val = val.to_str().unwrap_or("?");
                 // Manually polls async tasks so that we can still get parallelism while running in
@@ -102,9 +134,6 @@ where
             }
         })?)
     }
-
-    const PARTITION_SIZE: &'static str = "partition-size";
-    const PARTITION_TYPE: &'static str = "partition-type";
 
     /// "fastboot getvar partition-size"
     fn get_var_partition_size<'s, 't>(
@@ -148,21 +177,14 @@ where
                     Err(_) => snprintf!(part_id_buf, "{}/{:x}", part, idx),
                 };
                 responder
-                    .send_var_info(Self::PARTITION_SIZE, [part], snprintf!(size_str, "{:#x}", sz))
+                    .send_var_info(PARTITION_SIZE, [part], snprintf!(size_str, "{:#x}", sz))
                     .await?;
                 // Image type is not supported yet.
-                responder
-                    .send_var_info(Self::PARTITION_TYPE, [part], snprintf!(size_str, "raw"))
-                    .await?;
+                responder.send_var_info(PARTITION_TYPE, [part], snprintf!(size_str, "raw")).await?;
             }
         }
         Ok(())
     }
-
-    const BLOCK_DEVICE: &'static str = "block-device";
-    const TOTAL_BLOCKS: &'static str = "total-blocks";
-    const BLOCK_SIZE: &'static str = "block-size";
-    const BLOCK_DEVICE_STATUS: &'static str = "status";
 
     /// Block device related information.
     ///
@@ -180,9 +202,9 @@ where
         let blk = &self.disks[id];
         let info = blk.block_info();
         Ok(match val_type {
-            Self::TOTAL_BLOCKS => snprintf!(out, "{:#x}", info.num_blocks),
-            Self::BLOCK_SIZE => snprintf!(out, "{:#x}", info.block_size),
-            Self::BLOCK_DEVICE_STATUS => {
+            TOTAL_BLOCKS => snprintf!(out, "{:#x}", info.num_blocks),
+            BLOCK_SIZE => snprintf!(out, "{:#x}", info.block_size),
+            BLOCK_DEVICE_STATUS => {
                 snprintf!(out, "{}", blk.status().to_str())
             }
             _ => return Err("Invalid type".into()),
@@ -201,30 +223,28 @@ where
             let info = blk.block_info();
             responder
                 .send_var_info(
-                    Self::BLOCK_DEVICE,
-                    [id, Self::TOTAL_BLOCKS],
+                    BLOCK_DEVICE,
+                    [id, TOTAL_BLOCKS],
                     snprintf!(val, "{:#x}", info.num_blocks),
                 )
                 .await?;
             responder
                 .send_var_info(
-                    Self::BLOCK_DEVICE,
-                    [id, Self::BLOCK_SIZE],
+                    BLOCK_DEVICE,
+                    [id, BLOCK_SIZE],
                     snprintf!(val, "{:#x}", info.block_size),
                 )
                 .await?;
             responder
                 .send_var_info(
-                    Self::BLOCK_DEVICE,
-                    [id, Self::BLOCK_DEVICE_STATUS],
+                    BLOCK_DEVICE,
+                    [id, BLOCK_DEVICE_STATUS],
                     snprintf!(val, "{}", blk.status().to_str()),
                 )
                 .await?;
         }
         Ok(())
     }
-
-    const DEFAULT_BLOCK: &'static str = "gbl-default-block";
 
     /// "fastboot getvar gbl-default-block"
     fn get_var_default_block<'s>(&mut self, out: &'s mut [u8]) -> CommandResult<&'s str> {
