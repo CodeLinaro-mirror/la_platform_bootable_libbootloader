@@ -45,13 +45,12 @@ use efi::{
     EfiEntry,
 };
 use efi_types::{
-    EfiInputKey, GblEfiAvbKeyValidationStatus, GblEfiAvbProperty, GblEfiAvbVerificationResult,
-    GblEfiBootMode, GblEfiDeviceTreeMetadata, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
-    EFI_FASTBOOT_MESSAGE_TYPE_FAIL, EFI_FASTBOOT_MESSAGE_TYPE_INFO, EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
-    GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_DM_VERITY_FAILED as GBL_EFI_AVB_STATUS_DM_VERITY_FAILED,
-    GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_UNLOCKED as GBL_EFI_AVB_STATUS_UNLOCKED,
-    GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION, GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP,
-    PARTITION_NAME_LEN_U16,
+    EfiInputKey, GblEfiAvbBootColor, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
+    GblEfiAvbProperty, GblEfiAvbVerificationResult, GblEfiBootMode, GblEfiDeviceTreeMetadata,
+    GblEfiImageInfo, GblEfiVerifiedDeviceTree, GBL_EFI_AVB_STATUS_DM_VERITY_FAILED,
+    GBL_EFI_AVB_STATUS_UNLOCKED, GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
+    GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP, GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL,
+    GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO, GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, PARTITION_NAME_LEN_U16,
 };
 use fdt::Fdt;
 use gbl_async::block_on;
@@ -755,14 +754,14 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .boot_services()
             .find_first_and_open::<GblFastbootProtocol>()?;
         let sender = &mut Some(sender);
-        protocol.run_oem_function(cmd, download, |msg_type, msg| match msg_type as _ {
-            EFI_FASTBOOT_MESSAGE_TYPE_INFO => {
+        protocol.run_oem_function(cmd, download, |msg_type, msg| match msg_type {
+            GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO => {
                 block_on(sender.as_mut().ok_or(Error::ProtocolError)?.send_info(msg))
             }
-            EFI_FASTBOOT_MESSAGE_TYPE_OKAY => {
+            GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY => {
                 block_on(sender.take().ok_or(Error::ProtocolError)?.send_okay(msg))
             }
-            EFI_FASTBOOT_MESSAGE_TYPE_FAIL => {
+            GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL => {
                 block_on(sender.take().ok_or(Error::ProtocolError)?.send_fail(msg))
             }
             _ => Err(Error::InvalidInput),
@@ -887,37 +886,32 @@ fn gbl_to_efi_avb_property(property: AvbProperty) -> GblEfiAvbProperty {
 }
 
 /// Converts [GblEfiAvbDeviceStatus] bitmask to [AvbDeviceStatus]
-fn efi_to_gbl_avb_device_status(mask: u64) -> AvbDeviceStatus {
+fn efi_to_gbl_avb_device_status(mask: GblEfiAvbDeviceStatus) -> AvbDeviceStatus {
     AvbDeviceStatus {
-        is_unlocked: (mask & GBL_EFI_AVB_STATUS_UNLOCKED as u64) != 0,
-        is_dm_verity_error: (mask & GBL_EFI_AVB_STATUS_DM_VERITY_FAILED as u64) != 0,
+        is_unlocked: (mask & GBL_EFI_AVB_STATUS_UNLOCKED).0 != 0,
+        is_dm_verity_error: (mask & GBL_EFI_AVB_STATUS_DM_VERITY_FAILED).0 != 0,
     }
 }
 
 fn to_avb_validation_status_or_panic(status: GblEfiAvbKeyValidationStatus) -> KeyValidationStatus {
     match status {
-        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID => {
-            KeyValidationStatus::Valid
-        }
-        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY => {
+        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID => KeyValidationStatus::Valid,
+        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY => {
             KeyValidationStatus::ValidCustomKey
         }
-        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_INVALID => {
-            KeyValidationStatus::Invalid
-        }
-        _ => panic!("Unrecognized avb key validation status: {}", status),
+        efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID => KeyValidationStatus::Invalid,
+        _ => panic!("Unrecognized avb key validation status: {:?}", status),
     }
 }
 
-fn avb_color_to_efi_color(color: BootStateColor) -> u32 {
-    // bindgen may make enum i32 or u32. because we only care about bits, cast to u32 is ok.
-    (match color {
-        BootStateColor::Green => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_GREEN,
-        BootStateColor::Yellow => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_YELLOW,
-        BootStateColor::Orange => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_ORANGE,
-        BootStateColor::RedEio => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_RED_EIO,
-        BootStateColor::Red => efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_RED,
-    }) as _
+fn avb_color_to_efi_color(color: BootStateColor) -> GblEfiAvbBootColor {
+    match color {
+        BootStateColor::Green => efi_types::GBL_EFI_AVB_BOOT_COLOR_GREEN,
+        BootStateColor::Yellow => efi_types::GBL_EFI_AVB_BOOT_COLOR_YELLOW,
+        BootStateColor::Orange => efi_types::GBL_EFI_AVB_BOOT_COLOR_ORANGE,
+        BootStateColor::RedEio => efi_types::GBL_EFI_AVB_BOOT_COLOR_RED_EIO,
+        BootStateColor::Red => efi_types::GBL_EFI_AVB_BOOT_COLOR_RED,
+    }
 }
 
 fn efi_error_to_avb_error(error: Error) -> AvbIoError {
@@ -978,7 +972,7 @@ mod test {
 
     /// Helper for testing `avb_read_device_status`.
     fn test_avb_read_device_status(
-        call_status: ProtocolCallStatus<u64>,
+        call_status: ProtocolCallStatus<GblEfiAvbDeviceStatus>,
     ) -> AvbIoResult<AvbDeviceStatus> {
         let mut mock_efi = MockEfi::new();
 
@@ -1002,7 +996,7 @@ mod test {
 
     #[test]
     fn ops_avb_read_device_status_unlocked() {
-        let mask = GBL_EFI_AVB_STATUS_UNLOCKED as u64;
+        let mask = GBL_EFI_AVB_STATUS_UNLOCKED;
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
             Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false })
@@ -1011,7 +1005,7 @@ mod test {
 
     #[test]
     fn ops_avb_read_device_status_dm_verity_error() {
-        let mask = GBL_EFI_AVB_STATUS_DM_VERITY_FAILED as u64;
+        let mask = GBL_EFI_AVB_STATUS_DM_VERITY_FAILED;
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
             Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: true })
@@ -1020,8 +1014,7 @@ mod test {
 
     #[test]
     fn ops_avb_read_device_status_unlocked_and_dm_verity_error() {
-        let mask =
-            (GBL_EFI_AVB_STATUS_UNLOCKED as u64) | (GBL_EFI_AVB_STATUS_DM_VERITY_FAILED as u64);
+        let mask = (GBL_EFI_AVB_STATUS_UNLOCKED) | (GBL_EFI_AVB_STATUS_DM_VERITY_FAILED);
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
             Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: true })
@@ -1031,7 +1024,7 @@ mod test {
     #[test]
     fn ops_avb_read_device_status_empty() {
         assert_eq!(
-            test_avb_read_device_status(ProtocolCallStatus::Success(0)),
+            test_avb_read_device_status(ProtocolCallStatus::Success(GblEfiAvbDeviceStatus(0))),
             Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false })
         );
     }
@@ -1065,7 +1058,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         let mut avb = GblAvbProtocol::default();
         avb.validate_vbmeta_public_key_result =
-            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID));
+            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID));
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
@@ -1079,7 +1072,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         let mut avb = GblAvbProtocol::default();
         avb.validate_vbmeta_public_key_result =
-            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY));
+            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY));
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();
@@ -1096,7 +1089,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         let mut avb = GblAvbProtocol::default();
         avb.validate_vbmeta_public_key_result =
-            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_INVALID));
+            Some(Ok(efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID));
         mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
 
         let installed = mock_efi.install();

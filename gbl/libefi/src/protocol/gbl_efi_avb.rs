@@ -19,8 +19,8 @@ use crate::protocol::{Protocol, ProtocolInfo};
 use core::ffi::CStr;
 use core::ptr::null;
 use efi_types::{
-    EfiGuid, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition, GblEfiAvbProtocol,
-    GblEfiAvbVerificationResult,
+    EfiGuid, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition,
+    GblEfiAvbProtocol, GblEfiAvbVerificationResult,
 };
 use liberror::Result;
 
@@ -74,8 +74,8 @@ impl Protocol<'_, GblAvbProtocol> {
     }
 
     /// Wraps `GBL_EFI_AVB_PROTOCOL.read_device_status()`.
-    pub fn read_device_status(&self) -> Result<u64> {
-        let mut flags: u64 = 0;
+    pub fn read_device_status(&self) -> Result<GblEfiAvbDeviceStatus> {
+        let mut flags = GblEfiAvbDeviceStatus(0);
 
         // SAFETY:
         // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`
@@ -92,8 +92,7 @@ impl Protocol<'_, GblAvbProtocol> {
         public_key: &[u8],
         public_key_metadata: Option<&[u8]>,
     ) -> Result<GblEfiAvbKeyValidationStatus> {
-        let mut validation_status =
-            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_INVALID as _;
+        let mut validation_status = efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID;
 
         // SAFETY:
         // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`
@@ -236,7 +235,8 @@ mod test {
     use super::*;
     use crate::{test::run_test_with_mock_protocol, Error};
     use efi_types::defs::{
-        EfiStatus, EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS,
+        EfiStatus, GblEfiAvbBootColor, GblEfiAvbDeviceStatus, EFI_STATUS_BUFFER_TOO_SMALL,
+        EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS, GBL_EFI_AVB_BOOT_COLOR_RED,
     };
     use std::{ptr, slice};
 
@@ -395,12 +395,10 @@ mod test {
         /// C callback implementation that sets the flags for unlocked status.
         unsafe extern "efiapi" fn c_return_unlocked_and_ok(
             _: *mut GblEfiAvbProtocol,
-            flags_ptr: *mut u64,
+            flags_ptr: *mut GblEfiAvbDeviceStatus,
         ) -> EfiStatus {
             // SAFETY: flags_ptr is a valid u64 pointer available to write.
-            unsafe {
-                *flags_ptr = efi_types::GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_UNLOCKED as u64
-            };
+            unsafe { *flags_ptr = efi_types::GBL_EFI_AVB_STATUS_UNLOCKED };
             EFI_STATUS_SUCCESS
         }
 
@@ -410,8 +408,7 @@ mod test {
         };
 
         run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            let expected_flags =
-                efi_types::GBL_EFI_AVB_DEVICE_STATUS_GBL_EFI_AVB_STATUS_UNLOCKED as u64;
+            let expected_flags = efi_types::GBL_EFI_AVB_STATUS_UNLOCKED;
             assert_eq!(avb_protocol.read_device_status(), Ok(expected_flags));
         });
     }
@@ -421,7 +418,7 @@ mod test {
         /// C callback implementation that returns an error.
         unsafe extern "efiapi" fn c_return_error(
             _: *mut GblEfiAvbProtocol,
-            _: *mut u64,
+            _: *mut GblEfiAvbDeviceStatus,
         ) -> EfiStatus {
             EFI_STATUS_INVALID_PARAMETER
         }
@@ -438,7 +435,7 @@ mod test {
     fn validate_vbmeta_public_key_status_provided() {
         const EXPECTED_PUBLIC_KEY: &[u8] = b"test_key";
         const EXPECTED_STATUS: GblEfiAvbKeyValidationStatus =
-            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY;
+            efi_types::GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY;
 
         // C callback implementation that returns an error
         unsafe extern "efiapi" fn c_return_error(
@@ -504,7 +501,7 @@ mod test {
 
     #[test]
     fn handle_verification_result_data_provided() {
-        const COLOR: u32 = efi_types::GBL_EFI_AVB_BOOT_COLOR_GBL_EFI_AVB_COLOR_RED;
+        const COLOR: GblEfiAvbBootColor = GBL_EFI_AVB_BOOT_COLOR_RED;
 
         // C callback implementation that returns success.
         unsafe extern "efiapi" fn c_return_success(

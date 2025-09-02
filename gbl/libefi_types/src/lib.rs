@@ -82,3 +82,37 @@ impl GblEfiImageInfo {
         unsafe { Ok(core::str::from_utf8_unchecked(&buffer_utf8[..index])) }
     }
 }
+
+macro_rules! flag_impls {
+    ($enum_type:tt) => {
+        impl core::ops::BitAnd for $enum_type {
+            type Output = Self;
+            fn bitand(self, rhs: Self) -> Self::Output {
+                Self(self.0 & rhs.0)
+            }
+        }
+
+        impl core::ops::BitAndAssign for $enum_type {
+            fn bitand_assign(&mut self, rhs: Self) {
+                self.0 &= rhs.0
+            }
+        }
+
+        impl core::ops::BitOr for $enum_type {
+            type Output = Self;
+            fn bitor(self, rhs: Self) -> Self::Output {
+                Self(self.0 | rhs.0)
+            }
+        }
+
+        impl core::ops::BitOrAssign for $enum_type {
+            fn bitor_assign(&mut self, rhs: Self) {
+                self.0 |= rhs.0
+            }
+        }
+    };
+}
+
+flag_impls!(EfiMemoryAttribute);
+flag_impls!(GblEfiAvbDeviceStatus);
+flag_impls!(GblEfiPartitionBufferFlag);

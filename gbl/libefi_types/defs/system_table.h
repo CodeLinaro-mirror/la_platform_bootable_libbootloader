@@ -18,11 +18,10 @@
 #ifndef __SYSTEM_TABLE_H__
 #define __SYSTEM_TABLE_H__
 
-#include "types.h"
-
 #include "boot_service.h"
 #include "protocols/simple_text_output_protocol.h"
 #include "runtime_service.h"
+#include "types.h"
 
 typedef struct {
   EfiGuid vendor_guid;
@@ -31,7 +30,7 @@ typedef struct {
 
 typedef struct EfiSystemTable {
   EfiTableHeader header;
-  char16_t* firmware_vendor;
+  uint16_t* firmware_vendor;
   uint32_t firmware_revision;
   EfiHandle console_in_handle;
   void* con_in;

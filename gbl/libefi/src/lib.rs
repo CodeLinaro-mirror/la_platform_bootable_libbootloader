@@ -121,8 +121,8 @@ use efi_types::{
         EFI_EVENT_TYPE_NOTIFY_WAIT, EFI_EVENT_TYPE_RUNTIME,
         EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES, EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
         EFI_EVENT_TYPE_TIMER, EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL,
-        EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE,
-        EFI_RESET_TYPE_EFI_RESET_COLD, EFI_STATUS, EFI_STATUS_SUCCESS,
+        EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE, EFI_RESET_TYPE_COLD,
+        EFI_STATUS, EFI_STATUS_SUCCESS,
     },
     tpl::TplControl,
 };
@@ -767,7 +767,7 @@ impl RuntimeServices {
 
     /// Performs a cold reset without status code or data.
     pub fn cold_reset(&self) -> ! {
-        self.reset_system(EFI_RESET_TYPE_EFI_RESET_COLD, EFI_STATUS_SUCCESS, None)
+        self.reset_system(EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS, None)
     }
 }
 
@@ -776,15 +776,15 @@ impl RuntimeServices {
 #[allow(missing_docs)]
 #[repr(u32)]
 pub enum EventType {
-    Timer = EFI_EVENT_TYPE_TIMER,
-    RunTime = EFI_EVENT_TYPE_RUNTIME,
-    NotifyWait = EFI_EVENT_TYPE_NOTIFY_WAIT,
-    NotifySignal = EFI_EVENT_TYPE_NOTIFY_SIGNAL,
-    SignalExitBootServices = EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES,
-    SignalVirtualAddressChange = EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
+    Timer = EFI_EVENT_TYPE_TIMER.0,
+    RunTime = EFI_EVENT_TYPE_RUNTIME.0,
+    NotifyWait = EFI_EVENT_TYPE_NOTIFY_WAIT.0,
+    NotifySignal = EFI_EVENT_TYPE_NOTIFY_SIGNAL.0,
+    SignalExitBootServices = EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES.0,
+    SignalVirtualAddressChange = EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE.0,
 
     // Valid combinations:
-    TimerNotifySignal = EFI_EVENT_TYPE_TIMER | EFI_EVENT_TYPE_NOTIFY_SIGNAL,
+    TimerNotifySignal = EFI_EVENT_TYPE_TIMER.0 | EFI_EVENT_TYPE_NOTIFY_SIGNAL.0,
 }
 
 /// EFI task level priority setting for event notify function.
@@ -1156,10 +1156,10 @@ mod test {
     use core::ptr::{from_mut, NonNull};
     use efi_types::{
         EfiBlockIoProtocol, EfiEventNotify, EfiHandle, EfiLocateHandleSearchType,
-        EfiSimpleTextOutputProtocol, EfiStatus, EfiTpl, EFI_MEMORY_TYPE_LOADER_CODE,
-        EFI_MEMORY_TYPE_LOADER_DATA, EFI_STATUS_DEVICE_ERROR, EFI_STATUS_INVALID_PARAMETER,
-        EFI_STATUS_NOT_FOUND, EFI_STATUS_NOT_READY, EFI_STATUS_SUCCESS, EFI_STATUS_UNSUPPORTED,
-        EFI_TIMER_DELAY_TIMER_PERIODIC,
+        EfiMemoryAttribute, EfiOpenProtocolAttributes, EfiSimpleTextOutputProtocol, EfiStatus,
+        EfiTpl, EFI_MEMORY_TYPE_LOADER_CODE, EFI_MEMORY_TYPE_LOADER_DATA, EFI_STATUS_DEVICE_ERROR,
+        EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_NOT_FOUND, EFI_STATUS_NOT_READY,
+        EFI_STATUS_SUCCESS, EFI_STATUS_UNSUPPORTED, EFI_TIMER_DELAY_TIMER_PERIODIC,
     };
     use std::{cell::RefCell, collections::VecDeque, mem::size_of, slice::from_raw_parts_mut};
     use utils::RecurringTimer;
@@ -1251,7 +1251,7 @@ mod test {
         intf: *mut *mut core::ffi::c_void,
         agent_handle: EfiHandle,
         _: EfiHandle,
-        attr: u32,
+        attr: EfiOpenProtocolAttributes,
     ) -> EfiStatus {
         assert_eq!(attr, EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL);
         EFI_CALL_TRACES.with(|traces| {
@@ -1847,7 +1847,7 @@ mod test {
                     physical_start: 0,
                     virtual_start: 0,
                     number_of_pages: 0,
-                    attributes: 0,
+                    attributes: EfiMemoryAttribute(0),
                 },
                 EfiMemoryDescriptor {
                     memory_type: EFI_MEMORY_TYPE_LOADER_CODE,
@@ -1855,7 +1855,7 @@ mod test {
                     physical_start: 0,
                     virtual_start: 0,
                     number_of_pages: 0,
-                    attributes: 0,
+                    attributes: EfiMemoryAttribute(0),
                 },
             ];
             let map_key: usize = 12345;
@@ -1912,7 +1912,7 @@ mod test {
                     physical_start: 0,
                     virtual_start: 0,
                     number_of_pages: 0,
-                    attributes: 0,
+                    attributes: EfiMemoryAttribute(0),
                 },
                 EfiMemoryDescriptor {
                     memory_type: EFI_MEMORY_TYPE_LOADER_CODE,
@@ -1920,7 +1920,7 @@ mod test {
                     physical_start: 0,
                     virtual_start: 0,
                     number_of_pages: 0,
-                    attributes: 0,
+                    attributes: EfiMemoryAttribute(0),
                 },
             ];
 

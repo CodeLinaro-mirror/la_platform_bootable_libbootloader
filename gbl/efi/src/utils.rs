@@ -31,11 +31,11 @@ use efi::{
     DeviceHandle, EfiEntry,
 };
 use efi_types::{
-    EfiGuid, EfiInputKey, GblEfiBootBufferType, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD,
-    GBL_EFI_BOOT_BUFFER_TYPE_FDT, GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD,
-    GBL_EFI_BOOT_BUFFER_TYPE_KERNEL, GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA,
-    GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_IMAGE_TYPE_FASTBOOT, GBL_IMAGE_TYPE_OS_LOAD,
-    GBL_IMAGE_TYPE_PVMFW_DATA,
+    EfiGuid, EfiInputKey, EfiMemoryType, GblEfiBootBufferType,
+    GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD, GBL_EFI_BOOT_BUFFER_TYPE_FDT,
+    GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
+    GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA, GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_IMAGE_TYPE_FASTBOOT,
+    GBL_IMAGE_TYPE_OS_LOAD, GBL_IMAGE_TYPE_PVMFW_DATA,
 };
 use fdt::FdtHeader;
 use liberror::Error;
@@ -93,8 +93,8 @@ pub fn get_efi_fdt(entry: &EfiEntry) -> Option<(&FdtHeader, &[u8])> {
 }
 
 #[cfg(any(target_arch = "x86_64"))]
-pub(crate) fn efi_to_e820_mem_type(efi_mem_type: u32) -> u32 {
-    match efi_mem_type as _ {
+pub(crate) fn efi_to_e820_mem_type(efi_mem_type: EfiMemoryType) -> u32 {
+    match efi_mem_type {
         efi_types::EFI_MEMORY_TYPE_LOADER_CODE
         | efi_types::EFI_MEMORY_TYPE_LOADER_DATA
         | efi_types::EFI_MEMORY_TYPE_BOOT_SERVICES_CODE
@@ -110,7 +110,7 @@ pub(crate) fn efi_to_e820_mem_type(efi_mem_type: u32) -> u32 {
         efi_types::EFI_MEMORY_TYPE_ACPIRECLAIM_MEMORY => boot::x86::E820_ADDRESS_TYPE_ACPI,
         efi_types::EFI_MEMORY_TYPE_ACPIMEMORY_NVS => boot::x86::E820_ADDRESS_TYPE_NVS,
         efi_types::EFI_MEMORY_TYPE_PERSISTENT_MEMORY => boot::x86::E820_ADDRESS_TYPE_PMEM,
-        v => panic!("Unmapped EFI memory type {v}"),
+        v => panic!("Unmapped EFI memory type {:?}", v),
     }
 }
 
@@ -162,8 +162,8 @@ pub fn wait_key_stroke(
 }
 
 // Converts an EFI memory type to a zbi_mem_range_t type.
-pub(crate) fn efi_to_zbi_mem_range_type(efi_mem_type: u32) -> u32 {
-    match efi_mem_type as _ {
+pub(crate) fn efi_to_zbi_mem_range_type(efi_mem_type: EfiMemoryType) -> u32 {
+    match efi_mem_type {
         efi_types::EFI_MEMORY_TYPE_LOADER_CODE
         | efi_types::EFI_MEMORY_TYPE_LOADER_DATA
         | efi_types::EFI_MEMORY_TYPE_BOOT_SERVICES_CODE

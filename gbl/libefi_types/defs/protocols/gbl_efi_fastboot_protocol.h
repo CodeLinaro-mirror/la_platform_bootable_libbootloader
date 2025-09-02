@@ -43,25 +43,22 @@
 typedef void (*GetVarAllCallback)(void* context, const char* const* args,
                                   size_t num_args, const char* val);
 
-typedef enum EFI_FASTBOOT_MESSAGE_TYPE {
-  OKAY,
-  FAIL,
-  INFO,
-} EfiFastbootMessageType;
+EFI_ENUM(GBL_GBL_EFI_FASTBOOT_MESSAGE_TYPE, GblEfiFastbootMessageType, uint32_t,
+         GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL,
+         GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO);
 
 typedef EfiStatus (*FastbootMessageSender)(void* context,
-                                           EfiFastbootMessageType msg_type,
+                                           GblEfiFastbootMessageType msg_type,
                                            const char* msg, size_t msg_len);
 
 static const uint64_t GBL_EFI_FASTBOOT_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 1);
 
-typedef enum GBL_EFI_FASTBOOT_ERASE_ACTION {
-  // Treats the partition as a physical on disk partition and erases it.
-  ERASE_AS_PHYSICAL_PARTITION,
-  // Ignores the partition.
-  NOOP,
-} GblEfiFastbootEraseAction;
+EFI_ENUM(GBL_EFI_FASTBOOT_ERASE_ACTION, GblEfiFastbootEraseAction, uint32_t,
+         // Treats the partition as a physical on disk partition and erases it.
+         GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
+         // Ignores the partition.
+         GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP);
 
 typedef struct GblEfiFastbootProtocol {
   uint64_t revision;

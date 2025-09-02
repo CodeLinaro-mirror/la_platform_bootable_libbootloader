@@ -14,13 +14,13 @@ typedef struct {
                                        uint32_t descriptor_version,
                                        EfiMemoryDescriptor* virtual_map);
   EfiStatus (*convert_pointer)(size_t debug_disposition, void** address);
-  EfiStatus (*get_variable)(const char16_t* variable_name,
+  EfiStatus (*get_variable)(const uint16_t* variable_name,
                             const EfiGuid* vendor_guid, uint32_t* attributes,
                             size_t* data_size, void* data);
   EfiStatus (*get_next_variable_name)(size_t* variable_name_size,
-                                      char16_t* variable_name,
+                                      uint16_t* variable_name,
                                       EfiGuid* vendor_guid);
-  EfiStatus (*set_variable)(const char16_t* variable_name,
+  EfiStatus (*set_variable)(const uint16_t* variable_name,
                             const EfiGuid* vendor_guid, uint32_t attributes,
                             size_t data_size, const void* data);
   EfiStatus (*get_next_high_monotonic_count)(uint32_t* high_count);

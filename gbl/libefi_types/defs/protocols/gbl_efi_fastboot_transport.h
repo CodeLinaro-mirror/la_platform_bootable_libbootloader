@@ -32,10 +32,9 @@
 #include "gbl_protocol_utils.h"
 #include "types.h"
 
-typedef enum GBL_EFI_FASTBOOT_RX_MODE {
-  SINGLE_PACKET = 0,
-  FIXED_LENGTH,
-} GblEfiFastbootRxMode;
+EFI_ENUM(GBL_EFI_FASTBOOT_RX_MODE, GblEfiFastbootRxMode, uint32_t,
+         GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
+         GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH);
 
 static const uint64_t GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 1);

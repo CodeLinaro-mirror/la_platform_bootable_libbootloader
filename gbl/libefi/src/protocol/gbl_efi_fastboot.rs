@@ -25,8 +25,8 @@ use core::{
     str::from_utf8,
 };
 use efi_types::{
-    EfiFastbootMessageType, EfiGuid, EfiStatus, GblEfiFastbootEraseAction, GblEfiFastbootProtocol,
-    GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
+    EfiGuid, EfiStatus, GblEfiFastbootEraseAction, GblEfiFastbootMessageType,
+    GblEfiFastbootProtocol, GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
 };
 use liberror::{result_to_efi_status, Error, Result};
 
@@ -144,9 +144,9 @@ impl Protocol<'_, GblFastbootProtocol> {
         &self,
         cmd: &str,
         download: &mut [u8],
-        mut sender: impl FnMut(EfiFastbootMessageType, &str) -> Result<()>,
+        mut sender: impl FnMut(GblEfiFastbootMessageType, &str) -> Result<()>,
     ) -> Result<()> {
-        struct SenderCtx<'a>(&'a mut dyn FnMut(EfiFastbootMessageType, &str) -> Result<()>);
+        struct SenderCtx<'a>(&'a mut dyn FnMut(GblEfiFastbootMessageType, &str) -> Result<()>);
 
         /// Callback function to be passed to the `run_oem_function` interface.
         ///
@@ -158,7 +158,7 @@ impl Protocol<'_, GblFastbootProtocol> {
         ///   'msg_len' and outlives the call.
         unsafe extern "efiapi" fn message_sender(
             context: *mut core::ffi::c_void,
-            msg_type: EfiFastbootMessageType,
+            msg_type: GblEfiFastbootMessageType,
             msg: *const core::ffi::c_char,
             msg_len: usize,
         ) -> EfiStatus {
