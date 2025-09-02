@@ -15,12 +15,17 @@
 //! Rust wrapper for `GBL_EFI_AVF_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
-use efi_types::{EfiGuid, GblEfiAvfProtocol};
+use crate::{
+    protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
+};
+use efi_types::{EfiGuid, GblEfiAvfProtocol, GBL_EFI_AVF_PROTOCOL_REVISION};
 use liberror::{Error, Result};
 
 /// `GBL_EFI_AVF_PROTOCOL` implementation.
 pub struct GblAvfProtocol;
+
+versioned_protocol!(GblAvfProtocol, GBL_EFI_AVF_PROTOCOL_REVISION);
 
 impl ProtocolInfo for GblAvfProtocol {
     type InterfaceType = GblEfiAvfProtocol;
@@ -79,11 +84,6 @@ impl Protocol<'_, GblAvfProtocol> {
         }
 
         Ok(used_size)
-    }
-
-    /// Wraps `GBL_EFI_AVF_PROTOCOL.revision`.
-    pub fn revision(&self) -> u64 {
-        self.interface().revision
     }
 }
 

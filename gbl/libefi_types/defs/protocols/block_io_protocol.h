@@ -26,19 +26,23 @@
 #ifndef __BLOCK_IO_PROTOCOL_H__
 #define __BLOCK_IO_PROTOCOL_H__
 
+#include "gbl_protocol_utils.h"
 #include "types.h"
 
 typedef struct EfiBlockIoMedia EfiBlockIoMedia;
 typedef struct EfiBlockIoProtocol EfiBlockIoProtocol;
 
+static const uint64_t EFI_BLOCK_IO_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(2, 31);
+
 struct EfiBlockIoProtocol {
   uint64_t revision;
   EfiBlockIoMedia* media;
   EfiStatus (*reset)(EfiBlockIoProtocol* self, bool extended_verification);
-  EfiStatus (*read_blocks)(EfiBlockIoProtocol* self, uint32_t media_id, uint64_t lba,
-                           size_t buffer_size, void* buffer);
-  EfiStatus (*write_blocks)(EfiBlockIoProtocol* self, uint32_t media_id, uint64_t lba,
-                            size_t buffer_size, void* buffer);
+  EfiStatus (*read_blocks)(EfiBlockIoProtocol* self, uint32_t media_id,
+                           uint64_t lba, size_t buffer_size, void* buffer);
+  EfiStatus (*write_blocks)(EfiBlockIoProtocol* self, uint32_t media_id,
+                            uint64_t lba, size_t buffer_size, void* buffer);
   EfiStatus (*flush_blocks)(EfiBlockIoProtocol* self);
 };
 

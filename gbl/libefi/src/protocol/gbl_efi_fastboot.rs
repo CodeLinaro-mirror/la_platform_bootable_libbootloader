@@ -17,6 +17,7 @@
 use crate::{
     efi_call,
     protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
 };
 use core::{
     ffi::{c_char, c_void, CStr},
@@ -27,11 +28,14 @@ use core::{
 use efi_types::{
     EfiGuid, EfiStatus, GblEfiFastbootEraseAction, GblEfiFastbootMessageType,
     GblEfiFastbootProtocol, GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
+    GBL_EFI_FASTBOOT_PROTOCOL_REVISION,
 };
 use liberror::{result_to_efi_status, Error, Result};
 
 /// GBL_EFI_FASTBOOT_PROTOCOL
 pub struct GblFastbootProtocol;
+
+versioned_protocol!(GblFastbootProtocol, GBL_EFI_FASTBOOT_PROTOCOL_REVISION);
 
 // Note: this is an internal limitation due to the need to allocate
 // fixed sized buffers for storing args in the iterator
@@ -343,11 +347,6 @@ impl Protocol<'_, GblFastbootProtocol> {
         let serial_number = &self.interface().serial_number;
         let null_idx = serial_number.iter().position(|c| *c == 0).unwrap_or(serial_number.len());
         Ok(from_utf8(&serial_number[..null_idx])?)
-    }
-
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.revision`
-    pub fn revision(&self) -> u64 {
-        self.interface().revision
     }
 }
 

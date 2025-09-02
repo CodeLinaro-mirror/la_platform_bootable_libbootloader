@@ -15,12 +15,20 @@
 //! Rust wrapper for `GBL_EFI_OS_CONFIGURATION_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
-use efi_types::{EfiGuid, GblEfiOsConfigurationProtocol, GblEfiVerifiedDeviceTree};
+use crate::{
+    protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
+};
+use efi_types::{
+    EfiGuid, GblEfiOsConfigurationProtocol, GblEfiVerifiedDeviceTree,
+    GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION,
+};
 use liberror::{Error, Result};
 
 /// `GBL_EFI_OS_CONFIGURATION_PROTOCOL` implementation.
 pub struct GblOsConfigurationProtocol;
+
+versioned_protocol!(GblOsConfigurationProtocol, GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION);
 
 impl ProtocolInfo for GblOsConfigurationProtocol {
     type InterfaceType = GblEfiOsConfigurationProtocol;
@@ -76,11 +84,6 @@ impl Protocol<'_, GblOsConfigurationProtocol> {
         }
 
         Ok(())
-    }
-
-    /// Wraps `GBL_EFI_OS_CONFIGURATION_PROTOCOL.revision`.
-    pub fn revision(&self) -> u64 {
-        self.interface().revision
     }
 }
 

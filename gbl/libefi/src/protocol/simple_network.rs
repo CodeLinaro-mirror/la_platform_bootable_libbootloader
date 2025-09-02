@@ -15,18 +15,23 @@
 //! Rust wrapper for `EFI_SIMPLE_NETWORK_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
+use crate::{
+    protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
+};
 use core::ffi::c_void;
 use core::ptr::null_mut;
 use efi_types::{
     EfiGuid, EfiMacAddress, EfiSimpleNetworkMode, EfiSimpleNetworkProtocol,
-    EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS, EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS_MULTICAST,
-    EFI_SIMPLE_NETWORK_RECEIVE_UNICAST,
+    EFI_SIMPLE_NETWORK_PROTOCOL_REVISION, EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS,
+    EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS_MULTICAST, EFI_SIMPLE_NETWORK_RECEIVE_UNICAST,
 };
 use liberror::{Error, Result};
 
 /// EFI_SIMPLE_NETWORK_PROTOCOL
 pub struct SimpleNetworkProtocol;
+
+versioned_protocol!(SimpleNetworkProtocol, EFI_SIMPLE_NETWORK_PROTOCOL_REVISION);
 
 impl ProtocolInfo for SimpleNetworkProtocol {
     type InterfaceType = EfiSimpleNetworkProtocol;

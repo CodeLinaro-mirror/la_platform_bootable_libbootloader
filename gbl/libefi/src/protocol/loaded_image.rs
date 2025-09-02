@@ -14,12 +14,17 @@
 
 //! Rust wrapper for `EFI_LOADED_IMAGE_PROTOCOL`.
 
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
 use crate::DeviceHandle;
-use efi_types::{EfiGuid, EfiLoadedImageProtocol};
+use crate::{
+    protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
+};
+use efi_types::{EfiGuid, EfiLoadedImageProtocol, EFI_LOADED_IMAGE_PROTOCOL_REVISION};
 
 /// EFI_LOADED_IMAGE_PROTOCOL
 pub struct LoadedImageProtocol;
+
+versioned_protocol!(LoadedImageProtocol, EFI_LOADED_IMAGE_PROTOCOL_REVISION);
 
 impl ProtocolInfo for LoadedImageProtocol {
     type InterfaceType = EfiLoadedImageProtocol;

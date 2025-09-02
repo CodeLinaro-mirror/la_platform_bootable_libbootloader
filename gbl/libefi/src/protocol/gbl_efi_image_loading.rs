@@ -15,15 +15,23 @@
 //! Rust wrapper for `EFI_IMAGE_LOADING_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
+use crate::{
+    protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
+};
 use arrayvec::ArrayVec;
 use core::mem::{size_of, MaybeUninit};
-use efi_types::{EfiGuid, GblEfiImageBuffer, GblEfiImageInfo, GblEfiImageLoadingProtocol};
+use efi_types::{
+    EfiGuid, GblEfiImageBuffer, GblEfiImageInfo, GblEfiImageLoadingProtocol,
+    GBL_EFI_IMAGE_LOADING_PROTOCOL_REVISION,
+};
 use liberror::{Error, Result};
 use spin::Mutex;
 
 /// GBL_IMAGE_LOADING_PROTOCOL
 pub struct GblImageLoadingProtocol;
+
+versioned_protocol!(GblImageLoadingProtocol, GBL_EFI_IMAGE_LOADING_PROTOCOL_REVISION);
 
 impl ProtocolInfo for GblImageLoadingProtocol {
     type InterfaceType = GblEfiImageLoadingProtocol;
@@ -194,11 +202,6 @@ impl Protocol<'_, GblImageLoadingProtocol> {
         let image_buffer = EfiImageBufferInfo::Buffer(unsafe { EfiImageBuffer::new(gbl_buffer)? });
 
         Ok(image_buffer)
-    }
-
-    /// Wraps `GBL_EFI_IMAGE_LOADING_PROTOCOL.revision`.
-    pub fn revision(&self) -> u64 {
-        self.interface().revision
     }
 }
 

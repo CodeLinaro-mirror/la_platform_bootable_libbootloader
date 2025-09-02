@@ -17,16 +17,20 @@
 use crate::{
     efi_call,
     protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
 };
 use efi_types::{
     EfiGuid, GblEfiFastbootRxMode, GblEfiFastbootTransportProtocol,
     GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH, GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
+    GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION,
 };
 use gbl_async::yield_now;
 use liberror::{Error, Result};
 
 /// GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL
 pub struct GblFastbootTransportProtocol;
+
+versioned_protocol!(GblFastbootTransportProtocol, GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION);
 
 impl ProtocolInfo for GblFastbootTransportProtocol {
     type InterfaceType = GblEfiFastbootTransportProtocol;
@@ -154,10 +158,5 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
             }
         }
         self.flush()
-    }
-
-    /// Wraps `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.revision`.
-    pub fn revision(&self) -> u64 {
-        self.interface().revision
     }
 }

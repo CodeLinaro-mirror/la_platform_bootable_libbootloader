@@ -15,12 +15,14 @@
 //! Rust wrapper for `EFI_SIMPLE_TEXT_INPUT_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
+use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo, Requirement};
 use efi_types::{EfiGuid, EfiInputKey, EfiSimpleTextInputProtocol};
 use liberror::{Error, Result};
 
 /// EFI_SIMPLE_TEXT_INPUT_PROTOCOL
 pub struct SimpleTextInputProtocol;
+
+impl MaybeVersioned for EfiSimpleTextInputProtocol {}
 
 impl ProtocolInfo for SimpleTextInputProtocol {
     type InterfaceType = EfiSimpleTextInputProtocol;

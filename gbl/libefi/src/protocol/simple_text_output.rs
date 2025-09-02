@@ -15,10 +15,12 @@
 //! Rust wrapper for `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo};
 use core::fmt::{Error, Write};
 use efi_types::{EfiGuid, EfiSimpleTextOutputProtocol};
 use liberror::Result;
+
+impl MaybeVersioned for EfiSimpleTextOutputProtocol {}
 
 /// EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL
 pub struct SimpleTextOutputProtocol;

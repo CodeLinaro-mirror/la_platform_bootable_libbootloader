@@ -40,7 +40,7 @@ use efi::{
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
-        Protocol,
+        Protocol, Versioned,
     },
     EfiEntry,
 };
@@ -620,20 +620,18 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     }
 
     fn fixup_device_tree(&mut self, device_tree: &mut [u8]) -> Result<()> {
-        const MIN_SUPPORTED_REVISION: u64 = 0x00010000;
-
         match self.efi_entry.system_table().boot_services().find_first_and_open::<DtFixupProtocol>()
         {
-            Ok(protocol) if protocol.revision() >= MIN_SUPPORTED_REVISION => {
+            Ok(protocol) if protocol.revision() >= Protocol::<'_, DtFixupProtocol>::REVISION => {
                 protocol.fixup(device_tree)
             }
             // Protocol is optional.
             Ok(protocol) => {
                 efi_println!(
                     self.efi_entry,
-                    "DtFixupProtocol exists but version is too low for GBL to use ({:X} < {:X})",
+                    "DtFixupProtocol exists but version is too low for GBL to use ({} < {})",
                     protocol.revision(),
-                    MIN_SUPPORTED_REVISION
+                    Protocol::<'_, DtFixupProtocol>::REVISION
                 );
                 Ok(())
             }
@@ -1945,7 +1943,7 @@ mod test {
         protocol_result: Result<()>,
     ) -> Result<()> {
         let (protocol_revision, expected_conout) = if protocol_revision_invalid {
-            (0, "DtFixupProtocol exists but version is too low for GBL to use (0 < 10000)\r\n")
+            (0, "DtFixupProtocol exists but version is too low for GBL to use (0.0 < 1.0)\r\n")
         } else {
             (EFI_DT_FIXUP_PROTOCOL_REVISION, "")
         };

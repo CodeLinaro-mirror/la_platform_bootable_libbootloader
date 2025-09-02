@@ -19,7 +19,7 @@
 
 use crate::{DeviceHandle, MOCK_EFI};
 use core::{ffi::CStr, fmt::Write};
-pub use efi::protocol::gbl_efi_image_loading::EfiImageBufferInfo;
+pub use efi::protocol::{gbl_efi_image_loading::EfiImageBufferInfo, Revision, Versioned};
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
     GblEfiAvbPartition, GblEfiAvbVerificationResult, GblEfiFastbootEraseAction,
@@ -211,10 +211,18 @@ pub mod dt_fixup {
         /// Mock [efi::DtFixupProtocol].
         pub DtFixupProtocol {
             /// Wraps `EFI_DT_FIXUP_PROTOCOL.revision`.
-            pub fn revision(&self) -> u64;
+            pub fn revision(&self) -> Revision;
 
             /// Wraps `EFI_DT_FIXUP_PROTOCOL.fixup()`
             pub fn fixup(&self, device_tree: &mut [u8]) -> Result<()>;
+        }
+    }
+
+    impl Versioned for MockDtFixupProtocol {
+        const REVISION: efi::protocol::Revision = Revision { major: 1, minor: 0 };
+
+        fn revision(&self) -> Revision {
+            self.revision()
         }
     }
 

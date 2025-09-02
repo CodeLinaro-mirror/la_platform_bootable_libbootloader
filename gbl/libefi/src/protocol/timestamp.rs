@@ -15,9 +15,11 @@
 //! Rust wrapper for `EFI_TIMESTAMP_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
+use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo, Requirement};
 use efi_types::{EfiGuid, EfiTimestampProperties, EfiTimestampProtocol};
 use liberror::{Error, Result};
+
+impl MaybeVersioned for EfiTimestampProtocol {}
 
 /// `EFI_TIMESTAMP_PROTOCOL` implementation.
 pub struct TimestampProtocol;

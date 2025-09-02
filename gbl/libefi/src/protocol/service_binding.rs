@@ -16,12 +16,14 @@
 
 use crate::{
     efi_call,
-    protocol::{Protocol, ProtocolInfo},
+    protocol::{MaybeVersioned, Protocol, ProtocolInfo, Requirement},
     DeviceHandle, EfiEntry,
 };
 use core::mem::ManuallyDrop;
 use efi_types::{EfiGuid, EfiHandle, EfiServiceBindingProtocol};
 use liberror::Result;
+
+impl MaybeVersioned for EfiServiceBindingProtocol {}
 
 /// Trait for coupling a binding protocol to the protocol
 /// used by the application or driver.
@@ -38,6 +40,8 @@ impl<SBP: ServiceBindingProtocolInfo> ProtocolInfo for SBP {
     const GUID: EfiGuid = SBP::GUID;
 
     type InterfaceType = EfiServiceBindingProtocol;
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 impl<SBP: ServiceBindingProtocolInfo> Protocol<'_, SBP> {

@@ -15,8 +15,11 @@
 //! Rust wrapper for `EFI_DT_FIXUP_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
-use efi_types::{EfiDtFixupProtocol, EfiGuid, EFI_DT_APPLY_FIXUPS};
+use crate::{
+    protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
+};
+use efi_types::{EfiDtFixupProtocol, EfiGuid, EFI_DT_APPLY_FIXUPS, EFI_DT_FIXUP_PROTOCOL_REVISION};
 use liberror::Result;
 
 /// `EFI_DT_FIXUP_PROTOCOL` implementation.
@@ -31,13 +34,10 @@ impl ProtocolInfo for DtFixupProtocol {
     const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
+versioned_protocol!(DtFixupProtocol, EFI_DT_FIXUP_PROTOCOL_REVISION);
+
 // Protocol interface wrappers.
 impl Protocol<'_, DtFixupProtocol> {
-    /// Wraps `EFI_DT_FIXUP_PROTOCOL.revision`.
-    pub fn revision(&self) -> u64 {
-        self.interface().revision
-    }
-
     /// Wraps `EFI_DT_FIXUP_PROTOCOL.fixup()`.
     pub fn fixup(&self, device_tree: &mut [u8]) -> Result<()> {
         let mut buffer_size = device_tree.len();

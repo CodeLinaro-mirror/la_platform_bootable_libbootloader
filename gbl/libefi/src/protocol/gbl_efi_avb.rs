@@ -15,17 +15,22 @@
 //! Rust wrapper for `GBL_EFI_AVB_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::{
+    protocol::{Protocol, ProtocolInfo},
+    versioned_protocol,
+};
 use core::ffi::CStr;
 use core::ptr::null;
 use efi_types::{
     EfiGuid, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition,
-    GblEfiAvbProtocol, GblEfiAvbVerificationResult,
+    GblEfiAvbProtocol, GblEfiAvbVerificationResult, GBL_EFI_AVB_PROTOCOL_REVISION,
 };
 use liberror::Result;
 
 /// `GBL_EFI_AVB_PROTOCOL` implementation.
 pub struct GblAvbProtocol;
+
+versioned_protocol!(GblAvbProtocol, GBL_EFI_AVB_PROTOCOL_REVISION);
 
 impl ProtocolInfo for GblAvbProtocol {
     type InterfaceType = GblEfiAvbProtocol;
@@ -222,11 +227,6 @@ impl Protocol<'_, GblAvbProtocol> {
                 verification_result as *const _
             )
         }
-    }
-
-    /// Wraps `GBL_EFI_AVB_PROTOCOL.revision`.
-    pub fn revision(&self) -> u64 {
-        self.interface().revision
     }
 }
 

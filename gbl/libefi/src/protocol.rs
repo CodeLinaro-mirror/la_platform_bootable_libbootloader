@@ -14,7 +14,7 @@
 
 //! EFI protocol wrappers to provide Rust-safe APIs for usage.
 
-use crate::{DeviceHandle, EfiEntry};
+use crate::{efi_println, DeviceHandle, EfiEntry};
 use core::{
     ops::{Deref, DerefMut},
     ptr::{null_mut, NonNull},
@@ -53,10 +53,183 @@ pub enum Requirement {
     Optional,
 }
 
+/// Type safe definition for protocol revision.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Revision {
+    /// The major revision of the protocol as defined in the header.
+    /// The major version must match EXACTLY for compatibility.
+    /// If the major version is 0, the protocol is not yet stable
+    /// and breaking changes may occur.
+    pub major: u16,
+    /// The minor revision of the protocol as defined by the header.
+    ///
+    /// If the minor version is higher than the defined constant,
+    /// this is a transparent, backwards compatible difference.
+    ///
+    /// If the minor version is lower than expected,
+    /// the size of the protocol struct may be smaller than the GBL visible type
+    /// or fields may be in a reserved and undefined state.
+    pub minor: u16,
+}
+
+impl Revision {
+    /// Generate a revision from a raw u32.
+    pub const fn from_u32(r: u32) -> Self {
+        Self { major: ((r >> 16) & 0xFFFF) as u16, minor: (r & 0xFFFF) as u16 }
+    }
+}
+
+impl core::fmt::Display for Revision {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+impl From<u64> for Revision {
+    fn from(value: u64) -> Self {
+        // For now, discard the most significant bytes..
+        Self::from_u32(value as u32)
+    }
+}
+
+impl From<u32> for Revision {
+    fn from(value: u32) -> Self {
+        Self::from_u32(value)
+    }
+}
+
+/// Bindgen-derived protocol structures MUST implement `MaybeVersioned`.
+/// If the protocol is actually versioned it should provide override definitions
+/// for `REVISION` and `revision`.
+///
+/// This is necessary due to limitations in specializing trait implementations.
+pub trait MaybeVersioned {
+    /// Revision of struct as defined by header file.
+    const REVISION: Option<Revision> = None;
+
+    /// Actual revision of runtime protocol.
+    fn revision(&self) -> Option<Revision> {
+        None
+    }
+}
+
+/// Interface for defining the compile time expected version of a protocol
+/// and the actual runtime version of the protocol when opened.
+///
+/// Implement for Protocol<T> if you want to check the minor version in order to
+/// gate access to fields or method.
+///
+/// E.g.
+///
+/// ```
+/// struct MyProtocol;
+/// impl ProtocolInfo for MyProtocol {
+///     type InterfaceType = EfiMyProtocol;
+///
+///     const GUID: EfiGuid = ...;
+/// }
+///
+/// impl MaybeVersioned for EfiMyProtocol {
+///     const REVISION: Option<Revision> = Some(Revision::from_u32(EFI_MY_PROTOCOL_REVISION as u32));
+///
+///     fn revision(&self) -> Option<Revision> {
+///         Some(self.revision.into())
+///     }
+/// }
+///
+/// impl Versioned for Protocol<'_, MyProtocol> {
+///     const REVISION: Some(Revision::from_u32(EFI_MY_PROTOCOL_REVISION as u32));
+///
+///     fn revision(&self) -> Revision {
+///         self.interface().revision.into()
+///     }
+/// }
+/// ```
+///
+/// This is verbose, and it is easy to make mistakes, so the `versioned_protocol!` macro
+/// is defined to assist with the boilerplate.
+///
+/// The two traits `MaybeVersioned` and `Versioned` are necessary due to limitations
+/// in specializing trait implementations.
+pub trait Versioned {
+    /// The revision of the struct definition as seen by GBL.
+    /// Should be derived from the header that defines the protocol struct
+    /// and provided by bindgen.
+    const REVISION: Revision;
+
+    /// Accesses the revision field of the protocol structure.
+    fn revision(&self) -> Revision;
+}
+
+/// Convenience macro for describing versioned protocols.
+///
+/// Extended example:
+///
+/// ```
+/// // libefi_types/defs/protocols/efi_my_proto.h
+/// #include <gbl_protocol_utils.h>
+///
+/// static const uint64_t EFI_MY_PROTOCOL_REVISION = GBL_PROTOCOL_REVISION(2, 3);
+///
+/// typedef struct {
+///     uint64_t revision;
+///     ...
+/// } EfiMyProtocol;
+/// ```
+///
+/// ```
+/// // libefi/src/protocol/my_protocol.rs
+///
+/// use crate::{versioned_protocol, ProtocolInfo};
+/// use efi_types::{EfiMyProtocol, EFI_MY_PROTOCOL_REVISION};
+///
+/// struct MyProtocol;
+///
+/// impl ProtocolInfo for MyProtocol {
+///     type InterfaceType = EfiMyProtocol;
+///     ...
+/// }
+///
+/// versioned_protocol!(MyProtocol, EFI_MY_PROTOCOL_REVISION);
+///
+/// fn check_protocol<P>(p: &Protocol<'_, P>)
+///   where Protocol<'_, P>: Versioned {
+///     if p.revision() != P::REVISION {
+///         efi_println!(p.efi_entry(), "Version mismatch: expected {}, got {}",
+///                      P::REVISION, p.revision());
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! versioned_protocol {
+    ($protocol_struct:tt, $revision:expr) => {
+        versioned_protocol!($protocol_struct, $revision, revision);
+    };
+    ($protocol_struct:tt, $revision:expr, $field_name:ident) => {
+        use crate::protocol::{MaybeVersioned, Revision, Versioned};
+
+        impl MaybeVersioned for <$protocol_struct as ProtocolInfo>::InterfaceType {
+            const REVISION: Option<Revision> = Some(Revision::from_u32($revision as u32));
+
+            fn revision(&self) -> Option<Revision> {
+                Some(self.$field_name.into())
+            }
+        }
+
+        impl Versioned for Protocol<'_, $protocol_struct> {
+            const REVISION: Revision = Revision::from_u32($revision as u32);
+
+            fn revision(&self) -> Revision {
+                self.interface().$field_name.into()
+            }
+        }
+    };
+}
+
 /// ProtocolInfo provides GUID info and the EFI data structure type for a protocol.
 pub trait ProtocolInfo {
     /// Data structure type of the interface.
-    type InterfaceType;
+    type InterfaceType: MaybeVersioned;
     /// GUID of the protocol.
     const GUID: EfiGuid;
     /// Whether the protocol is mandatory or optional.
@@ -65,9 +238,13 @@ pub trait ProtocolInfo {
 
 /// Temporary trait to abstract over protocols using [ProtocolInfo] vs [Client].
 /// Once we use [Client] everywhere this can go away.
+///
+/// Note: `CInterface` must always be `Versioned` because of the
+/// [ProtocolInfo] vs [Client] split and because of limitations
+/// in impl specialization.
 pub trait ProtocolImpl {
     /// The raw C struct type.
-    type CInterface;
+    type CInterface: MaybeVersioned;
     /// The underlying implementation type.
     type ImplType;
     /// The protocol GUID.
@@ -100,7 +277,7 @@ impl<T: ProtocolInfo> ProtocolImpl for T {
 }
 
 /// For [Client], the implementation is a [Client] itself.
-impl<T: Identified> ProtocolImpl for Client<T> {
+impl<T: Identified + MaybeVersioned> ProtocolImpl for Client<T> {
     type CInterface = T;
     type ImplType = Self;
     const GUID: EfiGuid = T::GUID;
@@ -142,6 +319,36 @@ impl<'a, T: ProtocolImpl> Protocol<'a, T> {
         c_interface: NonNull<T::CInterface>,
         efi_entry: &'a EfiEntry,
     ) -> Self {
+        if let Some(expected) = T::CInterface::REVISION {
+            // Safety:
+            // * By precondition, `c_interface` must point to a valid `T::CInterface`.
+            if let Some(actual) = unsafe { c_interface.as_ref() }.revision() {
+                if actual.major != expected.major {
+                    efi_println!(
+                        efi_entry,
+                        "Opening Protocol<{}>: expected major version {}, got {}",
+                        core::any::type_name::<T>(),
+                        expected.major,
+                        actual.major
+                    );
+                } else if actual.minor < expected.minor {
+                    efi_println!(
+                        efi_entry,
+                        "Opening Protocol<{}>: expected minor version {}, got {}",
+                        core::any::type_name::<T>(),
+                        expected.minor,
+                        actual.minor
+                    );
+                }
+            } else {
+                efi_println!(
+                    efi_entry,
+                    "Opening Protocol<{}>: cannot check revision",
+                    core::any::type_name::<T>()
+                );
+            }
+        }
+
         // SAFETY: by function safety,
         // * `c_interface` is a valid `T::CInterface`
         // * `c_interface` will outlive the returned `Protocol`
@@ -174,7 +381,7 @@ impl<'a, T: ProtocolInfo> Protocol<'a, T> {
 
 /// Protocol<T> with a [Client] implementation can deref to [Client] to call
 /// its protocol APIs.
-impl<'a, T: Identified> Deref for Protocol<'a, Client<T>> {
+impl<'a, T: Identified + MaybeVersioned> Deref for Protocol<'a, Client<T>> {
     type Target = Client<T>;
 
     fn deref(&self) -> &Self::Target {
@@ -184,7 +391,7 @@ impl<'a, T: Identified> Deref for Protocol<'a, Client<T>> {
 
 /// Protocol<T> with a [Client] implementation can deref to [Client] to call
 /// its protocol APIs.
-impl<'a, T: Identified> DerefMut for Protocol<'a, Client<T>> {
+impl<'a, T: Identified + MaybeVersioned> DerefMut for Protocol<'a, Client<T>> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.interface
     }

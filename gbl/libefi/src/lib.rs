@@ -1150,7 +1150,7 @@ mod allocation {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::protocol::{block_io::BlockIoProtocol, ProtocolInfo, Requirement};
+    use crate::protocol::{block_io::BlockIoProtocol, ProtocolInfo, Requirement, Revision};
     use crate::DeviceHandle;
     use alloc::string::String;
     use core::ptr::{from_mut, NonNull};
@@ -2104,6 +2104,7 @@ mod test {
     macro_rules! TestProto {
         { $required:expr } => {
             struct EfiTestProtocol;
+            impl protocol::MaybeVersioned for EfiTestProtocol {}
             struct TestProtocol;
 
             impl ProtocolInfo for TestProtocol /* NO DOCS */ {
@@ -2242,6 +2243,7 @@ mod test {
     #[test]
     fn test_protocol_default_required() {
         struct EfiTestProtocol;
+        impl protocol::MaybeVersioned for EfiTestProtocol {}
         struct TestProtocol;
 
         impl ProtocolInfo for TestProtocol /* NO DOCS */ {
@@ -2273,6 +2275,144 @@ mod test {
                 let out_str = trace.borrow().console_out_trace.as_single_string();
                 assert_eq!(out_str, "Required protocol not found: EfiTestProtocol\r\n");
             });
+        });
+    }
+
+    trait TriviallyConstruct {
+        fn new() -> Self;
+    }
+
+    macro_rules! versioned_protocol {
+        ($compile_time:expr, $run_time:expr) => {
+            struct EfiTestProtocol;
+            impl protocol::MaybeVersioned for EfiTestProtocol {
+                const REVISION: Option<Revision> = $compile_time;
+                fn revision(&self) -> Option<Revision> {
+                    $run_time
+                }
+            }
+
+            struct TestProtocol;
+            impl ProtocolInfo for TestProtocol /* NO DOCS */ {
+                type InterfaceType = EfiTestProtocol;
+
+                const GUID: EfiGuid = EfiGuid::new(
+                    0x2ec515d8,
+                    0xaff5,
+                    0x403f,
+                    [0xb3, 0x36, 0x0f, 0x07, 0xe0, 0x74, 0x66, 0x78],
+                );
+            }
+
+            impl TriviallyConstruct for TestProtocol {
+                fn new() -> Self {
+                    Self {}
+                }
+            }
+        };
+    }
+
+    fn versioned_test_helper<T: ProtocolInfo + TriviallyConstruct, EMF: FnOnce(T) -> String>(
+        error_msg_func: EMF,
+    ) {
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+            let mut located_handles = [DeviceHandle(1 as *mut _)];
+            let mut test = T::new();
+
+            efi_call_traces().with(|traces| {
+                let mut traces = traces.borrow_mut();
+
+                traces
+                    .locate_handle_buffer_trace
+                    .outputs
+                    .push_back((located_handles.len(), located_handles.as_mut_ptr()));
+                traces
+                    .open_protocol_trace
+                    .outputs
+                    .push_back((as_efi_handle(&mut test), EFI_STATUS_SUCCESS));
+            });
+
+            assert!(efi_entry.system_table().boot_services().find_first_and_open::<T>().is_ok());
+
+            efi_call_traces().with(|trace| {
+                let out_str = trace.borrow().console_out_trace.as_single_string();
+                assert_eq!(out_str.trim_end_matches("\r\n"), error_msg_func(test));
+            });
+        });
+    }
+
+    #[test]
+    fn test_versioned_protocol_no_version() {
+        versioned_protocol! {None, None};
+        versioned_test_helper::<TestProtocol, _>(|_| "".into());
+    }
+
+    #[test]
+    fn test_versioned_protocol_equal_version() {
+        versioned_protocol! {
+            Some(Revision { major: 2112, minor: 1976 }),
+            Some(Revision { major: 2112, minor: 1976 })
+        };
+        versioned_test_helper::<TestProtocol, _>(|_| "".into());
+    }
+
+    #[test]
+    fn test_versioned_protocol_major_too_large() {
+        versioned_protocol! {
+            Some(Revision { major: 2112, minor: 1976 }),
+            Some(Revision { major: 2113, minor: 1976 })
+        };
+        versioned_test_helper::<TestProtocol, _>(|t| {
+            format!(
+                "Opening Protocol<{}>: expected major version 2112, got 2113",
+                std::any::type_name_of_val(&t)
+            )
+        });
+    }
+
+    #[test]
+    fn test_versioned_protocol_major_too_small() {
+        versioned_protocol! {
+            Some(Revision { major: 2112, minor: 1976 }),
+            Some(Revision { major: 2111, minor: 1976 })
+        };
+        versioned_test_helper::<TestProtocol, _>(|t| {
+            format!(
+                "Opening Protocol<{}>: expected major version 2112, got 2111",
+                std::any::type_name_of_val(&t)
+            )
+        });
+    }
+
+    #[test]
+    fn test_versioned_protocol_newer_minor() {
+        versioned_protocol! {
+            Some(Revision { major: 2112, minor: 1976 }),
+            Some(Revision { major: 2112, minor: 1977 })
+        };
+        versioned_test_helper::<TestProtocol, _>(|_| "".into());
+    }
+
+    #[test]
+    fn test_versioned_protocol_minor_too_small() {
+        versioned_protocol! {
+            Some(Revision { major: 2112, minor: 1976 }),
+            Some(Revision { major: 2112, minor: 1975 })
+        };
+        versioned_test_helper::<TestProtocol, _>(|t| {
+            format!(
+                "Opening Protocol<{}>: expected minor version 1976, got 1975",
+                std::any::type_name_of_val(&t)
+            )
+        });
+    }
+
+    #[test]
+    fn test_versioned_protocol_runtime_revision_unspecified() {
+        versioned_protocol! {Some(Revision { major: 2112, minor: 1976 }), None};
+        versioned_test_helper::<TestProtocol, _>(|t| {
+            format!("Opening Protocol<{}>: cannot check revision", std::any::type_name_of_val(&t))
         });
     }
 }

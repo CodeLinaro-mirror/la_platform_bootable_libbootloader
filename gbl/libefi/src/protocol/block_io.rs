@@ -13,8 +13,20 @@
 // limitations under the License.
 
 //! Rust wrapper for `EFI_BLOCK_IO_PROTOCOL`.
+use crate::protocol::{MaybeVersioned, Revision};
+use efi_types::{
+    defs::{EfiBlockIoProtocol, EFI_BLOCK_IO_PROTOCOL_REVISION},
+    protocol::Client,
+};
 
-use efi_types::{defs::EfiBlockIoProtocol, protocol::Client};
+impl MaybeVersioned for EfiBlockIoProtocol {
+    const REVISION: Option<Revision> =
+        Some(Revision::from_u32(EFI_BLOCK_IO_PROTOCOL_REVISION as u32));
+
+    fn revision(&self) -> Option<Revision> {
+        Some(self.revision.into())
+    }
+}
 
 /// Use the [Client] implementation for `BLOCK_IO_PROTOCOL`.
 pub type BlockIoProtocol = Client<EfiBlockIoProtocol>;

@@ -15,11 +15,13 @@
 //! Rust wrapper for `EFI_RANDOM_NUMBER_GENERATOR_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
+use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo};
 use core::mem::MaybeUninit;
 use efi_types::{EfiGuid, EfiRngProtocol};
 use liberror::Result;
 use zerocopy::FromBytes;
+
+impl MaybeVersioned for EfiRngProtocol {}
 
 /// Wraps `EFI_RANDOM_NUMBER_GENERATOR_PROTOCOL`
 pub struct RandomNumberGeneratorProtocol;

@@ -16,7 +16,7 @@
 
 use crate::{
     efi_call,
-    protocol::{Protocol, ProtocolInfo, Requirement},
+    protocol::{MaybeVersioned, Protocol, ProtocolInfo, Requirement},
     EfiEntry, EventNotify, EventType, Tpl,
 };
 use bytes::buf::UninitSlice;
@@ -29,6 +29,8 @@ use efi_types::{
 };
 use gbl_async::{assert_return, yield_now};
 use liberror::{efi_status_to_result, Result};
+
+impl MaybeVersioned for EfiBlockIo2Protocol {}
 
 /// EFI_BLOCK_IO2_PROTOCOL
 pub struct BlockIo2Protocol;

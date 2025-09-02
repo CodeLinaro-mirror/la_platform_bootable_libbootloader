@@ -22,7 +22,7 @@ use crate::{
     efi_call,
     protocol::{
         service_binding::{ProtocolBinder, ServiceBindingProtocolInfo},
-        Protocol, ProtocolInfo,
+        MaybeVersioned, Protocol, ProtocolInfo, Requirement,
     },
     EfiEntry,
 };
@@ -32,6 +32,8 @@ use efi_types::{
 };
 use liberror::Result;
 use zerocopy::{FromBytes, Immutable, IntoBytes};
+
+impl MaybeVersioned for EfiHash2Protocol {}
 
 /// Definition for a hash algorithm used by the EfiHash2Protocol.
 ///
@@ -145,6 +147,8 @@ impl ProtocolInfo for Hash2Protocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0x55b1d734, 0xc5e1, 0x49db, [0x96, 0x47, 0xb1, 0x6a, 0xfb, 0xe, 0x30, 0x5b]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
 impl Protocol<'_, Hash2Protocol> {

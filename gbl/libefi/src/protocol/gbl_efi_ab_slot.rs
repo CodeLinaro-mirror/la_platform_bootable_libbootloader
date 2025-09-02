@@ -16,10 +16,14 @@
 extern crate libgbl;
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
+use crate::{
+    protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
+};
 use efi_types::{
     EfiGuid, GblEfiABSlotProtocol, GblEfiBootMode, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
-    GblEfiUnbootableReason, GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
+    GblEfiUnbootableReason, GBL_EFI_AB_SLOT_PROTOCOL_REVISION,
+    GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
     GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE as SYSTEM_UPDATE,
     GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED as USER_REQUESTED,
     GBL_EFI_UNBOOTABLE_REASON_VERIFICATION_FAILURE as VERIFICATION_FAILURE,
@@ -30,6 +34,8 @@ use libgbl::slots::{Bootability, Slot, UnbootableReason};
 
 /// Wraps `GBL_EFI_SLOT_PROTOCOL`.
 pub struct GblABSlotProtocol;
+
+versioned_protocol!(GblABSlotProtocol, GBL_EFI_AB_SLOT_PROTOCOL_REVISION);
 
 impl ProtocolInfo for GblABSlotProtocol {
     type InterfaceType = GblEfiABSlotProtocol;
@@ -187,10 +193,5 @@ impl<'a> Protocol<'a, GblABSlotProtocol> {
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         unsafe { efi_call!(self.interface().flush, self.interface_ptr()) }
-    }
-
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.revision`
-    pub fn revision(&self) -> u64 {
-        self.interface().revision
     }
 }

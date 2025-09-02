@@ -37,7 +37,7 @@
 // It is an ergonomics and safety benefit to explicitly define
 // the width of enums in the EFI interfaces defined and used by GBL.
 //
-// The following conventions are for enums:
+// The following conventions are used for enums:
 // * The enum is named using ALL_CAPS.
 // * Enum variants are defined in ALL_CAPS and are prefixed
 //   with the ALL_CAPS enum name.

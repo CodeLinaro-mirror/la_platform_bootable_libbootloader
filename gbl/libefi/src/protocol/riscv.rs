@@ -15,12 +15,17 @@
 //! Rust wrapper for `RISCV_EFI_BOOT_PROTOCOL`.
 
 use crate::efi_call;
-use crate::protocol::{Protocol, ProtocolInfo};
-use efi_types::{EfiGuid, EfiRiscvBootProtocol};
+use crate::{
+    protocol::{Protocol, ProtocolInfo},
+    versioned_protocol,
+};
+use efi_types::{EfiGuid, EfiRiscvBootProtocol, EFI_RISCV_BOOT_PROTOCOL_REVISION};
 use liberror::Result;
 
 /// RISCV_EFI_BOOT_PROTOCOL
 pub struct RiscvBootProtocol;
+
+versioned_protocol!(RiscvBootProtocol, EFI_RISCV_BOOT_PROTOCOL_REVISION);
 
 impl ProtocolInfo for RiscvBootProtocol {
     type InterfaceType = EfiRiscvBootProtocol;
@@ -42,10 +47,5 @@ impl<'a> Protocol<'a, RiscvBootProtocol> {
             efi_call!(self.interface().get_boot_hartid, self.interface_ptr(), &mut boot_hart_id)?;
         }
         Ok(boot_hart_id)
-    }
-
-    /// Wraps `RISCV_EFI_BOOT_PROTOCOL.Revision`.
-    pub fn revision(&self) -> u64 {
-        self.interface().revision
     }
 }

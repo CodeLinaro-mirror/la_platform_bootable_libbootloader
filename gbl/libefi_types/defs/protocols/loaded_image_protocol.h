@@ -26,10 +26,13 @@
 #ifndef __LOADED_IMAGE_PROTOCOL_H__
 #define __LOADED_IMAGE_PROTOCOL_H__
 
+#include "gbl_protocol_utils.h"
+#include "protocols/device_path_protocol.h"
 #include "system_table.h"
 #include "types.h"
 
-#include "protocols/device_path_protocol.h"
+static const uint32_t EFI_LOADED_IMAGE_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(1, 0);
 
 typedef struct {
   uint32_t revision;

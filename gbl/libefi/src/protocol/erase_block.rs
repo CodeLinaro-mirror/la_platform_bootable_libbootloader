@@ -17,12 +17,17 @@
 use crate::{
     efi_call, efi_println,
     protocol::{block_io2::wait_completion, Protocol, ProtocolInfo},
-    EventNotify, EventType, Tpl,
+    versioned_protocol, EventNotify, EventType, Tpl,
 };
 use core::sync::atomic::{AtomicBool, Ordering};
-use efi_types::{EfiEraseBlockProtocol, EfiEraseBlockToken, EfiGuid, EFI_STATUS_NOT_READY};
+use efi_types::{
+    EfiEraseBlockProtocol, EfiEraseBlockToken, EfiGuid, EFI_ERASE_BLOCK_PROTOCOL_REVISION,
+    EFI_STATUS_NOT_READY,
+};
 use gbl_async::assert_return;
 use liberror::{efi_status_to_result, Result};
+
+versioned_protocol!(EraseBlockProtocol, EFI_ERASE_BLOCK_PROTOCOL_REVISION);
 
 /// EFI_ERASE_BLOCK_PROTOCOL
 pub struct EraseBlockProtocol;

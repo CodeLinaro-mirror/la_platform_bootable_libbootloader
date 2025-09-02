@@ -14,7 +14,7 @@
 
 //! Rust wrapper for `EFI_DEVICE_PATH_PROTOCOL`.
 
-use crate::protocol::{Protocol, ProtocolInfo, Requirement};
+use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo, Requirement};
 use crate::{efi_println, EfiEntry};
 use core::ffi::CStr;
 use core::fmt::Display;
@@ -28,6 +28,8 @@ use efi_types::{
 use liberror::{Error, Result};
 use zerocopy::byteorder::little_endian;
 use zerocopy::FromBytes;
+
+impl MaybeVersioned for EfiDevicePathProtocol {}
 
 /// `EFI_DEVICE_PATH_PROTOCOL`
 pub struct DevicePathProtocol;
@@ -114,6 +116,8 @@ impl<'a> Protocol<'a, DevicePathProtocol> {
         Ok(None)
     }
 }
+
+impl MaybeVersioned for EfiDevicePathToTextProtocol {}
 
 /// `EFI_DEVICE_PATH_TO_TEXT_PROTOCOL`
 pub struct DevicePathToTextProtocol;

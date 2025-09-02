@@ -17,7 +17,7 @@
 use crate::{
     efi_call, efi_println,
     protocol::{Protocol, ProtocolInfo},
-    EfiEntry,
+    versioned_protocol, EfiEntry,
 };
 use alloc::{vec, vec::Vec};
 use arrayvec::ArrayString;
@@ -32,7 +32,8 @@ use efi_types::defs::{
     GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD, GBL_EFI_BOOT_BUFFER_TYPE_FDT,
     GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
     GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA, GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK,
-    GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED, PARTITION_NAME_LEN_U16,
+    GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION, GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED,
+    PARTITION_NAME_LEN_U16,
 };
 use liberror::{Error, Result};
 use spin::{Mutex, MutexGuard};
@@ -155,7 +156,9 @@ impl<'b, const N: usize> BufferPool<'b, N> {
 }
 
 /// GBL_BOOT_MEMORY_PROTOCOL
-struct GblBootMemoryProtocol;
+pub struct GblBootMemoryProtocol;
+
+versioned_protocol!(GblBootMemoryProtocol, GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION);
 
 impl ProtocolInfo for GblBootMemoryProtocol {
     type InterfaceType = GblEfiBootMemoryProtocol;
