@@ -183,12 +183,10 @@ fn zircon_verify_kernel_internal<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>(
 mod test {
     use super::*;
     use crate::{
-        fuchsia_boot::{
-            test::{
-                append_cmd_line, corrupt_data, create_gbl_ops, create_storage, normalize_zbi,
-                read_test_data, TEST_ROLLBACK_INDEX_LOCATION, ZIRCON_A_ZBI_FILE,
-            },
-            ZIRCON_KERNEL_ALIGN,
+        constants::ZIRCON_KERNEL_ALIGNMENT,
+        fuchsia_boot::test::{
+            append_cmd_line, corrupt_data, create_gbl_ops, create_storage, normalize_zbi,
+            read_test_data, TEST_ROLLBACK_INDEX_LOCATION, ZIRCON_A_ZBI_FILE,
         },
         ops::test::FakeGblOps,
     };
@@ -200,7 +198,7 @@ mod test {
     #[test]
     fn copy_items_after_kernel_success() {
         let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load_buffer = AlignedBuffer::new(zbi.len() + 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(zbi.len() + 1024, ZIRCON_KERNEL_ALIGNMENT);
         load_buffer[..zbi.len()].clone_from_slice(zbi);
         // Add items that will be copied
         append_cmd_line(&mut load_buffer, b"vb_prop_0=val\0");
@@ -293,7 +291,7 @@ mod test {
     ) -> GblResult<(AlignedBuffer, AlignedBuffer)> {
         // Create the [AlignedBuffer] objects for the load buffer and ZBI items.
         let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGNMENT);
         load_buffer[..zbi.len()].clone_from_slice(zbi);
         let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
 

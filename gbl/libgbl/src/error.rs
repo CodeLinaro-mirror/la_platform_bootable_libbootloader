@@ -76,20 +76,14 @@ macro_rules! composite_enum {
         }
 
         // Generate `From<...>` implementation.
-        composite_enum!{$name,  $($ent($ent_t)),*}
-    };
-    // `From<>` implementation generation. Base case.
-    ($name:ident, $ent:ident($ent_t:ty)) => {
-        impl From<$ent_t> for $name {
-            fn from(ent: $ent_t) -> $name {
-                $name::$ent(ent)
+        $(
+            $(#[$inner $($args)*])*
+            impl From<$ent_t> for $name {
+                fn from(ent: $ent_t) -> $name {
+                    $name::$ent(ent)
+                }
             }
-        }
-    };
-    // `From<>` implementation generation. Recursive case.
-    ($name:ident, $ent:ident($ent_t:ty), $($next:ident($next_t:ty)),+) => {
-        composite_enum!{$name, $ent($ent_t)}
-        composite_enum!{$name, $($next($next_t)),*}
+        )*
     };
 }
 
@@ -104,6 +98,7 @@ composite_enum! {
         /// SlotVerifyError is used without verify data.
         AvbSlotVerifyError(SlotVerifyError<'static>),
         UnificationError(liberror::Error),
+        #[cfg(feature = "fuchsia")]
         ZbiError(zbi::ZbiError),
         TryFromIntError(TryFromIntError),
     }

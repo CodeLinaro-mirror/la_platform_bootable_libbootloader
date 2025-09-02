@@ -174,6 +174,7 @@ mod test {
         num::NonZeroUsize,
         sync::atomic::{AtomicBool, AtomicU32, Ordering},
     };
+    #[cfg(feature = "fuchsia")]
     use zbi::ZbiContainer;
 
     // The thread-local atomics are an ugly, ugly hack to pass state between
@@ -278,10 +279,12 @@ mod test {
             Ok(None)
         }
 
+        #[cfg(feature = "fuchsia")]
         fn zircon_add_device_zbi_items(&mut self, _: &mut ZbiContainer<&mut [u8]>) -> Result<()> {
             unimplemented!();
         }
 
+        #[cfg(feature = "fuchsia")]
         fn get_zbi_bootloader_files_buffer(&mut self) -> Option<&mut [u8]> {
             None
         }

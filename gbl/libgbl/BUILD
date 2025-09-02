@@ -20,12 +20,31 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-rust_library(
-    name = "libgbl",
+filegroup(
+    name = "libgbl_prod_files",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = [
+            "tests/**/*.rs",
+            "fuchsia_boot/**/*.rs",
+        ],
+    ),
+)
+
+filegroup(
+    name = "libgbl_dev_files",
     srcs = glob(
         ["src/**/*.rs"],
         exclude = ["tests/**/*.rs"],
     ),
+)
+
+rust_library(
+    name = "libgbl",
+    srcs = select({
+        "@gbl//toolchain:dev": [":libgbl_dev_files"],
+        "@gbl//toolchain:prod": [":libgbl_prod_files"],
+    }),
     aliases = {"@itertools_noalloc": "itertools_noalloc"},
     edition = "2021",
     proc_macro_deps = ["@gbl//libprofile:libprofile_macros"],
@@ -57,10 +76,14 @@ rust_library(
         "@lz4_flex",
         "@static_assertions",
         "@uuid",
-        "@zbi",
         "@zerocopy",
         "@zune_inflate",
-    ],
+    ] + select({
+        "@gbl//toolchain:dev": [
+            "@zbi",
+        ],
+        "@gbl//toolchain:prod": [],
+    }),
 )
 
 rust_test(

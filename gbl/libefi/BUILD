@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@gbl//toolchain:gbl_toolchain.bzl", "dev_test")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load(
     "@rules_cc//cc:defs.bzl",
@@ -109,8 +110,17 @@ rust_test(
         "@avb//:libavb_c_sha_staticlib",
         "@gbl//libavb:sysdeps",
         "@gbl//libboringssl:sysdeps",
-        "@zbi",
-    ],
+    ] + select({
+        "@gbl//toolchain:dev": [
+            "@zbi",
+        ],
+        "@gbl//toolchain:prod": [],
+    }),
+)
+
+dev_test(
+    name = "libefi_test_dev",
+    target = "libefi_test",
 )
 
 rust_library(

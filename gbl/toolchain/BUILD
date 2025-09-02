@@ -81,9 +81,10 @@ constraint_value(
 # This is intended to be used inside a `select()` statement.
 rustc_dev_prod_flags_select = {
     # Enable the "gbl_dev" feature for all dev targets.
+    # Enable the "fuchsia" feature for all dev targets.
     ":dev": [
-        "--cfg",
-        "feature=\"gbl_dev\"",
+        "--cfg=feature=\"gbl_dev\"",
+        "--cfg=feature=\"fuchsia\"",
     ],
     # Prod is the absence of the dev feature.
     # Rust features should be additive; in this case we consider prod to be

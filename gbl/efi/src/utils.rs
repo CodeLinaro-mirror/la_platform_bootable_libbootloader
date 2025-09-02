@@ -30,12 +30,14 @@ use efi::{
     utils::Timeout,
     DeviceHandle, EfiEntry,
 };
+#[cfg(any(target_arch = "x86_64", feature = "fuchsia"))]
+use efi_types::EfiMemoryType;
 use efi_types::{
-    EfiGuid, EfiInputKey, EfiMemoryType, GblEfiBootBufferType,
-    GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD, GBL_EFI_BOOT_BUFFER_TYPE_FDT,
-    GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
-    GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA, GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_IMAGE_TYPE_FASTBOOT,
-    GBL_IMAGE_TYPE_OS_LOAD, GBL_IMAGE_TYPE_PVMFW_DATA,
+    EfiGuid, EfiInputKey, GblEfiBootBufferType, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD,
+    GBL_EFI_BOOT_BUFFER_TYPE_FDT, GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD,
+    GBL_EFI_BOOT_BUFFER_TYPE_KERNEL, GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA,
+    GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_IMAGE_TYPE_FASTBOOT, GBL_IMAGE_TYPE_OS_LOAD,
+    GBL_IMAGE_TYPE_PVMFW_DATA,
 };
 use fdt::FdtHeader;
 use liberror::Error;
@@ -162,6 +164,7 @@ pub fn wait_key_stroke(
 }
 
 // Converts an EFI memory type to a zbi_mem_range_t type.
+#[cfg(feature = "fuchsia")]
 pub(crate) fn efi_to_zbi_mem_range_type(efi_mem_type: EfiMemoryType) -> u32 {
     match efi_mem_type {
         efi_types::EFI_MEMORY_TYPE_LOADER_CODE

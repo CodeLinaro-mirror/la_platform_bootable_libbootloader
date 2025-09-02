@@ -48,6 +48,7 @@ use core::arch::asm;
 use core::mem::size_of;
 use core::slice::from_raw_parts_mut;
 use liberror::{Error, Result};
+#[cfg(feature = "fuchsia")]
 use zbi::ZbiContainer;
 
 pub use x86_bootparam_defs::{boot_params, e820entry, setup_header};
@@ -267,6 +268,7 @@ where
 /// SAFETY:
 /// Caller must ensure `entry` is valid entry point for kernel.
 /// Caller must ensure `data` is valid ZBI data and is 4K aligned.
+#[cfg(feature = "fuchsia")]
 pub unsafe fn zbi_boot_raw(entry: usize, data: &[u8]) -> ! {
     // Clears stack pointers, interrupt and jumps to protected mode kernel.
     // SAFETY: By safety requirement of this function, input contains a valid ZBI kernel.
@@ -290,6 +292,7 @@ pub unsafe fn zbi_boot_raw(entry: usize, data: &[u8]) -> ! {
 /// SAFETY:
 /// Caller must ensure `kernel` is valid ZBI kernel and is 4K aligned.
 /// Caller must ensure `data` is valid ZBI data and is 4K aligned.
+#[cfg(feature = "fuchsia")]
 pub unsafe fn zbi_boot(kernel: &[u8], data: &[u8]) -> ! {
     let (entry, _) =
         ZbiContainer::parse(kernel).unwrap().get_kernel_entry_and_reserved_memory_size().unwrap();

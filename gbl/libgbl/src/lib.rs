@@ -33,6 +33,7 @@
 extern crate avb;
 extern crate core;
 extern crate gbl_storage;
+#[cfg(feature = "fuchsia")]
 extern crate zbi;
 
 use avb::{HashtreeErrorMode, SlotVerifyData, SlotVerifyFlags};
@@ -45,10 +46,12 @@ pub mod decompress;
 pub mod device_tree;
 pub mod error;
 pub mod fastboot;
-pub mod fuchsia_boot;
 pub mod gbl_avb;
 pub mod ops;
 pub mod partition;
+
+#[cfg(feature = "fuchsia")]
+pub mod fuchsia_boot;
 
 /// The 'slots' module, containing types and traits for
 /// querying and modifying slotted boot behavior.

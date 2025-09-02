@@ -78,7 +78,6 @@ rust_library(
     deps = [
         "@gbl//liberror",
         "@gbl//libsafemath",
-        "@zbi",
         "@zerocopy",
     ] + select({
         "@gbl//toolchain:gbl_rust_uefi_aarch64": [
@@ -91,5 +90,8 @@ rust_library(
         "@gbl//toolchain:gbl_rust_uefi_x86_64_debug": [":x86_bootparam_defs"],
         "@gbl//toolchain:gbl_rust_host_x86_64": [":x86_bootparam_defs"],
         "//conditions:default": [],
+    }) + select({
+        "@gbl//toolchain:prod": [],
+        "@gbl//toolchain:dev": ["@zbi"],
     }),
 )

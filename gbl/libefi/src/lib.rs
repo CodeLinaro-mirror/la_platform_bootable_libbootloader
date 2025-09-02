@@ -194,6 +194,7 @@ pub const EFI_GLOBAL_VARIABLE_GUID: EfiGuid =
 /// The value of the variable is ignored: if the variable is present,
 /// it indicates that the bootloader should attempt to boot a Fuchsia target.
 /// This may include reinitializing GPT partitions and partition contents.
+#[cfg(feature = "fuchsia")]
 pub const GBL_EFI_OS_BOOT_TARGET_VARNAME: &str = "gbl_os_boot_fuchsia";
 
 /// Creates an `EfiEntry` and initialize EFI global allocator.
@@ -2235,7 +2236,12 @@ mod test {
 
             efi_call_traces().with(|trace| {
                 let out_str = trace.borrow().console_out_trace.as_single_string();
-                assert_eq!(out_str, "");
+                let expected_output = if cfg!(feature = "gbl_dev") {
+                    "Optional protocol not found: EfiTestProtocol\r\n"
+                } else {
+                    ""
+                };
+                assert_eq!(out_str, expected_output);
             });
         });
     }

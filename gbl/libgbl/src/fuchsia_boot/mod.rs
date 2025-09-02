@@ -32,10 +32,6 @@ use vboot::zircon_verify_kernel;
 mod load;
 pub use load::{zircon_load_verify_abr_with_buffer, zircon_main, LoadedVerifiedZircon};
 
-/// Kernel load address alignment. Value taken from
-/// https://fuchsia.googlesource.com/fuchsia/+/4f204d8a0243e84a86af4c527a8edcc1ace1615f/zircon/kernel/target/arm64/boot-shim/BUILD.gn#38
-pub const ZIRCON_KERNEL_ALIGN: usize = 64 * 1024;
-
 const DURABLE_BOOT_PARTITION: &str = "durable_boot";
 const MISC_PARTITION: &str = "misc";
 const ABR_PARTITION_ALIASES: &[&str] = &[DURABLE_BOOT_PARTITION, MISC_PARTITION];
@@ -263,9 +259,12 @@ pub fn zircon_check_enter_fastboot<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) -> boo
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use crate::ops::{
-        test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
-        CertPermanentAttributes, RebootMode,
+    use crate::{
+        constants::ZIRCON_KERNEL_ALIGNMENT,
+        ops::{
+            test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
+            CertPermanentAttributes, RebootMode,
+        },
     };
     use abr::{
         mark_slot_active, mark_slot_unbootable, set_one_shot_bootloader, ABR_MAX_TRIES_REMAINING,
@@ -405,7 +404,7 @@ pub(crate) mod test {
         // Verifies kernel
         assert_eq!(normalize_zbi(expected_kernel), normalize_zbi(kernel.used_mut()));
         // Kernel is at aligned address
-        assert_eq!(kernel.used_mut().as_ptr() as usize % ZIRCON_KERNEL_ALIGN, 0);
+        assert_eq!(kernel.used_mut().as_ptr() as usize % ZIRCON_KERNEL_ALIGNMENT, 0);
 
         // Verifies that the slot successful flag is passed correctly.
         // Unsuccessful slot, rollback not updated.
@@ -450,7 +449,8 @@ pub(crate) mod test {
             let mut zbi_items_buffer_vec = Vec::new();
             let mut zbi_zircon_buffer_vec = Vec::new();
             for _ in 0..number {
-                zbi_zircon_buffer_vec.push(AlignedBuffer::new_uninit(size, ZIRCON_KERNEL_ALIGN));
+                zbi_zircon_buffer_vec
+                    .push(AlignedBuffer::new_uninit(size, ZIRCON_KERNEL_ALIGNMENT));
                 zbi_items_buffer_vec.push(AlignedBuffer::new_uninit(size, ZBI_ALIGNMENT_USIZE));
             }
 
@@ -608,8 +608,8 @@ pub(crate) mod test {
     ) -> (Vec<u8>, AlignedBuffer, AlignedBuffer, AlignedBuffer) {
         // Read the (possibly modified) ZBI from disk.
         let zbi = ops.copy_partition(part);
-        let sz = ZIRCON_KERNEL_ALIGN + zbi.len() + TEST_KERNEL_RESERVED_MEMORY_SIZE;
-        let load_buffer = AlignedBuffer::new(sz, ZIRCON_KERNEL_ALIGN);
+        let sz = ZIRCON_KERNEL_ALIGNMENT + zbi.len() + TEST_KERNEL_RESERVED_MEMORY_SIZE;
+        let load_buffer = AlignedBuffer::new(sz, ZIRCON_KERNEL_ALIGNMENT);
         let expected_kernel = AlignedBuffer::new_with_data(&zbi, ZBI_ALIGNMENT_USIZE);
         // Adds extra bytes for device ZBI items.
         let mut expected_zbi_items = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);

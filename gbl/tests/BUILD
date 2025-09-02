@@ -47,6 +47,7 @@ build_and_run_tests(
         "@gbl//libdttable:libdttable_test",
         "@gbl//libefi:efi_avb_test",
         "@gbl//libefi:libefi_test",
+        "@gbl//libefi:libefi_test_dev",
         "@gbl//libefi:mocks_test",
         "@gbl//libefi_types:gbl_protocols_license_test",
         "@gbl//libefi_types:libefi_types_test",
@@ -61,6 +62,5 @@ build_and_run_tests(
         "@gbl//libstorage:libstorage_test",
         "@gbl//libutils:test",
         "@gbl//libutils:testutils_test",
-        "@zbi//:zbi_test",
     ],
 )

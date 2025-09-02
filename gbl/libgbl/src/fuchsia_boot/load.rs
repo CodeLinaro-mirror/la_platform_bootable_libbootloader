@@ -14,12 +14,11 @@
 
 use crate::{
     android_boot::GblFastbootEntry,
-    constants::PAGE_SIZE,
+    constants::{PAGE_SIZE, ZIRCON_KERNEL_ALIGNMENT},
     fastboot::LoadedImageInfo,
     fuchsia_boot::{
         fixup_zbi_items, read_zircon_image, vboot::zircon_verify_kernel_in_place,
         zbi_split_unused_buffer_mut, zircon_check_enter_fastboot, zircon_part_name, GblAbrOps,
-        ZIRCON_KERNEL_ALIGN,
     },
     gbl_println,
     ops::RebootMode,
@@ -34,10 +33,10 @@ use zerocopy::IntoBytes;
 
 /// Relocates a ZBI kernel to a different buffer.
 ///
-/// * `dest` must be aligned to `ZIRCON_KERNEL_ALIGN`.
+/// * `dest` must be aligned to `ZIRCON_KERNEL_ALIGNMENT`.
 /// * `dest` will be a ZBI container containing only the kernel item.
 fn relocate_kernel(kernel: &[u8], dest: &mut [u8]) -> GblResult<()> {
-    if (dest.as_ptr() as usize % ZIRCON_KERNEL_ALIGN) != 0 {
+    if (dest.as_ptr() as usize % ZIRCON_KERNEL_ALIGNMENT) != 0 {
         return Err(Error::InvalidAlignment.into());
     }
 
@@ -70,9 +69,9 @@ fn relocate_kernel(kernel: &[u8], dest: &mut [u8]) -> GblResult<()> {
 fn relocate_to_tail(kernel: &mut [u8]) -> GblResult<(&mut [u8], &mut [u8])> {
     let reloc_size = ZbiContainer::parse(&kernel[..])?.get_buffer_size_for_kernel_relocation()?;
     let (original, relocated) = zbi_split_unused_buffer_mut(kernel)?;
-    let relocated = aligned_subslice(relocated, ZIRCON_KERNEL_ALIGN)?;
+    let relocated = aligned_subslice(relocated, ZIRCON_KERNEL_ALIGNMENT)?;
     let off = (SafeNum::from(relocated.len()) - reloc_size)
-        .round_down(ZIRCON_KERNEL_ALIGN)
+        .round_down(ZIRCON_KERNEL_ALIGNMENT)
         .try_into()
         .map_err(Error::from)?;
     let relocated = &mut relocated[off..];
@@ -289,7 +288,7 @@ mod test {
     fn test_zircon_main_unsuccessful_slot(slot: SlotIndex) {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         set_next_boot_slot(&mut ops, slot);
         let LoadedVerifiedZircon { zbi_items, kernel, slot: booted_slot } =
             zircon_main(&mut ops, &mut load_buffer[..], |_| {}).unwrap();
@@ -338,7 +337,7 @@ mod test {
     fn test_zircon_main_successful_slot(slot: SlotIndex) {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         mark_slot_active(&mut GblAbrOps(&mut ops), slot).unwrap();
         mark_slot_successful(&mut GblAbrOps(&mut ops), slot).unwrap();
         let LoadedVerifiedZircon { zbi_items, kernel, slot: booted_slot } =
@@ -365,7 +364,7 @@ mod test {
         let part = format!("zircon_{}", char::from(slot));
         // Corrupt offset = 64. Skips the ZBI header
         ops.flip_partition_bytes(&part, 64, 1);
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         set_next_boot_slot(&mut ops, slot);
         let _ = mark_slot_successful(&mut GblAbrOps(&mut ops), slot);
         assert!(zircon_main(&mut ops, &mut load_buffer[..], |_| {}).is_err());
@@ -394,7 +393,7 @@ mod test {
         ops.avb_ops
             .rollbacks
             .insert(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_VALUE + 1));
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         set_next_boot_slot(&mut ops, slot);
         let _ = mark_slot_successful(&mut GblAbrOps(&mut ops), slot);
         assert!(zircon_main(&mut ops, &mut load_buffer[..], |_| {}).is_err());
@@ -432,7 +431,7 @@ mod test {
         ops.avb_ops
             .rollbacks
             .insert(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_VALUE + 1));
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         set_next_boot_slot(&mut ops, slot);
         let LoadedVerifiedZircon { zbi_items, kernel, slot: booted_slot } =
             zircon_main(&mut ops, &mut load_buffer[..], |_| {}).unwrap();
@@ -480,7 +479,7 @@ mod test {
         ops.avb_device_status.is_unlocked = true;
         let part = format!("vbmeta_{}", char::from(slot));
         ops.flip_partition_bytes(&part, 0, 64);
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         set_next_boot_slot(&mut ops, slot);
         let LoadedVerifiedZircon { zbi_items, kernel, slot: booted_slot } =
             zircon_main(&mut ops, &mut load_buffer[..], |_| {}).unwrap();
@@ -535,7 +534,7 @@ mod test {
         let listener = SharedTestListener::default();
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         let bootimg = read_test_data("zircon_fastboot_bootimg");
         set_next_boot_slot(&mut ops, slot);
         let LoadedVerifiedZircon { zbi_items, kernel, slot: booted_slot } =
@@ -580,7 +579,7 @@ mod test {
         let listener = SharedTestListener::default();
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         let mut bootimg = read_test_data("zircon_fastboot_bootimg");
         bootimg[4096 + 64] = !bootimg[4096 + 64];
         let LoadedVerifiedZircon { zbi_items, kernel, .. } =
@@ -610,7 +609,7 @@ mod test {
         ops.avb_ops
             .rollbacks
             .insert(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_VALUE + 1));
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         let bootimg = read_test_data("zircon_fastboot_bootimg");
         assert!(
             zircon_main_fastboot_boot(&mut ops, &mut load_buffer[..], &bootimg, &listener).is_err()
@@ -639,7 +638,7 @@ mod test {
         ops.avb_ops
             .rollbacks
             .insert(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_VALUE + 1));
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         let bootimg = read_test_data("zircon_fastboot_bootimg");
         let LoadedVerifiedZircon { zbi_items, kernel, .. } =
             zircon_main_fastboot_boot(&mut ops, &mut load_buffer[..], &bootimg, &listener).unwrap();
@@ -670,7 +669,7 @@ mod test {
         ops.avb_ops
             .rollbacks
             .insert(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_VALUE + 1));
-        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGN);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         let mut bootimg = read_test_data("zircon_fastboot_bootimg");
         let kernel_len = read_test_data("zircon_slotless.zbi").len();
         println!("kernel_len: {kernel_len}, bootimg: {}", bootimg.len());

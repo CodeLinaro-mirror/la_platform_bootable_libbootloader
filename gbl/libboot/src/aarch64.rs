@@ -17,6 +17,7 @@
 //!   https://www.kernel.org/doc/html/v5.11/arm64/booting.html
 
 use core::arch::asm;
+#[cfg(feature = "fuchsia")]
 use zbi::ZbiContainer;
 
 /// ARM exception levels.
@@ -144,6 +145,7 @@ pub unsafe fn jump_linux_el2_or_lower(kernel: &[u8], ramdisk: &[u8], fdt: &[u8])
 /// # Safety
 ///
 /// Caller must ensure that `zbi_kernel` contains a valid zircon kernel ZBI item.
+#[cfg(feature = "fuchsia")]
 pub unsafe fn jump_zircon_el2_or_lower(kernel: &[u8], zbi_item: &[u8]) -> ! {
     assert_ne!(current_el(), ExceptionLevel::EL3);
     let (entry, _) =

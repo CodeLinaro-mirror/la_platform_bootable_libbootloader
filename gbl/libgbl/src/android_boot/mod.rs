@@ -49,6 +49,7 @@ pub mod vboot;
 pub use vboot::{avb_verify_slot, PartitionsToVerify};
 
 pub(crate) mod load;
+#[cfg(feature = "fuchsia")]
 pub(crate) use load::get_kernel;
 use load::{android_load_verified, BootBufferLoader, SlotSuffix};
 

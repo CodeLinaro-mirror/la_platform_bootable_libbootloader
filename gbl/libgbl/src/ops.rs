@@ -14,10 +14,11 @@
 
 //! GblOps trait that defines GBL callbacks.
 
+#[cfg(feature = "fuchsia")]
+use crate::fuchsia_boot::GblAbrOps;
 use crate::{
     constants::ImageType,
     error::Result as GblResult,
-    fuchsia_boot::GblAbrOps,
     gbl_avb::state::{KeyValidationStatus, VerificationStatus},
     gbl_println,
     partition::{
@@ -26,11 +27,12 @@ use crate::{
     },
 };
 pub use crate::{constants::Partition, image_buffer::ImageBuffer};
-pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
+pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, Ops as AbrOps, SlotIndex};
 use bytes::buf::UninitSlice;
 use core::{ffi::CStr, fmt::Write, num::NonZeroUsize, ops::DerefMut, result::Result};
 use gbl_async::block_on;
 use libprofile::ProfileBackend;
+#[cfg(feature = "fuchsia")]
 use libutils::aligned_subslice;
 
 // Re-exports of types from other dependencies that appear in the APIs of this library.
@@ -41,6 +43,7 @@ pub use fastboot::{FailSender, InfoSender, LockState, LockType, OkaySender};
 pub use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
 pub use slots::{Slot, SlotsMetadata};
+#[cfg(feature = "fuchsia")]
 pub use zbi::{ZbiContainer, ZBI_ALIGNMENT_USIZE};
 
 use super::device_tree;
@@ -140,6 +143,7 @@ pub trait GblOps<'a, 'd> {
     /// On success, returns a closure that performs the reboot.
     fn reboot_recovery(&mut self) -> Result<impl FnOnce() + '_, Error> {
         match self.set_reboot_mode(RebootMode::Recovery) {
+            #[cfg(feature = "fuchsia")]
             Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => {
                 set_one_shot_recovery(&mut GblAbrOps(self), true)?;
             }
@@ -154,6 +158,7 @@ pub trait GblOps<'a, 'd> {
     /// On success, returns a closure that performs the reboot.
     fn reboot_bootloader(&mut self) -> Result<impl FnOnce() + '_, Error> {
         match self.set_reboot_mode(RebootMode::Bootloader) {
+            #[cfg(feature = "fuchsia")]
             Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => {
                 set_one_shot_bootloader(&mut GblAbrOps(self), true)?;
             }
@@ -239,12 +244,14 @@ pub trait GblOps<'a, 'd> {
     fn expected_os(&mut self) -> Result<Option<Os>, Error>;
 
     /// Returns if the expected_os is fuchsia
+    #[cfg(feature = "fuchsia")]
     fn expected_os_is_fuchsia(&mut self) -> Result<bool, Error> {
         // TODO(b/374776896): Implement auto detection.
         Ok(self.expected_os()?.map(|v| v == Os::Fuchsia).unwrap_or(false))
     }
 
     /// Adds device specific ZBI items to the given `container`
+    #[cfg(feature = "fuchsia")]
     fn zircon_add_device_zbi_items(
         &mut self,
         container: &mut ZbiContainer<&mut [u8]>,
@@ -255,10 +262,12 @@ pub trait GblOps<'a, 'd> {
     /// Fuchsia uses bootloader file for staging SSH key in development flow.
     ///
     /// Returns `None` if the platform does not intend to support it.
+    #[cfg(feature = "fuchsia")]
     fn get_zbi_bootloader_files_buffer(&mut self) -> Option<&mut [u8]>;
 
     /// Gets the aligned part of buffer returned by `get_zbi_bootloader_files_buffer()` according to
     /// ZBI alignment requirement.
+    #[cfg(feature = "fuchsia")]
     fn get_zbi_bootloader_files_buffer_aligned(&mut self) -> Option<&mut [u8]> {
         aligned_subslice(self.get_zbi_bootloader_files_buffer()?, ZBI_ALIGNMENT_USIZE).ok()
     }
@@ -557,6 +566,7 @@ pub trait GblOps<'a, 'd> {
     fn slot_count(&mut self) -> Result<usize, Error> {
         Ok(match self.slots_metadata() {
             Ok(v) => v.slot_count,
+            #[cfg(feature = "fuchsia")]
             Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => 2,
             Err(Error::Unsupported) => 0,
             Err(e) => return Err(e.into()),
@@ -717,6 +727,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.expected_os()
     }
 
+    #[cfg(feature = "fuchsia")]
     fn zircon_add_device_zbi_items(
         &mut self,
         container: &mut ZbiContainer<&mut [u8]>,
@@ -724,6 +735,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.zircon_add_device_zbi_items(container)
     }
 
+    #[cfg(feature = "fuchsia")]
     fn get_zbi_bootloader_files_buffer(&mut self) -> Option<&mut [u8]> {
         self.ops.get_zbi_bootloader_files_buffer()
     }
@@ -994,6 +1006,7 @@ pub(crate) mod test {
     use crate::device_tree::DeviceTreeComponentType;
     use crate::error::IntegrationError;
     use crate::partition::GblDisk;
+    #[cfg(feature = "fuchsia")]
     use abr::{get_and_clear_one_shot_bootloader, get_boot_slot};
     use avb::{CertOps, Ops};
     use avb_test::TestOps as AvbTestOps;
@@ -1013,6 +1026,7 @@ pub(crate) mod test {
         collections::{HashMap, LinkedList},
         ffi::CString,
     };
+    #[cfg(feature = "fuchsia")]
     use zbi::{ZbiFlags, ZbiType};
 
     /// Type of [GblDisk] in tests.
@@ -1094,6 +1108,7 @@ pub(crate) mod test {
         pub stop_in_fastboot: Option<Result<bool, Error>>,
 
         /// For returned by `fn get_zbi_bootloader_files_buffer()`
+        #[cfg(feature = "fuchsia")]
         pub zbi_bootloader_files_buffer: Vec<u8>,
 
         /// For checking that `Self::reboot` is called.
@@ -1212,8 +1227,11 @@ pub(crate) mod test {
         /// For now we've just hardcoded the `zircon_add_device_zbi_items()` callback to add a
         /// single commandline ZBI item with these contents; if necessary we can generalize this
         /// later and allow tests to configure the ZBI modifications.
+        #[cfg(feature = "fuchsia")]
         pub const ADDED_ZBI_COMMANDLINE_CONTENTS: &'static [u8] = b"test_zbi_item";
+        #[cfg(feature = "fuchsia")]
         pub const TEST_BOOTLOADER_FILE_1: &'static [u8] = b"\x06test_1foo";
+        #[cfg(feature = "fuchsia")]
         pub const TEST_BOOTLOADER_FILE_2: &'static [u8] = b"\x06test_2bar";
         pub const GBL_TEST_VAR: &'static str = "gbl-test-var";
         pub const GBL_TEST_VAR_VAL: &'static str = "gbl-test-var-val";
@@ -1229,13 +1247,17 @@ pub(crate) mod test {
         pub const TEST_CUSTOM_FDT_FIXUP_PROP: &'static CStr = c"test-fixup";
 
         pub fn new(partitions: &'a [TestGblDisk]) -> Self {
+            #[cfg_attr(not(feature = "fuchsia"), allow(unused_mut))]
             let mut res = Self {
                 partitions,
+                #[cfg(feature = "fuchsia")]
                 zbi_bootloader_files_buffer: vec![0u8; 32 * 1024],
                 ..Default::default()
             };
+            #[cfg(feature = "fuchsia")]
             let mut container =
                 ZbiContainer::new(res.get_zbi_bootloader_files_buffer_aligned().unwrap()).unwrap();
+            #[cfg(feature = "fuchsia")]
             for ele in [Self::TEST_BOOTLOADER_FILE_1, Self::TEST_BOOTLOADER_FILE_2] {
                 container
                     .create_entry_with_payload(ZbiType::BootloaderFile, 0, ZbiFlags::default(), ele)
@@ -1251,6 +1273,7 @@ pub(crate) mod test {
         /// a more convenient API using [Vec].
         ///
         /// Panics if the given partition name doesn't exist.
+        #[cfg(feature = "fuchsia")]
         pub fn copy_partition(&mut self, name: &str) -> Vec<u8> {
             let mut contents =
                 vec![0u8; self.partition_size(name).unwrap().unwrap().try_into().unwrap()];
@@ -1259,6 +1282,7 @@ pub(crate) mod test {
         }
 
         /// Flips a range of bytes on the given partition.
+        #[cfg(feature = "fuchsia")]
         pub fn flip_partition_bytes(&mut self, name: &str, off: u64, sz: usize) {
             let mut contents = vec![0u8; sz];
             self.read_from_partition_sync(name, off, &mut contents[..]).unwrap();
@@ -1316,6 +1340,7 @@ pub(crate) mod test {
             Ok(self.os)
         }
 
+        #[cfg(feature = "fuchsia")]
         fn zircon_add_device_zbi_items(
             &mut self,
             container: &mut ZbiContainer<&mut [u8]>,
@@ -1331,6 +1356,7 @@ pub(crate) mod test {
             Ok(())
         }
 
+        #[cfg(feature = "fuchsia")]
         fn get_zbi_bootloader_files_buffer(&mut self) -> Option<&mut [u8]> {
             Some(self.zbi_bootloader_files_buffer.as_mut_slice())
         }
@@ -1670,6 +1696,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_fuchsia_reboot_bootloader_abr() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
@@ -1682,6 +1709,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_fuchsia_reboot_bootloader_via_set_reboot_mode() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
@@ -1705,6 +1733,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_fuchsia_reboot_recovery_abr() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
@@ -1719,6 +1748,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_fuchsia_reboot_recovery_via_set_reboot_mode() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);

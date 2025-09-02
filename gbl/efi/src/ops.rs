@@ -19,10 +19,9 @@ use crate::{
     efi_blocks::EfiGblDisk,
     utils::{get_efi_fdt, wait_key_stroke},
 };
-use alloc::{
-    alloc::{alloc, handle_alloc_error, Layout},
-    vec::Vec,
-};
+use alloc::alloc::{alloc, handle_alloc_error, Layout};
+#[cfg(feature = "fuchsia")]
+use alloc::vec::Vec;
 use arrayvec::ArrayVec;
 use core::{
     ffi::CStr, fmt::Write, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut, ptr::null,
@@ -76,6 +75,7 @@ use libprofile::ProfileBackend;
 use safemath::SafeNum;
 use spin::Mutex;
 use static_assertions::const_assert_eq;
+#[cfg(feature = "fuchsia")]
 use zbi::ZbiContainer;
 use zerocopy::IntoBytes;
 
@@ -136,6 +136,7 @@ pub(crate) fn get_buffer_from_protocol(
 pub struct Ops<'a, 'b> {
     pub efi_entry: &'a EfiEntry,
     pub disks: &'b [EfiGblDisk<'a>],
+    #[cfg(feature = "fuchsia")]
     pub zbi_bootloader_files_buffer: Vec<u8>,
     pub os: Option<Os>,
     pub base_sp: usize,
@@ -149,7 +150,14 @@ impl<'a, 'b> Ops<'a, 'b> {
         os: Option<Os>,
         base_sp: usize,
     ) -> Self {
-        Self { efi_entry, disks, zbi_bootloader_files_buffer: Default::default(), os, base_sp }
+        Self {
+            efi_entry,
+            disks,
+            #[cfg(feature = "fuchsia")]
+            zbi_bootloader_files_buffer: Default::default(),
+            os,
+            base_sp,
+        }
     }
 
     /// Gets the property of an FDT node from EFI FDT.
@@ -311,6 +319,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         Ok(self.os)
     }
 
+    #[cfg(feature = "fuchsia")]
     fn zircon_add_device_zbi_items(
         &mut self,
         container: &mut ZbiContainer<&mut [u8]>,
@@ -323,6 +332,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         })
     }
 
+    #[cfg(feature = "fuchsia")]
     fn get_zbi_bootloader_files_buffer(&mut self) -> Option<&mut [u8]> {
         // Switches to use get_image_buffer once available.
         const DEFAULT_SIZE: usize = 4096;

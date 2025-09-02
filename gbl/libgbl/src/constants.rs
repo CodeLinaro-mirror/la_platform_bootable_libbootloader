@@ -24,6 +24,7 @@ use core::{
 };
 use liberror::Error;
 use static_assertions::const_assert_eq;
+#[cfg(feature = "fuchsia")]
 use zbi::ZBI_ALIGNMENT_USIZE;
 
 /// Macro for defining Kibibyte-sized constants
@@ -79,8 +80,10 @@ type PartitionImageName = ArrayString<IMAGE_NAME_MAX_LEN>;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ImageType {
     /// ZBI for Zircon kernel
+    #[cfg(feature = "fuchsia")]
     ZbiZircon,
     /// ZBI items
+    #[cfg(feature = "fuchsia")]
     ZbiItems,
     /// Boot
     Boot,
@@ -98,7 +101,9 @@ impl ImageType {
     /// Get alignment required for the [ImageType]
     pub fn alignment(&self) -> usize {
         match self {
+            #[cfg(feature = "fuchsia")]
             Self::ZbiZircon => ZIRCON_KERNEL_ALIGNMENT,
+            #[cfg(feature = "fuchsia")]
             Self::ZbiItems => ZBI_ALIGNMENT_USIZE,
             Self::Boot => KERNEL_ALIGNMENT,
             Self::Fdt => FDT_ALIGNMENT,
@@ -111,7 +116,9 @@ impl ImageType {
     /// Get image name for the [ImageType]
     pub fn name(&self) -> &str {
         match self {
+            #[cfg(feature = "fuchsia")]
             ImageType::ZbiZircon => "zbi_zircon",
+            #[cfg(feature = "fuchsia")]
             ImageType::ZbiItems => "zbi_items",
             ImageType::Boot => "boot",
             ImageType::Fdt => "fdt",

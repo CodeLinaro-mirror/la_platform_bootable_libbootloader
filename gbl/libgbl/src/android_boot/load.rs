@@ -478,6 +478,7 @@ pub(crate) fn aligned_tail_offset(
 }
 
 /// Parses and returns the kernel image from a boot image.
+#[cfg(feature = "fuchsia")]
 pub fn get_kernel(boot: &[u8]) -> Result<&[u8], Error> {
     match BootImage::parse(&boot[..]).map_err(Error::from)? {
         BootImage::V3(_) | BootImage::V4(_) => boot.get(BootImageV3Info::new(boot)?.kernel_range),

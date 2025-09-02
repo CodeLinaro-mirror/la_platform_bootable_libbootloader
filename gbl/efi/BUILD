@@ -25,9 +25,25 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "libgbl_efi_prod_files",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/fuchsia_boot.rs"],
+    ),
+)
+
+filegroup(
+    name = "libgbl_efi_dev_files",
+    srcs = glob(["src/**/*.rs"]),
+)
+
 rust_library(
     name = "libgbl_efi",
-    srcs = glob(["src/**/*.rs"]),
+    srcs = select({
+        "@gbl//toolchain:dev": [":libgbl_efi_dev_files"],
+        "@gbl//toolchain:prod": [":libgbl_efi_prod_files"],
+    }),
     crate_name = "gbl_efi",
     proc_macro_deps = ["@gbl//libprofile:libprofile_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
@@ -35,6 +51,7 @@ rust_library(
         "@arrayvec",
         "@avb",
         "@bytes",
+        "@cfg_if",
         "@gbl//libasync",
         "@gbl//libasync:cyclic_executor",
         "@gbl//libboot",
@@ -51,10 +68,12 @@ rust_library(
         "@spin",
         "@static_assertions",
         "@uuid",
-        "@zbi",
         "@zerocopy",
     ] + select({
-        "@gbl//toolchain:dev": ["@smoltcp"],
+        "@gbl//toolchain:dev": [
+            "@smoltcp",
+            "@zbi",
+        ],
         "@gbl//toolchain:prod": [],
     }),
 )

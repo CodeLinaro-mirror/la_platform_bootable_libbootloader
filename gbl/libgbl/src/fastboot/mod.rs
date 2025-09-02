@@ -13,14 +13,17 @@
 // limitations under the License.
 
 //! Fastboot backend for libgbl.
+
+#[cfg(feature = "fuchsia")]
 use crate::{
-    android_boot::{
-        android_load_verify_fixup, get_boot_slot, get_kernel, load::sub_slice_range, BootBuffer,
-    },
+    android_boot::get_kernel,
     fuchsia_boot::{
         zbi_split_unused_buffer_ref, zircon_load_verify_abr_with_buffer, GblAbrOps,
         LoadedVerifiedZircon,
     },
+};
+use crate::{
+    android_boot::{android_load_verify_fixup, get_boot_slot, load::sub_slice_range, BootBuffer},
     gbl_println,
     ops::{FastbootEraseAction, RambootOps},
     partition::{check_part_unique, GblDisk, PartitionIo},
@@ -50,6 +53,7 @@ use liberror::Error;
 use libutils::snprintf;
 use libutils::FormattedBytes;
 use safemath::SafeNum;
+#[cfg(feature = "fuchsia")]
 use zbi::{ZbiContainer, ZbiType};
 
 pub(crate) mod vars;
@@ -158,6 +162,7 @@ pub enum LoadedImageInfo {
         kernel: Range<*const u8>,
     },
     /// Fuchsia loaded images.
+    #[cfg(feature = "fuchsia")]
     Fuchsia {
         /// Offset and length of ZBI items in `GblFastboot::load_buffer`.
         zbi_items: Range<usize>,
@@ -212,6 +217,7 @@ impl GblFastbootResult {
     /// Splits the given buffer into `(zbi_items, kernel)` according to layout info in
     /// `Self::loaded_image_info` if it is a `Some(LoadedImageInfo::Fuchsia)`. `load` should be the
     /// same buffer passed to GblFastboot.
+    #[cfg(feature = "fuchsia")]
     pub(crate) fn split_loaded_fuchsia<'a>(
         &self,
         load: &'a mut [u8],
@@ -480,7 +486,9 @@ where
         let window_size = next_arg_u64(&mut args)?;
         // Checks uniqueness of the partition and resolves its block device ID.
         let find = |p: Option<&'s str>| match blk_id {
-            None => Ok((check_part_unique(devs, p.ok_or("Must provide a partition")?)?, p)),
+            None => {
+                Ok::<_, Error>((check_part_unique(devs, p.ok_or("Must provide a partition")?)?, p))
+            }
             Some(v) => Ok(((v, devs[v].find_partition(p)?), p)),
         };
         let ((blk_id, partition), actual) = match find(part) {
@@ -491,6 +499,7 @@ where
             //
             // If we run into more of such legacy aliases that we can't migrate, consider adding
             // interfaces in GblOps for this.
+            #[cfg(feature = "fuchsia")]
             Err(Error::NotFound) if part == Some("fvm") => find(Some("fuchsia-fvm"))?,
             v => v?,
         };
@@ -609,6 +618,7 @@ where
     }
 
     /// Appends a staged payload as bootloader file.
+    #[cfg(feature = "fuchsia")]
     async fn add_staged_bootloader_file(&mut self, file_name: &str) -> CommandResult<()> {
         let buffer = self
             .gbl_ops
@@ -641,22 +651,23 @@ where
     /// Sets active slot.
     async fn set_active_slot(&mut self, slot: &str) -> CommandResult<()> {
         self.sync_all_blocks().await?;
-        match self.gbl_ops.expected_os_is_fuchsia()? {
+
+        #[cfg(feature = "fuchsia")]
+        if self.gbl_ops.expected_os_is_fuchsia()? {
             // TODO(b/374776896): Prioritizes platform specific `set_active_slot`  if available.
-            true => Ok(mark_slot_active(
+            return Ok(mark_slot_active(
                 &mut GblAbrOps(self.gbl_ops),
                 match slot {
                     "a" => SlotIndex::A,
                     "b" => SlotIndex::B,
                     _ => return Err("Invalid slot index for Fuchsia A/B/R".into()),
                 },
-            )?),
-            // We currently assume that slot indices are mapped to suffix 'a' to 'z' starting from
-            // 0. Revisit if we need to support arbitrary slot suffix to index mapping.
-            _ => Ok(self
-                .gbl_ops
-                .set_active_slot(u8::try_from(slot.chars().next().unwrap())? - b'a')?),
+            )?);
         }
+
+        // We currently assume that slot indices are mapped to suffix 'a' to 'z' starting from
+        // 0. Revisit if we need to support arbitrary slot suffix to index mapping.
+        Ok(self.gbl_ops.set_active_slot(u8::try_from(slot.chars().next().unwrap())? - b'a')?)
     }
 
     /// Helper for "fastboot boot" in Android image.
@@ -684,6 +695,7 @@ where
     }
 
     /// Helper for "fastboot boot" Fuchsia image.
+    #[cfg(feature = "fuchsia")]
     async fn boot_fuchsia(&mut self, img: &[u8], mut resp: impl InfoSender) -> CommandResult<()> {
         let load_buffer = &mut self.boot_buffer.general[..];
         let load_buffer_addr = load_buffer.as_ptr() as usize;
@@ -957,6 +969,7 @@ where
                     .await?;
                 Ok(())
             }
+            #[cfg(feature = "fuchsia")]
             "add-staged-bootloader-file" => {
                 let file_name = next_arg(&mut args).ok_or("Missing file name")?;
                 self.add_staged_bootloader_file(file_name).await?;
@@ -981,10 +994,12 @@ where
         // Re-sync preloaded partitions. Device state or disk content might have changed due to
         // flashing etc.
         self.gbl_ops.sync_partition_buffer(true)?;
-        match is_fuchsia_fastboot_boot_image(&img[..sz]) {
-            true => self.boot_fuchsia(&img[..sz], resp).await,
-            _ => self.boot_android(&img[..sz], resp).await,
+        #[cfg(feature = "fuchsia")]
+        if is_fuchsia_fastboot_boot_image(&img[..sz]) {
+            return self.boot_fuchsia(&img[..sz], resp).await;
         }
+
+        self.boot_android(&img[..sz], resp).await
     }
 
     async fn flashing_set_lock(
@@ -1056,6 +1071,7 @@ mod smash {
 }
 
 /// Helper to convert a offset and length to a range.
+#[cfg(feature = "fuchsia")]
 fn to_range(off: usize, len: usize) -> Range<usize> {
     off..off.checked_add(len).unwrap()
 }
@@ -1205,6 +1221,7 @@ pub fn fuchsia_fastboot_mdns_packet(node_name: &str, ipv6_addr: &[u8]) -> Result
 }
 
 /// Checks if a fastboot boot image is a fuchsia image.
+#[cfg(feature = "fuchsia")]
 fn is_fuchsia_fastboot_boot_image(img: &[u8]) -> bool {
     get_kernel(img).and_then(|v| ZbiContainer::parse(v).map_err(|_| Error::Other(None))).is_ok()
 }
@@ -1226,6 +1243,7 @@ pub(crate) mod test {
         slots::SlotsMetadata,
         Os,
     };
+    #[cfg(feature = "fuchsia")]
     use abr::{
         get_and_clear_one_shot_bootloader, get_boot_slot, mark_slot_unbootable, ABR_DATA_SIZE,
     };
@@ -1245,6 +1263,7 @@ pub(crate) mod test {
         ffi::CString,
         io::Read,
     };
+    #[cfg(feature = "fuchsia")]
     use zerocopy::IntoBytes;
 
     /// A test implementation of [InfoSender] and [OkaySender].
@@ -2381,6 +2400,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_oem_add_staged_bootloader_file() {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
@@ -2416,6 +2436,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_oem_add_staged_bootloader_file_missing_file_name() {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
@@ -2452,6 +2473,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_oem_add_staged_bootloader_file_missing_download() {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
@@ -2960,6 +2982,7 @@ pub(crate) mod test {
     }
 
     /// Helper for testing fastboot set_active in fuchsia A/B/R mode.
+    #[cfg(feature = "fuchsia")]
     fn test_run_gbl_fastboot_set_active_fuchsia_abr(slot_ch: char, slot: SlotIndex) {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; KiB!(4)]);
@@ -3017,16 +3040,19 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_run_gbl_fastboot_set_active_fuchsia_abr_a() {
         test_run_gbl_fastboot_set_active_fuchsia_abr('a', SlotIndex::A);
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_run_gbl_fastboot_set_active_fuchsia_abr_b() {
         test_run_gbl_fastboot_set_active_fuchsia_abr('b', SlotIndex::B);
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_run_gbl_fastboot_set_active_fuchsia_abr_invalid_slot() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; KiB!(4)]);
@@ -3119,6 +3145,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_run_gbl_fastboot_fuchsia_reboot_bootloader_abr() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; KiB!(4)]);
@@ -3158,6 +3185,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_run_gbl_fastboot_fuchsia_reboot_recovery_abr() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"durable_boot", [0x00u8; KiB!(4)]);
@@ -3199,6 +3227,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_legacy_fvm_partition_alias() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"fuchsia-fvm", [0x00u8; KiB!(4)]);
@@ -3467,6 +3496,7 @@ pub(crate) mod test {
     }
 
     #[test]
+    #[cfg(feature = "fuchsia")]
     fn test_fastboot_getvar_slot_count_fuchsia_abr_default() {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![vec![0u8; KiB!(128)]; 2];

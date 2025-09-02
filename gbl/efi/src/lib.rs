@@ -36,7 +36,7 @@ pub mod utils;
 mod android_boot;
 #[cfg(not(test))]
 mod fastboot;
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "fuchsia"))]
 mod fuchsia_boot;
 #[cfg(not(test))]
 mod net;
@@ -54,6 +54,7 @@ use {
         efi_blocks::{find_block_devices, EfiGblDisk},
         ops::Ops,
     },
+    cfg_if::cfg_if,
     efi::{efi_println, EfiEntry},
     libgbl::{Os, Result},
     utils::loaded_image_path,
@@ -62,30 +63,37 @@ use {
 #[cfg(not(test))]
 enum TargetOs {
     Android,
+    #[cfg(feature = "fuchsia")]
     Fuchsia,
 }
 
 #[cfg(not(test))]
-fn get_target_os(entry: &EfiEntry, disks: &[EfiGblDisk]) -> TargetOs {
-    let mut buf = [0u8; 1];
-    if entry
-        .system_table()
-        .runtime_services()
-        .get_variable(&efi::GBL_EFI_VENDOR_GUID, efi::GBL_EFI_OS_BOOT_TARGET_VARNAME, &mut buf)
-        .is_ok()
-    {
-        efi_println!(
-            entry,
-            "`{}` is set. Proceeding as Fuchsia.",
-            efi::GBL_EFI_OS_BOOT_TARGET_VARNAME
-        );
-        TargetOs::Fuchsia
-    } else if fuchsia_boot::is_fuchsia_gpt(disks).is_ok() {
-        efi_println!(entry, "Partition layout looks like Fuchsia. Proceeding as Fuchsia");
-        TargetOs::Fuchsia
-    } else {
-        efi_println!(entry, "Proceeding as Android");
-        TargetOs::Android
+fn get_target_os(_entry: &EfiEntry, _disks: &[EfiGblDisk]) -> TargetOs {
+    cfg_if! {
+        if #[cfg(feature = "fuchsia")] {
+            let mut buf = [0u8; 1];
+            if _entry
+                .system_table()
+                .runtime_services()
+                .get_variable(&efi::GBL_EFI_VENDOR_GUID, efi::GBL_EFI_OS_BOOT_TARGET_VARNAME, &mut buf)
+                .is_ok()
+            {
+                efi_println!(
+                    _entry,
+                    "`{}` is set. Proceeding as Fuchsia.",
+                    efi::GBL_EFI_OS_BOOT_TARGET_VARNAME
+                );
+                TargetOs::Fuchsia
+            } else if fuchsia_boot::is_fuchsia_gpt(_disks).is_ok() {
+                efi_println!(_entry, "Partition layout looks like Fuchsia. Proceeding as Fuchsia");
+                TargetOs::Fuchsia
+            } else {
+                efi_println!(_entry, "Proceeding as Android");
+                TargetOs::Android
+            }
+        } else {
+            TargetOs::Android
+        }
     }
 }
 
@@ -101,6 +109,7 @@ pub fn app_main(entry: EfiEntry) -> Result<()> {
 
     let disks = find_block_devices(&entry)?;
     match get_target_os(&entry, &disks) {
+        #[cfg(feature = "fuchsia")]
         TargetOs::Fuchsia => {
             let mut load = utils::get_boot_buffer(&entry, 128 * 1024 * 1024)?;
             let mut ops = Ops::new(&entry, &disks[..], Some(Os::Fuchsia), get_sp());
