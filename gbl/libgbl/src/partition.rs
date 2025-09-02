@@ -253,7 +253,10 @@ where
             PartitionTable::Raw(_, _) => Ok(None),
             PartitionTable::Gpt(ref mut gpt) => {
                 let mut blk = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
-                Ok(Some(blk.sync_gpt(gpt).await?))
+                // Don't repair GPT silently.
+                // TODO(b/441574159): Provides a mechanism for platform to configure whether GPT
+                // should be repaired.
+                Ok(Some(blk.sync_gpt(gpt, false).await?))
             }
         }
     }

@@ -550,7 +550,7 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
 
     /// Loads and syncs GPT from a block device.
     ///
-    /// The API validates and restores primary/secondary GPT header.
+    /// The API validates and optionally restores primary/secondary GPT header.
     ///
     /// # Returns
     ///
@@ -560,8 +560,9 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
     pub async fn sync_gpt(
         &mut self,
         gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
+        repair: bool,
     ) -> Result<GptSyncResult> {
-        gpt.load_and_sync(self).await
+        gpt.load_and_sync(self, repair).await
     }
 
     /// Updates GPT to the block device and sync primary and secondary GPT.

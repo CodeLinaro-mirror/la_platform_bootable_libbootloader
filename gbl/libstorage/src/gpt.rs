@@ -432,9 +432,13 @@ pub enum GptSyncResult {
     /// Both primary and secondary GPT are valid.
     #[default]
     BothValid,
-    /// Primary GPT is invalid and restored.
+    /// Secondary GPT is valid. Primary GPT is invalid.
+    PrimaryError(Error),
+    /// Secondary GPT is valid. Primary GPT is invalid and restored.
     PrimaryRestored(Error),
-    /// Secondary GPT is invalid and restored.
+    /// Primary GPT is valid. Secondary GPT is invalid.
+    SecondaryError(Error),
+    /// Primary GPT is valid. Secondary GPT is invalid and restored.
     SecondaryRestored(Error),
     /// Neither primary or secondary GPT is valid.
     NoValidGpt {
@@ -459,8 +463,14 @@ impl core::fmt::Display for GptSyncResult {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::BothValid => write!(f, "Found valid GPT."),
-            Self::PrimaryRestored(e) => write!(f, "Primary GPT restored due to {e:?}."),
-            Self::SecondaryRestored(e) => write!(f, "Secondary GPT restored due to {e:?}."),
+            Self::PrimaryError(e) => write!(f, "Found secondary GPT. Bad primary GPT {e:?}."),
+            Self::PrimaryRestored(e) => {
+                write!(f, "Found secondary GPT. Restored bad primary GPT {e:?}.")
+            }
+            Self::SecondaryError(e) => write!(f, "Found primary GPT. Bad secondary GPT {e:?}."),
+            Self::SecondaryRestored(e) => {
+                write!(f, "Found primary GPT. Restored bad secondary GPT {e:?}.")
+            }
             Self::NoValidGpt { primary, secondary } => {
                 write!(f, "No valid GPT. primary: {primary:?}, secondary: {secondary:?}.")
             }
@@ -707,6 +717,7 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
     pub(crate) async fn load_and_sync(
         &mut self,
         disk: &mut Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
+        repair: bool,
     ) -> Result<GptSyncResult> {
         let blk_sz = disk.io().info().block_size;
         let nonzero_blk_sz = NonZeroU64::new(blk_sz).ok_or(Error::InvalidInput)?;
@@ -746,9 +757,14 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
                 primary_header.entries = primary_entries_blk;
                 primary_header.update_crc();
 
-                disk.write(primary_header_pos, primary_header.as_bytes_mut()).await?;
-                disk.write(primary_entries_pos.try_into()?, primary_entries).await?;
-                GptSyncResult::PrimaryRestored(e)
+                match repair {
+                    true => {
+                        disk.write(primary_header_pos, primary_header.as_bytes_mut()).await?;
+                        disk.write(primary_entries_pos.try_into()?, primary_entries).await?;
+                        GptSyncResult::PrimaryRestored(e)
+                    }
+                    _ => GptSyncResult::PrimaryError(e),
+                }
             }
             (Ok(()), v) => {
                 // Restores to secondary
@@ -763,13 +779,18 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
                 secondary_header.entries = secondary_entries_blk.try_into()?;
                 secondary_header.update_crc();
 
-                disk.write(pos.try_into()?, secondary_header.as_bytes_mut()).await?;
-                disk.write(secondary_entries_pos.try_into()?, secondary_entries).await?;
-
-                GptSyncResult::SecondaryRestored(match v {
+                let e = match v {
                     Err(e) => e,
                     _ => Error::GptError(GptError::DifferentFromPrimary),
-                })
+                };
+                match repair {
+                    true => {
+                        disk.write(pos.try_into()?, secondary_header.as_bytes_mut()).await?;
+                        disk.write(secondary_entries_pos.try_into()?, secondary_entries).await?;
+                        GptSyncResult::SecondaryRestored(e)
+                    }
+                    _ => GptSyncResult::SecondaryError(e),
+                }
             }
         };
 
@@ -868,7 +889,7 @@ pub(crate) async fn update_gpt(
     }
 
     disk.write(0, mbr_primary).await?;
-    disk.sync_gpt(gpt).await?.res()
+    disk.sync_gpt(gpt, true).await?.res()
 }
 
 /// Erases GPT if there is one on the device.
@@ -876,7 +897,7 @@ pub(crate) async fn erase_gpt(
     disk: &mut Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
     gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
 ) -> Result<()> {
-    match disk.sync_gpt(gpt).await?.res() {
+    match disk.sync_gpt(gpt, false).await?.res() {
         Err(_) => Ok(()), // No valid GPT. Nothing to erase.
         _ => {
             let blk_sz = disk.block_info().block_size;
@@ -948,7 +969,7 @@ where
         if disk.block_info().num_blocks < min_required_blocks(disk.block_info().block_size)? {
             return Err(Error::GptError(GptError::DiskTooSmall));
         }
-        let has_valid_gpt = block_on(disk.sync_gpt(&mut gpt))?.res().is_ok();
+        let has_valid_gpt = block_on(disk.sync_gpt(&mut gpt, true))?.res().is_ok();
         // Uses the buffer for secondary GPT header/entries as construction buffer, as it is not
         // used by Gpt once loaded and synced.
         let (mut header, mut entries) = LoadBufferRef::from(&mut gpt.buffer[..]).secondary();
@@ -1116,7 +1137,7 @@ where
         // Clears primary header magic
         self.disk.write(blk_sz, &mut 0u64.to_be_bytes()).await?;
         // Re-syncs GPT
-        self.disk.sync_gpt(&mut self.gpt).await?.res()
+        self.disk.sync_gpt(&mut self.gpt, true).await?.res()
     }
 }
 
@@ -1148,7 +1169,7 @@ pub(crate) mod test {
     #[test]
     fn test_load_and_sync() {
         let (mut dev, mut gpt) = test_disk_and_gpt(include_bytes!("../test/gpt_test_1.bin"));
-        block_on(dev.sync_gpt(&mut gpt)).unwrap();
+        block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
 
         assert_eq!(gpt.partition_iter().unwrap().count(), 2);
         gpt.find_partition("boot_a").unwrap();
@@ -1169,7 +1190,7 @@ pub(crate) mod test {
         assert_ne!(buffer.as_ptr() as usize % 2, 0);
         let mut disk = test_disk(include_bytes!("../test/gpt_test_1.bin"));
         let mut gpt = Gpt::new(buffer).unwrap();
-        block_on(disk.sync_gpt(&mut gpt)).unwrap();
+        block_on(disk.sync_gpt(&mut gpt, true)).unwrap();
     }
 
     #[test]
@@ -1183,13 +1204,13 @@ pub(crate) mod test {
         let mut gpt = new_gpt_n::<127>();
         assert_eq!(gpt.max_entries(), 127);
         // Actual entries_count is 128 in the GPT.
-        assert!(block_on(dev.sync_gpt(&mut gpt)).unwrap().res().is_err());
+        assert!(block_on(dev.sync_gpt(&mut gpt, true)).unwrap().res().is_err());
     }
 
     #[test]
     fn test_good_gpt_no_repair_write() {
         let (mut dev, mut gpt) = test_disk_and_gpt(include_bytes!("../test/gpt_test_1.bin"));
-        assert_eq!(block_on(dev.sync_gpt(&mut gpt)).unwrap(), GptSyncResult::BothValid);
+        assert_eq!(block_on(dev.sync_gpt(&mut gpt, true)).unwrap(), GptSyncResult::BothValid);
     }
 
     /// A helper for testing restoration of invalid primary/secondary header modified by caller.
@@ -1208,9 +1229,16 @@ pub(crate) mod test {
         modify_primary(&mut header, Ref::<_, [GptEntry]>::new_slice(entries).unwrap());
         let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
         assert_ne!(dev.io().storage(), disk_orig);
-        let sync_res = block_on(dev.sync_gpt(&mut gpt)).unwrap();
+        let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
         assert_eq!(sync_res, GptSyncResult::PrimaryRestored(expect_primary_err));
         assert_eq!(dev.io().storage(), disk_orig);
+
+        // Syncs without restoring primary.
+        let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+        assert_ne!(dev.io().storage(), disk_orig);
+        let sync_res = block_on(dev.sync_gpt(&mut gpt, false)).unwrap();
+        assert_eq!(sync_res, GptSyncResult::PrimaryError(expect_primary_err));
+        assert_eq!(dev.io().storage(), disk);
 
         // Restores from primary to secondary.
         let mut disk = disk_orig.to_vec();
@@ -1220,9 +1248,16 @@ pub(crate) mod test {
         modify_secondary(&mut header, Ref::<_, [GptEntry]>::new_slice(&mut entries[..]).unwrap());
         let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
         assert_ne!(dev.io().storage(), disk_orig);
-        let sync_res = block_on(dev.sync_gpt(&mut gpt)).unwrap();
+        let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
         assert_eq!(sync_res, GptSyncResult::SecondaryRestored(expect_secondary_err));
         assert_eq!(dev.io().storage(), disk_orig);
+
+        // Syncs without restoring secondary.
+        let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+        assert_ne!(dev.io().storage(), disk_orig);
+        let sync_res = block_on(dev.sync_gpt(&mut gpt, false)).unwrap();
+        assert_eq!(sync_res, GptSyncResult::SecondaryError(expect_secondary_err));
+        assert_eq!(dev.io().storage(), disk);
     }
 
     #[test]
@@ -1411,7 +1446,7 @@ pub(crate) mod test {
         secondary_hdr.update_crc();
         let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
         assert_eq!(
-            block_on(dev.sync_gpt(&mut gpt)).unwrap(),
+            block_on(dev.sync_gpt(&mut gpt, true)).unwrap(),
             GptSyncResult::SecondaryRestored(Error::GptError(GptError::DifferentFromPrimary)),
         );
     }
@@ -1424,7 +1459,7 @@ pub(crate) mod test {
         // MBR + (header + entries) * 2 - 1
         disk.resize((1 + (32 + 1) * 2 - 1) * 512, 0);
         let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
-        let sync_res = block_on(dev.sync_gpt(&mut gpt)).unwrap();
+        let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
         let err = Error::GptError(GptError::DiskTooSmall);
         assert_eq!(sync_res, GptSyncResult::NoValidGpt { primary: err, secondary: err });
     }
@@ -1434,11 +1469,11 @@ pub(crate) mod test {
         let disk = include_bytes!("../test/gpt_test_1.bin");
         // Load a good GPT first.
         let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
-        assert_eq!(block_on(dev.sync_gpt(&mut gpt)).unwrap(), GptSyncResult::BothValid);
+        assert_eq!(block_on(dev.sync_gpt(&mut gpt, true)).unwrap(), GptSyncResult::BothValid);
         gpt.find_partition("boot_a").unwrap();
         // Corrupt GPT.
         block_on(dev.write(0, &mut vec![0u8; disk.len()])).unwrap();
-        assert!(block_on(dev.sync_gpt(&mut gpt)).unwrap().res().is_err());
+        assert!(block_on(dev.sync_gpt(&mut gpt, true)).unwrap().res().is_err());
         assert!(gpt.find_partition("").is_err());
     }
 
@@ -1597,7 +1632,7 @@ pub(crate) mod test {
         assert_eq!(dev.io().storage[512..][..GPT_SECTOR], vec![0u8; GPT_SECTOR]);
         assert_eq!(*dev.io().storage.last_chunk::<GPT_SECTOR>().unwrap(), *vec![0u8; GPT_SECTOR]);
         assert!(matches!(
-            block_on(dev.sync_gpt(&mut gpt)).unwrap(),
+            block_on(dev.sync_gpt(&mut gpt, true)).unwrap(),
             GptSyncResult::NoValidGpt { .. }
         ));
     }
@@ -1624,7 +1659,7 @@ pub(crate) mod test {
         entries.swap(0, 1);
         header.update_entries_crc(entries.as_bytes());
         let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
-        block_on(dev.sync_gpt(&mut gpt)).unwrap().res().unwrap();
+        block_on(dev.sync_gpt(&mut gpt, true)).unwrap().res().unwrap();
     }
 
     #[test]
@@ -1634,7 +1669,7 @@ pub(crate) mod test {
         assert!(!valid);
         block_on(builder.persist()).unwrap();
         // A new GPT is created.
-        block_on(dev.sync_gpt(&mut gpt)).unwrap().res().unwrap();
+        block_on(dev.sync_gpt(&mut gpt, true)).unwrap().res().unwrap();
         assert!(gpt.partition_iter().unwrap().next().is_none());
     }
 
@@ -1646,7 +1681,7 @@ pub(crate) mod test {
         assert_eq!(builder.remove("boot_b"), Ok(true));
         assert_eq!(builder.remove("non-existent"), Ok(false));
         block_on(builder.persist()).unwrap();
-        block_on(dev.sync_gpt(&mut gpt)).unwrap().res().unwrap();
+        block_on(dev.sync_gpt(&mut gpt, true)).unwrap().res().unwrap();
         let part_iter = gpt.partition_iter().unwrap();
         assert_eq!(
             part_iter.map(|v| v.name().unwrap().into()).collect::<Vec<String>>(),
@@ -1664,7 +1699,7 @@ pub(crate) mod test {
         // Adds following "new_0"
         builder.add("new_1", [1u8; GPT_GUID_LEN], [1u8; GPT_GUID_LEN], 0, Some(1)).unwrap();
         block_on(builder.persist()).unwrap();
-        block_on(dev.sync_gpt(&mut gpt)).unwrap().res().unwrap();
+        block_on(dev.sync_gpt(&mut gpt, true)).unwrap().res().unwrap();
         assert_eq!(gpt.find_partition("new_0").unwrap().absolute_range().unwrap(), (17408, 18432));
         assert_eq!(gpt.find_partition("new_1").unwrap().absolute_range().unwrap(), (18432, 18944));
         assert_eq!(gpt.find_partition("boot_b").unwrap().absolute_range().unwrap(), (25600, 37888));
@@ -1700,7 +1735,7 @@ pub(crate) mod test {
         // Consumes the rest of the space.
         builder.add("new_1", [1u8; GPT_GUID_LEN], [1u8; GPT_GUID_LEN], 0, None).unwrap();
         block_on(builder.persist()).unwrap();
-        block_on(dev.sync_gpt(&mut gpt)).unwrap().res().unwrap();
+        block_on(dev.sync_gpt(&mut gpt, true)).unwrap().res().unwrap();
         assert_eq!(gpt.find_partition("boot_a").unwrap().absolute_range().unwrap(), (17408, 25600));
         assert_eq!(gpt.find_partition("new_0").unwrap().absolute_range().unwrap(), (25600, 26624));
         assert_eq!(gpt.find_partition("new_1").unwrap().absolute_range().unwrap(), (26624, 48640));
