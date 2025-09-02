@@ -705,14 +705,17 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .get_var(name, args, out)
     }
 
-    fn fastboot_visit_all_variables(&mut self, cb: impl FnMut(&[&CStr], &CStr)) -> Result<()> {
+    fn fastboot_visit_all_variables(
+        &mut self,
+        mut cb: impl FnMut(&mut Self, &[&CStr], &CStr),
+    ) -> Result<()> {
         match self
             .efi_entry
             .system_table()
             .boot_services()
             .find_first_and_open::<GblFastbootProtocol>()
         {
-            Ok(v) => v.get_var_all(cb),
+            Ok(v) => v.get_var_all(|args, val| cb(self, args, val)),
             Err(Error::NotFound) => Ok(()),
             Err(e) => Err(e),
         }
@@ -1631,7 +1634,7 @@ mod test {
             .return_once(|| Err(Error::NotFound));
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        ops.fastboot_visit_all_variables(|_, _| {}).unwrap();
+        ops.fastboot_visit_all_variables(|_, _, _| {}).unwrap();
     }
 
     #[test]
@@ -1643,7 +1646,7 @@ mod test {
             .return_once(|| Err(Error::InvalidInput));
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        assert!(ops.fastboot_visit_all_variables(|_, _| {}).is_err());
+        assert!(ops.fastboot_visit_all_variables(|_, _, _| {}).is_err());
     }
 
     /// Helper for testing `GblOsConfigurationProtocol.fixup_bootconfig`
