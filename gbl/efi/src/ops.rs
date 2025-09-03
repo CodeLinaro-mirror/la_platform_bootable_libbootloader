@@ -788,13 +788,13 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .boot_services()
             .find_first_and_open::<GblFastbootProtocol>()
         {
-            Ok(v) => Ok(match v.vendor_erase(part)? {
-                GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION => {
-                    FastbootEraseAction::EraseAsPhysicalPartition
-                }
-                GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP => FastbootEraseAction::Noop,
-                _ => return Err(Error::InvalidState),
-            }),
+            Ok(v) => match v.vendor_erase(part) {
+                Ok(GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION)
+                | Err(Error::NotFound) => Ok(FastbootEraseAction::EraseAsPhysicalPartition),
+                Ok(GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP) => Ok(FastbootEraseAction::Noop),
+                Ok(_) => Err(Error::InvalidState),
+                Err(e) => Err(e),
+            },
             Err(Error::NotFound) => Ok(FastbootEraseAction::EraseAsPhysicalPartition),
             Err(e) => Err(e),
         }
