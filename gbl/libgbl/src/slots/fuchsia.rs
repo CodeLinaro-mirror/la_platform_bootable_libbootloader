@@ -607,7 +607,7 @@ mod test {
         let disk = include_bytes!("../../testdata/writeback_test_disk.bin").to_vec();
         let mut blk = TestDisk::new_ram_alloc(512, 512, disk).unwrap();
         let mut gpt = new_gpt_max();
-        block_on(blk.sync_gpt(&mut gpt)).unwrap();
+        block_on(blk.sync_gpt(&mut gpt, true)).unwrap();
         let mut sb: SlotBlock<AbrData> = Default::default();
         let mut read_buffer: [u8; size_of::<AbrData>()] = Default::default();
 
@@ -642,7 +642,7 @@ mod test {
         let disk = include_bytes!("../../testdata/writeback_test_disk.bin").to_vec();
         let mut blk = TestDisk::new_ram_alloc(512, 512, disk).unwrap();
         let mut gpt = new_gpt_max();
-        block_on(blk.sync_gpt(&mut gpt)).unwrap();
+        block_on(blk.sync_gpt(&mut gpt, true)).unwrap();
         let mut read_buffer: [u8; size_of::<AbrData>()] = Default::default();
 
         let mut sb: SlotBlock<AbrData> = Default::default();
