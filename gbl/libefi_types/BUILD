@@ -123,11 +123,11 @@ rust_doc_test(
     crate = ":libefi_types",
 )
 
-# GBL protocols require to be published under both Apache-2.0 and BDS-2-Clause-Patent licenses.
+# GBL EFI definitions and protocols must be published under both Apache-2.0 and
+# BDS-2-Clause-Patent licenses.
 # Refer to top-level README.md "Licesing" section.
 spdx_license_test(
     name = "gbl_protocols_license_test",
-    # Must cover all GBL-specific protocols headers.
-    srcs = glob(["**/gbl_efi_*_protocol.h"]),
+    srcs = glob(["defs/**/*.h"]),
     expected_spdx_identifier = "Apache-2.0 OR BSD-2-Clause-Patent",
 )
