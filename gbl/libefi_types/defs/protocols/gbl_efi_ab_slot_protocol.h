@@ -28,7 +28,6 @@
 
 #include <stdint.h>
 
-#include "gbl_protocol_utils.h"
 #include "system_table.h"
 #include "types.h"
 

@@ -18,7 +18,10 @@
 #ifndef __EFI_TYPES_H__
 #define __EFI_TYPES_H__
 
+#include <stddef.h>
 #include <stdint.h>
+
+#include "gbl_protocol_utils.h"
 
 typedef void* EfiHandle;
 typedef uint8_t char8_t;

@@ -29,7 +29,6 @@
 #ifndef __GBL_AVB_PROTOCOL_H__
 #define __GBL_AVB_PROTOCOL_H__
 
-#include "gbl_protocol_utils.h"
 #include "types.h"
 
 static const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION =
