@@ -26,7 +26,6 @@
 #ifndef __BOOT_SERVICE_TABLE_H__
 #define __BOOT_SERVICE_TABLE_H__
 
-#include "gbl_protocol_utils.h"
 #include "protocols/device_path_protocol.h"
 #include "types.h"
 

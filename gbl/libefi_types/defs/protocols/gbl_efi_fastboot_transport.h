@@ -29,7 +29,6 @@
 #ifndef __GBL_EFI_FASTBOOT_USB_H__
 #define __GBL_EFI_FASTBOOT_USB_H__
 
-#include "gbl_protocol_utils.h"
 #include "types.h"
 
 EFI_ENUM(GBL_EFI_FASTBOOT_RX_MODE, GblEfiFastbootRxMode, uint32_t,

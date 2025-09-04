@@ -29,7 +29,6 @@
 #ifndef __GBL_OS_CONFIGURATION_PROTOCOL_H__
 #define __GBL_OS_CONFIGURATION_PROTOCOL_H__
 
-#include "gbl_protocol_utils.h"
 #include "types.h"
 
 EFI_ENUM(GBL_EFI_DEVICE_TREE_TYPE, GblEfiDeviceTreeType, uint32_t,

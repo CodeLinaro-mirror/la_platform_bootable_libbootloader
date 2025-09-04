@@ -29,7 +29,6 @@
 #ifndef __GBL_EFI_FASTBOOT_PROTOCOL_H__
 #define __GBL_EFI_FASTBOOT_PROTOCOL_H__
 
-#include "gbl_protocol_utils.h"
 #include "types.h"
 
 #define GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8 32

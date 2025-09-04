@@ -28,7 +28,6 @@
 
 #include <stddef.h>
 
-#include "gbl_protocol_utils.h"
 #include "types.h"
 
 static const uint64_t GBL_EFI_IMAGE_LOADING_PROTOCOL_REVISION =
