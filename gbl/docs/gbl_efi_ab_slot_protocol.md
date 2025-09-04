@@ -56,7 +56,7 @@ typedef struct GBL_EFI_AB_SLOT_PROTOCOL {
   GBL_EFI_AB_SLOT_LOAD_BOOT_DATA      LoadBootData;
   GBL_EFI_AB_SLOT_GET_SLOT_INFO       GetSlotInfo;
   GBL_EFI_AB_SLOT_GET_CURRENT_SLOT    GetCurrentSlot;
-  GBL_EFI_AB_SLOT_GET_NEXT_SLOT       GetNextSlot;
+  VOID*                               Reserved;
   GBL_EFI_AB_SLOT_SET_ACTIVE_SLOT     SetActiveSlot;
   GBL_EFI_AB_SLOT_SET_SLOT_UNBOOTABLE SetSlotUnbootable;
   GBL_EFI_AB_SLOT_REINITIALIZE        Reinitialize;
@@ -87,13 +87,8 @@ See [`GBL_EFI_AB_SLOT_PROTOCOL.GetSlotInfo()`](#gbl_efi_ab_slot_protocolgetsloti
 
 **GetCurrentSlot**
 
-Returns the slot information of the currently booted bootloader.
+Returns the information of the currently booted slot.
 See [`GBL_EFI_AB_SLOT_PROTOCOL.GetCurrentSlot()`](#gbl_efi_ab_slot_protocolgetcurrentslot).
-
-**GetNextSlot**
-
-Returns the slot information of the next slot decision.
-See [`GBL_EFI_AB_SLOT_PROTOCOL.GetNextSlot()`](#gbl_efi_ab_slot_protocolgetnextslot).
 
 **SetActiveSlot**
 
@@ -277,7 +272,7 @@ slots as part of debugging or logging.
 
 ### Summary
 
-Returns the slot information of the currently booted bootloader.
+Returns the information of the currently booted slot.
 
 ### Prototype
 
@@ -305,9 +300,7 @@ for the structure definition.
 
 ### Description
 
-Returns the slot of the currently booted bootloader. If bootloader is not
-slotted, i.e. the device only has a single slot bootloader instead of A/B, the
-function returns `EFI_UNSUPPORTED`.
+Returns the information of the currently booted slot.
 
 This is identical to knowing the index of the current slot and calling
 `GetSlotInfo()` with that index.
@@ -317,66 +310,7 @@ This is identical to knowing the index of the current slot and calling
 | Return Code             | Semantics                          |
 |:------------------------|:---------------------------------- |
 | `EFI_SUCCESS`           | The call completed successfully.   |
-| `EFI_UNSUPPORTED`       | Bootloader is not slotted.         |
 | `EFI_INVALID_PARAMETER` | One of *Self* or *Info* is `NULL`. |
-
-## `GBL_EFI_AB_SLOT_PROTOCOL.GetNextSlot()`
-
-### Summary
-
-Returns the slot information of the next slot decision.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI * GBL_EFI_AB_SLOT_GET_NEXT_SLOT)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
-    IN BOOL                      MarkBootAttempt,
-    OUT GBL_EFI_SLOT_INFO*       Info,
-);
-```
-
-### Parameters
-
-*Self*
-
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
-instance.
-
-*MarkBootAttempt*
-
-The parameter is set to true if caller attempts to load, verify and boot the
-returned slot. If the caller only wants to query the next slot decision and
-does not intend to cause any state change, it is set to false.
-
-*Info*
-
-On exit contains the metadata for the next slot.
-See the definition for [`GBL_EFI_SLOT_INFO`](#related-definitions-1)
-for the structure definition.
-
-### Description
-
-The function returns the highest priority bootable slot according to current
-slot state.
-
-If parameter `MarkBootAttempt` is true, implementation should updates internal
-metadata for the slot such as decrementing retry counters if slot has not been
-successful.
-
-If there are no bootable slots, the function **MUST** returns `EFI_NOT_FOUND`.
-
-### Status Codes Returned
-
-| Return Code             | Semantics                                                                                                     |
-|:------------------------|:--------------------------------------------------------------------------------------------------------------|
-| `EFI_SUCCESS`           | The call completed successfully.                                                                              |
-| `EFI_NOT_FOUND`         | There are no bootable slots for the next decision.                                                            |
-| `EFI_INVALID_PARAMETER` | One of *Self* or *Info* is `NULL` or improperly aligned.                                                      |
-| `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                  |
-| `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions. |
 
 ## `GBL_EFI_AB_SLOT_PROTOCOL.SetActiveSlot()`
 
