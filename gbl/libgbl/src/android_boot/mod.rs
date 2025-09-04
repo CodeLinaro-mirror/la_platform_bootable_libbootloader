@@ -256,10 +256,6 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         _ => {}
     }
 
-    let final_command_line = CStr::from_bytes_until_nul(fdt.get_property("chosen", BOOTARGS_PROP)?)
-        .map_err(Error::from)?;
-    gbl_println!(ops, "final cmdline: \"{}\"", final_command_line.to_str().unwrap());
-
     // Notifies platform to process loaded partitions before final bootconfig and FDT fixup, so
     // that backend can add fixup items that depend on certain partition data.
     //
@@ -359,6 +355,12 @@ fn finalize_dt<'b, 'c>(
     if append_bootconfig {
         fdt_append_bootarg(ops, &mut fdt, extract_bootconfig(ramdisk)?.split('\n'), 0)?;
     }
+    // Print the final commandline. If the bootargs were changed by the firmware during fdt fixup,
+    // then the firmware must ensure the bootargs end with '\0'.
+    let final_command_line = CStr::from_bytes_until_nul(fdt.get_property("chosen", BOOTARGS_PROP)?)
+        .map_err(Error::from)?;
+    gbl_println!(ops, "final cmdline: \"{}\"", final_command_line.to_str().unwrap());
+
     fdt.shrink_to_fit()?;
     Ok(fdt.header_ref()?.actual_size())
 }
