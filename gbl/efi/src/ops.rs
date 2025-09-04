@@ -45,10 +45,9 @@ use efi::{
     EfiEntry,
 };
 use efi_types::{
-    EfiInputKey, GblEfiAvbBootColor, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
-    GblEfiAvbProperty, GblEfiAvbVerificationResult, GblEfiBootMode, GblEfiDeviceTreeMetadata,
-    GblEfiImageInfo, GblEfiVerifiedDeviceTree, GBL_EFI_AVB_STATUS_DM_VERITY_FAILED,
-    GBL_EFI_AVB_STATUS_UNLOCKED, GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
+    EfiInputKey, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbProperty,
+    GblEfiAvbVerificationResult, GblEfiBootMode, GblEfiDeviceTreeMetadata, GblEfiImageInfo,
+    GblEfiVerifiedDeviceTree, GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
     GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP, GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL,
     GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO, GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, PARTITION_NAME_LEN_U16,
 };
@@ -62,7 +61,7 @@ use libgbl::{
         DeviceTreeComponent, DeviceTreeComponentSource, DeviceTreeComponentType,
         DeviceTreeComponentsRegistry, MAXIMUM_DEVICE_TREE_COMPONENTS,
     },
-    gbl_avb::state::{BootStateColor, KeyValidationStatus},
+    gbl_avb::state::{BootStateColor, KeyValidationStatus, VerificationStatus},
     gbl_println,
     ops::{
         AvbDeviceStatus, AvbIoError, AvbIoResult, AvbProperty, CertPermanentAttributes, FailSender,
@@ -443,7 +442,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
     fn avb_handle_verification_result<'c>(
         &mut self,
-        color: BootStateColor,
+        status: VerificationStatus,
         digest: Option<&CStr>,
         properties: Option<impl Iterator<Item = AvbProperty<'c>>>,
     ) -> AvbIoResult<()> {
@@ -496,8 +495,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
                 protocol
                     .handle_verification_result(&GblEfiAvbVerificationResult {
-                        color: avb_color_to_efi_color(color),
-                        reserved1: Default::default(),
+                        color_flags: gbl_verification_status_to_efi_color_flags(status),
                         digest: digest.map_or(null(), |p| p.as_ptr() as _),
                         // TODO(b/337846185): Provide loaded partitions to the FW.
                         num_loaded_partitions: 0,
@@ -507,7 +505,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
                             false => avb_properties_efi.0.as_ptr(),
                             true => null(),
                         },
-                        reserved2: Default::default(),
+                        reserved: Default::default(),
                     })
                     .map_err(efi_error_to_avb_error)
             }
@@ -888,8 +886,8 @@ fn gbl_to_efi_avb_property(property: AvbProperty) -> GblEfiAvbProperty {
 /// Converts [GblEfiAvbDeviceStatus] bitmask to [AvbDeviceStatus]
 fn efi_to_gbl_avb_device_status(mask: GblEfiAvbDeviceStatus) -> AvbDeviceStatus {
     AvbDeviceStatus {
-        is_unlocked: (mask & GBL_EFI_AVB_STATUS_UNLOCKED).0 != 0,
-        is_dm_verity_error: (mask & GBL_EFI_AVB_STATUS_DM_VERITY_FAILED).0 != 0,
+        is_unlocked: mask & efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED != 0,
+        is_dm_verity_error: mask & efi_types::GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED != 0,
     }
 }
 
@@ -904,14 +902,19 @@ fn to_avb_validation_status_or_panic(status: GblEfiAvbKeyValidationStatus) -> Ke
     }
 }
 
-fn avb_color_to_efi_color(color: BootStateColor) -> GblEfiAvbBootColor {
-    match color {
+fn gbl_verification_status_to_efi_color_flags(status: VerificationStatus) -> u64 {
+    let base_color = match status.color {
         BootStateColor::Green => efi_types::GBL_EFI_AVB_BOOT_COLOR_GREEN,
         BootStateColor::Yellow => efi_types::GBL_EFI_AVB_BOOT_COLOR_YELLOW,
         BootStateColor::Orange => efi_types::GBL_EFI_AVB_BOOT_COLOR_ORANGE,
-        BootStateColor::RedEio => efi_types::GBL_EFI_AVB_BOOT_COLOR_RED_EIO,
         BootStateColor::Red => efi_types::GBL_EFI_AVB_BOOT_COLOR_RED,
-    }
+    };
+    let eio_flag = match status.is_eio {
+        true => efi_types::GBL_EFI_AVB_BOOT_COLOR_RED_EIO,
+        false => 0,
+    };
+
+    base_color | eio_flag
 }
 
 fn efi_error_to_avb_error(error: Error) -> AvbIoError {
@@ -996,7 +999,7 @@ mod test {
 
     #[test]
     fn ops_avb_read_device_status_unlocked() {
-        let mask = GBL_EFI_AVB_STATUS_UNLOCKED;
+        let mask = efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED;
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
             Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false })
@@ -1005,7 +1008,7 @@ mod test {
 
     #[test]
     fn ops_avb_read_device_status_dm_verity_error() {
-        let mask = GBL_EFI_AVB_STATUS_DM_VERITY_FAILED;
+        let mask = efi_types::GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED;
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
             Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: true })
@@ -1014,7 +1017,8 @@ mod test {
 
     #[test]
     fn ops_avb_read_device_status_unlocked_and_dm_verity_error() {
-        let mask = (GBL_EFI_AVB_STATUS_UNLOCKED) | (GBL_EFI_AVB_STATUS_DM_VERITY_FAILED);
+        let mask = (efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED)
+            | (efi_types::GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED);
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
             Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: true })
@@ -1024,7 +1028,7 @@ mod test {
     #[test]
     fn ops_avb_read_device_status_empty() {
         assert_eq!(
-            test_avb_read_device_status(ProtocolCallStatus::Success(GblEfiAvbDeviceStatus(0))),
+            test_avb_read_device_status(ProtocolCallStatus::Success(0)),
             Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false })
         );
     }

@@ -75,7 +75,7 @@ impl Protocol<'_, GblAvbProtocol> {
 
     /// Wraps `GBL_EFI_AVB_PROTOCOL.read_device_status()`.
     pub fn read_device_status(&self) -> Result<GblEfiAvbDeviceStatus> {
-        let mut flags = GblEfiAvbDeviceStatus(0);
+        let mut flags = 0;
 
         // SAFETY:
         // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`
@@ -398,7 +398,7 @@ mod test {
             flags_ptr: *mut GblEfiAvbDeviceStatus,
         ) -> EfiStatus {
             // SAFETY: flags_ptr is a valid u64 pointer available to write.
-            unsafe { *flags_ptr = efi_types::GBL_EFI_AVB_STATUS_UNLOCKED };
+            unsafe { *flags_ptr = efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED };
             EFI_STATUS_SUCCESS
         }
 
@@ -408,7 +408,7 @@ mod test {
         };
 
         run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            let expected_flags = efi_types::GBL_EFI_AVB_STATUS_UNLOCKED;
+            let expected_flags = efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED;
             assert_eq!(avb_protocol.read_device_status(), Ok(expected_flags));
         });
     }
@@ -510,7 +510,7 @@ mod test {
         ) -> EfiStatus {
             // SAFETY:
             // * `result` is non-null.
-            assert_eq!(unsafe { (*result).color }, COLOR);
+            assert_eq!(unsafe { (*result).color_flags }, COLOR);
             EFI_STATUS_SUCCESS
         }
 
@@ -521,7 +521,7 @@ mod test {
 
         run_test_with_mock_protocol(c_interface, |avb_protocol| {
             let verification_result =
-                GblEfiAvbVerificationResult { color: COLOR, ..Default::default() };
+                GblEfiAvbVerificationResult { color_flags: COLOR, ..Default::default() };
 
             assert!(avb_protocol.handle_verification_result(&verification_result).is_ok());
         });

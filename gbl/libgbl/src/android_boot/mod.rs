@@ -117,7 +117,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         partitions.try_push_preloaded(n.name_cstr(), b)?;
     }
 
-    let (verify_data, color, unlocked) = avb_verify_slot(ops, slot, &mut partitions)?;
+    let (verify_data, status, unlocked) = avb_verify_slot(ops, slot, &mut partitions)?;
     let images = android_load_verified(ops, slot, unlocked, &verify_data)?;
 
     let pvmfw = match images.pvmfw.is_empty() {
@@ -137,7 +137,8 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     for entry in CommandlineParser::new(verify_data.cmdline().to_str().unwrap()) {
         write!(bootconfig_builder, "{}\n", entry?).map_err(Error::from)?;
     }
-    write!(bootconfig_builder, "androidboot.verifiedbootstate={}\n", color).map_err(Error::from)?;
+    write!(bootconfig_builder, "androidboot.verifiedbootstate={}\n", status.color)
+        .map_err(Error::from)?;
     if !is_recovery {
         bootconfig_builder.add("androidboot.force_normal_boot=1\n")?;
     }
@@ -808,8 +809,8 @@ androidboot.vbmeta.device_state={}
 androidboot.vbmeta.hash_alg=sha512
 androidboot.vbmeta.size={}
 androidboot.vbmeta.digest={}
-androidboot.vbmeta.invalidate_on_error=yes
 androidboot.veritymode=enforcing
+androidboot.veritymode.managed=yes
 {}androidboot.verifiedbootstate={}
 {}",
                 self.public_key_digest,
@@ -928,9 +929,9 @@ androidboot.veritymode=enforcing
         ops.current_slot = Some(Ok(slot(slot_suffix)));
         ops.avb_device_status.is_unlocked = unlock;
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(rollback_idx))]);
-        let mut out_color = None;
-        let mut handler = |color, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
-            out_color = Some(color);
+        let mut out_status = None;
+        let mut handler = |status, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
+            out_status = Some(status);
             Ok(())
         };
         ops.avb_handle_verification_result = Some(&mut handler);
@@ -1649,9 +1650,9 @@ androidboot.veritymode=enforcing
         let mut ops = FakeGblOps::new(&storage);
         ops.avb_device_status.is_unlocked = unlocked;
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
-        let mut out_color = None;
-        let mut handler = |color, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
-            out_color = Some(color);
+        let mut out_status = None;
+        let mut handler = |status, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
+            out_status = Some(status);
             Ok(())
         };
         ops.avb_handle_verification_result = Some(&mut handler);

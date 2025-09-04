@@ -19,14 +19,12 @@ use core::fmt::{Display, Formatter};
 /// https://source.android.com/docs/security/features/verifiedboot/boot-flow#communicating-verified-boot-state-to-users
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum BootStateColor {
-    /// Success .
+    /// Success.
     Green,
     /// Success but custom key is used.
     Yellow,
     /// Device is unlocked.
     Orange,
-    /// Dm-verity is corrupted.
-    RedEio,
     /// No valid OS found.
     Red,
 }
@@ -38,10 +36,19 @@ impl Display for BootStateColor {
             BootStateColor::Green => "green",
             BootStateColor::Yellow => "yellow",
             BootStateColor::Orange => "orange",
-            BootStateColor::RedEio => "red_eio",
             BootStateColor::Red => "red",
         })
     }
+}
+
+/// Verification status returned from AVB.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct VerificationStatus {
+    /// The resulting AVB boot state color.
+    pub color: BootStateColor,
+    /// Indicates whether hash tree corruption was detected.
+    /// If true, the device is expected to boot into EIO mode.
+    pub is_eio: bool,
 }
 
 /// https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust

@@ -17,7 +17,7 @@
 use crate::{
     gbl_avb::{
         ops::{GblAvbOps, PreloadBufferState, AVB_DIGEST_KEY},
-        state::{BootStateColor, KeyValidationStatus},
+        state::{BootStateColor, KeyValidationStatus, VerificationStatus},
     },
     gbl_println,
     ops::PartitionBuffer,
@@ -26,7 +26,7 @@ use crate::{
 use abr::SlotIndex;
 use arrayvec::ArrayVec;
 use avb::{
-    slot_verify, HashtreeErrorMode, Ops as _, SlotVerifyData, SlotVerifyError, SlotVerifyFlags,
+    slot_verify, HashtreeErrorMode, SlotVerifyData, SlotVerifyError, SlotVerifyFlags,
     SlotVerifyResult,
 };
 use bootparams::entry::CommandlineParser;
@@ -109,7 +109,7 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
     ops: &mut impl GblOps<'a, 'b>,
     slot: u8,
     partitions: &'d mut PartitionsToVerify<'c>,
-) -> Result<(SlotVerifyData<'d>, BootStateColor, bool)> {
+) -> Result<(SlotVerifyData<'d>, VerificationStatus, bool)> {
     let slot = match slot {
         0 => SlotIndex::A,
         1 => SlotIndex::B,
@@ -122,25 +122,26 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
     let PartitionsToVerify { partitions, preloaded } = partitions;
 
     let mut avb_ops = GblAvbOps::new(ops, Some(slot), preloaded, false);
-    let unlocked = avb_ops.read_is_device_unlocked()?;
+    let status = avb_ops.avb_read_device_status()?;
+
+    let mut flags = SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_NONE;
+    if status.is_unlocked {
+        flags |= SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_ALLOW_VERIFICATION_ERROR;
+    }
+    if status.is_dm_verity_error {
+        flags |= SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION;
+    }
+
     let verify_result = slot_verify(
         &mut avb_ops,
         partitions,
         Some(slot.into()),
-        // TODO(b/337846185): Pass AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION in
-        // case verity corruption is detected by HLOS.
-        match unlocked {
-            true => SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_ALLOW_VERIFICATION_ERROR,
-            _ => SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_NONE,
-        },
-        // TODO(b/337846185): For demo, we use the same setting as Cuttlefish u-boot.
-        // Pass AVB_HASHTREE_ERROR_MODE_MANAGED_RESTART_AND_EIO and handle EIO.
-        HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_RESTART_AND_INVALIDATE,
+        flags,
+        HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_MANAGED_RESTART_AND_EIO,
     );
-
     let (color, verify_data) = match verify_result {
         Ok(ref verify_data) => {
-            let color = match unlocked {
+            let color = match status.is_unlocked {
                 false
                     if avb_ops.key_validation_status()? == KeyValidationStatus::ValidCustomKey =>
                 {
@@ -152,19 +153,21 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
 
             gbl_println!(
                 avb_ops.gbl_ops,
-                "AVB verification passed. Device is unlocked: {unlocked}. Color: {color}"
+                "AVB verification passed. Device is unlocked: {}. Color: {color}",
+                status.is_unlocked,
             );
 
             (color, Some(verify_data))
         }
         // Non-fatal error, can continue booting since verify_data is available.
-        Err(ref e) if e.verification_data().is_some() && unlocked => {
+        Err(ref e) if e.verification_data().is_some() && status.is_unlocked => {
             let color = BootStateColor::Orange;
 
             gbl_println!(
                 avb_ops.gbl_ops,
-                "AVB verification failed with {e}. Device is unlocked: {unlocked}. Color: {color}. \
-                Continue current boot attempt."
+                "AVB verification failed with {e}. Device is unlocked: {} Color: {color}. \
+                Continue current boot attempt.",
+                status.is_unlocked
             );
 
             (color, Some(e.verification_data().unwrap()))
@@ -175,8 +178,9 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
 
             gbl_println!(
                 avb_ops.gbl_ops,
-                "AVB verification failed with {e}. Device is unlocked: {unlocked}. Color: {color}. \
-                Cannot continue boot."
+                "AVB verification failed with {e}. Device is unlocked: {}. Color: {color}. \
+                Cannot continue boot.",
+                status.is_unlocked
             );
 
             (color, None)
@@ -185,18 +189,26 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
 
     // Gets digest from the result command line.
     let mut digest = None;
+    let mut is_eio = false;
     if let Some(ref verify_data) = verify_data {
+        is_eio = verify_data.resolved_hashtree_error_mode()
+            == HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_EIO;
+
         digest = CommandlineParser::new(verify_data.cmdline().to_str().unwrap())
             .find_map(|v| v.ok().filter(|v| v.key == AVB_DIGEST_KEY))
             .map(|v| v.value)
             .flatten()
     }
+
+    let verification_status = VerificationStatus { color, is_eio };
     // Allowes FW to handle verification result.
-    avb_ops.handle_verification_result(verify_data, color, digest)?;
+    avb_ops.handle_verification_result(verify_data, verification_status, digest)?;
 
     match color {
         BootStateColor::Red => Err(verify_result.unwrap_err().without_verify_data().into()),
-        _ => Ok((into_verify_data(verify_result).unwrap(), color, unlocked)),
+        _ => {
+            Ok((into_verify_data(verify_result).unwrap(), verification_status, status.is_unlocked))
+        }
     }
 }
 
@@ -207,7 +219,7 @@ mod test {
         android_boot::tests::read_test_data,
         ops::{
             test::{FakeGblOps, FakeGblOpsStorage},
-            AvbProperty,
+            AvbDeviceStatus, AvbProperty,
         },
         IntegrationError::AvbIoError,
     };
@@ -218,32 +230,33 @@ mod test {
     fn test_avb_verify_slot<'a>(
         partitions: &[(&CStr, &str)],
         partitions_to_verify: &mut PartitionsToVerify<'a>,
-        device_unlocked: std::result::Result<bool, avb::IoError>,
+        device_status: std::result::Result<AvbDeviceStatus, avb::IoError>,
         rollback_result: std::result::Result<u64, avb::IoError>,
         slot: u8,
-        expected_reported_color: Option<BootStateColor>,
+        expected_reported_status: Option<VerificationStatus>,
     ) -> Result<()> {
         let mut storage = FakeGblOpsStorage::default();
         for (part, file) in partitions {
             storage.add_raw_device(part, read_test_data(file));
         }
         let mut ops = FakeGblOps::new(&storage);
-        match device_unlocked {
-            Ok(unlocked) => ops.avb_device_status.is_unlocked = unlocked,
+        match device_status {
+            Ok(ref device_status) => ops.avb_device_status = device_status.clone(),
             Err(ref e) => ops.avb_device_status_error = Some(e.clone()),
         };
         ops.avb_ops.rollbacks = HashMap::from([(1, rollback_result)]);
-        let mut out_color = None;
-        let mut handler = |color, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
-            out_color = Some(color);
+        let mut out_status = None;
+        let mut handler = |status, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
+            out_status = Some(status);
             Ok(())
         };
         ops.avb_handle_verification_result = Some(&mut handler);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
         let res = avb_verify_slot(&mut ops, slot, partitions_to_verify);
-        assert_eq!(out_color, expected_reported_color);
-        let (_, _, unlocked) = res?;
-        assert_eq!(unlocked, device_unlocked.unwrap());
+        assert_eq!(out_status, expected_reported_status);
+        let (_, status, unlocked) = res?;
+        assert_eq!(out_status.unwrap(), status);
+        assert_eq!(unlocked, device_status.unwrap().is_unlocked);
         Ok(())
     }
 
@@ -264,14 +277,13 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                // Unlocked result
-                Ok(false),
+                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
                 // Rollback index result
                 Ok(0),
                 // Slot
                 0,
-                // Expected color
-                Some(BootStateColor::Green),
+                // Expected verification status
+                Some(VerificationStatus { color: BootStateColor::Green, is_eio: false }),
             ),
             Ok(()),
         );
@@ -300,14 +312,13 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                // Unlocked result
-                Ok(false),
+                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
                 // Rollback index result
                 Ok(0),
                 // Slot
                 0,
-                // Expected color
-                Some(BootStateColor::Green),
+                // Expected verification status
+                Some(VerificationStatus { color: BootStateColor::Green, is_eio: false }),
             ),
             Ok(()),
         );
@@ -329,14 +340,13 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                // Unlocked result
-                Ok(true),
+                Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
                 // Rollback index result
                 Ok(0),
                 // Slot
                 0,
-                // Expected color
-                Some(BootStateColor::Orange),
+                // Expected verification status
+                Some(VerificationStatus { color: BootStateColor::Orange, is_eio: false }),
             ),
             Ok(()),
         );
@@ -349,7 +359,8 @@ mod test {
         partitions_to_verify.try_push(c"init_boot").unwrap();
         partitions_to_verify.try_push(c"vendor_boot").unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
+            // Wrong boot image, expect verification to fail.
+            (c"boot_a", "boot_v0_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
             (c"vendor_boot_a", "vendor_boot_v4_a.img"),
             (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
@@ -358,14 +369,13 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                // Unlocked result
-                Ok(true),
+                Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
                 // Rollback index result
                 Ok(0),
                 // Slot
                 0,
-                // Expected color
-                Some(BootStateColor::Orange),
+                // Expected verification status
+                Some(VerificationStatus { color: BootStateColor::Orange, is_eio: false }),
             ),
             // Device is unlocked, so can continue boot
             Ok(()),
@@ -388,14 +398,13 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                // Unlocked result
-                Ok(true),
+                Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
                 // Get rollback index is failed
                 Err(IoError::NoSuchValue),
                 // Slot
                 0,
-                // Expected color
-                Some(BootStateColor::Red),
+                // Expected verification status
+                Some(VerificationStatus { color: BootStateColor::Red, is_eio: false }),
             ),
             Err(SlotVerifyError::Io.into())
         )
@@ -419,14 +428,13 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                // Unlocked result
-                Ok(false),
+                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
                 // Rollback index result
                 Ok(0),
                 // Slot
                 0,
-                // Expected color
-                Some(BootStateColor::Red),
+                // Expected verification status
+                Some(VerificationStatus { color: BootStateColor::Red, is_eio: false }),
             ),
             // Cannot continue boot
             Err(SlotVerifyError::Verification(None).into()),
@@ -434,20 +442,49 @@ mod test {
     }
 
     #[test]
-    fn test_avb_verify_slot_verification_failed_obtain_lock_status() {
+    fn test_avb_verify_slot_success_eio_mode() {
+        let mut partitions_to_verify = PartitionsToVerify::default();
+        partitions_to_verify.try_push(c"boot").unwrap();
+        partitions_to_verify.try_push(c"init_boot").unwrap();
+        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        let partitions_data = [
+            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "init_boot_a.img"),
+            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+        ];
+
+        assert_eq!(
+            test_avb_verify_slot(
+                &partitions_data,
+                &mut partitions_to_verify,
+                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: true }),
+                // Rollback index result
+                Ok(0),
+                // Slot
+                0,
+                // Expected verification status
+                Some(VerificationStatus { color: BootStateColor::Green, is_eio: true }),
+            ),
+            Ok(()),
+        );
+    }
+
+    #[test]
+    fn test_avb_verify_slot_verification_failed_obtain_device_status() {
         let mut partitions_to_verify = PartitionsToVerify::default();
 
         assert_eq!(
             test_avb_verify_slot(
                 &[],
                 &mut partitions_to_verify,
-                // Unlocked result
+                // Device status
                 Err(avb::IoError::NoSuchValue),
                 // Rollback index result
                 Ok(0),
                 // Slot
                 0,
-                // Expected color
+                // Expected verification status
                 None,
             ),
             // Cannot continue boot

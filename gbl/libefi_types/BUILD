@@ -39,6 +39,7 @@ cc_library(
     includes = ["defs"],
 )
 
+# TODO(b/443135241): Use --new-type-alias for bitmask typedef consts, e.g GblEfiAvbBootColor
 rust_bindgen(
     name = "efi_defs_bindgen",
     bindgen_flags = [
