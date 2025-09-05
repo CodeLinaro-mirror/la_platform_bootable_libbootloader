@@ -489,51 +489,6 @@ the info structure.
 | `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                          |
 | `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions.         |
 
-## `GBL_EFI_AB_SLOT_PROTOCOL.MarkBootAttempt()`
-
-### Summary
-
-Marks a boot attempt on the current slot.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI * GBL_EFI_AB_SLOT_MARK_BOOT_ATTEMPT)(
-    IN GBL_EFI_AB_SLOT_PROTOCOL* Self,
-);
-```
-
-### Parameters
-
-*Self*
-
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
-instance.
-
-### Description
-
-Updates internal metadata for the current boot target slot.
-If the current slot has registered a successful boot, its tries remaining field
-is left unchanged.
-If there are no slots with non-zero *Successful* or *Tries* fields, the call to
-`MarkBootAttempt()` **MUST** return `EFI_ACCESS_DENIED`. The bootloader then
-must decide on the next action to take.
-
-Subsequent calls to `GetSlotInfo()` and `GetCurrentSlot()` **MUST** reflect
-the decremented tries.
-
-### Status Codes Returned
-
-| Return Code             | Semantics                                                                                                     |
-|:------------------------|:--------------------------------------------------------------------------------------------------------------|
-| `EFI_SUCCESS`           | The call completed successfully.                                                                              |
-| `EFI_INVALID_PARAMETER` | *Self* is `NULL` or improperly aligned.                                                                       |
-| `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                  |
-| `EFI_VOLUME_CORRUPTED`  | The metadata loaded is invalid or corrupt. The caller should call `Reinitialize` before taking other actions. |
-| `EFI_ACCESS_DENIED`     | The current slot has no more tries remaining.                                                                 |
-
 ## `GBL_EFI_AB_SLOT_PROTOCOL.Reinitialize()`
 
 ### Summary
