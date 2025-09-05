@@ -672,12 +672,12 @@ where
 
     /// Helper for "fastboot boot" in Android image.
     async fn boot_android(&mut self, img: &[u8], mut resp: impl InfoSender) -> CommandResult<()> {
-        let slot_suffix = get_boot_slot(self.gbl_ops, false)?;
+        let slot_suffix = get_boot_slot(self.gbl_ops)?;
         let mut boot_part = [0u8; 16];
-        let boot_part = snprintf!(boot_part, "boot_{slot_suffix}");
+        let boot_part = snprintf!(boot_part, "boot_{}", slot_suffix.0);
         // We still need to specify slot because other components such as vendor_boot, dtb, dtbo and
         // vbmeta still come from the disk.
-        let slot_idx = (u64::from(slot_suffix) - u64::from('a')).try_into().unwrap();
+        let slot_idx = slot_suffix.as_index();
         let mut ramboot_ops = RambootOps { ops: self.gbl_ops, ram_partitions: &[(boot_part, img)] };
         let boot_buffer = self.boot_buffer.as_borrowed();
         let (ramdisk, fdt, kernel, _) =
@@ -688,7 +688,7 @@ where
             kernel: kernel.as_ptr_range(),
         });
         resp.send_formatted_info(|f| {
-            write!(f, "Boot image as Android slot {slot_suffix}").unwrap()
+            write!(f, "Boot image as Android slot {}", slot_suffix.0).unwrap()
         })
         .await?;
         Ok(())

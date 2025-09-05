@@ -573,24 +573,8 @@ pub trait GblOps<'a, 'd> {
         })
     }
 
-    /// Gets the currently booted bootloader slot.
-    ///
-    /// # Returns
-    ///
-    /// * Returns Ok(Some(slot index)) if bootloader is slotted.
-    /// * Returns Ok(Errorr::Unsupported) if bootloader is not slotted.
-    /// * Returns Err() on error.
+    /// Gets the current boot slot.
     fn get_current_slot(&mut self) -> Result<Slot, Error>;
-
-    /// Gets the slot for the next A/B decision.
-    ///
-    /// # Args
-    ///
-    /// * `mark_boot_attempt`: Passes true if the caller attempts to boot the returned slot and
-    ///   would like implementation to perform necessary update to the state of slot such as retry
-    ///   counter. Passes false if the caller only wants to query the slot decision and not cause
-    ///   any state change.
-    fn get_next_slot(&mut self, _mark_boot_attempt: bool) -> Result<Slot, Error>;
 
     /// Sets the active slot for the next A/B decision.
     ///
@@ -911,11 +895,6 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         Err(Error::Unsupported)
     }
 
-    fn get_next_slot(&mut self, _: bool) -> Result<Slot, Error> {
-        // Ramboot is not suppose to call this interface.
-        unreachable!()
-    }
-
     fn set_active_slot(&mut self, _: u8) -> Result<(), Error> {
         // Ramboot is not suppose to call this interface.
         unreachable!()
@@ -1147,12 +1126,6 @@ pub(crate) mod test {
         // set it, it can panic with "unwrap()" which will give a clearer error and location
         // message than a vague error such as `Error::Unimplemented`.
         pub current_slot: Option<Result<Slot, Error>>,
-
-        /// For returned by `get_next_slot`
-        pub next_slot: Option<Result<Slot, Error>>,
-
-        /// Number of times `get_next_slot()` is called with `mark_boot_attempt` set to true.
-        pub mark_boot_attempt_called: usize,
 
         /// slot index last set active by `set_active()`,
         pub last_set_active_slot: Option<u8>,
@@ -1665,11 +1638,6 @@ pub(crate) mod test {
 
         fn get_current_slot(&mut self) -> Result<Slot, Error> {
             self.current_slot.unwrap()
-        }
-
-        fn get_next_slot(&mut self, mark_boot_attempt: bool) -> Result<Slot, Error> {
-            self.mark_boot_attempt_called += usize::from(mark_boot_attempt);
-            self.next_slot.unwrap()
         }
 
         fn set_active_slot(&mut self, slot: u8) -> Result<(), Error> {

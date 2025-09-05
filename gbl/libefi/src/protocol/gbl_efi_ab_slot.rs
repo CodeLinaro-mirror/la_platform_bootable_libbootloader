@@ -117,24 +117,6 @@ impl<'a> Protocol<'a, GblABSlotProtocol> {
         Ok(info.into())
     }
 
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.GetNextSlot()`
-    pub fn get_next_slot(&self, mark_boot_attempt: bool) -> Result<GblSlot> {
-        let mut info = GblEfiSlotInfo::default();
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()`, `info` are input/output parameter and will not be retained. It
-        // outlives the call.
-        unsafe {
-            efi_call!(
-                self.interface().get_next_slot,
-                self.interface_ptr(),
-                mark_boot_attempt,
-                &mut info as _
-            )?;
-        }
-        Ok(GblSlot::from(info))
-    }
-
     /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_active_slot()`
     pub fn set_active_slot(&self, idx: u8) -> Result<()> {
         // SAFETY:

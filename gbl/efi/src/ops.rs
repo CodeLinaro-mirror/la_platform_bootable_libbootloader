@@ -828,10 +828,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         self.open_slot_protocol()?.get_current_slot()?.try_into()
     }
 
-    fn get_next_slot(&mut self, mark_boot_attempt: bool) -> Result<Slot> {
-        self.open_slot_protocol()?.get_next_slot(mark_boot_attempt)?.try_into()
-    }
-
     fn set_active_slot(&mut self, slot: u8) -> Result<()> {
         self.open_slot_protocol()?.set_active_slot(slot)
     }

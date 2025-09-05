@@ -475,10 +475,6 @@ mod test {
             unimplemented!()
         }
 
-        fn get_next_slot(&mut self, _: bool) -> Result<Slot> {
-            unimplemented!()
-        }
-
         fn set_active_slot(&mut self, _: u8) -> Result<()> {
             unimplemented!()
         }

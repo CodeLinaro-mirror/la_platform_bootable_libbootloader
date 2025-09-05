@@ -25,6 +25,7 @@ use crate::{
     },
     gbl_println,
     ops::{PartitionBuffer, RebootMode},
+    slots::Suffix,
     GblOps, Result,
 };
 use bootparams::{
@@ -389,30 +390,15 @@ fn fixup_bootconfig<'a, 'b, 'c>(
 
 /// Gets the target slot to boot.
 ///
-/// * If GBL is slotless (`GblOps::get_current_slot()` returns `Error::Unsupported`), the API
-///   behaves the same as `GblOps::get_next_slot()`.
-/// * If GBL is slotted, the API behaves the same as `GblOps::get_current_slot()` and
-///   `mark_boot_attempt` is ignored.
-/// * Default to A slot if slotting backend is not implemented on the platform.
-pub(crate) fn get_boot_slot<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
-    mark_boot_attempt: bool,
-) -> Result<char> {
-    let slot = match ops.get_current_slot() {
-        // Slotless bootloader
-        Err(Error::Unsupported) => {
-            gbl_println!(ops, "GBL is Slotless.");
-            ops.get_next_slot(mark_boot_attempt)
-        }
-        v => v,
-    };
-    match slot {
-        Ok(slot) => Ok(slot.suffix.0),
-        Err(Error::Unsupported) | Err(Error::NotFound) => {
-            // Default to slot A if slotting is not supported.
-            // Slotless partition name is currently not supported. Revisit if this causes problems.
-            gbl_println!(ops, "Slotting is not supported. Choose A slot by default");
-            Ok('a')
+/// Defaults to `a` slot if slotting backend is not implemented on the platform.
+pub(crate) fn get_boot_slot<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) -> Result<Suffix> {
+    match ops.get_current_slot() {
+        Ok(slot) => Ok(slot.suffix),
+        Err(Error::Unsupported | Error::NotFound) => {
+            // TODO(b/442975038): Make this an error in production, allow fallback only for
+            // #[cfg(feature = "gbl_dev")]
+            gbl_println!(ops, "Slotting is not supported. Default to 'a' slot. This would not be allowed for production in the near future when slotting becomes mandatory.");
+            Ok('a'.into())
         }
         Err(e) => {
             gbl_println!(ops, "Failed to get boot slot: {e}");
@@ -616,8 +602,8 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     }
 
     // Checks whether fastboot has set a different active slot. Reboot if it does.
-    let slot_suffix = get_boot_slot(ops, true)?;
-    if result.last_set_active_slot.unwrap_or(slot_suffix) != slot_suffix {
+    let slot_suffix = get_boot_slot(ops)?;
+    if matches!(result.last_set_active_slot, Some(s) if s != slot_suffix.0) {
         gbl_println!(ops, "Active slot changed by \"fastboot set_active\". Reset..");
         ops.reboot();
         return Err(Error::UnexpectedReturn.into());
@@ -628,7 +614,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     //
     // It's a little awkward to convert suffix char to integer which will then be converted
     // back to char by the API. Consider passing in the char bytes directly.
-    let slot_idx = (u64::from(slot_suffix) - u64::from('a')).try_into().unwrap();
+    let slot_idx = slot_suffix.as_index();
 
     let is_recovery = matches!(reboot_mode, RebootMode::Recovery)
         || matches!(boot_mode, AndroidBootMode::Recovery);
@@ -1992,24 +1978,6 @@ androidboot.veritymode.managed=yes
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
-        assert_eq!(ops.mark_boot_attempt_called, 0);
-        checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel)
-    }
-
-    #[test]
-    fn test_android_main_slotless_gbl_slot_a() {
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
-        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
-
-        let mut ops = default_test_gbl_ops(&storage);
-        ops.current_slot = Some(Err(Error::Unsupported));
-        ops.next_slot = Some(Ok(slot('a')));
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = (&mut load_buffer[..]).into();
-        let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
-        assert_eq!(ops.mark_boot_attempt_called, 1);
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel)
     }
 
@@ -2026,25 +1994,7 @@ androidboot.veritymode.managed=yes
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
-        assert_eq!(ops.mark_boot_attempt_called, 0);
         checks_loaded_v2_slot_b_normal_mode(ramdisk, kernel)
-    }
-
-    #[test]
-    fn test_android_main_slotless_gbl_slot_b() {
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_b", read_test_data("boot_v2_b.img"));
-        storage.add_raw_device(c"vbmeta_b", read_test_data("vbmeta_v2_b.img"));
-        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
-
-        let mut ops = default_test_gbl_ops(&storage);
-        ops.current_slot = Some(Err(Error::Unsupported));
-        ops.next_slot = Some(Ok(slot('b')));
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = (&mut load_buffer[..]).into();
-        let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
-        assert_eq!(ops.mark_boot_attempt_called, 1);
-        checks_loaded_v2_slot_b_normal_mode(ramdisk, kernel);
     }
 
     #[test]
@@ -2056,7 +2006,6 @@ androidboot.veritymode.managed=yes
 
         let mut ops = default_test_gbl_ops(&storage);
         ops.current_slot = Some(Err(Error::Unsupported));
-        ops.next_slot = Some(Err(Error::Unsupported));
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();

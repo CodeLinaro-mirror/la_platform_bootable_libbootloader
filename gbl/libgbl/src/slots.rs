@@ -74,6 +74,11 @@ impl Suffix {
     fn rank(&self) -> i64 {
         -i64::from(u32::from(self.0))
     }
+
+    /// Gets the slot index number.
+    pub fn as_index(&self) -> u8 {
+        self.0 as u8 - b'a'
+    }
 }
 
 impl From<char> for Suffix {
@@ -452,5 +457,12 @@ mod test {
         let squid_buffer: SuffixBytes = squid.into();
         let squid_cstr = CStr::from_bytes_until_nul(&squid_buffer);
         assert!(squid_cstr.is_ok());
+    }
+
+    #[test]
+    fn test_suffix_as_index() {
+        assert_eq!(Suffix::from('a').as_index(), 0, "expect suffix 'a' to have index 0");
+        assert_eq!(Suffix::from('b').as_index(), 1, "expect suffix 'b' to have index 1");
+        assert_eq!(Suffix::from('z').as_index(), 25, "expect suffix 'z' to have index 25");
     }
 }

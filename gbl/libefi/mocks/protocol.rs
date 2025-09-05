@@ -410,9 +410,6 @@ pub mod gbl_efi_ab_slot {
             /// Mock of GblABSlotProtocol::get_current_slot.
             pub fn get_current_slot(&self) -> Result<GblSlot>;
 
-            /// Mock of GblABSlotProtocol::get_next_slot.
-            pub fn get_next_slot(&self, mark_boot_attempt: bool) -> Result<GblSlot>;
-
             /// Mock of GblABSlotProtocol::load_boot_data.
             pub fn load_boot_data(&self) -> Result<GblEfiSlotMetadataBlock>;
 
