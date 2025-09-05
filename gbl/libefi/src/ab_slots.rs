@@ -164,7 +164,7 @@ mod test {
     use libgbl::constants::ImageType;
     use libgbl::{
         device_tree::DeviceTreeComponentsRegistry,
-        gbl_avb::state::{BootStateColor, KeyValidationStatus},
+        gbl_avb::state::{KeyValidationStatus, VerificationStatus},
         ops::{FailSender, ImageBuffer, InfoSender, LockState, LockType, OkaySender},
     };
     use libprofile::{ProfileBackend, ProfileTimer, Reporter};
@@ -350,7 +350,7 @@ mod test {
 
         fn avb_handle_verification_result<'b>(
             &mut self,
-            _color: BootStateColor,
+            _status: VerificationStatus,
             _digest: Option<&CStr>,
             _properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
         ) -> AvbIoResult<()> {

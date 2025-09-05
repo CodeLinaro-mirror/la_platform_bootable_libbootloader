@@ -114,5 +114,4 @@ macro_rules! flag_impls {
 }
 
 flag_impls!(EfiMemoryAttribute);
-flag_impls!(GblEfiAvbDeviceStatus);
 flag_impls!(GblEfiPartitionBufferFlag);

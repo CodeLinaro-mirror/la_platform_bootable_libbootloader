@@ -15,7 +15,7 @@
 //! Gbl AVB operations.
 
 use crate::{
-    gbl_avb::state::{BootStateColor, KeyValidationStatus},
+    gbl_avb::state::{KeyValidationStatus, VerificationStatus},
     ops::{AvbDeviceStatus, AvbProperty},
     GblOps,
 };
@@ -41,7 +41,7 @@ use crate::gbl_println;
 #[cfg(feature = "gbl_dev")]
 use core::fmt::Debug;
 
-/// The digest key in commandline provided by libavb.
+/// The digest key in AVB commandline.
 pub const AVB_DIGEST_KEY: &str = "androidboot.vbmeta.digest";
 
 // AVB cert tracks versions for the PIK and PSK; PRK cannot be changed so has no version info.
@@ -107,7 +107,7 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
     pub fn handle_verification_result(
         &mut self,
         slot_verify: Option<&SlotVerifyData>,
-        color: BootStateColor,
+        status: VerificationStatus,
         digest: Option<&str>,
     ) -> IoResult<()> {
         // TODO(b/337846185): Cover this logic with unittests.
@@ -141,7 +141,7 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
             })
         });
 
-        self.gbl_ops.avb_handle_verification_result(color, digest_cstr, properties)
+        self.gbl_ops.avb_handle_verification_result(status, digest_cstr, properties)
     }
 
     /// Get vbmeta public key validation status reported by validate_vbmeta_public_key.

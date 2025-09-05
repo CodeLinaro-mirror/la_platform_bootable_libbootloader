@@ -34,7 +34,7 @@ devices.
 ### Revision Number
 
 ```c
-#define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 2)
+#define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 3)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -73,7 +73,7 @@ set loaded and verified by GBL.
 
 Retrieves the current device status, including its lock state and dm-verity
 error indication.
-[`ReadDeviceStatus()`](#gbl_efi_avb_protocolreaddevicestatus).
+[`ReadDeviceStatus()`][readdevicestatus].
 
 #### ValidateVbmetaPublicKey
 
@@ -216,7 +216,7 @@ typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_READ_DEVICE_STATUS) (
   IN GBL_EFI_AVB_PROTOCOL *Self,
-  OUT UINT64 *StatusFlags);
+  OUT GBL_EFI_AVB_DEVICE_STATUS *StatusFlags);
 ```
 
 ### Related Definitions
@@ -224,17 +224,17 @@ EFI_STATUS
 #### GBL_EFI_AVB_DEVICE_STATUS
 
 ```c
-typedef enum {
-  GBL_EFI_AVB_STATUS_UNLOCKED = 0x1 << 0,
-  GBL_EFI_AVB_STATUS_DM_VERITY_FAILED = 0x1 << 1,
-} GBL_EFI_AVB_DEVICE_STATUS;
+typedef UINT64 GBL_EFI_AVB_DEVICE_STATUS;
+
+STATIC CONST GBL_EFI_AVB_DEVICE_STATUS GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED = 0x1 << 0;
+STATIC CONST GBL_EFI_AVB_DEVICE_STATUS GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED = 0x1 << 1;
 ```
 
-##### GBL_EFI_AVB_STATUS_UNLOCKED
+##### GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED
 
 Flag indicating that the device is unlocked.
 
-##### GBL_EFI_AVB_STATUS_DM_VERITY_FAILED
+##### GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED
 
 Flag indicating that the device rebooted due to a dm-verity error.
 
@@ -255,16 +255,16 @@ definitions above for the semantics of each flag value.
 This method allows the firmware to provide GBL with the current AVB device
 status, covering:
 
-1. `GBL_EFI_AVB_STATUS_UNLOCKED` - Indicates the device is [unlocked][unlocked].
-   GBL treats unlocked devices as being in the `orange` boot state, skipping
-   certain verification enforcement and allowing boot to proceed with reduced
-   security guarantees.
-1. `GBL_EFI_AVB_STATUS_DM_VERITY_FAILED` - Indicates the device rebooted due to
-   a dm-verity hashtree corruption [error][dmv_error]. In this case, GBL passes
-   `AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION` to `libavb`.
-   Unless the library detects new OS images, this results in a
-   `RED_EIO` (dm-verity error) boot state, requiring user confirmation before
-   proceeding in degraded mode.
+1. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED` - Indicates the device is
+   [unlocked][unlocked]. GBL treats unlocked devices as being in the `orange`
+   boot state, skipping certain verification enforcement and allowing boot to
+   proceed with reduced security guarantees.
+1. `GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED` - Indicates the device rebooted
+   due to a dm-verity hashtree corruption [error][dmv_error]. In this case, GBL
+   passes `AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION` to
+   `libavb`. Unless the library detects new OS images, this results in a
+   `GBL_EFI_AVB_BOOT_COLOR_RED_EIO` flag, requiring user additional confirmation
+   before proceeding in degraded mode.
 
 GBL may call this method multiple times within a single boot session. If the
 method returns an error, GBL rejects to boot.
@@ -619,42 +619,47 @@ EFI_STATUS
 #### GBL_EFI_AVB_BOOT_COLOR
 
 ```c
-typedef enum {
-  GBL_EFI_AVB_COLOR_RED,
-  GBL_EFI_AVB_COLOR_RED_EIO,
-  GBL_EFI_AVB_COLOR_ORANGE,
-  GBL_EFI_AVB_COLOR_YELLOW,
-  GBL_EFI_AVB_COLOR_GREEN,
-} GBL_EFI_AVB_BOOT_COLOR;
+typedef UINT64 GBL_EFI_AVB_BOOT_COLOR;
+
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_RED = 0x1 << 0;
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_ORANGE = 0x1 << 1;
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_YELLOW = 0x1 << 2;
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_GREEN = 0x1 << 3;
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_RED_EIO = 0x1 << 4;
 ```
 
-##### GBL_EFI_AVB_COLOR_RED
+##### GBL_EFI_AVB_BOOT_COLOR_RED
 
-Verification failed (including fatal errors on an unlocked device). Boot cannot
-proceed.
+Flag indicating that verification failed (including fatal errors on an unlocked
+device). A corresponding notification [must][boot_flow_red] be shown to inform
+the user that no valid OS is detected. Boot cannot proceed.
 
-##### GBL_EFI_AVB_COLOR_RED_EIO
+##### GBL_EFI_AVB_BOOT_COLOR_ORANGE
 
-A dm-verity [error][dmv_error] has been detected. A corresponding notification
-must be shown to obtain user confirmation before proceeding with the boot in
+Flag indicating that the device is unlocked (regardless of the verification
+result). A corresponding notification [must][boot_flow_orange] be shown to
+obtain user confirmation before proceeding with the boot. HLOS functionality may
+be limited.
+
+##### GBL_EFI_AVB_BOOT_COLOR_YELLOW
+
+Flag indicating that device is locked and verification passed using a
+user-provided custom key. A corresponding notification [must][boot_flow_yellow]
+be shown to obtain user confirmation before proceeding with the boot.
+
+##### GBL_EFI_AVB_BOOT_COLOR_GREEN
+
+Flag indicating that device is locked and verification passed. Boot can proceed.
+
+##### GBL_EFI_AVB_BOOT_COLOR_RED_EIO
+
+Flag indicating the device has rebooted due to [dm-verity][dmv_error] hash tree
+corruption (detected via [`ReadDeviceStatus`][readdevicestatus]), or this error
+occurred on a previous boot and a system update has not been applied since. A
+corresponding notification [must][boot_flow_red_eio] be shown to obtain user
+confirmation before proceeding with the dialogs for other colors and boot in
 degraded mode, allowing the device to receive a future update that resolves the
 issue.
-
-##### GBL_EFI_AVB_COLOR_ORANGE
-
-Used regardless of the verification result to indicate that the device is
-unlocked. A corresponding notification must be shown to obtain user confirmation
-before proceeding with the boot. HLOS functionality may be limited.
-
-##### GBL_EFI_AVB_COLOR_YELLOW
-
-Device is locked and verification passed using a user-provided custom key. A
-corresponding notification must be shown to obtain user confirmation before
-proceeding with the boot.
-
-##### GBL_EFI_AVB_COLOR_GREEN
-
-Device is locked and verification passed. Boot can proceed
 
 #### GBL_EFI_AVB_PROPERTY
 
@@ -712,27 +717,33 @@ Points to a buffer containing the loaded partition data of `DataSize` bytes.
 
 ```c
 typedef struct {
-  // GBL_EFI_AVB_BOOT_COLOR
-  UINT32                             Color;
-  UINT32                             Reserved1;
+  GBL_EFI_AVB_BOOT_COLOR             ColorFlags;
   CONST CHAR8                        *Digest;
   UINTN                              NumLoadedPartitions;
   CONST GBL_EFI_AVB_LOADED_PARTITION *LoadedPartitions;
   UINTN                              NumProperties;
   CONST GBL_EFI_AVB_PROPERTY         *Properties;
-  UINT32                             Reserved2[8];
+  UINT32                             Reserved[8];
 } GBL_EFI_AVB_VERIFICATION_RESULT;
 ```
 
-##### Color
+##### ColorFlags
 
-The verification result `GBL_EFI_AVB_BOOT_COLOR`. See corresponding section from
-above for more details.
+Represents the verification result using `GBL_EFI_AVB_BOOT_COLOR` flags. Only
+one of the following may be set at a time to indicate the boot state for
+firmware to request user confirmation, as required by the boot flow
+[documentation][boot_flow]:
 
-##### Reserved1
+1. `GBL_EFI_AVB_BOOT_COLOR_RED`
+2. `GBL_EFI_AVB_BOOT_COLOR_ORANGE`
+3. `GBL_EFI_AVB_BOOT_COLOR_YELLOW`
+4. `GBL_EFI_AVB_BOOT_COLOR_GREEN`
 
-Reserved to ensure 8-byte alignment for the pointers and potential future use
-cases.
+`GBL_EFI_AVB_BOOT_COLOR_RED_EIO` may be set alongside `ORANGE`, `YELLOW` and
+`GREEN` colors to indicate that a dm-verity (hash tree) error occurred,
+requiring an additional user confirmation [dialog][boot_flow_red_eio].
+
+See the corresponding section above for more details.
 
 ##### Digest
 
@@ -765,7 +776,7 @@ all AVB properties extracted from `vbmeta` and chained partition footers. May be
 `NULL` if no properties are provided or verification fails (so `RED` state
 color).
 
-##### Reserved2
+##### Reserved
 
 Reserved for potential future use cases.
 
@@ -823,6 +834,7 @@ following UEFI error codes are used to communicate results back to the library:
 | Others                         | Treated as `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                                                                                 |
 
 [readpartitionstoverify]: #gbl_efi_avb_protocolreadpartitionstoverify
+[readdevicestatus]: #gbl_efi_avb_protocolreaddevicestatus
 [handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
 [protocolwriterollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
 [avb]: https://source.android.com/docs/security/features/verifiedboot/avb
@@ -831,3 +843,8 @@ following UEFI error codes are used to communicate results back to the library:
 [rp]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#rollback-protection
 [update_ri]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes
 [pd]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#persistent-digests
+[boot_flow]: https://source.android.com/docs/security/features/verifiedboot/boot-flow
+[boot_flow_red]: https://source.android.com/docs/security/features/verifiedboot/boot-flow#no-valid-os-found
+[boot_flow_orange]: https://source.android.com/docs/security/features/verifiedboot/boot-flow#unlocked-devices
+[boot_flow_yellow]: https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
+[boot_flow_red_eio]: https://source.android.com/docs/security/features/verifiedboot/boot-flow#dm-verity-corruption

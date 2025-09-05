@@ -18,7 +18,7 @@ use crate::{
     constants::ImageType,
     error::Result as GblResult,
     fuchsia_boot::GblAbrOps,
-    gbl_avb::state::{BootStateColor, KeyValidationStatus},
+    gbl_avb::state::{KeyValidationStatus, VerificationStatus},
     gbl_println,
     partition::{
         check_part_unique, read_unique_partition, read_unique_partition_sync,
@@ -346,7 +346,7 @@ pub trait GblOps<'a, 'd> {
     /// Set device state (rot / version binding), show UI, etc.
     fn avb_handle_verification_result<'b>(
         &mut self,
-        color: BootStateColor,
+        status: VerificationStatus,
         digest: Option<&CStr>,
         properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
     ) -> AvbIoResult<()>;
@@ -856,11 +856,11 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 
     fn avb_handle_verification_result<'b>(
         &mut self,
-        color: BootStateColor,
+        status: VerificationStatus,
         digest: Option<&CStr>,
         properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
     ) -> AvbIoResult<()> {
-        self.ops.avb_handle_verification_result(color, digest, properties)
+        self.ops.avb_handle_verification_result(status, digest, properties)
     }
 
     fn avb_validate_vbmeta_public_key(
@@ -1120,7 +1120,7 @@ pub(crate) mod test {
         /// Custom handler for `avb_handle_verification_result`
         pub avb_handle_verification_result: Option<
             &'a mut dyn FnMut(
-                BootStateColor,
+                VerificationStatus,
                 Option<&CStr>,
                 Option<Vec<AvbProperty<'_>>>,
             ) -> AvbIoResult<()>,
@@ -1411,12 +1411,12 @@ pub(crate) mod test {
 
         fn avb_handle_verification_result<'b>(
             &mut self,
-            color: BootStateColor,
+            status: VerificationStatus,
             digest: Option<&CStr>,
             properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
         ) -> AvbIoResult<()> {
             match self.avb_handle_verification_result.as_mut() {
-                Some(f) => (*f)(color, digest, properties.map(|p| p.collect())),
+                Some(f) => (*f)(status, digest, properties.map(|p| p.collect())),
                 _ => Ok(()),
             }
         }

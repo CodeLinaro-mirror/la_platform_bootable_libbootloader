@@ -32,21 +32,25 @@
 #include "types.h"
 
 static const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 2);
+    GBL_PROTOCOL_REVISION(0, 3);
 
-EFI_ENUM(GBL_EFI_AVB_DEVICE_STATUS, GblEfiAvbDeviceStatus, uint64_t,
-         // Indicates device is unlocked.
-         GBL_EFI_AVB_STATUS_UNLOCKED = 0x1 << 0,
-         // Indecated dm-verity error is occurred.
-         GBL_EFI_AVB_STATUS_DM_VERITY_FAILED = 0x1 << 1);
+typedef uint64_t GblEfiAvbDeviceStatus;
+// Indicates device is unlocked.
+static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED = 0x1
+                                                                        << 0;
+// Indecated dm-verity error is occurred.
+static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED =
+    0x1 << 1;
 
-// Os boot state color.
+// Os boot state color flags.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#communicating-verified-boot-state-to-users
-EFI_ENUM(GBL_EFI_AVB_BOOT_COLOR, GblEfiAvbBootColor, uint32_t,
-         GBL_EFI_AVB_BOOT_COLOR_RED, GBL_EFI_AVB_BOOT_COLOR_RED_EIO,
-         GBL_EFI_AVB_BOOT_COLOR_ORANGE, GBL_EFI_AVB_BOOT_COLOR_YELLOW,
-         GBL_EFI_AVB_BOOT_COLOR_GREEN);
+typedef uint64_t GblEfiAvbBootColor;
+static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_RED = 0x1 << 0;
+static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_ORANGE = 0x1 << 1;
+static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_YELLOW = 0x1 << 2;
+static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_GREEN = 0x1 << 3;
+static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_RED_EIO = 0x1 << 4;
 
 // Vbmeta key validation status.
 //
@@ -81,9 +85,7 @@ typedef struct {
 } GblEfiAvbProperty;
 
 typedef struct {
-  GblEfiAvbBootColor color;
-  // To ensure 8 bytes pointers alignment.
-  uint32_t reserved1;
+  GblEfiAvbBootColor color_flags;
   // Pointer to nul-terminated ASCII hex digest calculated by libavb. May be
   // null in case of verification failed (RED boot state color).
   const char8_t* digest;
@@ -91,7 +93,7 @@ typedef struct {
   const GblEfiAvbLoadedPartition* loaded_partitions;
   size_t num_properties;
   const GblEfiAvbProperty* properties;
-  uint64_t reserved2[8];
+  uint64_t reserved[8];
 } GblEfiAvbVerificationResult;
 
 typedef struct GblEfiAvbProtocol {
