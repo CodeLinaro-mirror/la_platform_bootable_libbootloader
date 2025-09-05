@@ -64,21 +64,21 @@ typedef struct {
   // On input - `base_name` buffer size
   // On output - actual `base_name` length
   size_t base_name_len;
-  char8_t* base_name;
+  uint8_t* base_name;
 } GblEfiAvbPartition;
 
 typedef struct {
   // UTF-8, null terminated
-  const char8_t* base_name;
+  const uint8_t* base_name;
   size_t data_size;
   const uint8_t* data;
 } GblEfiAvbLoadedPartition;
 
 typedef struct {
   // UTF-8, null terminated
-  const char8_t* base_partition_name;
+  const uint8_t* base_partition_name;
   // UTF-8, null terminated
-  const char8_t* key;
+  const uint8_t* key;
   // Excluding null terminator
   size_t value_size;
   const uint8_t* value;
@@ -88,7 +88,7 @@ typedef struct {
   GblEfiAvbBootColor color_flags;
   // Pointer to nul-terminated ASCII hex digest calculated by libavb. May be
   // null in case of verification failed (RED boot state color).
-  const char8_t* digest;
+  const uint8_t* digest;
   size_t num_loaded_partitions;
   const GblEfiAvbLoadedPartition* loaded_partitions;
   size_t num_properties;
@@ -125,12 +125,12 @@ typedef struct GblEfiAvbProtocol {
                                     /* in */ uint64_t rollback_index);
 
   EfiStatus (*read_persistent_value)(struct GblEfiAvbProtocol* self,
-                                     /* in */ const char8_t* name,
+                                     /* in */ const uint8_t* name,
                                      /* in-out */ size_t* value_size,
                                      /* out */ uint8_t* value);
 
   EfiStatus (*write_persistent_value)(struct GblEfiAvbProtocol* self,
-                                      /* in */ const char8_t* name,
+                                      /* in */ const uint8_t* name,
                                       /* in */ size_t value_size,
                                       /* in */ const uint8_t* value);
 
