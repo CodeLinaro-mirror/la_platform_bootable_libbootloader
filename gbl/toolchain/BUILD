@@ -535,6 +535,8 @@ uefi_rustc_flags = [
     # Support unwind tables. (On arm, this make sures x29 is stored on stack first).
     "-C",
     "force-unwind-tables=yes",
+    # Generate debug information. For MSVC targets, this only affects the size of the PDB file.
+    "-g",
 ]
 
 rustc_opt_flags = [
@@ -558,10 +560,20 @@ rust_toolchain(
     ] + rustc_common_flags + rustc_opt_flags,
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
-    rust_std = "@rust_prebuilts//:x86_64-unknown-uefi_prebuilt_stdlibs",
+    rust_std = select({
+        ":rust_no_sysroot_true": ":rust_stdlib_empty",
+        "//conditions:default": ":rust_std_source_build",
+    }),
     rustc = "@rust_prebuilts//:bin/rustc",
     staticlib_ext = ".a",
     stdlib_linkflags = [],
+    # rules_rust only outputs pdb file when stripping is disabled.
+    # Debug info is in PDB file. There appears to be no change on file size.
+    strip_level = {
+        "dbg": "none",
+        "fastbuild": "none",
+        "opt": "none",
+    },
     target_triple = "x86_64-unknown-uefi",
 )
 
@@ -713,6 +725,13 @@ rust_toolchain(
     rustc = "@rust_prebuilts//:bin/rustc",
     staticlib_ext = ".a",
     stdlib_linkflags = [],
+    # rules_rust only outputs pdb file when stripping is disabled.
+    # Debug info is in PDB file. There appears to be no change on file size.
+    strip_level = {
+        "dbg": "none",
+        "fastbuild": "none",
+        "opt": "none",
+    },
     target_triple = "aarch64-unknown-uefi",
 )
 
