@@ -215,10 +215,7 @@ _no_sysroot_transition = transition(
 # Creates a symlink wrapper to `file` in the given `ctx`.
 # Returns the symlink file object.
 def _create_symlink_wrapper(ctx, file):
-    # Append the label name to the file name but keep the same extension. i.e.
-    # "<file>.<extension>" -> "<file>_<label>.<extension>"
-    stem = file.basename.removesuffix(".{}".format(file.extension))
-    out = ctx.actions.declare_file("{}_{}.{}".format(stem, ctx.label.name, file.extension))
+    out = ctx.actions.declare_file("{}/{}".format(ctx.label.name, file.basename))
     ctx.actions.symlink(output = out, target_file = file)
     return out
 
@@ -340,5 +337,38 @@ link_static_cc_library = rule(
     implementation = _link_static_cc_library_impl,
     attrs = {
         "cc_library": attr.label(),  # The cc_library() target for the static library.
+    },
+)
+
+# Implementation of the extract_pdb_file rule.
+def _extract_pdb_file(ctx):
+    output_groups = ctx.attr.target[OutputGroupInfo]
+    return DefaultInfo(files = output_groups.pdb_file)
+
+extract_pdb_file = rule(
+    implementation = _extract_pdb_file,
+    attrs = {
+        # The target that generates pdb file
+        "target": attr.label(
+            mandatory = True,
+            providers = [OutputGroupInfo],
+        ),
+    },
+)
+
+# Implementation of the rename_output rule.
+def _rename_output(ctx):
+    out = ctx.actions.declare_file("{}/{}".format(ctx.label.name, ctx.attr.out))
+    ctx.actions.symlink(output = out, target_file = ctx.files.target[0])
+    return DefaultInfo(files = depset([out]))
+
+rename_output = rule(
+    implementation = _rename_output,
+    attrs = {
+        "target": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+        ),
+        "out": attr.string(mandatory = True),
     },
 )

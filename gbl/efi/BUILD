@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform", "dev_test")
+load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform", "dev_test", "extract_pdb_file", "rename_output")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
 load("@gbl_llvm_prebuilts//:info.bzl", "gbl_llvm_tool_path")
@@ -84,6 +84,20 @@ dev_test(
     target = ":test",
 )
 
+APP_NAME = select({
+    "@gbl//toolchain:gbl_rust_elf_riscv64": "gbl_riscv64",
+    "@gbl//toolchain:gbl_rust_uefi_x86_64": "gbl_x86_64",
+    "@gbl//toolchain:gbl_rust_uefi_aarch64": "gbl_aarch64",
+    "//conditions:default": "gbl_unknown",
+}) + "_" + select({
+    "@gbl//toolchain:dev": "dev",
+    "@gbl//toolchain:prod": "prod",
+    "//conditions:default": "unknown",
+}) + select({
+    "@gbl//toolchain:uefi_debug": "_debug",
+    "//conditions:default": "",
+})
+
 # The UEFI application target.
 #
 # Almost all logic should be in the libgbl_efi target; this contains only the
@@ -92,6 +106,7 @@ dev_test(
 rust_binary(
     name = "app",
     srcs = glob(["app/**/*.rs"]),
+    binary_name = APP_NAME,
     linker_script = select(
         {
             "@gbl//toolchain:gbl_rust_elf_riscv64": "@gbl//efi/arch/riscv64:riscv64_efi.lds",
@@ -121,6 +136,11 @@ rust_binary(
             "//conditions:default": [],
         },
     ),
+)
+
+extract_pdb_file(
+    name = "app_pdb",
+    target = ":app",
 )
 
 genrule(
@@ -170,68 +190,101 @@ genrule(
     ],
 )
 
+# Uses standard output name.
+#
+# `APP_NAME` contains `select` expression and can only be evaluated in rules.
+rename_output(
+    name = "gbl_signed",
+    out = APP_NAME + ".efi",
+    target = ":gbl_efi_testkey",
+)
+
 build_with_platform(
     name = "x86_64_dev",
     platform = "@gbl//toolchain:gbl_uefi_x86_64_dev",
-    deps = [":gbl_efi_testkey"],
+    deps = [":gbl_signed"],
+)
+
+build_with_platform(
+    name = "x86_64_dev_pdb",
+    platform = "@gbl//toolchain:gbl_uefi_x86_64_dev",
+    deps = [":app_pdb"],
 )
 
 build_with_platform(
     name = "x86_64_prod",
     platform = "@gbl//toolchain:gbl_uefi_x86_64_prod",
-    deps = [":gbl_efi_testkey"],
+    deps = [":gbl_signed"],
+)
+
+build_with_platform(
+    name = "x86_64_prod_pdb",
+    platform = "@gbl//toolchain:gbl_uefi_x86_64_prod",
+    deps = [":app_pdb"],
 )
 
 build_with_platform(
     name = "x86_64_debug_dev",
     mode = "dbg",
     platform = "@gbl//toolchain:gbl_uefi_x86_64_debug_dev",
-    deps = [":gbl_efi"],
+    deps = [":gbl_signed"],
 )
 
 build_with_platform(
     name = "x86_64_debug_prod",
     mode = "dbg",
     platform = "@gbl//toolchain:gbl_uefi_x86_64_debug_prod",
-    deps = [":gbl_efi"],
+    deps = [":gbl_signed"],
 )
 
 build_with_platform(
     name = "aarch64_dev",
     platform = "@gbl//toolchain:gbl_uefi_aarch64_dev",
-    deps = [":gbl_efi_testkey"],
+    deps = [":gbl_signed"],
+)
+
+build_with_platform(
+    name = "aarch64_dev_pdb",
+    platform = "@gbl//toolchain:gbl_uefi_aarch64_dev",
+    deps = [":app_pdb"],
 )
 
 build_with_platform(
     name = "aarch64_prod",
     platform = "@gbl//toolchain:gbl_uefi_aarch64_prod",
-    deps = [":gbl_efi_testkey"],
+    deps = [":gbl_signed"],
+)
+
+build_with_platform(
+    name = "aarch64_prod_pdb",
+    platform = "@gbl//toolchain:gbl_uefi_aarch64_prod",
+    deps = [":app_pdb"],
 )
 
 build_with_platform(
     name = "aarch64_debug_dev",
     mode = "dbg",
     platform = "@gbl//toolchain:gbl_uefi_aarch64_debug_dev",
-    deps = [":gbl_efi"],
+    deps = [":gbl_signed"],
 )
 
 build_with_platform(
     name = "aarch64_debug_prod",
     mode = "dbg",
     platform = "@gbl//toolchain:gbl_uefi_aarch64_debug_prod",
-    deps = [":gbl_efi"],
+    deps = [":gbl_signed"],
 )
 
 build_with_platform(
     name = "riscv64_dev",
     platform = "@gbl//toolchain:gbl_elf_riscv64_dev",
-    deps = [":gbl_efi_testkey"],
+    deps = [":gbl_signed"],
 )
 
 build_with_platform(
     name = "riscv64_prod",
     platform = "@gbl//toolchain:gbl_elf_riscv64_prod",
-    deps = [":gbl_efi_testkey"],
+    deps = [":gbl_signed"],
 )
 
 # Our infra tests currently fetch GBL binaries from these paths:
@@ -266,12 +319,16 @@ filegroup(
     name = "all_platforms",
     srcs = [
         ":aarch64_dev",
+        ":aarch64_dev_pdb",
         ":aarch64_prod",
+        ":aarch64_prod_pdb",
         ":copies_for_tests",
         ":riscv64_dev",
         ":riscv64_prod",
         ":x86_64_dev",
+        ":x86_64_dev_pdb",
         ":x86_64_prod",
+        ":x86_64_prod_pdb",
     ],
 )
 
