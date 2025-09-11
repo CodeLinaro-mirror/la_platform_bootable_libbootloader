@@ -343,7 +343,10 @@ link_static_cc_library = rule(
 # Implementation of the extract_pdb_file rule.
 def _extract_pdb_file(ctx):
     output_groups = ctx.attr.target[OutputGroupInfo]
-    return DefaultInfo(files = output_groups.pdb_file)
+
+    # noop if target doesn't generate PDB file.
+    out = output_groups.pdb_file if hasattr(output_groups, "pdb_file") else depset([])
+    return DefaultInfo(files = out)
 
 extract_pdb_file = rule(
     implementation = _extract_pdb_file,
