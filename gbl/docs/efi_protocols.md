@@ -287,3 +287,12 @@ etc.).
 
 This protocol delegates AVF-related logic to the firmware to ensure the
 integrity of pVMs running under the Android Virtualization Framework.
+
+### GblDebugProtocol
+
+* [`GBL_EFI_DEBUG_PROTOCOL`](./gbl_efi_debug_protocol.md)
+* optional: callbacks to facilitate debugging.
+
+This protocol provides a callback for GBL to indicate that a fatal error has occurred
+and gives the firmware an opportunity to save state internally before GBL attempts to
+reset the system.

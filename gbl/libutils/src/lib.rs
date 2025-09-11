@@ -149,6 +149,23 @@ pub fn get_sp() -> usize {
     sp
 }
 
+/// Returns the frame pointer register
+#[inline(always)]
+pub fn get_frame_ptr() -> usize {
+    let fp: usize;
+    // SAFETY: The asm! macro is used to read the frame pointer register. This is safe because the
+    // frame pointer register is always a valid register to read from.
+    unsafe {
+        #[cfg(target_arch = "aarch64")]
+        asm!("mov {}, fp", out(reg) fp);
+        #[cfg(target_arch = "riscv64")]
+        asm!("mv {}, fp", out(reg) fp);
+        #[cfg(target_arch = "x86_64")]
+        asm!("mov {}, rbp", out(reg) fp);
+    }
+    fp
+}
+
 /// Helper function for stripping namespaces from a typename.
 pub fn base_type_name<T>() -> &'static str {
     let type_name = core::any::type_name::<T>();
