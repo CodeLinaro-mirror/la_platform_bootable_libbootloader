@@ -46,13 +46,12 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   CHAR8                                         SerialNumber[GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8];
   GBL_EFI_FASTBOOT_GET_VAR                      GetVar;
   GBL_EFI_FASTBOOT_GET_VAR_ALL                  GetVarAll;
-  GBL_EFI_FASTBOOT_RUN_OEM_FUNCTION             RunOemFunction;
   GBL_EFI_FASTBOOT_GET_STAGED                   GetStaged;
   GBL_EFI_FASTBOOT_SET_LOCK                     SetLock;
   GBL_EFI_FASTBOOT_GET_LOCK                     GetLock;
   GBL_EFI_FASTBOOT_VENDOR_ERASE                 VendorErase;
   GBL_EFI_FASTBOOT_SHOULD_STOP_IN_FASTBOOT      ShouldStopInFastboot;
-  GBL_EFI_FASTBOOT_IS_COMMAND_ALLOWED           IsCommandAllowed;
+  GBL_EFI_FASTBOOT_COMMAND_EXEC                 CommandExec;
   GBL_EFI_FASTBOOT_START_LOCAL_SESSION          StartLocalSession;
   GBL_EFI_FASTBOOT_UPDATE_LOCAL_SESSION         UpdateLocalSession;
   GBL_EFI_FASTBOOT_CLOSE_LOCAL_SESSION          CloseLocalSession;
@@ -83,11 +82,6 @@ See [`GBL_EFI_FASTBOOT_PROTOCOL.GetVar()`](#gbl_efi_fastboot_protocolgetvar).
 Iterates all combinations of arguments and values for all fastboot variables.
 See [`GBL_EFI_FASTBOOT_PROTOCOL.GetVarAll()`](#gbl_efi_fastboot_protocolgetvarall).
 
-**RunOemFunction**
-
-Runs an OEM-defined command on the device.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.RunOemFunction()`](#gbl_efi_fastboot_protocolrunoemfunction).
-
 **GetStaged**
 
 Read OEM provided payload for uploading to fastboot host by command
@@ -115,10 +109,10 @@ See [`GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`](#gbl_efi_fastboot_protocolvendor
 Checks whether boot should stop in fastboot mode. See
 [`GBL_EFI_FASTBOOT_PROTOCOL.ShouldStopInFastboot()`](#gbl_efi_fastboot_protocolshouldstopinfastboot)
 
-**IsCommandAllowed**
+**CommandExec**
 
-Checks if a fastboot command is allowed by the platform.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.IsCommandAllowed()`](#gbl_efi_fastboot_protocoliscommandallowed).
+Allows custom overriding of fastboot commands.
+See [`GBL_EFI_FASTBOOT_PROTOCOL.CommandExec()`](#gbl_efi_fastboot_protocolcommandexec).
 
 **StartLocalSession**
 
@@ -297,138 +291,6 @@ callback `GetVarAllCallback()` and passes the context, arguments and value.
 |:------------------------|:------------------------------------------------|
 | `EFI_SUCCESS`           | Operation is successful.                        |
 | `EFI_INVALID_PARAMETER` | One of *Self* or *GetVarAllCallback* is `NULL`. |
-
-## `GBL_EFI_FASTBOOT_PROTOCOL.RunOemFunction()`
-
-### Summary
-
-Runs a vendor defined function that requires firmware support.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_RUN_OEM_FUNCTION)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-    IN CHAR8*                     Command,
-    IN UINTN                      CommandLen,
-    IN UINT8*                     DownloadData,
-    IN UINTN                      DownloadDataLen,
-    IN FASTBOOT_MESSAGE_SENDER    Sender,
-    IN VOID*                      SenderContext,
-);
-```
-
-### Parameters
-
-*Self*
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
-
-*Command*
-
-The command to run as a UTF-8 encoded string, excluding the "oem " prefix.
-The string does not need to be NULL terminated.
-
-*CommandLen*
-
-The length of the command in bytes, excluding any Null-terminator.
-
-*DownloadData*
-
-A pointer to the most recent download data.
-
-*DownloadDataLen*
-
-The size of the download data in `DownloadData`.
-
-`DownloadData` and `DownloadDataLen` can be used to implement OEM commands that
-process platform specific payload. i.e.
-`fastboot stage <data> && fastboot oem process-data`,
-
-*Sender*
-
-A pointer to a function of type `FASTBOOT_MESSAGE_SENDER`. The function is used
-by the implementation to send custom fastboot OKAY/FAIL/INFO messages. For input
-arguments, it takes the `SenderContext` pointer passed to this function, the
-message type, a pointer to a UTF8 string and the string length.
-
-OKAY/FAIL messages should only be sent once. Sending it multiple times in
-a single command may break fastboot exahcange sequence. Caller that provides
-`FASTBOOT_MESSAGE_SENDER` should check this situation and return
-`EFI_PROTOCOL_ERROR` if implementation attempts to send a OKAY/FAIL more than
-once.
-
-Likewise if implementation returns without sending any OKAY/FAIL message, caller
-should send a default one based on the return value of this API.
-
-*SenderContext*
-
-A pointer to the context data for `Sender`.
-
-### Description
-
-`RunOemFunction()` runs a vendor defined Oem function. These functions can take
-arbitrary arguments or subcommands. The caller does no parsing or verification.
-All parsing and verification is the responsibility of the method
-implementation. Oem functions can display power or battery information, print
-or iterate over UEFI variables, or conduct arbitrary other operations.
-
-Implementation may choose not to return from the function and take over the
-control flow. This can be the case for oem commands that implements platform
-specific reboot or side loading/booting of platform specific payload. However,
-in this case, implementation should make sure to send a OKAY or FAIL message
-using `Sender` to prevent host from hanging waiting for reply.
-
-### Related Definitions
-
-```c
-typedef enum EFI_FASTBOOT_MESSAGE_TYPE {
-  OKAY,
-  FAIL,
-  INFO,
-} EFI_FASTBOOT_MESSAGE_TYPE;
-
-typedef
-EFI_STATUS (*FASTBOOT_MESSAGE_SENDER) (
-    IN VOID*                      Context,
-    IN EFI_FASTBOOT_MESSAGE_TYPE  MsgType
-    IN CONST CHAR8*               Msg,
-    IN UINTN                      Len,
-);
-```
-*Context*
-
-The pointer to the context passed to `RunOemFunction()`.
-
-*MsgType*
-
-A `EFI_FASTBOOT_MESSAGE_TYPE` value indicating message type.
-
-*Msg*
-
-A pointer to a UTF8 string. The string does not need to be NULL terminated.
-
-*Len*
-
-The length of `Msg`.
-
-Note: The max allowed length of a message depends on the transport. For
-example, for Fastboot over USB, it is the native packet size. Implementation
-should consider the transport setup it provides when passing the string.
-Oversized message may be truncated by the caller when sent to the host.
-
-
-### Status Codes Returned
-
-| Return Code             | Semantics
-|:------------------------|:---------------------------------------------------------|
-| `EFI_SUCCESS`           | The call completed successfully.                         |
-| `EFI_INVALID_PARAMETER` | Any of *Self*, *Command*, *Sender* is `NULL`.            |
-| `EFI_NOT_FOUND`         | The command is not supported.                            |
-| `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state.|
-
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.GetStaged()`
 
@@ -697,26 +559,27 @@ button press is active. In particular, if the device supports
 
 Any errors should cause a return value of `false`.
 
-## `GBL_EFI_FASTBOOT_PROTOCOL.IsCommandAllowed()`
+## `GBL_EFI_FASTBOOT_PROTOCOL.CommandExec()`
 
 ### Summary
 
-Checks whether a fastboot command is allowed.
+Allows for command filtering and implementation override.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_IS_COMMAND_ALLOWED)(
+(EFIAPI * GBL_EFI_FASTBOOT_COMMAND_EXEC)(
     IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-    IN UINTN                      NumArgs,
-    IN CONST CHAR8* CONST*        Args,
-    IN UINTN                      DownloadDataLen,
-    IN UINT8*                     DownloadData,
-    OUT BOOLEAN                   *Allowed,
-    IN UINTN                      MsgBufSize,
-    OUT CHAR8*                    MsgBuf,
+    IN UINTN                                  NumArgs,
+    IN CONST CHAR8* CONST*                    Args,
+    IN UINTN                                  DownloadDataLen,
+    IN UINT8*                                 DownloadData,
+    IN UINTN                                  DownloadDataFullSize,
+    OUT GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT* Implementation,
+    IN FASTBOOT_MESSAGE_SENDER                Sender,
+    IN VOID*                                  SenderContext,
 );
 ```
 
@@ -724,7 +587,8 @@ EFI_STATUS
 
 *Self*
 
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
+A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
+instance.
 
 *NumArgs*
 
@@ -746,34 +610,143 @@ The size of the download data in `DownloadData`.
 `DownloadData` and `DownloadDataLen` provide additional context for commands
 such as `fastboot flash`.
 
-*Allowed*
+*DownloadDataFullSize*
 
-On exit, set to TRUE if the command is allowed. Set to FALSE otherwise.
+Full size of the download data buffer `DownloadData`. It can be bigger than
+`DownloadDataLen` for custom implementation use.
 
-*MsgBufSize*
+*Implementation*
 
-Store the size of `MsgBuf`.
+On exit, set to one of the values:
+* GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED - command is not allowed
+* GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL - GBL is required to pass
+this variant as the default value. The callee can leave the parameter untouched
+if 'DEFAULT_IMPL' is the desired behavior and just return `EFI_SUCCESS`.
+* GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL - GBL should ignore the command
+since custom implementation was used
 
-*MsgBuf*
+*Sender*
 
-On exit, stores a NULL-terminated UTF-8 output message.
+A pointer to a function of type `FASTBOOT_MESSAGE_SENDER`. The function is used
+by the implementation to send custom fastboot OKAY/FAIL/INFO messages. For input
+arguments, it takes the `SenderContext` pointer passed to this function, the
+message type, a pointer to a UTF8 string and the string length.
+
+Warning: The `Sender` parameter should only be used for commands that are
+`CUSTOM_IMPL`. Using Sender to send messages for commands that are `PROHIBITED`
+or `DEFAULT_IMPL` will result in undefined behavior, incorrect output, or will
+leave the fastboot protocol in a bad state.
+
+OKAY/FAIL messages should only be sent once. Sending more than one OKAY or FAIL
+or sending both may break the fastboot exchange sequence. It is the caller's
+responsibility to provide a sender function that verifies that at most one OKAY
+OR FAIL message is sent and returns EFI_PROTOCOL_ERROR if the implementation
+violates this requirement.
+
+Likewise if implementation returns without sending any OKAY/FAIL message,
+caller should send either an OKAY or a FAIL based on the return value of this
+API.
+
+*SenderContext*
+
+A pointer to the context data for `Sender`.
 
 ### Description
 
-`IsCommandAllowed()` queries whether a fastboot command is allowed by the
-platform. When command is not allowed, firmware can output an optional
-NULL-terminated message in `MsgBuf`.
+`CommandExec()` queries whether a fastboot command is allowed and what
+implementation to use. If command is not allowed, firmware can output an
+optional NULL-terminated message in `MsgBuf`.
 
 It's up to the caller to decide how to proceed in the case of error, i.e base
 on the level of security requirement.
+
+If "default implementation" is requested GBL will handle the command using an
+implementation within GBL.
+
+If "custom implementation" is indicated GBL will assume that the callee handled
+the command.
+
+Following commands can not be overridden:
+<!-- LINT.IfChange -->
+
+* `continue`
+* `download`
+* `fetch`
+* `getvar`
+* `reboot`
+* `reboot-bootloader`
+* `reboot-fastboot`
+* `reboot-recovery`
+* `set_active`
+* `upload`
+<!-- LINT.ThenChange(/gbl/libfastboot/src/lib.rs) -->
 
 ### Status Codes Returned
 
 | Return Code             | Semantics                                          |
 |:------------------------|:---------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                   |
-| `EFI_INVALID_PARAMETER` | `Command` or `Allowed` or `MsgBuf` is NULL. `DownloadDataLen` is non-zero but `DownloadData` is NULL. |
+| `EFI_INVALID_PARAMETER` | `Command` or `Implementation` or `MsgBuf` is NULL. `DownloadDataLen` is non-zero but `DownloadData` is NULL. |
 | `EFI_DEVICE_ERROR`      | An internal error occurred. |
+
+### Related Definitions
+
+```c
+typedef enum GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT {
+  GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
+  GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
+  GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL,
+} GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT;
+
+typedef enum EFI_FASTBOOT_MESSAGE_TYPE {
+  OKAY,
+  FAIL,
+  INFO,
+} EFI_FASTBOOT_MESSAGE_TYPE;
+
+typedef
+EFI_STATUS (*FASTBOOT_MESSAGE_SENDER) (
+    IN VOID*                      Context,
+    IN EFI_FASTBOOT_MESSAGE_TYPE  MsgType
+    IN CONST CHAR8*               Msg,
+    IN UINTN                      Len,
+);
+```
+
+*GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED* - indicates that command is
+not allowed. GBL is responsible for communicating the prohibition to the user.
+This is a convenience common case and GBL will send a generic error message.
+A custom error message can be sent if the exec result is
+`GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL`.
+
+*GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL* - GBL will use its own
+default implementation to handle the command.
+
+*GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL* - command is handled by
+running custom implementation. Vendor firmware is responsible for guaranteeing
+that the implementation has run to completion before returning this value. GBL
+will ignore the command assuming it has been handled.
+
+*Context*
+
+The pointer to the context passed to `RunOemFunction()`.
+
+*MsgType*
+
+A `EFI_FASTBOOT_MESSAGE_TYPE` value indicating message type.
+
+*Msg*
+
+A pointer to a UTF8 string. The string does not need to be NULL terminated.
+
+*Len*
+
+The length of `Msg`.
+
+Note: The max allowed length of a message depends on the transport. For
+example, for Fastboot over USB, it is the native packet size. Implementation
+should consider the transport setup it provides when passing the string.
+Oversized message may be truncated by the caller when sent to the host.
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.StartLocalSession()`
 

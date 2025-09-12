@@ -51,13 +51,18 @@ typedef EfiStatus (*FastbootMessageSender)(void* context,
                                            const char* msg, size_t msg_len);
 
 static const uint64_t GBL_EFI_FASTBOOT_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 1);
+    GBL_PROTOCOL_REVISION(0, 2);
 
 EFI_ENUM(GBL_EFI_FASTBOOT_ERASE_ACTION, GblEfiFastbootEraseAction, uint32_t,
          // Treats the partition as a physical on disk partition and erases it.
          GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
          // Ignores the partition.
          GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP);
+
+EFI_ENUM(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT, GblEfiFastbootCommandExecResult,
+         uint32_t, GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
+         GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
+         GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL);
 
 typedef struct GblEfiFastbootProtocol {
   uint64_t revision;
@@ -70,13 +75,6 @@ typedef struct GblEfiFastbootProtocol {
                        size_t* out_size);
   EfiStatus (*get_var_all)(struct GblEfiFastbootProtocol* self, void* ctx,
                            GetVarAllCallback cb);
-
-  // Fastboot oem function methods
-  EfiStatus (*run_oem_function)(struct GblEfiFastbootProtocol* self,
-                                const char* cmd, size_t len,
-                                uint8_t* download_buffer,
-                                size_t download_data_size,
-                                FastbootMessageSender sender, void* ctx);
 
   // Fastboot get_staged backend
   EfiStatus (*get_staged)(struct GblEfiFastbootProtocol* self, uint8_t* out,
@@ -93,11 +91,13 @@ typedef struct GblEfiFastbootProtocol {
                             const uint8_t* part_name, size_t part_name_len,
                             GblEfiFastbootEraseAction* action);
   bool (*should_stop_in_fastboot)(struct GblEfiFastbootProtocol* self);
-  EfiStatus (*is_command_allowed)(struct GblEfiFastbootProtocol* self,
-                                  size_t num_args, const char* const* args,
-                                  size_t download_data_len,
-                                  uint8_t* download_data, bool* allowed,
-                                  size_t msg_buf_size, uint8_t* msg_buf);
+  EfiStatus (*command_exec)(struct GblEfiFastbootProtocol* self,
+                            size_t num_args, const char* const* args,
+                            size_t download_data_used_len,
+                            uint8_t* download_data,
+                            size_t download_data_full_size,
+                            GblEfiFastbootCommandExecResult* implementation,
+                            FastbootMessageSender sender, void* ctx);
 
   // Local session methods
   EfiStatus (*start_local_session)(struct GblEfiFastbootProtocol* self,

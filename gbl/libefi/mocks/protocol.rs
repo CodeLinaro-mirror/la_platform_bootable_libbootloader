@@ -22,8 +22,9 @@ use core::{ffi::CStr, fmt::Write};
 pub use efi::protocol::{gbl_efi_image_loading::EfiImageBufferInfo, Revision, Versioned};
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
-    GblEfiAvbPartition, GblEfiAvbVerificationResult, GblEfiFastbootEraseAction,
-    GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    GblEfiAvbPartition, GblEfiAvbVerificationResult, GblEfiFastbootCommandExecResult,
+    GblEfiFastbootEraseAction, GblEfiFastbootMessageType, GblEfiImageInfo,
+    GblEfiVerifiedDeviceTree,
 };
 use liberror::Result;
 use mockall::mock;
@@ -348,16 +349,6 @@ pub mod gbl_efi_fastboot {
             unimplemented!()
         }
 
-        /// Protocol<'_, GblFastbootProtocol>::run_oem_function.
-        pub fn run_oem_function(
-            &self,
-            _: &str,
-            _: &mut [u8],
-            _: impl FnMut(GblEfiFastbootMessageType, &str) -> Result<()>,
-        ) -> Result<()> {
-            unimplemented!()
-        }
-
         /// Protocol<'_, GblFastbootProtocol>::get_staged.
         pub fn get_staged(&self, _: &mut [u8]) -> Result<(usize, usize)> {
             unimplemented!()
@@ -383,13 +374,14 @@ pub mod gbl_efi_fastboot {
             unimplemented!()
         }
 
-        /// Protocol<'_, GblFastbootProtocol>::is_command_allowed()`
-        pub fn is_command_allowed<'a>(
+        /// Protocol<'_, GblFastbootProtocol>::command_exec()`
+        pub fn command_exec<'a>(
             &self,
             _: impl Iterator<Item = &'a CStr> + Clone,
             _: &mut [u8],
-            _: &mut [u8],
-        ) -> Result<bool> {
+            _: usize,
+            _: impl FnMut(GblEfiFastbootMessageType, &str) -> Result<()>,
+        ) -> Result<GblEfiFastbootCommandExecResult> {
             unimplemented!()
         }
     }

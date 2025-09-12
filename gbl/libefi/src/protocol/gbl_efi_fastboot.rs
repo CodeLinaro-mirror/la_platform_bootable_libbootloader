@@ -26,9 +26,10 @@ use core::{
     str::from_utf8,
 };
 use efi_types::{
-    EfiGuid, EfiStatus, GblEfiFastbootEraseAction, GblEfiFastbootMessageType,
-    GblEfiFastbootProtocol, GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
-    GBL_EFI_FASTBOOT_PROTOCOL_REVISION,
+    EfiGuid, EfiStatus, GblEfiFastbootCommandExecResult, GblEfiFastbootEraseAction,
+    GblEfiFastbootMessageType, GblEfiFastbootProtocol,
+    GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
+    GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION, GBL_EFI_FASTBOOT_PROTOCOL_REVISION,
 };
 use liberror::{result_to_efi_status, Error, Result};
 
@@ -127,8 +128,8 @@ impl Protocol<'_, GblFastbootProtocol> {
         // SAFETY:
         // *`self.interface_ptr()` points to a valid object
         // * established by `Protocol::new()`.
-        // * The `ctx` parameter is a valid `Callback` object, outlives the call and not being
-        //   referenced elsewhere(declared inline at the parameter site).
+        // * The `ctx` parameter is a valid `Callback` object, outlives the call and is not
+        //   referenced elsewhere (declared inline at the parameter site).
         // * By UEFI interface requirement, vendor firmware passes array of C strings to
         //   `get_var_all_cb` that remains valid for the call.
         unsafe {
@@ -141,61 +142,6 @@ impl Protocol<'_, GblFastbootProtocol> {
         };
 
         Ok(())
-    }
-
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.run_oem_function()`
-    pub fn run_oem_function(
-        &self,
-        cmd: &str,
-        download: &mut [u8],
-        mut sender: impl FnMut(GblEfiFastbootMessageType, &str) -> Result<()>,
-    ) -> Result<()> {
-        struct SenderCtx<'a>(&'a mut dyn FnMut(GblEfiFastbootMessageType, &str) -> Result<()>);
-
-        /// Callback function to be passed to the `run_oem_function` interface.
-        ///
-        /// # Safety
-        ///
-        /// * Caller must guarantee that `ctx` points to a valid instance of `SenderCtx`, outlives
-        ///   the call, and is not referenced elsewhere.
-        /// * Caller must guarantee that `msg` points to a valid initialized buffer with length
-        ///   'msg_len' and outlives the call.
-        unsafe extern "efiapi" fn message_sender(
-            context: *mut core::ffi::c_void,
-            msg_type: GblEfiFastbootMessageType,
-            msg: *const core::ffi::c_char,
-            msg_len: usize,
-        ) -> EfiStatus {
-            // SAFETY: By safety requirement of this function, `ctx` points to a `SenderCtx`.
-            let cb = unsafe { (context as *mut SenderCtx).as_mut() }.unwrap();
-            result_to_efi_status((cb.0)(
-                msg_type,
-                // SAFETY: By safety requirement of this function, `msg` point to a valid
-                // initialized buffer of length `msg_len`;
-                from_utf8(unsafe { from_raw_parts(msg as _, msg_len) }).unwrap(),
-            ))
-        }
-
-        // SAFETY:
-        // *`self.interface_ptr()` points to a valid object
-        // * established by `Protocol::new()`.
-        // * `cmd` and `download` are for input only. They outlive the call and won't be retained.
-        // * The `ctx` parameter is a valid `SenderCtx` object, outlives the call and not being
-        //   referenced elsewhere(declared inline at the parameter site).
-        // * By UEFI interface requirement, vendor firmware passes valid ASCII string and provides
-        //   the correct string length to the callback function.
-        unsafe {
-            efi_call!(
-                self.interface().run_oem_function,
-                self.interface_ptr(),
-                cmd.as_ptr() as _,
-                cmd.len(),
-                download.as_mut_ptr(),
-                download.len(),
-                Some(message_sender),
-                &mut SenderCtx(&mut sender) as *mut _ as _,
-            )
-        }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_staged()`
@@ -241,37 +187,69 @@ impl Protocol<'_, GblFastbootProtocol> {
         Ok(out)
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.is_command_allowed()`
-    pub fn is_command_allowed<'a>(
+    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.command_exec()`
+    pub fn command_exec<'a>(
         &self,
         args: impl Iterator<Item = &'a CStr> + Clone,
         download: &mut [u8],
-        out_msg: &mut [u8],
-    ) -> Result<bool> {
+        download_used: usize,
+        mut sender: impl FnMut(GblEfiFastbootMessageType, &str) -> Result<()>,
+    ) -> Result<GblEfiFastbootCommandExecResult> {
         // Consider using ArrayVec to simplify the logic and the Clone bound.
         let mut args_arr = [null(); MAX_ARGS];
         let args_arr = args_arr.get_mut(..args.clone().count()).ok_or(Error::InvalidInput)?;
         args_arr.iter_mut().zip(args).for_each(|(l, r)| *l = r.as_ptr());
-        let mut out_allowed = true;
+        let mut out_impl = GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL;
+        struct SenderCtx<'a>(&'a mut dyn FnMut(GblEfiFastbootMessageType, &str) -> Result<()>);
+
+        /// Callback function to be passed to the `command_exec` interface.
+        ///
+        /// # Safety
+        ///
+        /// * Caller must guarantee that `ctx` points to a valid instance of `SenderCtx`, outlives
+        ///   the call, and is not referenced elsewhere.
+        /// * Caller must guarantee that `msg` points to a valid initialized buffer with length
+        ///   'msg_len' and outlives the call.
+        unsafe extern "efiapi" fn message_sender(
+            context: *mut core::ffi::c_void,
+            msg_type: GblEfiFastbootMessageType,
+            msg: *const core::ffi::c_char,
+            msg_len: usize,
+        ) -> EfiStatus {
+            // SAFETY: By safety requirement of this function, `ctx` points to a `SenderCtx`.
+            let cb = unsafe { (context as *mut SenderCtx).as_mut() }.unwrap();
+            result_to_efi_status((cb.0)(
+                msg_type,
+                // SAFETY: By safety requirement of this function, `msg` point to a valid
+                // initialized buffer of length `msg_len`;
+                from_utf8(unsafe { from_raw_parts(msg as _, msg_len) }).unwrap(),
+            ))
+        }
+
         // SAFETY:
         // *`self.interface()?` guarantees self.interface is non-null and points to a valid object
         // * established by `Protocol::new()`.
-        // * `cmd`, `download`, `out_msg`, and `out_allowed` are for input/output only. They
+        // * `cmd`, `download` and `out_impl` are for input/output only. They
         //   outlive the call and won't be retained.
+        // * The `ctx` parameter is a valid `SenderCtx` object, outlives the call and is not
+        //   referenced elsewhere(declared inline at the parameter site).
+        // * By UEFI interface requirement, vendor firmware passes valid ASCII string and provides
+        //   the correct string length to the callback function.
         unsafe {
             efi_call!(
-                self.interface().is_command_allowed,
+                self.interface().command_exec,
                 self.interface_ptr(),
                 args_arr.len(),
                 args_arr.as_ptr() as _,
-                download.len(),
+                download_used,
                 download.as_mut_ptr(),
-                &mut out_allowed,
-                out_msg.len(),
-                out_msg.as_mut_ptr(),
+                download.len(),
+                &mut out_impl,
+                Some(message_sender),
+                &mut SenderCtx(&mut sender) as *mut _ as _,
             )?;
         }
-        Ok(out_allowed)
+        Ok(out_impl)
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.start_local_session()`

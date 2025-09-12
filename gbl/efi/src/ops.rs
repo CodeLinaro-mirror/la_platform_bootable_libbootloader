@@ -45,11 +45,16 @@ use efi::{
 };
 use efi_types::{
     EfiInputKey, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbProperty,
-    GblEfiAvbVerificationResult, GblEfiBootMode, GblEfiDeviceTreeMetadata, GblEfiImageInfo,
-    GblEfiVerifiedDeviceTree, GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
-    GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP, GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL,
-    GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO, GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, PARTITION_NAME_LEN_U16,
+    GblEfiAvbVerificationResult, GblEfiBootMode, GblEfiDeviceTreeMetadata,
+    GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL,
+    GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
+    GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
+    GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION, GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP,
+    GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL, GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO,
+    GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, PARTITION_NAME_LEN_U16,
 };
+use fastboot::CommandExecType;
 use fdt::Fdt;
 use gbl_async::block_on;
 use gbl_storage::{BlockIo, Disk, Gpt};
@@ -259,6 +264,26 @@ impl Write for Ops<'_, '_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         efi_print!(self.efi_entry, "{}", s);
         Ok(())
+    }
+}
+
+/// Helper function to handle message sending for cammand_exec
+fn command_exec_message_sender(
+    msg_type: GblEfiFastbootMessageType,
+    msg: &str,
+    sender: &mut Option<impl InfoSender + OkaySender + FailSender>,
+) -> Result<()> {
+    match msg_type {
+        GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO => {
+            block_on(sender.as_mut().ok_or(Error::ProtocolError)?.send_info(msg))
+        }
+        GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY => {
+            block_on(sender.take().ok_or(Error::ProtocolError)?.send_okay(msg))
+        }
+        GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL => {
+            block_on(sender.take().ok_or(Error::ProtocolError)?.send_fail(msg))
+        }
+        _ => Err(Error::InvalidInput),
     }
 }
 
@@ -748,32 +773,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .unwrap_or(LockState::Unlocked))
     }
 
-    fn fastboot_run_oem(
-        &mut self,
-        cmd: &str,
-        download: &mut [u8],
-        sender: impl InfoSender + OkaySender + FailSender,
-    ) -> Result<()> {
-        let protocol = self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()?;
-        let sender = &mut Some(sender);
-        protocol.run_oem_function(cmd, download, |msg_type, msg| match msg_type {
-            GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO => {
-                block_on(sender.as_mut().ok_or(Error::ProtocolError)?.send_info(msg))
-            }
-            GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY => {
-                block_on(sender.take().ok_or(Error::ProtocolError)?.send_okay(msg))
-            }
-            GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL => {
-                block_on(sender.take().ok_or(Error::ProtocolError)?.send_fail(msg))
-            }
-            _ => Err(Error::InvalidInput),
-        })
-    }
-
     fn fastboot_get_staged(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
         match self
             .efi_entry
@@ -806,20 +805,37 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
-    fn fastboot_is_command_allowed<'arg>(
+    fn fastboot_command_exec<'arg>(
         &mut self,
         args: impl Iterator<Item = &'arg CStr> + Clone,
         download: &mut [u8],
-        out_msg: &mut [u8],
-    ) -> Result<bool> {
+        download_used: usize,
+        sender: impl InfoSender + OkaySender + FailSender,
+    ) -> Result<CommandExecType> {
         match self
             .efi_entry
             .system_table()
             .boot_services()
             .find_first_and_open::<GblFastbootProtocol>()
         {
-            Ok(v) => v.is_command_allowed(args, download, out_msg),
-            Err(Error::NotFound) => Ok(true),
+            Ok(v) => {
+                let sender = &mut Some(sender);
+                match v.command_exec(args, download, download_used, |msg_type, msg| {
+                    command_exec_message_sender(msg_type, msg, sender)
+                }) {
+                    Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED) => {
+                        Ok(CommandExecType::Prohibited)
+                    }
+                    Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL)
+                    | Err(Error::NotFound) => Ok(CommandExecType::DefaultImpl),
+                    Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL) => {
+                        Ok(CommandExecType::CustomImpl)
+                    }
+                    Ok(_) => Err(Error::InvalidState),
+                    Err(e) => Err(e),
+                }
+            }
+            Err(Error::NotFound) => Ok(Default::default()),
             Err(e) => Err(e),
         }
     }
