@@ -84,6 +84,13 @@ typedef struct GblEfiOsConfigurationProtocol {
   EfiStatus (*select_device_trees)(struct GblEfiOsConfigurationProtocol* self,
                                    GblEfiVerifiedDeviceTree* device_trees,
                                    size_t num_device_trees);
+
+  // Selects FIT configuration to be used.
+  EfiStatus (*select_fit_configuration)(struct GblEfiOsConfigurationProtocol* self,
+                                        size_t fit_size, const uint8_t* fit,
+                                        size_t metadata_size, const uint8_t* metadata,
+                                        size_t* selected_configuration_offset);
+
 } GblEfiOsConfigurationProtocol;
 
 #endif  //__GBL_OS_CONFIGURATION_PROTOCOL_H__

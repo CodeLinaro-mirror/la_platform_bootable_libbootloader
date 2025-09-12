@@ -12,6 +12,7 @@ configuration data:
 
 * device tree (select components to build the final one)
 * bootconfig (append fixups)
+* FIT configuration (select configuration corresponding to the platform)
 
 GBL will load and verify the data provided by boot partitions, and then call
 these protocol functions to give the firmware a chance to construct and adjust
@@ -49,6 +50,7 @@ typedef struct _GBL_EFI_OS_CONFIGURATION_PROTOCOL {
   UINT64                            Revision;
   GBL_EFI_FIXUP_BOOTCONFIG          FixupBootConfig;
   GBL_EFI_SELECT_DEVICE_TREES       SelectDeviceTrees;
+  GBL_EFI_SELECT_FIT_CONFIGURATION  SelectFitConfiguration;
   GBL_EFI_FIXUP_ZBI                 FixupZbi;
 } GBL_EFI_OS_CONFIGURATION_PROTOCOL;
 ```
@@ -69,6 +71,11 @@ Applies bootconfig fixups. See [`FixupBootConfig()`][bootconfig_fixup].
 
 Select components such as base device tree, overlays to build the final device
 tree. See [`SelectDeviceTrees()`][select].
+
+#### SelectFitConfiguration
+
+Selects the FIT configuration corresponding to the platform.
+See [`SelectFitConfiguration()`][fit_configuration]
 
 #### FixupZbi
 
@@ -295,6 +302,90 @@ boot if more than one base device tree is provided by the boot partitions.
 | `EFI_UNSUPPORTED`       | No components been selected; GBL will use autoselection.                |
 | `EFI_INVALID_PARAMETER` | Unexpected input; GBL will refuse to boot.                              |
 
+## GBL_EFI_OS_CONFIGURATION_PROTOCOL.SelectFitConfiguration()
+
+### Summary
+
+Inspects FIT configurations and selects the configuration to be used for
+the platform.
+
+### Prototype
+
+```c
+typedef EFI_STATUS (EFIAPI *GBL_EFI_SELECT_FIT_CONFIGURATION)(
+  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *This,
+  IN UINTN                             FitSize,
+  IN CONST UINT8                       *Fit,
+  IN UINTN                             MetadataSize,
+  IN CONST UINT8                       *Metadata,
+  OUT UINTN                            *SelectedConfigurationOffset,
+  );
+```
+
+### Parameters
+
+Ownership of all the parameters is loaned only for the duration of the function
+call, and must not be retained by the protocol after returning.
+
+#### This
+
+A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
+
+#### FitSize [in]
+
+Size of the FIT FDT buffer.
+
+#### Fit [in]
+
+Pointer to the FIT FDT loaded by GBL.
+
+#### MetadataSize [in]
+
+Size of the metadata payload.
+The size is guaranteed to be `0` if `Metadata` is NULL.
+
+#### Metadata [in]
+
+Pointer to the first FIT image payload if the type is set to "metadata".
+
+GBL requires the metadata payload to be referenced by the first sub-node
+inside the `/images` node in FIT FDT. The sub-node for metadata must have type
+set to "metadata".
+
+If no such metadata node is found, this parameter will have a `NULL` value.
+
+#### SelectedConfigurationOffset [out]
+
+Pointer to a value to be set by the firmware with the offset of the
+selected configuration node within the `Fit` FDT.
+
+### Description
+
+A single FIT image can contain multiple configurations with various images -
+kernel, DTB, ramdisk, etc. Each configuration can have different set of images
+corresponding to the platform on which images need to be loaded.
+Present GBL implementation supports only devicetree selection via FIT image.
+
+The appropriate configuration can be dynamically selected by the firmware at
+runtime based on the platform. Firmware can use the `Metadata` parameter to
+read additional information required for comparing the configuration entries
+present in the FIT image.
+
+Exactly one FIT configuration must be selected. GBL will refuse to boot if no
+configuration is selected.
+`EFI_UNSUPPORTED` may be returned to indicate that firmware-specific selection
+isn't required. In this case, GBL will use traditional device tree selection
+and ignore the FIT image entirely.
+
+### Status Codes Returned
+
+|                         |                                                    |
+| ----------------------- | ---------------------------------------------------|
+| `EFI_SUCCESS`           | FIT configuration has been selected.               |
+| `EFI_UNSUPPORTED`       | No configuration selected; GBL will continue to    |
+|                         | boot.                                              |
+| `EFI_INVALID_PARAMETER` | Unexpected input; GBL will refuse to boot.         |
+
 ## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupZbi()
 
 TODO(b/353272981)
@@ -305,3 +396,4 @@ TODO(b/353272981)
 [avf]: https://source.android.com/docs/core/virtualization
 [bootconfig]: https://source.android.com/docs/core/architecture/bootloader/implementing-bootconfig
 [libavb]: https://source.android.com/docs/security/features/verifiedboot/avb
+[fit_configuration]: #gbl_efi_os_configuration_protocolselectfitconfiguration
