@@ -1,0 +1,52 @@
+// Copyright 2025, The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Rust wrapper for `GBL_EFI_DEBUG_PROTOCOL`.
+use crate::{
+    efi_call,
+    protocol::{Protocol, ProtocolInfo, Requirement},
+    versioned_protocol,
+};
+use efi_types::{EfiGuid, GblEfiDebugProtocol, GBL_EFI_DEBUG_PROTOCOL_REVISION};
+use libutils::get_frame_ptr;
+
+/// Wraps `GBL_EFI_DEBUG_PROTOCOL`.
+pub struct GblDebugProtocol;
+
+versioned_protocol!(GblDebugProtocol, GBL_EFI_DEBUG_PROTOCOL_REVISION);
+
+impl ProtocolInfo for GblDebugProtocol {
+    type InterfaceType = GblEfiDebugProtocol;
+
+    const GUID: EfiGuid =
+        EfiGuid::new(0x98ca3da1, 0xc1ac, 0x4402, [0x9c, 0x16, 0x75, 0x58, 0xd3, 0xed, 0x57, 0x05]);
+
+    const REQUIREMENT: Requirement = Requirement::Optional;
+}
+
+impl<'a> Protocol<'a, GblDebugProtocol> {
+    /// Wrapper of `GBL_EFI_DEBUG_PROTOCOL.fatal_error()`
+    pub fn fatal_error(&self) {
+        // SAFETY:
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
+        let _ = unsafe {
+            efi_call!(
+                self.interface().fatal_error,
+                self.interface_ptr(),
+                get_frame_ptr() as *const core::ffi::c_void
+            )
+        };
+    }
+}

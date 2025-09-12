@@ -254,6 +254,7 @@ cc_flags_common = [
     "-fno-common",
     "-fno-exceptions",
     "-fno-rtti",
+    "-femit-dwarf-unwind=always",
     # Enable optimization otherwise software AVB hash will be too slow.
     "-O3",
 ]

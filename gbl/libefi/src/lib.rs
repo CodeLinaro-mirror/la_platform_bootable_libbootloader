@@ -1120,7 +1120,17 @@ pub fn reset() -> ! {
 /// Don't set this as the panic handler so that other crates' tests can depend on libefi.
 #[cfg(not(test))]
 pub fn panic(panic: &PanicInfo) -> ! {
-    efi_try_print!("Panics! {}\r\n", panic);
+    allocation::internal_efi_entry_and_rt()
+        .0
+        .and_then(|entry| {
+            entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<protocol::gbl_efi_debug::GblDebugProtocol>()
+                .ok()
+        })
+        .map(|protocol| protocol.fatal_error());
+    efi_try_print!("Panic! {}\r\n", panic);
     reset();
 }
 
