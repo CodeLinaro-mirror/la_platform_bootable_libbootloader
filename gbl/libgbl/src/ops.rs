@@ -573,6 +573,13 @@ pub trait GblOps<'a, 'd> {
         })
     }
 
+    /// Get the slot info for provided index.
+    ///
+    /// # Args
+    ///
+    /// * `slot`: The numeric index of the slot.
+    fn get_slot_info(&mut self, slot: u8) -> Result<Slot, Error>;
+
     /// Gets the current boot slot.
     fn get_current_slot(&mut self) -> Result<Slot, Error>;
 
@@ -890,6 +897,10 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!()
     }
 
+    fn get_slot_info(&mut self, slot: u8) -> Result<Slot, Error> {
+        self.ops.get_slot_info(slot)
+    }
+
     fn get_current_slot(&mut self) -> Result<Slot, Error> {
         // Ramboot is slotless
         Err(Error::Unsupported)
@@ -981,10 +992,10 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use crate::android_boot::BOOTARGS_PROP;
-    use crate::device_tree::DeviceTreeComponentType;
-    use crate::error::IntegrationError;
-    use crate::partition::GblDisk;
+    use crate::{
+        android_boot::BOOTARGS_PROP, device_tree::DeviceTreeComponentType, error::IntegrationError,
+        partition::GblDisk, slots::Bootability,
+    };
     #[cfg(feature = "fuchsia")]
     use abr::{get_and_clear_one_shot_bootloader, get_boot_slot};
     use avb::{CertOps, Ops};
@@ -1636,6 +1647,10 @@ pub(crate) mod test {
             self.slot_metadata_result.unwrap_or(Err(Error::Unsupported))
         }
 
+        fn get_slot_info(&mut self, _: u8) -> Result<Slot, Error> {
+            unimplemented!()
+        }
+
         fn get_current_slot(&mut self) -> Result<Slot, Error> {
             self.current_slot.unwrap()
         }
@@ -1743,6 +1758,11 @@ pub(crate) mod test {
     /// Helper for creating a slot object.
     pub(crate) fn slot(suffix: char) -> Slot {
         Slot { suffix: suffix.into(), ..Default::default() }
+    }
+
+    /// Helper for creating a successful slot object.
+    pub(crate) fn slot_successful(suffix: char) -> Slot {
+        Slot { suffix: suffix.into(), bootability: Bootability::Successful, ..Default::default() }
     }
 
     #[test]

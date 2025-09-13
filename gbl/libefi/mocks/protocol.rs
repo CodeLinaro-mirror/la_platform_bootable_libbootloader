@@ -407,6 +407,9 @@ pub mod gbl_efi_ab_slot {
     mock! {
         /// Mock of [GblABSlotProtocol]
         pub GblABSlotProtocol {
+            /// Mock of GblABSlotProtocol::get_slot_info.
+            pub fn get_slot_info(&mut self, idx: u8) -> Result<GblSlot>;
+
             /// Mock of GblABSlotProtocol::get_current_slot.
             pub fn get_current_slot(&self) -> Result<GblSlot>;
 
