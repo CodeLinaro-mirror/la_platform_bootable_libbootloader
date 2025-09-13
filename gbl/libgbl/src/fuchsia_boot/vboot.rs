@@ -157,23 +157,10 @@ fn zircon_verify_kernel_internal<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>(
         }
     }
 
-    // Increases rollback indices if the slot has successfully booted.
+    // Update rollback indices if the slot has successfully booted following:
+    // https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes
     if verified_success && slot_booted_successfully && !unlocked {
-        for (loc, val) in verify_data.rollback_indexes().iter().enumerate() {
-            if *val > 0 && avb_ops.read_rollback_index(loc)? != *val {
-                avb_ops.write_rollback_index(loc, *val)?;
-            }
-        }
-
-        // Increases rollback index values for Fuchsia key version locations.
-        for key_version in avb_ops.key_versions {
-            match key_version {
-                Some((loc, rollback)) if avb_ops.read_rollback_index(loc)? != rollback => {
-                    avb_ops.write_rollback_index(loc, rollback)?;
-                }
-                _ => {}
-            }
-        }
+        avb_ops.update_rollback_indexes(verify_data)?;
     }
 
     Ok(())

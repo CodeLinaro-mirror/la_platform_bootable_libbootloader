@@ -58,6 +58,8 @@ pub enum PreloadBufferState<'a> {
 /// Implements avb ops callbacks for [GblOps].
 pub struct GblAvbOps<'a: 'c, 'b, 'c, T> {
     /// The underlying [GblOps].
+    /// TODO(b/337846185): Make private to ensure GblAvbOps methods are used
+    /// instead of accessing the underlying `gbl_ops` directly.
     pub gbl_ops: &'b mut T,
     slot: Option<SlotIndex>,
     /// Slotless partitions pre-loaded by the implementation. Provided to avoid redundant IO.
@@ -69,7 +71,7 @@ pub struct GblAvbOps<'a: 'c, 'b, 'c, T> {
     /// so depends on other factors such as slot success state; it's up to the user to persist them
     /// post-verification if needed.
     // If `array_map` is imported in the future, consider switching to it.
-    pub key_versions: [Option<(usize, u64)>; AVB_CERT_NUM_KEY_VERSIONS],
+    key_versions: [Option<(usize, u64)>; AVB_CERT_NUM_KEY_VERSIONS],
     /// True to use the AVB cert extensions.
     use_cert: bool,
     /// Avb public key validation status reported by validate_vbmeta_public_key.
@@ -142,6 +144,27 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
         });
 
         self.gbl_ops.avb_handle_verification_result(status, digest_cstr, properties)
+    }
+
+    /// Helper for updating rollback indexes after verification is done.
+    pub fn update_rollback_indexes(&mut self, data: &SlotVerifyData<'_>) -> IoResult<()> {
+        // Rollback indexes provided by libavb
+        let slot_indexes = data
+            .rollback_indexes()
+            .iter()
+            .enumerate()
+            .filter_map(|(location, &idx)| (idx > 0).then_some((location, idx)));
+
+        // Saved key version rollback indexes
+        let key_version_indexes = self.key_versions.clone().into_iter().filter_map(|opt| opt);
+
+        slot_indexes.chain(key_version_indexes).try_for_each(|(loc, idx)| {
+            let stored = self.read_rollback_index(loc)?;
+            if idx > stored {
+                self.write_rollback_index(loc, idx)?;
+            }
+            Ok(())
+        })
     }
 
     /// Get vbmeta public key validation status reported by validate_vbmeta_public_key.

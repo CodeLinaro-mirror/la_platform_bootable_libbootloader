@@ -471,6 +471,10 @@ mod test {
             unimplemented!();
         }
 
+        fn get_slot_info(&mut self, _: u8) -> Result<Slot> {
+            unimplemented!()
+        }
+
         fn get_current_slot(&mut self) -> Result<Slot> {
             unimplemented!()
         }
