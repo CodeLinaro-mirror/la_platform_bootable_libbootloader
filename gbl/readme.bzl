@@ -73,8 +73,12 @@ fi
 # Look for protocols in the documentation that are not in the source, to try to
 # prevent stale docs referring to protocols we are no longer using.
 # Here we're matching on words ending in "Protocol", except "Protocol" itself.
+# Note: the ServiceBindingProtocol is special because it does not have its own GUID.
+# Protocol services that use the mechanism have an associated service binding protocol
+# that adheres to the interface structure of ServiceBindingProtocol but has a
+# unique GUID. It does directly implement ProtocolInfo.
 UNUSED_PROTOCOLS=""
-README_PROTOCOLS=($(grep -P " ?[^ ]+Protocol$" ${README} | awk '{print $NF}' | sort | uniq))
+README_PROTOCOLS=($(grep -P " ?[^ ]+Protocol$" ${README} | grep -v "ServiceBindingProtocol" | awk '{print $NF}' | sort | uniq))
 for P in ${README_PROTOCOLS[@]}
 do
   grep -qhE -e "impl ProtocolInfo for $P" -e "pub type $P = Client<Efi" ${ALL_INPUTS} || UNUSED_PROTOCOLS+="\n\t$P"
