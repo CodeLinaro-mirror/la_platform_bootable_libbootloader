@@ -674,7 +674,7 @@ where
     async fn boot_android(&mut self, img: &[u8], mut resp: impl InfoSender) -> CommandResult<()> {
         let slot = get_boot_slot(self.gbl_ops)?;
         let mut boot_part = [0u8; 16];
-        let boot_part = snprintf!(boot_part, "boot_{}", slot.suffix.0);
+        let boot_part = snprintf!(boot_part, "boot_{}", slot.suffix.as_char());
         let mut ramboot_ops = RambootOps { ops: self.gbl_ops, ram_partitions: &[(boot_part, img)] };
         let boot_buffer = self.boot_buffer.as_borrowed();
         let (ramdisk, fdt, kernel, _) =
@@ -685,7 +685,7 @@ where
             kernel: kernel.as_ptr_range(),
         });
         resp.send_formatted_info(|f| {
-            write!(f, "Boot image as Android slot {}", slot.suffix.0).unwrap()
+            write!(f, "Boot image as Android slot {}", slot.suffix.as_char()).unwrap()
         })
         .await?;
         Ok(())

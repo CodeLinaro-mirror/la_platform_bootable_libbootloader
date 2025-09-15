@@ -397,7 +397,7 @@ mod test {
         let sb: SlotBlock<BootloaderControl> = Default::default();
         let expected: Vec<Slot> = ('a'..='d')
             .map(|c| Slot {
-                suffix: c.into(),
+                suffix: c.try_into().unwrap(),
                 priority: DEFAULT_PRIORITY.into(),
                 bootability: Bootability::Retriable(sb.get_max_retries().unwrap()),
             })
@@ -417,7 +417,7 @@ mod test {
 
         let expected: Vec<Slot> = ('a'..='b')
             .map(|c| Slot {
-                suffix: c.into(),
+                suffix: c.try_into().unwrap(),
                 priority: DEFAULT_PRIORITY.into(),
                 bootability: Bootability::Retriable(sb.get_max_retries().unwrap()),
             })
@@ -495,7 +495,7 @@ mod test {
     #[test]
     fn test_get_boot_target_recovery_nondefault_recovery_slot() {
         let mut sb: SlotBlock<BootloaderControl> = Default::default();
-        let b_suffix: Suffix = 'b'.into();
+        let b_suffix: Suffix = 'b'.try_into().unwrap();
         assert!(sb.set_active_slot(b_suffix).is_ok());
         sb.get_mut_data().slot_metadata.iter_mut().for_each(|bits| bits.set_tries(0));
         let b_slot = sb.slots_iter().find(|s| s.suffix == b_suffix).unwrap();
@@ -523,7 +523,7 @@ mod test {
     #[test]
     fn test_slot_mark_boot_attempt() {
         let mut sb: SlotBlock<BootloaderControl> = Default::default();
-        let slot = Slot { suffix: 'a'.into(), ..Default::default() };
+        let slot = Slot { suffix: 'a'.try_into().unwrap(), ..Default::default() };
         assert_eq!(sb.mark_boot_attempt(), Ok(BootToken(())));
         assert_eq!(
             sb.slots_iter().next().unwrap(),
@@ -542,7 +542,7 @@ mod test {
     fn test_slot_mark_boot_attempt_no_more_tries() {
         let mut sb: SlotBlock<BootloaderControl> = Default::default();
         sb.get_mut_data().slot_metadata[0].set_tries(1);
-        let slot = Slot { suffix: 'a'.into(), ..Default::default() };
+        let slot = Slot { suffix: 'a'.try_into().unwrap(), ..Default::default() };
         assert_eq!(sb.mark_boot_attempt(), Ok(BootToken(())));
         assert_eq!(
             sb.slots_iter().next().unwrap(),
@@ -566,7 +566,7 @@ mod test {
             metadata.set_successful(true);
         }
         let target = BootTarget::NormalBoot(Slot {
-            suffix: 'a'.into(),
+            suffix: 'a'.try_into().unwrap(),
             priority: DEFAULT_PRIORITY.into(),
             bootability: Bootability::Successful,
         });
@@ -578,8 +578,12 @@ mod test {
     #[test]
     fn test_mark_slot_tried_slotted_recovery() {
         let mut sb: SlotBlock<BootloaderControl> = Default::default();
-        assert!(sb.set_slot_unbootable('a'.into(), UnbootableReason::UserRequested).is_ok());
-        assert!(sb.set_slot_unbootable('b'.into(), UnbootableReason::UserRequested).is_ok());
+        assert!(sb
+            .set_slot_unbootable('a'.try_into().unwrap(), UnbootableReason::UserRequested)
+            .is_ok());
+        assert!(sb
+            .set_slot_unbootable('b'.try_into().unwrap(), UnbootableReason::UserRequested)
+            .is_ok());
         assert_eq!(sb.mark_boot_attempt(), Ok(BootToken(())));
     }
 

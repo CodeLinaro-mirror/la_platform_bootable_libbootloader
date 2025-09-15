@@ -60,10 +60,23 @@ impl From<u8> for Priority {
 }
 
 /// A type safe container for describing a slot's suffix.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct Suffix(pub(crate) char);
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Suffix(char);
 
 impl Suffix {
+    /// Creates a new instance from slot suffix char.
+    pub fn from_char(suffix: char) -> Result<Self, Error> {
+        match suffix.is_ascii_lowercase() {
+            true => Ok(Self(suffix)),
+            false => Err(Error::Other(Some("Invalid slot suffix char"))),
+        }
+    }
+
+    /// Returns the slot name as char.
+    pub fn as_char(&self) -> char {
+        self.0
+    }
+
     // We want lexigraphically lower suffixes
     // to have higher priority.
     // A cheater way to do this is to compare
@@ -74,32 +87,19 @@ impl Suffix {
     fn rank(&self) -> i64 {
         -i64::from(u32::from(self.0))
     }
+}
 
-    /// Gets the slot index number.
-    pub fn as_index(&self) -> u8 {
-        self.0 as u8 - b'a'
+impl Default for Suffix {
+    fn default() -> Self {
+        Self('a')
     }
 }
 
-impl From<char> for Suffix {
-    fn from(c: char) -> Self {
-        Self(c)
-    }
-}
-
-impl TryFrom<usize> for Suffix {
+impl TryFrom<char> for Suffix {
     type Error = Error;
 
-    fn try_from(value: usize) -> Result<Self, Self::Error> {
-        u32::try_from(value).ok().and_then(char::from_u32).ok_or(Error::InvalidInput).map(Self)
-    }
-}
-
-impl TryFrom<u32> for Suffix {
-    type Error = Error;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        char::from_u32(value).ok_or(Error::InvalidInput).map(Self)
+    fn try_from(suffix: char) -> Result<Self, Self::Error> {
+        Self::from_char(suffix)
     }
 }
 
@@ -257,7 +257,7 @@ impl BootTarget {
     pub fn suffix(&self) -> Suffix {
         match self {
             Self::NormalBoot(slot) | Self::Recovery(RecoveryTarget::Slotted(slot)) => slot.suffix,
-            Self::Recovery(RecoveryTarget::Dedicated) => 'r'.into(),
+            Self::Recovery(RecoveryTarget::Dedicated) => Suffix('r'),
         }
     }
 }
@@ -440,29 +440,19 @@ mod test {
     use core::ffi::CStr;
 
     #[test]
-    fn test_suffix_to_cstr() {
-        let normal: Suffix = 'a'.into();
-        let normal_buffer: SuffixBytes = normal.into();
-        let normal_cstr = CStr::from_bytes_until_nul(&normal_buffer);
-        assert!(normal_cstr.is_ok());
-
-        // All UTF-8 characters are at most 4 bytes.
-        // The in-memory representation as a chr or Suffix
-        // uses all 4 bytes regardless of the length of the serialized
-        // representation, but we need to make sure that buffer for
-        // the serialized suffix can handle that too.
-        // All emoji are 4 bytes when encoded as UTF-8,
-        // so they're a reasonable test.
-        let squid: Suffix = '🦑'.into();
-        let squid_buffer: SuffixBytes = squid.into();
-        let squid_cstr = CStr::from_bytes_until_nul(&squid_buffer);
-        assert!(squid_cstr.is_ok());
+    fn test_suffix_from_char() {
+        assert_eq!(Suffix::from_char('a'), Ok(Suffix('a')), "lowercase");
+        assert_eq!(Suffix::from_char('b'), Ok(Suffix('b')), "lowercase");
+        assert!(Suffix::from_char('A').is_err(), "uppercase");
+        assert!(Suffix::from_char('%').is_err(), "not alphabet");
+        assert!(Suffix::from_char('🦑').is_err(), "UTF-8 emoji");
     }
 
     #[test]
-    fn test_suffix_as_index() {
-        assert_eq!(Suffix::from('a').as_index(), 0, "expect suffix 'a' to have index 0");
-        assert_eq!(Suffix::from('b').as_index(), 1, "expect suffix 'b' to have index 1");
-        assert_eq!(Suffix::from('z').as_index(), 25, "expect suffix 'z' to have index 25");
+    fn test_suffix_to_cstr() {
+        let normal = Suffix('a');
+        let normal_buffer: SuffixBytes = normal.into();
+        let normal_cstr = CStr::from_bytes_until_nul(&normal_buffer);
+        assert_eq!(normal_cstr, Ok(c"a"));
     }
 }

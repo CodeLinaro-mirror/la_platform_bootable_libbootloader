@@ -538,17 +538,17 @@ mod test {
                 slots,
                 vec![
                     Slot {
-                        suffix: 'a'.into(),
+                        suffix: 'a'.try_into().unwrap(),
                         priority: 1usize.into(),
                         bootability: Bootability::Unbootable(UnbootableReason::Unknown),
                     },
                     Slot {
-                        suffix: 'b'.into(),
+                        suffix: 'b'.try_into().unwrap(),
                         priority: 2usize.into(),
                         bootability: Bootability::Retriable(1usize.into()),
                     },
                     Slot {
-                        suffix: 'c'.into(),
+                        suffix: 'c'.try_into().unwrap(),
                         priority: 3usize.into(),
                         bootability: Bootability::Successful,
                     }
@@ -614,7 +614,7 @@ mod test {
             let cursor = gbl.load_slot_interface(&mut persist).unwrap();
 
             let slot = Slot {
-                suffix: 'a'.into(),
+                suffix: 'a'.try_into().unwrap(),
                 priority: 7usize.into(),
                 bootability: Bootability::Successful,
             };
@@ -712,10 +712,13 @@ mod test {
             let mut gbl = Gbl::<TestGblOps>::new(&mut test_ops);
             let cursor = gbl.load_slot_interface(&mut persist).unwrap();
 
-            assert_eq!(cursor.ctx.set_active_slot('b'.into()), Ok(()));
-            assert_eq!(cursor.ctx.set_active_slot('c'.into()), Err(Error::Other(None)));
+            assert_eq!(cursor.ctx.set_active_slot('b'.try_into().unwrap()), Ok(()));
+            assert_eq!(
+                cursor.ctx.set_active_slot('c'.try_into().unwrap()),
+                Err(Error::Other(None))
+            );
 
-            let bad_suffix = '$'.into();
+            let bad_suffix = 'z'.try_into().unwrap();
             assert_eq!(cursor.ctx.set_active_slot(bad_suffix), Err(Error::InvalidInput));
         });
     }
@@ -753,12 +756,16 @@ mod test {
             let cursor = gbl.load_slot_interface(&mut persist).unwrap();
 
             assert_eq!(
-                cursor.ctx.set_slot_unbootable('a'.into(), UnbootableReason::SystemUpdate),
+                cursor
+                    .ctx
+                    .set_slot_unbootable('a'.try_into().unwrap(), UnbootableReason::SystemUpdate),
                 Ok(())
             );
 
             assert_eq!(
-                cursor.ctx.set_slot_unbootable('b'.into(), UnbootableReason::UserRequested),
+                cursor
+                    .ctx
+                    .set_slot_unbootable('b'.try_into().unwrap(), UnbootableReason::UserRequested),
                 Err(Error::InvalidInput)
             );
         });

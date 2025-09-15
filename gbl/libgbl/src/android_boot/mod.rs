@@ -52,7 +52,7 @@ pub use vboot::{avb_verify_slot, PartitionsToVerify};
 pub(crate) mod load;
 #[cfg(feature = "fuchsia")]
 pub(crate) use load::get_kernel;
-use load::{android_load_verified, BootBufferLoader};
+use load::{android_load_verified, slotted_part, BootBufferLoader};
 
 /// Device tree bootargs property to store kernel command line.
 pub const BOOTARGS_PROP: &CStr = c"bootargs";
@@ -107,7 +107,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
                 preloaded.push((part, v))
             }
             Err(Error::NotFound) => {
-                if ops.partition_size(&part.slotted(slot.suffix.as_index())?)?.is_some() {
+                if ops.partition_size(&slotted_part(part.name(), slot)?)?.is_some() {
                     partitions.try_push(part.name_cstr())?
                 }
             }
@@ -120,7 +120,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     }
 
     let (verify_data, status, unlocked) = avb_verify_slot(ops, slot, &mut partitions)?;
-    let images = android_load_verified(ops, slot.suffix.as_index(), unlocked, &verify_data)?;
+    let images = android_load_verified(ops, slot, unlocked, &verify_data)?;
 
     let pvmfw = match images.pvmfw.is_empty() {
         true => None,
@@ -144,7 +144,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     if !is_recovery {
         bootconfig_builder.add("androidboot.force_normal_boot=1\n")?;
     }
-    write!(bootconfig_builder, "androidboot.slot_suffix=_{}\n", slot.suffix.0)
+    write!(bootconfig_builder, "androidboot.slot_suffix=_{}\n", slot.suffix.as_char())
         .map_err(Error::from)?;
     // Placeholder value for now. Userspace can use this value to tell if device is booted with GBL.
     // TODO(yochiang): Generate useful value like version, build_incremental in the bootconfig.
@@ -402,7 +402,7 @@ pub(crate) fn get_boot_slot<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) -> Result<Slo
                 "Slotting is not supported. Default to 'a' slot. This would not be allowed for \
                 production in the near future when slotting becomes mandatory."
             );
-            Ok(Slot { suffix: 'a'.into(), ..Default::default() })
+            Ok(Slot { suffix: 'a'.try_into().unwrap(), ..Default::default() })
         }
         Err(e) => {
             gbl_println!(ops, "Failed to get boot slot: {e}");
@@ -607,7 +607,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 
     // Checks whether fastboot has set a different active slot. Reboot if it does.
     let slot = get_boot_slot(ops)?;
-    if matches!(result.last_set_active_slot, Some(s) if s != slot.suffix.0) {
+    if matches!(result.last_set_active_slot, Some(s) if s != slot.suffix.as_char()) {
         gbl_println!(ops, "Active slot changed by \"fastboot set_active\". Reset..");
         ops.reboot();
         return Err(Error::UnexpectedReturn.into());

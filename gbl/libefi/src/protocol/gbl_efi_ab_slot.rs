@@ -30,7 +30,7 @@ use efi_types::{
 };
 use liberror::Result;
 
-use libgbl::slots::{Bootability, Slot, UnbootableReason};
+use libgbl::slots::{Bootability, Slot, Suffix, UnbootableReason};
 
 /// Wraps `GBL_EFI_SLOT_PROTOCOL`.
 pub struct GblABSlotProtocol;
@@ -70,7 +70,7 @@ impl TryFrom<GblSlot> for libgbl::slots::Slot {
     fn try_from(info: GblSlot) -> Result<Self> {
         let info = info.0;
         Ok(Slot {
-            suffix: info.suffix.try_into()?,
+            suffix: Suffix::try_from(char::try_from(info.suffix)?)?,
             priority: info.priority.into(),
             bootability: match (info.successful, info.tries) {
                 (s, _) if s != 0 => Bootability::Successful,

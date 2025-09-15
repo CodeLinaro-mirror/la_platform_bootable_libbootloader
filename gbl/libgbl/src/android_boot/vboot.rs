@@ -111,8 +111,8 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
     slot: Slot,
     partitions: &'d mut PartitionsToVerify<'c>,
 ) -> Result<(SlotVerifyData<'d>, VerificationStatus, bool)> {
-    let slot_index = SlotIndex::try_from(slot.suffix.0)
-        .inspect_err(|_| gbl_println!(ops, "AVB: Invalid slot: {}", slot.suffix.0))
+    let slot_index = SlotIndex::try_from(slot.suffix.as_char())
+        .inspect_err(|_| gbl_println!(ops, "AVB: Invalid slot: {}", slot.suffix.as_char()))
         .map_err(|_| Error::InvalidInput)?;
 
     let PartitionsToVerify { partitions, preloaded } = partitions;

@@ -20,55 +20,24 @@ use crate::{
     gbl_println,
     ops::GblOps,
     partition::RAW_PARTITION_NAME_LEN,
+    slots::Slot,
 };
 use arrayvec::ArrayString;
 use avb::SlotVerifyData;
 use bootimg::{defs::*, BootImage, VendorImageHeader};
-use core::{
-    ffi::CStr,
-    fmt::Write,
-    mem::take,
-    ops::{Deref, Range},
-};
+use core::{ffi::CStr, fmt::Write, mem::take, ops::Range};
 use liberror::Error;
 use libutils::{aligned_offset, aligned_subslice};
 use safemath::SafeNum;
 use zerocopy::{IntoBytes, Ref};
 
-// Represents a slot suffix.
-pub(crate) struct SlotSuffix([u8; 3]);
-
-impl SlotSuffix {
-    // Creates a new instance.
-    pub(crate) fn new(slot: u8) -> Result<Self, Error> {
-        let suffix = u32::from(slot) + u32::from(b'a');
-        match char::from_u32(suffix).map(|v| v.is_ascii_lowercase()) {
-            Some(true) => Ok(Self([b'_', suffix.try_into().unwrap(), 0])),
-            _ => Err(Error::Other(Some("Invalid slot index"))),
-        }
-    }
-
-    // Casts as CStr.
-    fn as_cstr(&self) -> &CStr {
-        CStr::from_bytes_with_nul(&self.0[..]).unwrap()
-    }
-}
-
-impl Deref for SlotSuffix {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        self.as_cstr().to_str().unwrap()
-    }
-}
-
 /// Returns a slotted partition name.
 pub(crate) fn slotted_part(
     part: &str,
-    slot: u8,
+    slot: Slot,
 ) -> Result<ArrayString<RAW_PARTITION_NAME_LEN>, Error> {
     let mut res = ArrayString::new_const();
-    write!(res, "{}{}", part, &SlotSuffix::new(slot)? as &str).unwrap();
+    write!(res, "{part}_{}", slot.suffix.as_char()).unwrap();
     Ok(res)
 }
 
@@ -255,7 +224,7 @@ impl LoadedImages<'_> {
 fn get_verified_partition<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
     part: &CStr,
-    slot: u8,
+    slot: Slot,
     unlocked: bool,
     optional: bool,
     verify_data: &'c SlotVerifyData,
@@ -314,7 +283,7 @@ fn log_and_parse_bootimg<'a, 'b, 'c>(
 /// * `load`: The destination image assembly load buffer.
 pub(super) fn android_load_verified<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
-    slot: u8,
+    slot: Slot,
     unlocked: bool,
     verify_data: &'c SlotVerifyData,
 ) -> Result<LoadedImages<'c>, Error> {
@@ -409,7 +378,7 @@ fn load_v2_or_lower_verified<'a, 'b, 'c>(
 fn load_v3_and_v4_verified<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
     boot: &'c [u8],
-    slot: u8,
+    slot: Slot,
     unlocked: bool,
     verify_data: &'c SlotVerifyData,
     images: &mut LoadedImages<'c>,
@@ -762,4 +731,16 @@ fn move_left(
     buffer.get(..sub.len()).ok_or(Error::BufferTooSmall(Some(sub.len())))?;
     buffer.copy_within(buffer.len() - sub.len().., 0);
     Ok(sub_slice_range(&range, &buffer[..sub.len()].as_ptr_range()).unwrap())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::ops::test::slot;
+
+    #[test]
+    fn test_slotted_part() {
+        assert_eq!(slotted_part("boot", slot('a')).as_deref(), Ok("boot_a"));
+        assert_eq!(slotted_part("boot", slot('b')).as_deref(), Ok("boot_b"));
+    }
 }

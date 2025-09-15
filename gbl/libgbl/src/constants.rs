@@ -16,13 +16,12 @@
 
 // TODO(b/380392958) Cleanup other used of the constants. Move them here as well.
 
-use crate::{android_boot::load::SlotSuffix, partition::RawName};
+use crate::partition::RawName;
 use arrayvec::ArrayString;
 use core::{
     ffi::CStr,
-    fmt::{Debug, Display, Formatter, Write},
+    fmt::{Debug, Display, Formatter},
 };
-use liberror::Error;
 use static_assertions::const_assert_eq;
 #[cfg(feature = "fuchsia")]
 use zbi::ZBI_ALIGNMENT_USIZE;
@@ -175,23 +174,5 @@ impl Partition {
             Self::Pvmfw => c"pvmfw",
             Self::PlatformSpecific(v) => v.to_cstr(),
         }
-    }
-
-    /// Returns the slotted name.
-    pub fn slotted(&self, slot: u8) -> Result<PartitionImageName, Error> {
-        let mut res = ArrayString::new_const();
-        write!(res, "{}{}", self.name(), &SlotSuffix::new(slot)? as &str).unwrap();
-        Ok(res)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_slotted_image_name() {
-        assert_eq!(&Partition::Boot.slotted(0).unwrap(), "boot_a");
-        assert_eq!(&Partition::Boot.slotted(1).unwrap(), "boot_b");
     }
 }

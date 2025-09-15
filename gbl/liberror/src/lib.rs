@@ -282,6 +282,12 @@ impl From<core::num::TryFromIntError> for Error {
     }
 }
 
+impl From<core::char::CharTryFromError> for Error {
+    fn from(_: core::char::CharTryFromError) -> Self {
+        Self::InvalidInput
+    }
+}
+
 impl From<FromBytesUntilNulError> for Error {
     fn from(_: FromBytesUntilNulError) -> Self {
         Self::InvalidInput

@@ -1757,12 +1757,16 @@ pub(crate) mod test {
 
     /// Helper for creating a slot object.
     pub(crate) fn slot(suffix: char) -> Slot {
-        Slot { suffix: suffix.into(), ..Default::default() }
+        Slot { suffix: suffix.try_into().unwrap(), ..Default::default() }
     }
 
     /// Helper for creating a successful slot object.
     pub(crate) fn slot_successful(suffix: char) -> Slot {
-        Slot { suffix: suffix.into(), bootability: Bootability::Successful, ..Default::default() }
+        Slot {
+            suffix: suffix.try_into().unwrap(),
+            bootability: Bootability::Successful,
+            ..Default::default()
+        }
     }
 
     #[test]
