@@ -83,6 +83,9 @@ genrule(
 cc_library(
     name = "libdttable_c",
     srcs = [":bindgen_noop_cc"],
-    hdrs = ["utils/src/dt_table.h"],
+    hdrs = [
+        "utils/src/dt_table.h",
+        "utils/src/dt_table_core.h",
+    ],
     includes = ["utils/src/"],
 )
