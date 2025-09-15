@@ -199,12 +199,13 @@ pub fn build_pvmfw_data_region<'a, 'b>(
 /// Add a device tree node describing pvmfw memory carveout. This is default behavior, required for
 /// pKVM, and can be overridden for other hypervisors by removing the
 /// `/reserved-memory/pkvm_guest_firmware` node in `ops.fixup_device_tree`.
-fn pkvm_describe_pvmfw_resvmem<'a, T>(fdt: &mut Fdt<T>, buffer: &[u8]) -> Result<()>
+fn pkvm_describe_pvmfw_resvmem<'a, T>(fdt: &mut Fdt<T>, buffer: &[u8], bin_len: usize) -> Result<()>
 where
     T: AsMut<[u8]> + AsRef<[u8]>,
 {
     const RESVMEM_PATH: &str = "/reserved-memory";
     const PVMFW_RESVMEM_PATH: &str = "/reserved-memory/pkvm_guest_firmware";
+    const CONFIG_OFFSET_PROP: &CStr = c"config-data-offset";
     const MAX_REG_CELLS: usize = 8;
     const FDT_CELL_SIZE: usize = 4;
 
@@ -228,6 +229,8 @@ where
     )?;
     fdt.set_property(PVMFW_RESVMEM_PATH, std_props::REG, &reg_buf[..reg_bytes])?;
     fdt.set_property(PVMFW_RESVMEM_PATH, std_props::NO_MAP, &[])?;
+    let config_offset: u32 = bin_len.try_into().map_err(|_| Error::OutOfRange)?;
+    fdt.set_property(PVMFW_RESVMEM_PATH, CONFIG_OFFSET_PROP, &config_offset.to_be_bytes())?;
     Ok(())
 }
 
@@ -399,12 +402,13 @@ pub fn avf_fixup_host_dt<'a, 'b, 'c, T>(
     ops: &mut impl GblOps<'a, 'b>,
     host_dt: &mut Fdt<T>,
     pvmfw_buf: &[u8],
+    pvmfw_bin_len: usize,
     verify_data: &impl AVFVerificationData,
 ) -> Result<()>
 where
     T: AsMut<[u8]> + AsRef<[u8]>,
 {
-    pkvm_describe_pvmfw_resvmem(host_dt, pvmfw_buf)?;
+    pkvm_describe_pvmfw_resvmem(host_dt, pvmfw_buf, pvmfw_bin_len)?;
     write_ref_dt_properties(ops, host_dt, HOST_DT_AVF_PATH, verify_data)
 }
 
@@ -632,6 +636,7 @@ pub(crate) mod test {
     #[test]
     fn test_pkvm_describe_pvmfw_resvmem() {
         let buf = AlignedBuffer::new(10, PVMFW_DATA_ALIGNMENT);
+        let dummy_bin_len = 4usize;
 
         let init = include_bytes!("../../../libfdt/test/data/res_mem_min_dt.dtb").to_vec();
         let mut fdt_buf = vec![0u8; init.len() + 512];
@@ -647,7 +652,7 @@ pub(crate) mod test {
         );
         assert!(fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::REG).is_err());
 
-        assert!(pkvm_describe_pvmfw_resvmem(&mut fdt, &buf).is_ok());
+        assert!(pkvm_describe_pvmfw_resvmem(&mut fdt, &buf, dummy_bin_len).is_ok());
         assert_eq!(
             fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::COMPATIBLE)
                 .unwrap(),
@@ -661,6 +666,11 @@ pub(crate) mod test {
             fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::REG).unwrap();
         assert_eq!(&reg_prop[..8], (buf.as_ptr() as usize).to_be_bytes());
         assert_eq!(&reg_prop[8..], buf.len().to_be_bytes());
+
+        let conf_offset_prop = fdt
+            .get_property("/reserved-memory/pkvm_guest_firmware", c"config-data-offset")
+            .unwrap();
+        assert_eq!(conf_offset_prop, (dummy_bin_len as u32).to_be_bytes());
     }
 
     #[test]
@@ -727,11 +737,12 @@ pub(crate) mod test {
         let mut ops = FakeGblOps::new(&[][..]);
         ops.avf_is_supported = true;
         let dummy_buf = [0u8; 4];
+        let dummy_len = 2;
 
         let mut hostdt_buf = AlignedBuffer::new(1024, 8);
         let mut fdt = Fdt::new_empty(&mut hostdt_buf[..]).unwrap();
 
-        avf_fixup_host_dt(&mut ops, &mut fdt, &dummy_buf, &digest).unwrap();
+        avf_fixup_host_dt(&mut ops, &mut fdt, &dummy_buf, dummy_len, &digest).unwrap();
 
         assert_eq!(fdt.get_property(HOST_DT_AVF_PATH, VENDOR_HASH_PROP).unwrap(), test_digest);
         assert_eq!(fdt.get_property(HOST_DT_AVF_PATH, SK_PUB_KEY_PROP).unwrap(), sk_key);

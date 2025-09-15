@@ -498,14 +498,15 @@ impl<'a> BootBufferLoader<'a> {
         verify_data: &SlotVerifyData,
         unlocked: bool,
         is_recovery: bool,
-    ) -> Result<&'a mut [u8], Error> {
+    ) -> Result<(&'a mut [u8], usize), Error> {
         // Parse the partition header and extract the pvmfw binary
         let info = BootImageV3Info::new(img)?;
         let pvmfw_bin = img.get(info.kernel_range.clone()).ok_or(Error::BadBufferSize)?;
+        let pvmfw_bin_len = pvmfw_bin.len();
         Ok(match self.bufs.pvmfw_data.as_mut() {
             Some(v) => {
                 build_pvmfw_data_region(ops, v, pvmfw_bin, verify_data, unlocked, is_recovery)
-                    .map(|sz| &mut take(v)[..sz])?
+                    .map(|sz| (&mut take(v)[..sz], pvmfw_bin_len))?
             }
             _ => {
                 // Split out buffer from general load for loading pvmfw.
@@ -525,7 +526,7 @@ impl<'a> BootBufferLoader<'a> {
                 )?;
                 let (pvmfw, general) = take(&mut self.bufs.general)[off..].split_at_mut(sz);
                 self.bufs.general = general;
-                pvmfw
+                (pvmfw, pvmfw_bin_len)
             }
         })
     }

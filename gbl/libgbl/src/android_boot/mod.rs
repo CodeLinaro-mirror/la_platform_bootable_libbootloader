@@ -286,7 +286,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     fdt_append_bootarg(ops, &mut fdt, [images.boot_cmdline, images.vendor_cmdline], 1024)?;
 
     match pvmfw {
-        Some(ref v) => avf_fixup_host_dt(ops, &mut fdt, v, &verify_data)?,
+        Some((ref v, s)) => avf_fixup_host_dt(ops, &mut fdt, v, s, &verify_data)?,
         _ => {}
     }
 
