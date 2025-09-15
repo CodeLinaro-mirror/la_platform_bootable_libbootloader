@@ -80,6 +80,20 @@ This logging requires all three of:
 * Device Path to Text Protocol
 * Loaded Image Protocol
 
+### ServiceBindingProtocol
+
+* [`EFI_SERVICE_BINDING_PROTOCOL`](https://uefi.org/specs/UEFI/2.11/11_Protocols_UEFI_Driver_Model.html#efi-service-binding-protocol)
+* optional: used to create bound handles for certain protocols.
+
+The ServiceBindingProtocol provides functionality to create and destry child
+handles with new protocols installed on them.
+
+Note: the ServiceBindingProtocol does not have its own GUID. Drivers for
+protocols that are opened by service binding define GUIDs for a protocol that
+has the same structural interface as the ServiceBindingProtocol. Once the
+corresponding ServiceBindingProtocol has been opened, a call to `CreateChild()`
+will generate a handle bound to the desired protocol.
+
 ### Hash2Protocol
 
 * [`EFI_HASH2_PROTOCOL`](https://uefi.org/specs/UEFI/2.11/37_Secure_Technologies.html#efi-hash2-protocol)
@@ -88,6 +102,9 @@ This logging requires all three of:
 Used as part of AVB signature checking. Implementations can use device specific extensions
 to accelerate cryptographic hash functions.
 If not present GBL will use hash implementations provided by BoringSSL.
+
+Note: handles are bound to the Hash2 protocol via the ServiceBindingProtocol.
+See the documentation for Hash2Protocol and ServiceBindingProtocol for more information.
 
 ### Memory Allocation Services
 
