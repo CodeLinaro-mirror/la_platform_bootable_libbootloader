@@ -59,13 +59,8 @@ rust_library(
 
 rust_library(
     name = "libcompiler_builtins",
-    srcs = glob(
-        [
-            "lib/rustlib/src/rust/vendor/compiler_builtins/src/**/*.rs",
-            "lib/rustlib/src/rust/vendor/compiler_builtins/libm/src/**/*.rs",
-        ],
-    ),
-    compile_data = glob(["lib/rustlib/src/rust/vendor/compiler_builtins/src/**/*.md"]),
+    srcs = glob(["lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins/src/**/*.rs"]),
+    compile_data = glob(["lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins/src/**/*.md"]),
     crate_features = [
         "compiler-builtins",
         "core",
