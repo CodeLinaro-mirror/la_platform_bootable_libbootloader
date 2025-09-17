@@ -163,7 +163,7 @@ typedef struct _GBL_EFI_SLOT_METADATA_BLOCK {
 
 *Self*
 
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
+A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Metadata*
@@ -241,7 +241,7 @@ typedef struct _GBL_EFI_SLOT_INFO {
 
 *Self*
 
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
+A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Idx*
@@ -289,7 +289,7 @@ EFI_STATUS
 
 *Self*
 
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
+A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Info*
@@ -333,7 +333,7 @@ EFI_STATUS
 
 *Self*
 
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
+A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Idx*
@@ -383,7 +383,7 @@ EFI_STATUS
 
 *Self*
 
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
+A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Idx*
@@ -443,7 +443,7 @@ EFI_STATUS
 
 *Self*
 
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
+A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 ### Description
@@ -501,7 +501,7 @@ typedef enum _GBL_EFI_AB_SLOT_BOOT_MODE {
 
 *Self*
 
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
+A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Mode*
@@ -578,7 +578,7 @@ EFI_STATUS
 
 *Self*
 
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
+A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Mode*
@@ -625,7 +625,7 @@ EFI_STATUS
 
 *Self*
 
-A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protcol-interface-structure)
+A pointer to the [`GBL_EFI_AB_SLOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 ### Description

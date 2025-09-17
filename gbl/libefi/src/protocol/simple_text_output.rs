@@ -33,6 +33,14 @@ impl ProtocolInfo for SimpleTextOutputProtocol {
 }
 
 impl Protocol<'_, SimpleTextOutputProtocol> {
+    /// Wrapper of `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL.Reset()`
+    pub fn reset(&self, extended: bool) -> Result<()> {
+        // SAFETY:
+        // `self.interface()` is non-null and points to a valid object.
+        // `self.interface_ptr()` is an input parameter and is not retained. It outlives the call.
+        unsafe { efi_call!(self.interface().reset, self.interface_ptr(), extended) }
+    }
+
     /// Wrapper of `EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL.OutputString()`
     pub fn output_string(&self, msg: &mut [u16]) -> Result<()> {
         // SAFETY:

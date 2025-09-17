@@ -258,6 +258,28 @@ impl<'a, 'b> Ops<'a, 'b> {
             v => Ok(v?),
         }
     }
+
+    /// Run protocol integration required tests.
+    #[cfg(all(not(test), feature = "gbl_dev"))]
+    fn run_integration_test_required<Sender: InfoSender + OkaySender + FailSender>(
+        &self,
+        sender: Sender,
+        send_impl: impl FnOnce(&'static str, Sender, Result<()>) -> Result<()>,
+    ) -> Result<()> {
+        let res = libprotocol_test::test_all_required_protocols(self.efi_entry);
+        send_impl("required protocool integration test", sender, res)
+    }
+
+    /// Run protocol integration optional tests.
+    #[cfg(all(not(test), feature = "gbl_dev"))]
+    fn run_integration_test_optional<Sender: InfoSender + OkaySender + FailSender>(
+        &self,
+        sender: Sender,
+        send_impl: impl FnOnce(&'static str, Sender, Result<()>) -> Result<()>,
+    ) -> Result<()> {
+        let res = libprotocol_test::test_all_optional_protocols(self.efi_entry);
+        send_impl("optional protocol integration test", sender, res)
+    }
 }
 
 impl Write for Ops<'_, '_> {
@@ -830,38 +852,73 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
-    fn fastboot_command_exec<'arg>(
+    fn fastboot_command_exec<'arg, Sender: InfoSender + OkaySender + FailSender>(
         &mut self,
         args: impl Iterator<Item = &'arg CStr> + Clone,
         download: &mut [u8],
         download_used: usize,
-        sender: impl InfoSender + OkaySender + FailSender,
+        sender: Sender,
     ) -> Result<CommandExecType> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()
-        {
-            Ok(v) => {
-                let sender = &mut Some(sender);
-                match v.command_exec(args, download, download_used, |msg_type, msg| {
-                    command_exec_message_sender(msg_type, msg, sender)
-                }) {
-                    Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED) => {
-                        Ok(CommandExecType::Prohibited)
-                    }
-                    Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL)
-                    | Err(Error::NotFound) => Ok(CommandExecType::DefaultImpl),
-                    Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL) => {
-                        Ok(CommandExecType::CustomImpl)
-                    }
-                    Ok(_) => Err(Error::InvalidState),
-                    Err(e) => Err(e),
-                }
+        // Note: can't simplify the type for the command function or lift it out
+        //       due to limitations in the type checker as of 2025-10-02.
+        let exec_funcs: &[(
+            &'static str,
+            fn(&Self, Sender, fn(&'static str, Sender, Result<()>) -> Result<()>) -> Result<()>,
+        )] = &[
+            // These tests depend heavily on libefi and libefi_types, and we don't
+            // want to add those dependencies to libgbl, so move the invocation here
+            // instead of libgbl/src/ops.rs
+            #[cfg(all(not(test), feature = "gbl_dev"))]
+            ("gbl-integration-test-required", Self::run_integration_test_required),
+            #[cfg(all(not(test), feature = "gbl_dev"))]
+            ("gbl-integration-test-optional", Self::run_integration_test_optional),
+        ];
+
+        fn send_func<Sender: InfoSender + OkaySender + FailSender>(
+            msg: &str,
+            message_sender: Sender,
+            res: Result<()>,
+        ) -> Result<()> {
+            if res.is_ok() {
+                block_on(message_sender.send_okay(msg))
+            } else {
+                block_on(message_sender.send_fail(msg))
             }
-            Err(Error::NotFound) => Ok(Default::default()),
-            Err(e) => Err(e),
+        }
+
+        let mut args = args.peekable();
+        let key = args.peek().map_or("", |a| a.to_str().unwrap_or(""));
+        if let Some(exec_cmd) =
+            exec_funcs.iter().find_map(|(k, v)| if *k == key { Some(v) } else { None })
+        {
+            exec_cmd(self, sender, send_func).map(|_| CommandExecType::DefaultImpl)
+        } else {
+            match self
+                .efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<GblFastbootProtocol>()
+            {
+                Ok(v) => {
+                    let sender = &mut Some(sender);
+                    match v.command_exec(args, download, download_used, |msg_type, msg| {
+                        command_exec_message_sender(msg_type, msg, sender)
+                    }) {
+                        Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED) => {
+                            Ok(CommandExecType::Prohibited)
+                        }
+                        Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL)
+                        | Err(Error::NotFound) => Ok(CommandExecType::DefaultImpl),
+                        Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL) => {
+                            Ok(CommandExecType::CustomImpl)
+                        }
+                        Ok(_) => Err(Error::InvalidState),
+                        Err(e) => Err(e),
+                    }
+                }
+                Err(Error::NotFound) => Ok(Default::default()),
+                Err(e) => Err(e),
+            }
         }
     }
 

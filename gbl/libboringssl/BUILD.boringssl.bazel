@@ -17,7 +17,6 @@ load(
     "bcm_internal_headers",
     "crypto_headers",
     "crypto_internal_headers",
-    "crypto_sources",
 )
 load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
 load("@rules_cc//cc:defs.bzl", "cc_library")

@@ -544,12 +544,12 @@ pub trait GblOps<'a, 'd> {
     ///   messages.
     ///
     /// Returns Ok((true, _)) if allowed, Ok((false, <msg>)) if disallowed.
-    fn fastboot_command_exec<'arg>(
+    fn fastboot_command_exec<'arg, Sender: InfoSender + OkaySender + FailSender>(
         &mut self,
         args: impl Iterator<Item = &'arg CStr> + Clone,
         download: &mut [u8],
         download_used: usize,
-        sender: impl InfoSender + OkaySender + FailSender,
+        sender: Sender,
     ) -> Result<CommandExecType, Error>;
 
     /// Returns a [SlotsMetadata] for the platform.
@@ -965,12 +965,12 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
-    fn fastboot_command_exec<'arg>(
+    fn fastboot_command_exec<'arg, Sender: InfoSender + OkaySender + FailSender>(
         &mut self,
         _: impl Iterator<Item = &'arg CStr> + Clone,
         _: &mut [u8],
         _: usize,
-        _: impl InfoSender + OkaySender + FailSender,
+        _: Sender,
     ) -> Result<CommandExecType, Error> {
         // Ramboot should not need this.
         unreachable!();
@@ -1631,12 +1631,12 @@ pub(crate) mod test {
                 .unwrap_or(Ok(FastbootEraseAction::EraseAsPhysicalPartition))
         }
 
-        fn fastboot_command_exec<'arg>(
+        fn fastboot_command_exec<'arg, Sender: InfoSender + OkaySender + FailSender>(
             &mut self,
             args: impl Iterator<Item = &'arg CStr> + Clone,
             download: &mut [u8],
             download_used: usize,
-            mut sender: impl InfoSender + OkaySender + FailSender,
+            mut sender: Sender,
         ) -> Result<CommandExecType, Error> {
             let args = args.map(|v| v.to_str().unwrap().to_string()).collect::<Vec<_>>();
             if args == ["oem test-oem"] {

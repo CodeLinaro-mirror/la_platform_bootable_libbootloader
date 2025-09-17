@@ -144,6 +144,14 @@ impl<C: 'static + Identified> Client<C> {
         let c_interface = unsafe { c_interface.as_ref() };
         Self(c_interface)
     }
+
+    /// Returns the underlying client struct.
+    ///
+    /// This method is a safety valve for tests.
+    /// Calling it in production code is a code smell.
+    pub fn interface(&self) -> &'static C {
+        self.0
+    }
 }
 
 /// A UEFI protocol provider.

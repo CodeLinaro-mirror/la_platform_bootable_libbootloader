@@ -71,6 +71,7 @@ rust_library(
         "@zerocopy",
     ] + select({
         "@gbl//toolchain:dev": [
+            "@gbl//protocol_integration:libprotocol_test",
             "@smoltcp",
             "@zbi",
         ],

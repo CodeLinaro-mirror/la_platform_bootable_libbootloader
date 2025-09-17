@@ -293,7 +293,7 @@ impl<T: Identified + MaybeVersioned> ProtocolImpl for Client<T> {
     }
 }
 
-/// A generic type for representing an EFI protcol.
+/// A generic type for representing an EFI protocol.
 pub struct Protocol<'a, T: ProtocolImpl> {
     // The handle to the device offering the protocol. It's needed for closing the protocol.
     device: DeviceHandle,

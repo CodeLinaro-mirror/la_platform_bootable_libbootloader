@@ -50,7 +50,7 @@ pub unsafe trait HashAlgorithm: private::Sealed {
     const GUID: EfiGuid;
 
     /// The type of the digest.
-    type DigestType: IntoBytes + FromBytes + Immutable;
+    type DigestType: IntoBytes + FromBytes + Immutable + Eq;
 
     /// Access the relevant hash digest field in a `EfiHash2Output` union.
     ///

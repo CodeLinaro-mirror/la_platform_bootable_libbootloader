@@ -25,12 +25,12 @@
 mod riscv64;
 
 use cfg_if::cfg_if;
-use core::{ffi::c_void, panic::PanicInfo};
+use core::panic::PanicInfo;
 use efi::{
     efi_println, initialize, panic,
     protocol::random_number_generator::RandomNumberGeneratorProtocol, EfiAllocator, EfiEntry,
 };
-use efi_types::EfiSystemTable;
+use efi_types::{EfiHandle, EfiSystemTable};
 use gbl_efi::app_main;
 
 use libstack::initialize_canary;
@@ -159,7 +159,7 @@ fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
 /// # Safety
 /// `image_handle` and `systab_ptr` must be valid objects that adhere to the UEFI specification.
 #[no_mangle]
-pub unsafe extern "C" fn efi_main(image_handle: *mut c_void, systab_ptr: *mut EfiSystemTable) {
+pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiSystemTable) {
     // SAFETY:
     // * caller provides valid `image_handle` and `systab_ptr` objects
     // * we only call `initialize()` once

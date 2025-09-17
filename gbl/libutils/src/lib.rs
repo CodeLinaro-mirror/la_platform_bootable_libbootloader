@@ -169,7 +169,7 @@ pub fn get_frame_ptr() -> usize {
 /// Helper function for stripping namespaces from a typename.
 pub fn base_type_name<T>() -> &'static str {
     let type_name = core::any::type_name::<T>();
-    type_name.rsplit("::").next().unwrap_or(type_name)
+    type_name.rsplit_once("::").unwrap_or(("", type_name)).1
 }
 
 /// Helper function to split the basename from a method expression
