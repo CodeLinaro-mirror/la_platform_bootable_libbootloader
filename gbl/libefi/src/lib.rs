@@ -96,8 +96,6 @@ pub mod libc;
 #[cfg(not(test))]
 pub use allocation::EfiAllocator;
 
-/// The Android EFI protocol implementation of an A/B slot manager.
-pub mod ab_slots;
 /// C wrappers for EFI based hashing.
 pub mod efi_hash_c;
 /// Local fastboot/bootmenu support.

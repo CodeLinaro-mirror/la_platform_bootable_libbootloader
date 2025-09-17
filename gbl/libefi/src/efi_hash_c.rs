@@ -174,6 +174,8 @@ pub unsafe extern "C" fn efi_sha512_final(
 
 #[cfg(test)]
 mod test {
+    extern crate avb_sysdeps;
+
     use super::*;
     use crate::{
         hash2::HashAlgorithm,
