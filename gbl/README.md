@@ -182,6 +182,39 @@ debugging x86_64 GBL EFI app on QEMU using rust-gdb. To try the example:
    ./qemu_gdb_example/launch_qemu_gdb.sh aarch64
    ```
 
+### Debug with LLDB on Cuttlefish
+
+For x86_64 and aarch64, a pdb file is built along the GBL EFI application.
+The following gives an example of debugging GBL with the pdb file on Cuttlefish.
+(Currently only aarch64 is supported.)
+
+1. Build GBL with GDB connection listening enabled:
+
+   ```
+   ./tools/bazel run //bootable/libbootloader:gbl_efi_dist -c dbg --@gbl//toolchain:always_wait_gdb
+   ```
+
+2. Launch cuttlefish with GBL and qemu.
+
+   ```
+   launch_cvd \
+      --vm_manager=qemu_cli \
+      --android_efi_loader=./out/gbl_efi/gbl_aarch64_dev.efi \
+      --gdb_port=1337 \
+      --cpus=1
+   ```
+
+3. After cuttlefish emulator started successfully, in a separate terminal,
+   launch lldb.
+
+   ```
+   lldb \
+    -o "target create ./out/gbl_efi/gbl_aarch64_dev.efi" \
+    -o "gdb-remote localhost:1337" \
+    -o "command script import bootable/libbootloader/gbl/qemu_gdb_example/lldb_load_gbl.py" \
+    -o "script lldb_load_gbl.start_gbl()"
+   ```
+
 ### Boot Fuchsia on emulator
 
 1. Make sure Fuchsia target pass control to GBL.

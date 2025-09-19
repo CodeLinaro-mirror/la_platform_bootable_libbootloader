@@ -84,13 +84,12 @@ fn generate_canary(entry: &EfiEntry) -> usize {
 /// The function implements a simple handshake protocol between GBL and GDB for the initial
 /// execution break and passing of GBL load address in memory, which is needed for GDB to load
 /// symbols.
-#[cfg(feature = "gdb_debug")]
+#[cfg(any(feature = "gdb_debug", feature = "always-wait-gdb"))]
 fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
     // Our debug script `qemu_gdb_example/load_gbl_debug_bin.py` looks for this magic to determine
     // if GBL is ready for debug. Must be kept in sync with
     // `qemu_gdb_example/load_gbl_debug_bin.py`.
     const GDB_MAGIC: u64 = 0x166eb3328561cfe7;
-    use core::arch::asm;
     let image_base = gbl_efi::utils::image_base(entry)?;
     efi_println!(entry, "Image base: {:#x}", image_base);
     let mut buf = [0u8; 1];
@@ -103,10 +102,7 @@ fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
     {
         #[cfg(target_arch = "x86_64")]
         {
-            efi_println!(
-                entry,
-                "Please run load_gbl_debug_bin.py or set $rax=0 from gdb to continue."
-            );
+            efi_println!(entry, "Set $rax=0 from debugger to continue.");
             // Sets $rax to `GDB_MAGIC` and $rcx to the image load address
             // which will be retrieved by the debug script for loading debug
             // symbols. Loops until $rax is set 0 either by the
@@ -116,7 +112,7 @@ fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
             // It explicitly marks them as clobbered and does not modify
             // any memory.
             unsafe {
-                asm!(
+                core::arch::asm!(
                     "2:",
                     "cmp rax, 0",
                     "jne 2b",
@@ -129,10 +125,7 @@ fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            efi_println!(
-                entry,
-                "Please run load_gbl_debug_bin.py or set $x0=0 from gdb to continue."
-            );
+            efi_println!(entry, "Set $x0=0 from debugger to continue.");
             // Sets $x0 to `GDB_MAGIC` and $x2 to the image load address
             // which will be retrieved by the debug script for loading debug
             // symbols. Loops until $x0 is set 0 either by the
@@ -142,7 +135,7 @@ fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
             // It explicitly marks them as clobbered and does not modify
             // any memory.
             unsafe {
-                asm!(
+                core::arch::asm!(
                     "2:",
                     "cmp x0, 0",
                     "b.ne 2b",
@@ -151,6 +144,11 @@ fn wait_gdb(entry: &EfiEntry) -> libgbl::Result<()> {
                     clobber_abi("C"),
                 );
             }
+        }
+        #[cfg(target_arch = "riscv64")]
+        {
+            let _ = GDB_MAGIC; // Suppresses unused variables error.
+            unimplemented!();
         }
     }
     Ok(())
@@ -180,7 +178,7 @@ pub unsafe extern "C" fn efi_main(image_handle: *mut c_void, systab_ptr: *mut Ef
         initialize_canary(systab_ptr, usize::to_le(canary & !0xFFFF));
     }
 
-    #[cfg(feature = "gdb_debug")]
+    #[cfg(any(feature = "gdb_debug", feature = "always-wait-gdb"))]
     let _ = wait_gdb(&entry).inspect_err(|_| efi_println!(entry, "Failed to wait gdb connection."));
 
     app_main(entry).unwrap();
