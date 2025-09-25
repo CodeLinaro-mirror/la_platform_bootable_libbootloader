@@ -936,6 +936,9 @@ androidboot.veritymode.managed=yes
         assert_eq!(designated_fdt.unwrap_or(fdt.as_ptr()), fdt.as_ptr());
         assert_eq!(designated_kernel.unwrap_or(kernel.as_ptr()), kernel.as_ptr());
 
+        // If fdt is in general load buffer, checks it starts at page size aligned address.
+        assert!(designated_fdt.is_some() || fdt.as_ptr().align_offset(PAGE_SIZE) == 0);
+
         let fdt = Fdt::new(fdt).unwrap();
         // "linux,initrd-start/end" are updated.
         assert_eq!(

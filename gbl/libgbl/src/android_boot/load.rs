@@ -648,8 +648,10 @@ impl<'a> BootBufferLoader<'a> {
             Some(v) => Ok(&mut v[..]),
             _ => {
                 // Moves FDT to the left most position.
+                // Starts at PAGE_SIZE aligned address to make sure that the preceding ramdisk
+                // image (if no designated ramdisk buffer is provided), has a page aligned end.
                 self.general_fdt =
-                    move_left(self.bufs.general, &self.general_fdt, bootconfig_end, FDT_ALIGNMENT)?;
+                    move_left(self.bufs.general, &self.general_fdt, bootconfig_end, PAGE_SIZE)?;
                 Ok(&mut self.bufs.general[self.general_fdt.start..self.general_kernel.start])
             }
         }
