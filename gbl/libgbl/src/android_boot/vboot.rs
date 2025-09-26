@@ -183,10 +183,15 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
         }
     };
 
-    // Gets digest from the result command line.
     let mut digest = None;
     let mut is_eio = false;
     if let Some(ref verify_data) = verify_data {
+        assert!(
+            verify_data.vbmeta_data().first().unwrap().partition_name() == c"vbmeta",
+            "GBL requires the vbmeta partition as the top-level verification structure. Please \
+            contact the GBL team if you encounter this error."
+        );
+
         is_eio = verify_data.resolved_hashtree_error_mode()
             == HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_EIO;
 

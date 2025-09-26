@@ -147,6 +147,12 @@ fn zircon_verify_kernel_internal<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>(
         }
     };
 
+    assert!(
+        verify_data.vbmeta_data().first().unwrap().partition_name() == c"vbmeta",
+        "GBL requires the vbmeta partition as the top-level verification structure. Please \
+        contact the GBL team if you encounter this error."
+    );
+
     // Collects ZBI items from vbmetadata and appends to the `zbi_items`.
     for vbmeta_data in verify_data.vbmeta_data() {
         for prop in vbmeta_data.descriptors()?.iter().filter_map(|d| match d {
