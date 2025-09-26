@@ -196,6 +196,13 @@ pub mod gbl_efi_os_configuration {
                 &self,
                 components: &mut [GblEfiVerifiedDeviceTree],
             ) -> Result<()>;
+
+            /// Wraps `GBL_EFI_OS_CONFIGURATION_PROTOCOL.select_fit_configuration()`
+            pub fn select_fit_configuration(
+                &self,
+                fit: &[u8],
+                metadata: &[u8],
+            ) -> Result<usize>;
         }
     }
 
