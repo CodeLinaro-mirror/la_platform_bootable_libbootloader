@@ -241,15 +241,16 @@ build_with_no_rust_sysroot = rule(
 )
 
 # A transition rule that emits the "--platforms=<attr.platform>" option.
-def _platform_transition_impl(_, attr):
+def _platform_transition_impl(settings, attr):
+    mode = attr.mode if attr.mode != "" else settings["//command_line_option:compilation_mode"]
     return {
         "//command_line_option:platforms": attr.platform,
-        "//command_line_option:compilation_mode": attr.mode,
+        "//command_line_option:compilation_mode": mode,
     }
 
 _platform_transition = transition(
     implementation = _platform_transition_impl,
-    inputs = [],
+    inputs = ["//command_line_option:compilation_mode"],
     outputs = ["//command_line_option:platforms", "//command_line_option:compilation_mode"],
 )
 
@@ -262,7 +263,7 @@ build_with_platform = rule(
             default = Label("@bazel_tools//tools/allowlists/function_transition_allowlist"),
         ),
         "platform": attr.string(mandatory = True),
-        "mode": attr.string(mandatory = False, default = "opt"),
+        "mode": attr.string(mandatory = False),
         "deps": attr.label_list(allow_files = True, mandatory = True),
     },
 )

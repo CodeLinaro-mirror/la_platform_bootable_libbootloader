@@ -540,12 +540,25 @@ uefi_rustc_flags = [
     "-g",
 ]
 
-rustc_opt_flags = [
-    "-C",
-    "opt-level=3",
-]
+config_setting(
+    name = "compilation_mode_dbg",
+    values = {"compilation_mode": "dbg"},
+)
 
-rustc_common_flags = common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select)
+rustc_opt_flags = ["-C"] + select({
+    ":compilation_mode_dbg": ["opt-level=0"],
+    "//conditions:default": ["opt-level=3"],  # Default to enable optimization
+})
+
+wait_gdb_switch = select({
+    ":always_wait_gdb_enabled": [
+        "--cfg",
+        "feature=\"always-wait-gdb\"",
+    ],
+    "//conditions:default": [],
+})
+
+rustc_common_flags = common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select) + wait_gdb_switch
 
 # x86_64 UEFI toolchain
 rust_toolchain(
@@ -593,13 +606,7 @@ msvc_rustc_debug_common = [
     # it easier to read its disassembly.
     "-C",
     "link-args=/debug:dwarf",
-] + select({
-    ":always_wait_gdb_enabled": [
-        "--cfg",
-        "feature=\"always-wait-gdb\"",
-    ],
-    "//conditions:default": [],
-})
+]
 
 # x64 debug target
 rust_toolchain(
