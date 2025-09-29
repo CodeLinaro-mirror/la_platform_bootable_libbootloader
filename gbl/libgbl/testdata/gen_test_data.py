@@ -295,6 +295,10 @@ def gen_android_test_vbmeta(partition_file_pairs, out_vbmeta):
                 f"{TEST_ROLLBACK_INDEX}",
                 "--rollback_index_location",
                 f"{TEST_ROLLBACK_INDEX_LOCATION}",
+                "--prop",
+                "com.android.build.system.os_version:1",
+                "--prop",
+                "com.android.build.system.security_patch:1",
             ]
             + desc_args,
             stderr=subprocess.STDOUT,
@@ -374,6 +378,9 @@ def gen_android_test_images():
             random.seed(RNG_SEED_ANDROID[slot])
             kernel = out_dir / f"kernel_{slot}.img"
             kernel.write_bytes(random.randbytes(4 * SZ_KB))
+
+            fw = out_dir / f"fw_{slot}.img"
+            fw.write_bytes(random.randbytes(4 * SZ_KB))
 
             generic_ramdisk = out_dir / f"generic_ramdisk_{slot}.img"
             generic_ramdisk.write_bytes(random.randbytes(8 * SZ_KB))
@@ -542,6 +549,7 @@ androidboot.config_2=val_2
                     (f"boot", out_dir / f"boot_v{i}_{slot}.img"),
                     ("dtbo", out_dir / f"dtbo_{slot}.img"),
                     ("dtb", out_dir / f"dtb_{slot}.img"),
+                    ("fw", fw),
                 ]
                 gen_android_test_vbmeta(parts, out_dir / f"vbmeta_v{i}_{slot}.img")
 
@@ -562,6 +570,7 @@ androidboot.config_2=val_2
                             ("vendor_kernel_boot", vendor_kernel_boot),
                             ("dtbo", out_dir / f"dtbo_{slot}.img"),
                             ("dtb", out_dir / f"dtb_{slot}.img"),
+                            ("fw", fw),
                         ]
                         prefix = f"vbmeta_v{boot_ver}_v{vendor_ver}"
                         if use_init_boot:
@@ -587,6 +596,7 @@ androidboot.config_2=val_2
                 ),
                 ("dtbo", out_dir / f"dtbo_{slot}.img"),
                 ("dtb", out_dir / f"dtb_{slot}.img"),
+                ("fw", fw),
             ]
             gen_android_test_vbmeta(parts, vbmeta_out)
 
@@ -605,6 +615,7 @@ androidboot.config_2=val_2
                         ),
                         ("dtbo", out_dir / f"dtbo_{slot}.img"),
                         ("dtb", out_dir / f"dtb_{slot}.img"),
+                        ("fw", fw),
                     ]
                     gen_android_test_vbmeta(parts, vbmeta_out)
 
