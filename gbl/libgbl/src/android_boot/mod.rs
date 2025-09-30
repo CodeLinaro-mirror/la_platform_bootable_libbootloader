@@ -24,6 +24,7 @@ use crate::{
         GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
     },
     gbl_println,
+    misc::{read_bootloader_message_to, write_bootloader_message},
     ops::{PartitionBuffer, RebootMode},
     slots::Slot,
     GblOps, Result,
@@ -41,7 +42,7 @@ use gbl_async::block_on;
 use libbuild_number::BUILD_NUMBER;
 use liberror::Error;
 use libutils::aligned_subslice;
-use misc::{AndroidBootMode, BootloaderMessage};
+use misc::AndroidBootMode;
 
 mod avf;
 use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region};
@@ -546,29 +547,22 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     mut boot_buffer: BootBuffer<'c>,
     run_fastboot: impl FnOnce(GblFastbootEntry<'_, G>),
 ) -> Result<(&'c mut [u8], &'c mut [u8], &'c mut [u8], &'c mut [u8])> {
-    let (bcb_buffer, _) = boot_buffer
-        .general
-        .split_at_mut_checked(BootloaderMessage::SIZE_BYTES)
-        .ok_or(Error::BufferTooSmall(Some(BootloaderMessage::SIZE_BYTES)))
-        .inspect_err(|e| gbl_println!(ops, "Buffer too small for reading misc. {e}"))?;
-    ops.read_from_partition_sync("misc", 0, &mut *bcb_buffer)
-        .inspect_err(|e| gbl_println!(ops, "Failed to read misc partition: {e}"))?;
-    let bcb = BootloaderMessage::from_bytes_ref(bcb_buffer)
-        .inspect_err(|e| gbl_println!(ops, "Failed to parse bootloader messgae: {e}"))?;
+    let bcb = read_bootloader_message_to(ops, boot_buffer.general).inspect_err(|e| {
+        gbl_println!(ops, "Failed to read bootloader message from misc partition: {e}")
+    })?;
     let boot_mode = bcb
         .boot_mode()
-        .inspect_err(|e| gbl_println!(ops, "Failed to parse BCB boot mode ({e}). Ignored"))
+        .inspect_err(|e| {
+            let cmd = bcb.boot_command();
+            gbl_println!(ops, "Failed to parse BCB boot command {cmd:?}: {e}");
+        })
         .unwrap_or(AndroidBootMode::Normal);
-    gbl_println!(ops, "Boot mode from BCB: {}", boot_mode);
 
     if matches!(boot_mode, AndroidBootMode::BootloaderBootOnce) {
-        let mut zeroed_command = [0u8; misc::COMMAND_FIELD_SIZE];
-        ops.write_to_partition_sync(
-            "misc",
-            misc::COMMAND_FIELD_OFFSET.try_into().unwrap(),
-            &mut zeroed_command,
-        )?;
+        bcb.update_boot_command(AndroidBootMode::Normal);
+        write_bootloader_message(ops, bcb)?;
     }
+    gbl_println!(ops, "Boot mode from BCB: {boot_mode:?}");
 
     // Checks platform reboot reason.
     let reboot_mode = ops
@@ -613,8 +607,8 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
         return Err(Error::UnexpectedReturn.into());
     }
 
-    let is_recovery = matches!(reboot_mode, RebootMode::Recovery)
-        || matches!(boot_mode, AndroidBootMode::Recovery);
+    let is_recovery =
+        matches!(reboot_mode, RebootMode::Recovery) || boot_mode.should_enter_recovery();
     android_load_verify_fixup(ops, slot, is_recovery, boot_buffer)
 }
 
@@ -625,6 +619,7 @@ pub(crate) mod tests {
         constants::{KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
         fastboot::test::{make_expected_usb_out, SharedTestListener, TestLocalSession},
         gbl_avb::state::{BootStateColor, KeyValidationStatus},
+        misc::test::read_bootloader_message,
         ops::{
             test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage},
             AvbProperty, PartitionBuffer,
@@ -2052,9 +2047,7 @@ androidboot.veritymode.managed=yes
         ops.write_to_partition_sync("misc", 0, &mut b"bootonce-bootloader".to_vec()).unwrap();
         test_fastboot_is_triggered(&mut ops);
 
-        let mut bcb_buffer = [0u8; BootloaderMessage::SIZE_BYTES];
-        ops.read_from_partition_sync("misc", 0, &mut bcb_buffer[..]).unwrap();
-        let bcb = BootloaderMessage::from_bytes_ref(&bcb_buffer).unwrap();
+        let bcb = read_bootloader_message(&mut ops).unwrap();
         assert_eq!(
             bcb.boot_mode().unwrap(),
             AndroidBootMode::Normal,

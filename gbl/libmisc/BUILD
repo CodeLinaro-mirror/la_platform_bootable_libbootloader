@@ -27,6 +27,7 @@ rust_library(
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
         "@gbl//liberror",
+        "@static_assertions",
         "@zerocopy",
     ],
 )
