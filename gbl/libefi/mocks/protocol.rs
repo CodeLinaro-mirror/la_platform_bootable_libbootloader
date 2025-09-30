@@ -432,37 +432,39 @@ pub mod gbl_efi_fastboot {
     pub type Var = MockVar;
 }
 
-/// Mock gbl_efi_ab_slot
-pub mod gbl_efi_ab_slot {
+/// Mock gbl_efi_boot_target
+pub mod gbl_efi_boot_target {
     use super::*;
-    use efi::protocol::gbl_efi_ab_slot::GblSlot;
-    use efi_types::{GblEfiBootMode, GblEfiSlotMetadataBlock};
+    use efi::protocol::gbl_efi_boot_target::GblSlot;
+    use efi_types::GblEfiSlotMetadataBlock;
 
     mock! {
-        /// Mock of [GblABSlotProtocol]
-        pub GblABSlotProtocol {
-            /// Mock of GblABSlotProtocol::get_slot_info.
+        /// Mock of [GblBootTargetProtocol]
+        pub GblBootTargetProtocol {
+            /// Mock of GblBootTargetProtocol::get_slot_info.
             pub fn get_slot_info(&mut self, idx: u8) -> Result<GblSlot>;
 
-            /// Mock of GblABSlotProtocol::get_current_slot.
+            /// Mock of GblBootTargetProtocol::get_current_slot.
             pub fn get_current_slot(&self) -> Result<GblSlot>;
 
-            /// Mock of GblABSlotProtocol::load_boot_data.
+            /// Mock of GblBootTargetProtocol::load_boot_data.
             pub fn load_boot_data(&self) -> Result<GblEfiSlotMetadataBlock>;
 
-            /// Mock of GblABSlotProtocol::set_active_slot.
+            /// Mock of GblBootTargetProtocol::set_active_slot.
             pub fn set_active_slot(&self, idx: u8) -> Result<()>;
+        }
+    }
 
-            /// Mock of GblABSlotProtocol::set_boot_mode.
-            pub fn set_boot_mode(&self, mode: GblEfiBootMode) -> Result<()>;
+    impl Versioned for MockGblBootTargetProtocol {
+        const REVISION: Revision = Revision { major: 0, minor: 2 };
 
-            /// Mock of GblABSlotProtocol::get_boot_mode.
-            pub fn get_boot_mode(&self) -> Result<GblEfiBootMode>;
+        fn revision(&self) -> Revision {
+            Self::REVISION
         }
     }
 
     /// Map to the libefi name so code under test can just use one name.
-    pub type GblABSlotProtocol = MockGblABSlotProtocol;
+    pub type GblBootTargetProtocol = MockGblBootTargetProtocol;
 }
 
 /// Mock gbl_efi_boot_memory

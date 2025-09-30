@@ -20,9 +20,7 @@ use crate::{
         fixup_zbi_items, read_zircon_image, vboot::zircon_verify_kernel_in_place,
         zbi_split_unused_buffer_mut, zircon_check_enter_fastboot, zircon_part_name, GblAbrOps,
     },
-    gbl_println,
-    ops::RebootMode,
-    GblOps, Result as GblResult,
+    gbl_println, GblOps, Result as GblResult,
 };
 pub use abr::{get_boot_slot, SlotIndex};
 use liberror::Error;
@@ -156,18 +154,10 @@ pub fn zircon_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 ) -> GblResult<LoadedVerifiedZircon<'c>> {
     gbl_println!(ops, "Loading and verifying Fuchsia...");
 
-    // Checks platform reboot mode.
-    let reboot_mode = ops
-        .get_reboot_mode()
-        .inspect_err(|e| {
-            gbl_println!(ops, "Failed to get reboot mode from platform: {e}. Ignored.")
-        })
-        .unwrap_or(RebootMode::Normal);
-    gbl_println!(ops, "Reboot mode from platform: {reboot_mode:?}");
-
+    // TODO(b/445679472): Revisit this after Fuchsia adopts BCB or its own boot mode standard.
     // Checks and enters fastboot.
     let result = &mut Default::default();
-    if matches!(reboot_mode, RebootMode::Bootloader) || zircon_check_enter_fastboot(ops) {
+    if zircon_check_enter_fastboot(ops) {
         gbl_println!(ops, "Entering fastboot mode...");
         run_fastboot(GblFastbootEntry { ops, boot_buffer: (&mut load[..]).into(), result });
         gbl_println!(ops, "Leaving fastboot mode...");

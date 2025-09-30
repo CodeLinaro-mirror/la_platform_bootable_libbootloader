@@ -26,7 +26,7 @@ use crate::{
     gbl_avb::{ArrayMaxParts, ArrayMaxRequestedParts},
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message},
-    ops::{PartitionBuffer, RebootMode},
+    ops::PartitionBuffer,
     slots::Slot,
     GblOps, Result,
 };
@@ -594,19 +594,9 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     }
     gbl_println!(ops, "Boot mode from BCB: {boot_mode:?}");
 
-    // Checks platform reboot reason.
-    let reboot_mode = ops
-        .get_reboot_mode()
-        .inspect_err(|e| {
-            gbl_println!(ops, "Failed to get reboot reason from platform: {e}. Ignored.")
-        })
-        .unwrap_or(RebootMode::Normal);
-    gbl_println!(ops, "Reboot reason from platform: {reboot_mode:?}");
-
     // Checks and enters fastboot.
     let result = &mut Default::default();
-    if matches!(reboot_mode, RebootMode::Bootloader)
-        || matches!(boot_mode, AndroidBootMode::BootloaderBootOnce)
+    if matches!(boot_mode, AndroidBootMode::BootloaderBootOnce)
         || ops
             .should_stop_in_fastboot()
             .inspect_err(|e| {
@@ -637,8 +627,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
         return Err(Error::UnexpectedReturn.into());
     }
 
-    let is_recovery =
-        matches!(reboot_mode, RebootMode::Recovery) || boot_mode.should_enter_recovery();
+    let is_recovery = boot_mode.should_enter_recovery();
     android_load_verify_fixup(ops, slot, is_recovery, boot_buffer)
 }
 
@@ -1885,7 +1874,6 @@ androidboot.veritymode.managed=yes
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
         ops.current_slot = Some(Ok(slot('a')));
-        ops.reboot_mode = Some(Ok(RebootMode::Normal));
         ops
     }
 
@@ -1997,21 +1985,6 @@ androidboot.veritymode.managed=yes
 
         let mut ops = default_test_gbl_ops(&storage);
         ops.write_to_partition_sync("misc", 0, &mut b"boot-recovery".to_vec()).unwrap();
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let load_buffer = (&mut load_buffer[..]).into();
-        let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
-        checks_loaded_v2_slot_a_recovery_mode(ramdisk, kernel)
-    }
-
-    #[test]
-    fn test_android_main_reboot_reason_recovery_mode() {
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
-        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
-
-        let mut ops = default_test_gbl_ops(&storage);
-        ops.reboot_mode = Some(Ok(RebootMode::Recovery));
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
@@ -2133,17 +2106,6 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.write_to_partition_sync("misc", 0, &mut b"bootonce-bootloader".to_vec()).unwrap();
-        test_fastboot_is_triggered(&mut ops);
-    }
-
-    #[test]
-    fn test_android_main_enter_fastboot_via_reboot_reason() {
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
-        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
-        let mut ops = default_test_gbl_ops(&storage);
-        ops.reboot_mode = Some(Ok(RebootMode::Bootloader));
         test_fastboot_is_triggered(&mut ops);
     }
 

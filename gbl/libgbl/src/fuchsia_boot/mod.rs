@@ -263,7 +263,7 @@ pub(crate) mod test {
         constants::ZIRCON_KERNEL_ALIGNMENT,
         ops::{
             test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
-            CertPermanentAttributes, RebootMode,
+            CertPermanentAttributes,
         },
     };
     use abr::{
@@ -358,7 +358,6 @@ pub(crate) mod test {
         );
         ops.avb_ops.cert_permanent_attributes_hash =
             Some(read_test_data("cert_permanent_attributes.hash").try_into().unwrap());
-        ops.reboot_mode = Some(Ok(RebootMode::Normal));
         ops
     }
 

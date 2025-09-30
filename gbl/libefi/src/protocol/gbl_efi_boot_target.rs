@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Rust wrapper for `GBL_EFI_SLOT_PROTOCOL`.
+//! Rust wrapper for `GBL_EFI_BOOT_TARGET_PROTOCOL`.
 extern crate libgbl;
 
 use crate::efi_call;
 use crate::{
-    protocol::{Protocol, ProtocolInfo, Requirement},
+    protocol::{Protocol, ProtocolInfo},
     versioned_protocol,
 };
 use efi_types::{
-    EfiGuid, GblEfiABSlotProtocol, GblEfiBootMode, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
-    GblEfiUnbootableReason, GBL_EFI_AB_SLOT_PROTOCOL_REVISION,
+    EfiGuid, GblEfiBootTargetProtocol, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
+    GblEfiUnbootableReason, GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION,
     GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
     GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE as SYSTEM_UPDATE,
     GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED as USER_REQUESTED,
@@ -32,18 +32,16 @@ use liberror::Result;
 
 use libgbl::slots::{Bootability, Slot, Suffix, UnbootableReason};
 
-/// Wraps `GBL_EFI_SLOT_PROTOCOL`.
-pub struct GblABSlotProtocol;
+/// Wraps `GBL_EFI_BOOT_TARGET_PROTOCOL`.
+pub struct GblBootTargetProtocol;
 
-versioned_protocol!(GblABSlotProtocol, GBL_EFI_AB_SLOT_PROTOCOL_REVISION);
+versioned_protocol!(GblBootTargetProtocol, GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION);
 
-impl ProtocolInfo for GblABSlotProtocol {
-    type InterfaceType = GblEfiABSlotProtocol;
+impl ProtocolInfo for GblBootTargetProtocol {
+    type InterfaceType = GblEfiBootTargetProtocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0x9a7a7db4, 0x614b, 0x4a08, [0x3d, 0xf9, 0x00, 0x6f, 0x49, 0xb0, 0xd8, 0x0c]);
-
-    const REQUIREMENT: Requirement = Requirement::Optional;
+        EfiGuid::new(0xd382db1b, 0x9ac2, 0x11f0, [0x84, 0xc7, 0x04, 0x7b, 0xcb, 0xa9, 0x60, 0x19]);
 }
 
 fn from_efi_unbootable_reason(reason: GblEfiUnbootableReason) -> UnbootableReason {
@@ -83,8 +81,8 @@ impl TryFrom<GblSlot> for libgbl::slots::Slot {
     }
 }
 
-impl<'a> Protocol<'a, GblABSlotProtocol> {
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.load_boot_data()`
+impl<'a> Protocol<'a, GblBootTargetProtocol> {
+    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.load_boot_data()`
     pub fn load_boot_data(&self) -> Result<GblEfiSlotMetadataBlock> {
         let mut block: GblEfiSlotMetadataBlock = Default::default();
         // SAFETY:
@@ -95,7 +93,7 @@ impl<'a> Protocol<'a, GblABSlotProtocol> {
         Ok(block)
     }
 
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.get_slot_info()`
+    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.get_slot_info()`
     pub fn get_slot_info(&self, idx: u8) -> Result<GblSlot> {
         let mut info: GblEfiSlotInfo = Default::default();
         // SAFETY:
@@ -106,7 +104,7 @@ impl<'a> Protocol<'a, GblABSlotProtocol> {
         Ok(info.into())
     }
 
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.get_current_slot()`
+    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.get_current_slot()`
     pub fn get_current_slot(&self) -> Result<GblSlot> {
         let mut info: GblEfiSlotInfo = Default::default();
         // SAFETY:
@@ -117,63 +115,11 @@ impl<'a> Protocol<'a, GblABSlotProtocol> {
         Ok(info.into())
     }
 
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_active_slot()`
+    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.set_active_slot()`
     pub fn set_active_slot(&self, idx: u8) -> Result<()> {
         // SAFETY:
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         unsafe { efi_call!(self.interface().set_active_slot, self.interface_ptr(), idx) }
-    }
-
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_slot_unbootable()`
-    pub fn set_slot_unbootable(&self, idx: u8, reason: GblEfiUnbootableReason) -> Result<()> {
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        unsafe {
-            efi_call!(self.interface().set_slot_unbootable, self.interface_ptr(), idx, reason)
-        }
-    }
-
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.reinitialize()`
-    pub fn reinitialize(&self) -> Result<()> {
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface().reinitialize, self.interface_ptr()) }
-    }
-
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.get_boot_mode()`
-    pub fn get_boot_mode(&self) -> Result<GblEfiBootMode> {
-        let mut mode = GblEfiBootMode(0);
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        // `mode` is an output parameter. It is not retained, and it outlives the call.
-        unsafe { efi_call!(self.interface().get_boot_mode, self.interface_ptr(), &mut mode)? }
-
-        Ok(mode)
-    }
-
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.set_boot_mode()`
-    pub fn set_boot_mode(&self, mode: GblEfiBootMode) -> Result<()> {
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        unsafe {
-            efi_call!(
-                self.interface().set_boot_mode,
-                self.interface_ptr(),
-                mode.try_into().or(Err(Error::InvalidInput))?,
-            )
-        }
-    }
-
-    /// Wrapper of `GBL_EFI_SLOT_PROTOCOL.flush()`
-    pub fn flush(&self) -> Result<()> {
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface().flush, self.interface_ptr()) }
     }
 }

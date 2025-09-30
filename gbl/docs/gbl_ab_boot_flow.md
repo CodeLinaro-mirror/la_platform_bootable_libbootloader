@@ -2,7 +2,7 @@
 
 This document explains the A/B boot flows implemented by GBL and its
 interaction with EFI protocol
-[GBL_EFI_AB_SLOT_PROTOCOL](./gbl_efi_ab_slot_protocol.md).
+[GBL_EFI_BOOT_TARGET_PROTOCOL](./gbl_efi_boot_target_protocol.md).
 
 | **Status**  | Work in progress |
 |:------------|-----------------:|
@@ -31,10 +31,10 @@ The boot flow is summarized in the following diagram.
 
 ![Flowchart of a device booting with A/B slots](./resources/ab-bl-ab-android-flow.png)
 
-GBL queries the current bootloader slot by calling
-[GBL_EFI_AB_SLOT_PROTOCOL.GetCurrentSlot()](./gbl_efi_ab_slot_protocol.md#gbl_efi_ab_slot_protocolgetcurrentslot).
+GBL queries the current boot slot by calling
+[`GBL_EFI_BOOT_TARGET_PROTOCOL.GetCurrentSlot()`](./gbl_efi_boot_target_protocol.md#gbl_efi_boot_target_protocol_getcurrentslot).
 It also tracks whether
-[GBL_EFI_AB_SLOT_PROTOCOL.SetActiveSlot()](./gbl_efi_ab_slot_protocol.md#gbl_efi_ab_slot_protocolsetactiveslot)
+[`GBL_EFI_BOOT_TARGET_PROTOCOL.SetActiveSlot()`](./gbl_efi_boot_target_protocol.md#gbl_efi_boot_target_protocol_setactiveslot)
 has been called to change the next active slot to a different slot, i.e. by
 `fastboot set_active`. If it has, GBL considers that the user intends to boot
 to a different slot than the current one and will trigger a reboot. If not, GBL

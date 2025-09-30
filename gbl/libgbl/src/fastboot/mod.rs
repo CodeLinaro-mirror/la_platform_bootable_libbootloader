@@ -25,6 +25,7 @@ use crate::{
 use crate::{
     android_boot::{android_load_verify_fixup, get_boot_slot, load::sub_slice_range, BootBuffer},
     gbl_println,
+    misc::{read_bootloader_message_to, write_bootloader_message},
     ops::{CommandExecType, FastbootEraseAction, RambootOps},
     partition::{check_part_unique, GblDisk, PartitionIo},
     GblOps,
@@ -52,6 +53,7 @@ use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
 use libutils::snprintf;
 use libutils::FormattedBytes;
+use misc::AndroidBootMode;
 use safemath::SafeNum;
 #[cfg(feature = "fuchsia")]
 use zbi::{ZbiContainer, ZbiType};
@@ -578,6 +580,27 @@ where
         Ok(())
     }
 
+    /// Sets the boot mode for the next reboot.
+    fn set_boot_mode(&mut self, mode: AndroidBootMode) -> CommandResult<()> {
+        match mode {
+            #[cfg(feature = "fuchsia")]
+            AndroidBootMode::BootloaderBootOnce if self.gbl_ops.expected_os_is_fuchsia()? => {
+                set_one_shot_bootloader(&mut GblAbrOps(self.gbl_ops), true)?;
+            }
+            #[cfg(feature = "fuchsia")]
+            AndroidBootMode::Recovery if self.gbl_ops.expected_os_is_fuchsia()? => {
+                set_one_shot_recovery(&mut GblAbrOps(self.gbl_ops), true)?;
+            }
+            _ => {
+                // Update the bootloader message (BCB) in the `misc` partition.
+                let bcb = read_bootloader_message_to(self.gbl_ops, self.boot_buffer.general)?;
+                bcb.update_boot_command(mode);
+                write_bootloader_message(self.gbl_ops, bcb)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Syncs all storage devices and reboots.
     async fn sync_tasks_and_reboot(
         &mut self,
@@ -586,31 +609,24 @@ where
     ) -> CommandResult<()> {
         resp.send_info("Syncing storage...").await?;
         self.sync_all_blocks().await?;
-        match mode {
-            RebootMode::Normal => {
-                resp.send_info("Rebooting...").await?;
-                resp.send_okay("").await?;
-                self.gbl_ops.reboot();
-            }
+        let msg = match mode {
+            RebootMode::Normal => "Rebooting...",
             RebootMode::Bootloader => {
-                let f = self.gbl_ops.reboot_bootloader()?;
-                resp.send_info("Rebooting to bootloader...").await?;
-                resp.send_okay("").await?;
-                f()
+                self.set_boot_mode(AndroidBootMode::BootloaderBootOnce)?;
+                "Rebooting to bootloader..."
             }
             RebootMode::Fastboot => {
-                let f = self.gbl_ops.reboot_fastboot()?;
-                resp.send_info("Rebooting to userspace fastboot...").await?;
-                resp.send_okay("").await?;
-                f()
+                self.set_boot_mode(AndroidBootMode::Fastboot)?;
+                "Rebooting to userspace fastboot..."
             }
             RebootMode::Recovery => {
-                let f = self.gbl_ops.reboot_recovery()?;
-                resp.send_info("Rebooting to recovery...").await?;
-                resp.send_okay("").await?;
-                f()
+                self.set_boot_mode(AndroidBootMode::Recovery)?;
+                "Rebooting to recovery..."
             }
-        }
+        };
+        resp.send_info(msg).await?;
+        resp.send_okay("").await?;
+        self.gbl_ops.reboot();
         Ok(())
     }
 
@@ -1224,7 +1240,8 @@ pub(crate) mod test {
             checks_loaded_v2_slot_a_normal_mode, checks_loaded_v2_slot_b_normal_mode,
             default_test_gbl_ops, read_test_data,
         },
-        constants::{KiB, KERNEL_ALIGNMENT},
+        constants::{KiB, MiB, KERNEL_ALIGNMENT},
+        misc::test::read_bootloader_message,
         ops::{
             test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage, SenderMessage},
             Partition, PartitionBuffer,
@@ -3130,6 +3147,80 @@ pub(crate) mod test {
         );
     }
 
+    fn test_fastboot_reboot(
+        reboot_command: &[u8],
+        expected_info: &[u8],
+        expected_boot_mode: AndroidBootMode,
+    ) {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"misc", [0u8; KiB!(4)]);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let buffers = vec![vec![0u8; KiB!(128)]; 2];
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        let mut load_buffer = AlignedBuffer::new(MiB!(8), KERNEL_ALIGNMENT);
+
+        listener.add_usb_input(reboot_command);
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            load_buffer.as_mut().into(),
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"INFOSyncing storage...",
+                expected_info,
+                b"OKAY",
+                b"FAILUnknown",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+        let bcb = read_bootloader_message(&mut gbl_ops).unwrap();
+        assert_eq!(bcb.boot_mode(), Ok(expected_boot_mode));
+        assert!(gbl_ops.rebooted);
+    }
+
+    #[test]
+    fn test_run_gbl_fastboot_reboot() {
+        test_fastboot_reboot(b"reboot", b"INFORebooting...", AndroidBootMode::Normal);
+    }
+
+    #[test]
+    fn test_run_gbl_fastboot_bootloader() {
+        test_fastboot_reboot(
+            b"reboot-bootloader",
+            b"INFORebooting to bootloader...",
+            AndroidBootMode::BootloaderBootOnce,
+        );
+    }
+
+    #[test]
+    fn test_run_gbl_fastboot_reboot_fastboot() {
+        test_fastboot_reboot(
+            b"reboot-fastboot",
+            b"INFORebooting to userspace fastboot...",
+            AndroidBootMode::Fastboot,
+        );
+    }
+
+    #[test]
+    fn test_run_gbl_fastboot_reboot_recovery() {
+        test_fastboot_reboot(
+            b"reboot-recovery",
+            b"INFORebooting to recovery...",
+            AndroidBootMode::Recovery,
+        );
+    }
+
     #[test]
     #[cfg(feature = "fuchsia")]
     fn test_run_gbl_fastboot_fuchsia_reboot_bootloader_abr() {
@@ -3138,7 +3229,6 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -3168,6 +3258,7 @@ pub(crate) mod test {
         );
 
         assert_eq!(get_and_clear_one_shot_bootloader(&mut GblAbrOps(&mut gbl_ops)), Ok(true));
+        assert!(gbl_ops.rebooted);
     }
 
     #[test]
@@ -3178,7 +3269,6 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -3210,6 +3300,7 @@ pub(crate) mod test {
         // One shot recovery is set.
         assert_eq!(get_boot_slot(&mut GblAbrOps(&mut gbl_ops), true), (SlotIndex::R, false));
         assert_eq!(get_boot_slot(&mut GblAbrOps(&mut gbl_ops), true), (SlotIndex::A, false));
+        assert!(gbl_ops.rebooted);
     }
 
     #[test]

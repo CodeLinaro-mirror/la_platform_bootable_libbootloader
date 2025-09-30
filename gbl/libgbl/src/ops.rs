@@ -14,8 +14,6 @@
 
 //! GblOps trait that defines GBL callbacks.
 
-#[cfg(feature = "fuchsia")]
-use crate::fuchsia_boot::GblAbrOps;
 use crate::{
     constants::ImageType,
     error::Result as GblResult,
@@ -121,44 +119,6 @@ pub trait GblOps<'a, 'd> {
     /// absolutely can't be taken, implementation should hang and notify platform user in its own
     /// way.
     fn reboot(&mut self);
-
-    /// Reboots into recovery mode
-    ///
-    /// On success, returns a closure that performs the reboot.
-    fn reboot_recovery(&mut self) -> Result<impl FnOnce() + '_, Error> {
-        match self.set_reboot_mode(RebootMode::Recovery) {
-            #[cfg(feature = "fuchsia")]
-            Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => {
-                set_one_shot_recovery(&mut GblAbrOps(self), true)?;
-            }
-            Err(e) => return Err(e),
-            _ => {}
-        }
-        Ok(|| self.reboot())
-    }
-
-    /// Reboots into bootloader fastboot mode
-    ///
-    /// On success, returns a closure that performs the reboot.
-    fn reboot_bootloader(&mut self) -> Result<impl FnOnce() + '_, Error> {
-        match self.set_reboot_mode(RebootMode::Bootloader) {
-            #[cfg(feature = "fuchsia")]
-            Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => {
-                set_one_shot_bootloader(&mut GblAbrOps(self), true)?;
-            }
-            Err(e) => return Err(e),
-            _ => {}
-        }
-        Ok(|| self.reboot())
-    }
-
-    /// Reboots into userspace fastboot mode
-    ///
-    /// On success, returns a closure that performs the reboot.
-    fn reboot_fastboot(&mut self) -> Result<impl FnOnce() + '_, Error> {
-        self.set_reboot_mode(RebootMode::FastbootD)?;
-        Ok(|| self.reboot())
-    }
 
     /// Returns the list of disk devices on this platform.
     ///
@@ -572,12 +532,6 @@ pub trait GblOps<'a, 'd> {
     /// * `slot`: The numeric index of the slot.
     fn set_active_slot(&mut self, _slot: u8) -> Result<(), Error>;
 
-    /// Sets the reboot mode for the next reboot.
-    fn set_reboot_mode(&mut self, _mode: RebootMode) -> Result<(), Error>;
-
-    /// Gets the reboot mode for this boot.
-    fn get_reboot_mode(&mut self) -> Result<RebootMode, Error>;
-
     /// Returns the base stack pointer if available
     fn get_base_sp(&mut self) -> Option<usize>;
 
@@ -908,17 +862,6 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!()
     }
 
-    fn set_reboot_mode(&mut self, _: RebootMode) -> Result<(), Error> {
-        // Ramboot is not suppose to call this interface.
-        unreachable!()
-    }
-
-    fn get_reboot_mode(&mut self) -> Result<RebootMode, Error> {
-        // Assumes that ramboot use normal boot mode. But we might consider supporting recovery
-        // if there is a usecase.
-        Ok(RebootMode::Normal)
-    }
-
     fn get_base_sp(&mut self) -> Option<usize> {
         self.ops.get_base_sp()
     }
@@ -984,8 +927,6 @@ pub(crate) mod test {
         android_boot::BOOTARGS_PROP, constants::Partition, device_tree::DeviceTreeComponentType,
         error::IntegrationError, partition::GblDisk, slots::Bootability,
     };
-    #[cfg(feature = "fuchsia")]
-    use abr::{get_and_clear_one_shot_bootloader, get_boot_slot};
     use avb::{CertOps, Ops};
     use avb_test::TestOps as AvbTestOps;
     use bootparams::commandline::CommandlineBuilder;
@@ -1136,14 +1077,8 @@ pub(crate) mod test {
         // message than a vague error such as `Error::Unimplemented`.
         pub current_slot: Option<Result<Slot, Error>>,
 
-        /// slot index last set active by `set_active()`,
+        /// slot index last set active by `set_active()`.
         pub last_set_active_slot: Option<u8>,
-
-        /// For returned by `get_reboot_mode()`
-        pub reboot_mode: Option<Result<RebootMode, Error>>,
-
-        /// For returned by `set_reboot_mode()`
-        pub set_reboot_mode_result: Option<Result<(), Error>>,
 
         /// For returned by `slot_metadata`
         pub slot_metadata_result: Option<Result<SlotsMetadata, Error>>,
@@ -1711,15 +1646,6 @@ pub(crate) mod test {
             Ok(())
         }
 
-        fn set_reboot_mode(&mut self, mode: RebootMode) -> Result<(), Error> {
-            self.reboot_mode = Some(Ok(mode));
-            self.set_reboot_mode_result.unwrap()
-        }
-
-        fn get_reboot_mode(&mut self) -> Result<RebootMode, Error> {
-            self.reboot_mode.unwrap()
-        }
-
         fn get_base_sp(&mut self) -> Option<usize> {
             self.base_sp
         }
@@ -1727,83 +1653,6 @@ pub(crate) mod test {
         fn get_profiling_backend(&self) -> impl ProfileBackend {
             NullProfiler {}
         }
-    }
-
-    #[test]
-    #[cfg(feature = "fuchsia")]
-    fn test_fuchsia_reboot_bootloader_abr() {
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
-        (gbl_ops.reboot_bootloader().unwrap())();
-        assert!(gbl_ops.rebooted);
-        assert_eq!(get_and_clear_one_shot_bootloader(&mut GblAbrOps(&mut gbl_ops)), Ok(true));
-    }
-
-    #[test]
-    #[cfg(feature = "fuchsia")]
-    fn test_fuchsia_reboot_bootloader_via_set_reboot_mode() {
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_mode_result = Some(Ok(()));
-        (gbl_ops.reboot_bootloader().unwrap())();
-        assert!(gbl_ops.rebooted);
-        assert_eq!(gbl_ops.reboot_mode, Some(Ok(RebootMode::Bootloader)));
-        assert_eq!(get_and_clear_one_shot_bootloader(&mut GblAbrOps(&mut gbl_ops)), Ok(false));
-    }
-
-    #[test]
-    fn test_non_fuchsia_reboot_bootloader() {
-        let storage = FakeGblOpsStorage::default();
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.set_reboot_mode_result = Some(Ok(()));
-        (gbl_ops.reboot_bootloader().unwrap())();
-        assert!(gbl_ops.rebooted);
-        assert_eq!(gbl_ops.reboot_mode, Some(Ok(RebootMode::Bootloader)));
-    }
-
-    #[test]
-    #[cfg(feature = "fuchsia")]
-    fn test_fuchsia_reboot_recovery_abr() {
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_mode_result = Some(Err(Error::Unsupported));
-        (gbl_ops.reboot_recovery().unwrap())();
-        assert!(gbl_ops.rebooted);
-        // One shot recovery is set.
-        assert_eq!(get_boot_slot(&mut GblAbrOps(&mut gbl_ops), true), (SlotIndex::R, false));
-        assert_eq!(get_boot_slot(&mut GblAbrOps(&mut gbl_ops), true), (SlotIndex::A, false));
-    }
-
-    #[test]
-    #[cfg(feature = "fuchsia")]
-    fn test_fuchsia_reboot_recovery_via_set_reboot_mode() {
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"durable_boot", [0x00u8; 4 * 1024]);
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.os = Some(Os::Fuchsia);
-        gbl_ops.set_reboot_mode_result = Some(Ok(()));
-        (gbl_ops.reboot_recovery().unwrap())();
-        assert!(gbl_ops.rebooted);
-        assert_eq!(gbl_ops.reboot_mode, Some(Ok(RebootMode::Recovery)));
-        // One shot recovery not set.
-        assert_eq!(get_boot_slot(&mut GblAbrOps(&mut gbl_ops), true), (SlotIndex::A, false));
-    }
-
-    #[test]
-    fn test_non_fuchsia_reboot_recovery() {
-        let storage = FakeGblOpsStorage::default();
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.set_reboot_mode_result = Some(Ok(()));
-        (gbl_ops.reboot_recovery().unwrap())();
-        assert!(gbl_ops.rebooted);
-        assert_eq!(gbl_ops.reboot_mode, Some(Ok(RebootMode::Recovery)));
     }
 
     /// Helper for creating a slot object.

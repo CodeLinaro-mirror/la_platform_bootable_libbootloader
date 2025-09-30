@@ -37,10 +37,10 @@ use efi::{
         device_path::{DevicePathProtocol, DevicePathToTextProtocol},
         dt_fixup::DtFixupProtocol,
         erase_block::EraseBlockProtocol,
-        gbl_efi_ab_slot::GblABSlotProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
         gbl_efi_boot_memory::GblBootMemoryProtocol,
+        gbl_efi_boot_target::GblBootTargetProtocol,
         gbl_efi_debug::GblDebugProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_fastboot_transport::GblFastbootTransportProtocol,
@@ -237,6 +237,7 @@ pub fn test_all_required_protocols(entry: &EfiEntry) -> Result<()> {
         #[cfg(target_arch = "riscv64")]
         test_entry!(test_riscv_boot_protocol),
         test_entry!(test_gbl_avb),
+        test_entry!(test_gbl_boot_target),
     ];
 
     let mut res = Ok(());
@@ -314,8 +315,8 @@ fn test_erase_block(entry: &EfiEntry) -> Result<()> {
     res
 }
 
-fn test_gbl_ab_slot(entry: &EfiEntry) -> Result<()> {
-    let protocol = expect_one_handle_for_protocol::<GblABSlotProtocol>(entry)?;
+fn test_gbl_boot_target(entry: &EfiEntry) -> Result<()> {
+    let protocol = expect_one_handle_for_protocol::<GblBootTargetProtocol>(entry)?;
 
     let mut res = Ok(());
 
@@ -334,19 +335,7 @@ fn test_gbl_ab_slot(entry: &EfiEntry) -> Result<()> {
         res = Err(e);
     }
 
-    if let Err(e) = protocol.get_boot_mode() {
-        efi_println!(entry, "Could not get boot mode");
-        res = Err(e);
-    }
-
-    if let Err(e) = field_check!(
-        protocol,
-        set_active_slot,
-        set_slot_unbootable,
-        reinitialize,
-        set_boot_mode,
-        flush
-    ) {
+    if let Err(e) = field_check!(protocol, set_active_slot) {
         res = Err(e);
     }
 
@@ -579,7 +568,6 @@ pub fn test_all_optional_protocols(entry: &EfiEntry) -> Result<()> {
         test_entry!(test_dt_fixup),
         test_entry!(test_device_path),
         test_entry!(test_erase_block),
-        test_entry!(test_gbl_ab_slot),
         test_entry!(test_gbl_avf),
         test_entry!(test_gbl_boot_memory),
         test_entry!(test_gbl_debug),

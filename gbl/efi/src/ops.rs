@@ -32,10 +32,10 @@ use efi::{
     profiling::EfiProfileBackend,
     protocol::{
         dt_fixup::DtFixupProtocol,
-        gbl_efi_ab_slot::GblABSlotProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
         gbl_efi_boot_memory::{gbl_get_partition_buffer, gbl_sync_partition_buffer},
+        gbl_efi_boot_target::GblBootTargetProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
@@ -45,8 +45,8 @@ use efi::{
 };
 use efi_types::{
     EfiInputKey, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbLoadedPartition,
-    GblEfiAvbPartition, GblEfiAvbProperty, GblEfiAvbVerificationResult, GblEfiBootMode,
-    GblEfiDeviceTreeMetadata, GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    GblEfiAvbPartition, GblEfiAvbProperty, GblEfiAvbVerificationResult, GblEfiDeviceTreeMetadata,
+    GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
@@ -73,8 +73,8 @@ use libgbl::{
     gbl_println,
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
-        ImageBuffer, InfoSender, LockState, LockType, OkaySender, Partition, PartitionBuffer,
-        RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
+        ImageBuffer, InfoSender, LockState, LockType, OkaySender, Partition, PartitionBuffer, Slot,
+        SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -255,11 +255,32 @@ impl<'a, 'b> Ops<'a, 'b> {
         Ok(ImageBuffer::new(image_type, buf)?)
     }
 
-    /// Helper for opening GblABSlotProtocol protocol. Maps `Error::NotFound` to `Error::Unsupported`
-    fn open_slot_protocol(&mut self) -> Result<Protocol<'a, GblABSlotProtocol>> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open() {
+    /// Helper for opening GblBootTargetProtocol protocol.
+    /// Maps `Error::NotFound` to `Error::Unsupported`
+    /// TODO(b/442975038): Don't map `Error::NotFound` as this protocol is required.
+    fn open_boot_target_protocol(&mut self) -> Result<Protocol<'a, GblBootTargetProtocol>> {
+        match self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblBootTargetProtocol>()
+        {
+            Ok(protocol)
+                if protocol.revision() >= Protocol::<'_, GblBootTargetProtocol>::REVISION =>
+            {
+                Ok(protocol)
+            }
+            Ok(protocol) => {
+                efi_println!(
+                    self.efi_entry,
+                    "GblBootTargetProtocol version is too low, expected: {} actual: {}",
+                    Protocol::<'_, GblBootTargetProtocol>::REVISION,
+                    protocol.revision()
+                );
+                Err(Error::UnsupportedVersion)
+            }
             Err(Error::NotFound) => Err(Error::Unsupported),
-            v => Ok(v?),
+            Err(e) => Err(e),
         }
     }
 
@@ -988,28 +1009,25 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     }
 
     fn get_slot_info(&mut self, slot: u8) -> Result<Slot> {
-        self.open_slot_protocol()?.get_slot_info(slot)?.try_into()
+        self.open_boot_target_protocol()?.get_slot_info(slot)?.try_into()
     }
 
     fn get_current_slot(&mut self) -> Result<Slot> {
-        self.open_slot_protocol()?.get_current_slot()?.try_into()
+        self.open_boot_target_protocol()?.get_current_slot()?.try_into()
     }
 
     fn set_active_slot(&mut self, slot: u8) -> Result<()> {
-        self.open_slot_protocol()?.set_active_slot(slot)
-    }
-
-    fn set_reboot_mode(&mut self, mode: RebootMode) -> Result<()> {
-        self.open_slot_protocol()?.set_boot_mode(gbl_to_efi_boot_mode(mode))
-    }
-
-    fn get_reboot_mode(&mut self) -> Result<RebootMode> {
-        self.open_slot_protocol()?.get_boot_mode().map(|v| efi_to_gbl_boot_mode(v))
+        self.open_boot_target_protocol()?.set_active_slot(slot)
     }
 
     fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
         Ok(SlotsMetadata {
-            slot_count: self.open_slot_protocol()?.load_boot_data()?.slot_count.try_into().unwrap(),
+            slot_count: self
+                .open_boot_target_protocol()?
+                .load_boot_data()?
+                .slot_count
+                .try_into()
+                .unwrap(),
         })
     }
 
@@ -1019,27 +1037,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         EfiProfileBackend::new(self.efi_entry)
-    }
-}
-
-/// Converts a [GblEfiBootMode] to [RebootMode].
-fn efi_to_gbl_boot_mode(mode: GblEfiBootMode) -> RebootMode {
-    match mode {
-        efi_types::GBL_EFI_BOOT_MODE_NORMAL => RebootMode::Normal,
-        efi_types::GBL_EFI_BOOT_MODE_RECOVERY => RebootMode::Recovery,
-        efi_types::GBL_EFI_BOOT_MODE_FASTBOOTD => RebootMode::FastbootD,
-        efi_types::GBL_EFI_BOOT_MODE_BOOTLOADER => RebootMode::Bootloader,
-        _ => panic!("Unexpected boot mode"),
-    }
-}
-
-/// Converts a [RebootMode] to [GblEfiBootMode].
-fn gbl_to_efi_boot_mode(mode: RebootMode) -> GblEfiBootMode {
-    match mode {
-        RebootMode::Normal => efi_types::GBL_EFI_BOOT_MODE_NORMAL,
-        RebootMode::Recovery => efi_types::GBL_EFI_BOOT_MODE_RECOVERY,
-        RebootMode::FastbootD => efi_types::GBL_EFI_BOOT_MODE_FASTBOOTD,
-        RebootMode::Bootloader => efi_types::GBL_EFI_BOOT_MODE_BOOTLOADER,
     }
 }
 
@@ -1122,13 +1119,8 @@ fn efi_error_to_avb_error(error: Error) -> AvbIoError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use efi_mocks::{
-        protocol::{gbl_efi_ab_slot::GblABSlotProtocol, gbl_efi_avb::GblAvbProtocol},
-        MockEfi,
-    };
-    use efi_types::{
-        defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GblEfiBootMode, GBL_EFI_AVB_PARTITION_OPTIONAL,
-    };
+    use efi_mocks::{protocol::gbl_efi_avb::GblAvbProtocol, MockEfi};
+    use efi_types::{defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GBL_EFI_AVB_PARTITION_OPTIONAL};
     use mockall::predicate::eq;
     use std::{cell::RefCell, rc::Rc, slice};
 
@@ -1809,79 +1801,6 @@ mod test {
             ),
             Err(Error::BufferTooSmall(Some(EXPECTED_SIZE))),
         );
-    }
-
-    /// Helper for testing `set_boot_mode`
-    fn test_set_reboot_mode(input: RebootMode, expect: GblEfiBootMode) {
-        let mut mock_efi = MockEfi::new();
-        mock_efi.boot_services.expect_find_first_and_open::<GblABSlotProtocol>().return_once(
-            move || {
-                let mut slot = GblABSlotProtocol::default();
-                slot.expect_set_boot_mode().return_once(move |mode| {
-                    assert_eq!(mode, expect);
-                    Ok(())
-                });
-                Ok(slot)
-            },
-        );
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        assert_eq!(ops.set_reboot_mode(input), Ok(()));
-    }
-
-    #[test]
-    fn test_set_reboot_mode_normal() {
-        test_set_reboot_mode(RebootMode::Normal, efi_types::GBL_EFI_BOOT_MODE_NORMAL);
-    }
-
-    #[test]
-    fn test_set_reboot_mode_recovery() {
-        test_set_reboot_mode(RebootMode::Recovery, efi_types::GBL_EFI_BOOT_MODE_RECOVERY);
-    }
-
-    #[test]
-    fn test_set_reboot_mode_bootloader() {
-        test_set_reboot_mode(RebootMode::Bootloader, efi_types::GBL_EFI_BOOT_MODE_BOOTLOADER);
-    }
-
-    #[test]
-    fn test_set_reboot_mode_fastbootd() {
-        test_set_reboot_mode(RebootMode::FastbootD, efi_types::GBL_EFI_BOOT_MODE_FASTBOOTD);
-    }
-
-    /// Helper for testing `get_boot_mode`
-    fn test_get_reboot_mode(input: GblEfiBootMode, expect: RebootMode) {
-        let mut mock_efi = MockEfi::new();
-        mock_efi.boot_services.expect_find_first_and_open::<GblABSlotProtocol>().return_once(
-            move || {
-                let mut slot = GblABSlotProtocol::default();
-                slot.expect_get_boot_mode().return_once(move || Ok(input));
-                Ok(slot)
-            },
-        );
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        assert_eq!(ops.get_reboot_mode().unwrap(), expect)
-    }
-
-    #[test]
-    fn test_get_reboot_mode_normal() {
-        test_get_reboot_mode(efi_types::GBL_EFI_BOOT_MODE_NORMAL, RebootMode::Normal);
-    }
-
-    #[test]
-    fn test_get_reboot_mode_recovery() {
-        test_get_reboot_mode(efi_types::GBL_EFI_BOOT_MODE_RECOVERY, RebootMode::Recovery);
-    }
-
-    #[test]
-    fn test_get_reboot_mode_bootloader() {
-        test_get_reboot_mode(efi_types::GBL_EFI_BOOT_MODE_BOOTLOADER, RebootMode::Bootloader);
-    }
-
-    #[test]
-    fn test_get_reboot_mode_fastbootd() {
-        test_get_reboot_mode(efi_types::GBL_EFI_BOOT_MODE_FASTBOOTD, RebootMode::FastbootD);
     }
 
     #[test]

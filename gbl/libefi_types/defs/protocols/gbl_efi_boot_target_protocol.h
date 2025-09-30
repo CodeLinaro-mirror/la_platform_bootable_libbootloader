@@ -23,8 +23,8 @@
  * terms apply by default.
  */
 
-#ifndef __GBL_EFI_AB_SLOT_PROTOCOL_H__
-#define __GBL_EFI_AB_SLOT_PROTOCOL_H__
+#ifndef __GBL_EFI_BOOT_TARGET_PROTOCOL_H__
+#define __GBL_EFI_BOOT_TARGET_PROTOCOL_H__
 
 #include <stdint.h>
 
@@ -43,10 +43,6 @@ EFI_ENUM(GblEfiUnbootableReason, uint8_t,
          GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE,
          GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED,
          GBL_EFI_UNBOOTABLE_REASON_VERIFICATION_FAILURE);
-
-EFI_ENUM(GblEfiBootMode, uint32_t, GBL_EFI_BOOT_MODE_NORMAL,
-         GBL_EFI_BOOT_MODE_RECOVERY, GBL_EFI_BOOT_MODE_FASTBOOTD,
-         GBL_EFI_BOOT_MODE_BOOTLOADER);
 
 typedef struct {
   // One UTF-8 encoded single character
@@ -68,35 +64,22 @@ typedef struct {
   GblEfiSlotMergeStatus merge_status;
 } GblEfiSlotMetadataBlock;
 
-static const uint64_t GBL_EFI_AB_SLOT_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 1);
+static const uint64_t GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 2);
 
-typedef struct GblEfiABSlotProtocol {
+typedef struct GblEfiBootTargetProtocol {
   uint64_t revision;
   // Slot metadata query methods
-  EfiStatus (*load_boot_data)(struct GblEfiABSlotProtocol* self,
+  EfiStatus (*load_boot_data)(struct GblEfiBootTargetProtocol* self,
                               /* out */ GblEfiSlotMetadataBlock* metadata);
-  EfiStatus (*get_slot_info)(struct GblEfiABSlotProtocol* self,
+  EfiStatus (*get_slot_info)(struct GblEfiBootTargetProtocol* self,
                              /* in */ uint8_t index,
                              /* out */ GblEfiSlotInfo* info);
-  EfiStatus (*get_current_slot)(struct GblEfiABSlotProtocol* self,
+  EfiStatus (*get_current_slot)(struct GblEfiBootTargetProtocol* self,
                                 /* out */ GblEfiSlotInfo* info);
-  void* _reserved;
   // Slot metadata manipulation methods
-  EfiStatus (*set_active_slot)(struct GblEfiABSlotProtocol* self,
+  EfiStatus (*set_active_slot)(struct GblEfiBootTargetProtocol* self,
                                /* in */ uint8_t index);
-  EfiStatus (*set_slot_unbootable)(
-      struct GblEfiABSlotProtocol* self,
-      /* in */ uint8_t index,
-      /* in */ GblEfiUnbootableReason unbootable_reason);
-  EfiStatus (*reinitialize)(struct GblEfiABSlotProtocol* self);
-  // Boot mode
-  EfiStatus (*get_boot_mode)(struct GblEfiABSlotProtocol* self,
-                             /* out */ GblEfiBootMode* mode);
-  EfiStatus (*set_boot_mode)(struct GblEfiABSlotProtocol* self,
-                             /* in */ GblEfiBootMode mode);
-  // Miscellaneous methods
-  EfiStatus (*flush)(struct GblEfiABSlotProtocol* self);
-} GblEfiABSlotProtocol;
+} GblEfiBootTargetProtocol;
 
-#endif  // __GBL_EFI_AB_SLOT_PROTOCOL_H__
+#endif  // __GBL_EFI_BOOT_TARGET_PROTOCOL_H__

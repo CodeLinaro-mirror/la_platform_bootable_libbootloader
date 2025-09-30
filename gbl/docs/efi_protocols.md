@@ -258,13 +258,12 @@ This can be enabled by itself, or in addition to fastboot over TCP.
 Used for device tree selection and bootconfig fixup. If not provided, the data
 from boot partitions will be used without FW-specific modifications.
 
-### GblABSlotProtocol
+### GblBootTargetProtocol
 
-* [`GBL_EFI_AB_SLOT_PROTOCOL`](./gbl_efi_ab_slot_protocol.md)
-* optional: enables A/B slotted booting
+* [`GBL_EFI_BOOT_TARGET_PROTOCOL`](./gbl_efi_boot_target_protocol.md)
+* required: enables A/B slotted booting and boot mode selection
 
-Used to read and write A/B slot metadata. If not provided, GBL will
-load from either the `_a` slot or a slotless boot partition.
+Used to read and write A/B slot metadata.
 
 All components that interact with A/B slot metadata must use the same format.
 Typically these components are:
