@@ -25,7 +25,7 @@ use crate::{
 use crate::{
     android_boot::{android_load_verify_fixup, get_boot_slot, load::sub_slice_range, BootBuffer},
     gbl_println,
-    ops::{FastbootEraseAction, RambootOps},
+    ops::{CommandExecType, FastbootEraseAction, RambootOps},
     partition::{check_part_unique, GblDisk, PartitionIo},
     GblOps,
 };
@@ -394,6 +394,7 @@ where
                             Ok(()) => break,
                             v => v,
                         };
+
                         if res.is_err_and(|e| e != Error::Disconnected) {
                             gbl_println!(self.gbl_ops, "GBL Fastboot TCP session error: {:?}", res);
                         }
@@ -572,11 +573,7 @@ where
     }
 
     /// Implementation for "fastboot oem gbl-sync-tasks".
-    async fn oem_sync_tasks(
-        &self,
-        mut _responder: impl InfoSender,
-        _res: &mut [u8],
-    ) -> CommandResult<()> {
+    async fn oem_sync_tasks(&self, mut _responder: impl InfoSender) -> CommandResult<()> {
         self.sync_all_blocks().await?;
         Ok(())
     }
@@ -938,12 +935,11 @@ where
         &mut self,
         cmd_str: &str,
         mut responder: impl InfoSender + OkaySender + FailSender,
-        res: &mut [u8],
     ) -> CommandResult<()> {
         let mut args = cmd_str.split(' ');
         let cmd = args.next().ok_or("Missing command")?;
         match cmd {
-            "gbl-sync-tasks" => self.oem_sync_tasks(responder, res).await,
+            "gbl-sync-tasks" => self.oem_sync_tasks(responder).await,
             "gbl-enable-async-task" => {
                 self.enable_async_task = true;
                 Ok(())
@@ -978,11 +974,7 @@ where
                 smash::stack_smash_demo(self.gbl_ops);
                 Err("Stack smash demo failed to restart system".into())
             }
-            _ => {
-                let mut dl = self.take_download();
-                let dl = dl.as_mut().map(|(v, sz)| &mut v[..*sz]).unwrap_or(&mut [][..]);
-                Ok(self.gbl_ops.fastboot_run_oem(cmd_str, dl, responder)?)
-            }
+            _ => Err("Command not found".into()),
         }
     }
 
@@ -1007,24 +999,25 @@ where
         Ok(self.gbl_ops.fastboot_set_lock(lock_type, lock_state)?)
     }
 
-    async fn is_command_allowed(
+    async fn command_exec(
         &mut self,
         args: impl Iterator<Item = &'_ CStr> + Clone,
-    ) -> CommandResult<()> {
-        let mut err: CommandError = "Command rejected by platform".into();
-        match self.gbl_ops.fastboot_is_command_allowed(
-            args,
-            self.current_download_buffer
-                .as_mut()
-                .map_or(&mut [][..], |v| &mut v[..self.current_download_size]),
-            err.formatted_bytes().buffer(),
-        )? {
-            true => Ok(()),
-            _ => {
-                err.formatted_bytes().update_as_c_str()?;
-                Err(err)
-            }
-        }
+        responder: impl InfoSender + OkaySender + FailSender,
+    ) -> CommandResult<CommandExecType> {
+        let current_download_size =
+            self.current_download_buffer.as_ref().map_or(0, |_| self.current_download_size);
+        let res = self.gbl_ops.fastboot_command_exec(
+            args.clone(),
+            self.current_download_buffer.as_mut().map_or(&mut [][..], |v| &mut v[..]),
+            current_download_size,
+            responder,
+        )?;
+
+        Ok(res)
+    }
+
+    fn log_line(&mut self, message: &str) {
+        gbl_println!(self.gbl_ops, "{}", message);
     }
 }
 
@@ -1234,7 +1227,7 @@ pub(crate) mod test {
         constants::KiB,
         constants::KERNEL_ALIGNMENT,
         ops::{
-            test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage},
+            test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage, SenderMessage},
             Partition, PartitionBuffer,
         },
         slots::SlotsMetadata,
@@ -1248,7 +1241,7 @@ pub(crate) mod test {
         mem::size_of,
         pin::{pin, Pin},
     };
-    use fastboot::{test_utils::TestUploadBuilder, MAX_RESPONSE_SIZE};
+    use fastboot::{test_utils::TestUploadBuilder, CommandExecType, MAX_RESPONSE_SIZE};
     use gbl_async::{block_on, poll, poll_n_times};
     use gbl_storage::GPT_GUID_LEN;
     use liberror::Error;
@@ -1716,8 +1709,7 @@ pub(crate) mod test {
         oem_cmd: &str,
         resp: impl InfoSender + OkaySender + FailSender,
     ) -> CommandResult<()> {
-        let mut res = [0u8; MAX_RESPONSE_SIZE];
-        fb.oem(oem_cmd, resp, &mut res[..]).await?;
+        fb.oem(oem_cmd, resp).await?;
         Ok(())
     }
 
@@ -2533,8 +2525,6 @@ pub(crate) mod test {
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         );
-
-        assert_eq!(gbl_ops.oem_cmd_download, vec![0x55u8; 0x1000]);
     }
 
     #[test]
@@ -3811,18 +3801,118 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_fastboot_is_command_allowed() {
+    fn test_fastboot_command_exec_custom_impl() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut download_trace = vec![];
+        let mut handler = |cmd: Vec<String>, download: &mut [u8], download_used: usize| {
+            assert_eq!(download.len(), download_used);
+            download_trace.push(download.to_vec());
+            match cmd.join(":").as_str() {
+                "flash custom_test_okay" => Ok(CommandExecType::CustomImpl),
+                "flash custom_test_fail" => Ok(CommandExecType::CustomImpl),
+                _ => Ok(CommandExecType::DefaultImpl),
+            }
+        };
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.command_exec_send_messages = vec![
+            vec![
+                SenderMessage::Info("okay info 1".to_string()),
+                SenderMessage::Info("okay info 2".to_string()),
+                SenderMessage::Okay("ok".to_string()),
+            ],
+            vec![
+                SenderMessage::Info("fail info".to_string()),
+                SenderMessage::Fail("fail".to_string()),
+            ],
+        ]
+        .into();
+        gbl_ops.fastboot_command_exec_handler = Some(&mut handler);
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"flash custom_test_okay");
+        listener.add_usb_input(b"flash custom_test_fail");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            Default::default(),
+        ));
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"INFOokay info 1",
+                b"INFOokay info 2",
+                b"OKAYok",
+                b"INFOfail info",
+                b"FAILfail",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        assert_eq!(download_trace, vec![vec![], vec![]]);
+    }
+
+    #[test]
+    fn test_fastboot_command_exec_custom_no_reply() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"boot_a", [0u8; KiB!(4)]);
         let buffers = vec![vec![0u8; KiB!(1)]; 1];
         let mut download_trace = vec![];
-        let mut handler = |cmd: Vec<String>, download: &mut [u8], out_msg: &mut [u8]| {
+        let mut handler = |cmd: Vec<String>, download: &mut [u8], download_used: usize| {
+            assert_eq!(download.len(), download_used);
             download_trace.push(download.to_vec());
-            snprintf!(out_msg, "Command rejected.\0");
-            Ok(cmd.join(":") != "getvar:all")
+            match cmd.join(":").as_str() {
+                "flash custom_test_no_reply" => Ok(CommandExecType::CustomImpl),
+                _ => Ok(CommandExecType::DefaultImpl),
+            }
         };
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.fastboot_is_command_allowed_handler = Some(&mut handler);
+        gbl_ops.fastboot_command_exec_handler = Some(&mut handler);
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"flash custom_test_no_reply");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            Default::default(),
+        ));
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[b"OKAY", b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        assert_eq!(download_trace, vec![vec![]]);
+    }
+
+    #[test]
+    fn test_fastboot_command_exec() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", [0u8; KiB!(4)]);
+        const BUFFER_SIZE: usize = KiB!(2);
+        let buffers = vec![vec![0u8; BUFFER_SIZE]; 1];
+        let mut download_trace: Vec<(Vec<u8>, usize)> = vec![];
+        let mut handler = |cmd: Vec<String>, download: &mut [u8], download_used: usize| {
+            download_trace.push((download.to_vec(), download_used));
+            match cmd.join(":").as_str() {
+                "flash not_allowed" => Ok(CommandExecType::Prohibited),
+                _ => Ok(CommandExecType::DefaultImpl),
+            }
+        };
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.fastboot_command_exec_handler = Some(&mut handler);
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
         let download_data = &[0xaau8; 0x400];
@@ -3830,7 +3920,7 @@ pub(crate) mod test {
         listener.add_usb_input(download_data);
         listener.add_usb_input(b"flash:boot_a");
         // Fails due to permission.
-        listener.add_usb_input(b"getvar:all");
+        listener.add_usb_input(b"flash not_allowed");
         listener.add_usb_input(b"continue");
         block_on(run_gbl_fastboot_stack::<2>(
             &mut gbl_ops,
@@ -3846,7 +3936,7 @@ pub(crate) mod test {
                 b"DATA00000400",
                 b"OKAY",
                 b"OKAY",
-                b"FAILCommand rejected.",
+                b"FAILCommand not allowed.",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),
@@ -3854,7 +3944,12 @@ pub(crate) mod test {
             listener.dump_usb_out_queue()
         );
 
-        assert_eq!(download_trace, vec![vec![], download_data.to_vec(), vec![], vec![]]);
+        let mut expected_download_data_buffer = vec![0u8; BUFFER_SIZE];
+        expected_download_data_buffer[..download_data.len()].copy_from_slice(download_data);
+        assert_eq!(
+            download_trace,
+            vec![(expected_download_data_buffer.to_vec(), download_data.len()), (vec![], 0)]
+        );
     }
 
     #[test]

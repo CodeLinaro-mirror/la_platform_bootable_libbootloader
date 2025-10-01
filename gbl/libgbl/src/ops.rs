@@ -39,7 +39,7 @@ use libutils::aligned_subslice;
 pub use avb::{
     CertPermanentAttributes, IoError as AvbIoError, IoResult as AvbIoResult, SHA256_DIGEST_SIZE,
 };
-pub use fastboot::{FailSender, InfoSender, LockState, LockType, OkaySender};
+pub use fastboot::{CommandExecType, FailSender, InfoSender, LockState, LockType, OkaySender};
 pub use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
 pub use slots::{Slot, SlotsMetadata};
@@ -517,26 +517,6 @@ pub trait GblOps<'a, 'd> {
     /// Ok(LockState::Locked) if locked, Ok(LockState::Unlocked) if unlocked.
     fn fastboot_get_lock(&mut self, lock_type: LockType) -> Result<LockState, Error>;
 
-    /// Executes a fastboot oem command.
-    ///
-    /// # Args
-    ///
-    /// * `cmd`: The oem command string.
-    /// * `download`: The most recent download data.
-    /// * `sender`: An implementation that provides APIs for sending fastboot OKAY/FAIL/INFO
-    ///   messages.
-    ///
-    /// * If implementation does not attempt to return, it should send an OKAY or FAIL message via
-    /// sender to prevent the host from waiting for device response.
-    /// * If implementation returns without sending OKAY/FAIL message, GBL fastboot will send the
-    ///   message depending on the return result.
-    fn fastboot_run_oem(
-        &mut self,
-        cmd: &str,
-        download: &mut [u8],
-        sender: impl InfoSender + OkaySender + FailSender,
-    ) -> Result<(), Error>;
-
     /// Reads out data staged by the platform to upload to the host during `fastboot get_staged`.
     ///
     /// # Args
@@ -558,17 +538,19 @@ pub trait GblOps<'a, 'd> {
     /// # Args:
     ///
     /// * `args`: An iterator of CStrs. The first one is the command, followed by arguments.
-    /// * `download`: The current downloaded data.
-    /// * `out_msg`: Buffer for optionally constructing a UTF8 message in the case the command is
-    ///   not allowed.
+    /// * `download`: The current downloaded data buffer.
+    /// * `download_used`: Size of the download buffer that is used.
+    /// * `sender`: An implementation that provides APIs for sending fastboot OKAY/FAIL/INFO
+    ///   messages.
     ///
     /// Returns Ok((true, _)) if allowed, Ok((false, <msg>)) if disallowed.
-    fn fastboot_is_command_allowed<'arg>(
+    fn fastboot_command_exec<'arg>(
         &mut self,
         args: impl Iterator<Item = &'arg CStr> + Clone,
         download: &mut [u8],
-        out_msg: &mut [u8],
-    ) -> Result<bool, Error>;
+        download_used: usize,
+        sender: impl InfoSender + OkaySender + FailSender,
+    ) -> Result<CommandExecType, Error>;
 
     /// Returns a [SlotsMetadata] for the platform.
     fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error>;
@@ -963,16 +945,6 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
-    fn fastboot_run_oem(
-        &mut self,
-        _: &str,
-        _: &mut [u8],
-        _: impl InfoSender + OkaySender + FailSender,
-    ) -> Result<(), Error> {
-        // Ramboot should not need this.
-        unreachable!();
-    }
-
     fn fastboot_get_staged(&mut self, _: &mut [u8]) -> Result<(usize, usize), Error> {
         // Ramboot should not need this.
         unreachable!();
@@ -993,12 +965,13 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
-    fn fastboot_is_command_allowed<'arg>(
+    fn fastboot_command_exec<'arg>(
         &mut self,
         _: impl Iterator<Item = &'arg CStr> + Clone,
         _: &mut [u8],
-        _: &mut [u8],
-    ) -> Result<bool, Error> {
+        _: usize,
+        _: impl InfoSender + OkaySender + FailSender,
+    ) -> Result<CommandExecType, Error> {
         // Ramboot should not need this.
         unreachable!();
     }
@@ -1032,7 +1005,7 @@ pub(crate) mod test {
     use libprofile::{ProfileTimer, Reporter};
     use libutils::snprintf;
     use std::{
-        collections::{HashMap, LinkedList},
+        collections::{HashMap, LinkedList, VecDeque},
         ffi::CString,
     };
     #[cfg(feature = "fuchsia")]
@@ -1098,6 +1071,12 @@ pub(crate) mod test {
         fn default() -> Self {
             Self { is_unlocked: false, is_dm_verity_error: false }
         }
+    }
+
+    pub enum SenderMessage {
+        Okay(String),
+        Fail(String),
+        Info(String),
     }
 
     /// Fake [GblOps] implementation for testing.
@@ -1183,9 +1162,6 @@ pub(crate) mod test {
         /// For returned by `avf_is_supported`
         pub avf_is_supported: bool,
 
-        /// Download data seen by the most recent oem command
-        pub oem_cmd_download: Vec<u8>,
-
         /// Handler of `fastboot_get_staged`
         pub get_staged_handler:
             Option<&'a mut dyn FnMut(&mut [u8]) -> Result<(usize, usize), Error>>,
@@ -1214,9 +1190,16 @@ pub(crate) mod test {
         pub vendor_erase_handler:
             Option<&'a mut dyn FnMut(&str) -> Result<FastbootEraseAction, Error>>,
 
-        /// Handler for `Self::fastboot_is_command_allowed`.
-        pub fastboot_is_command_allowed_handler:
-            Option<&'a mut dyn FnMut(Vec<String>, &mut [u8], &mut [u8]) -> Result<bool, Error>>,
+        /// Handler for `Self::fastboot_command_exec`.
+        pub fastboot_command_exec_handler: Option<
+            &'a mut dyn FnMut(Vec<String>, &mut [u8], usize) -> Result<CommandExecType, Error>,
+        >,
+
+        /// Download data seen by the most recent command_exec command
+        pub command_exec_download: Vec<u8>,
+
+        /// Stack to store messages that needs to be send.
+        pub command_exec_send_messages: VecDeque<Vec<SenderMessage>>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1620,19 +1603,6 @@ pub(crate) mod test {
             Ok(())
         }
 
-        fn fastboot_run_oem(
-            &mut self,
-            cmd: &str,
-            download: &mut [u8],
-            mut sender: impl InfoSender + OkaySender + FailSender,
-        ) -> Result<(), Error> {
-            self.oem_cmd_download = download.to_vec();
-            match cmd {
-                "test-oem" => block_on(sender.send_info(Self::GBL_OEM_CMD_INFO_MSG)),
-                _ => Err(Error::NotFound),
-            }
-        }
-
         fn fastboot_get_staged(&mut self, out: &mut [u8]) -> Result<(usize, usize), Error> {
             (self.get_staged_handler.as_mut().unwrap())(out)
         }
@@ -1657,17 +1627,45 @@ pub(crate) mod test {
                 .unwrap_or(Ok(FastbootEraseAction::EraseAsPhysicalPartition))
         }
 
-        fn fastboot_is_command_allowed<'arg>(
+        fn fastboot_command_exec<'arg>(
             &mut self,
             args: impl Iterator<Item = &'arg CStr> + Clone,
             download: &mut [u8],
-            out_msg: &mut [u8],
-        ) -> Result<bool, Error> {
-            let args = args.map(|v| v.to_str().unwrap());
-            self.fastboot_is_command_allowed_handler
-                .as_mut()
-                .map(|v| v(args.map(|v| String::from(v)).collect::<Vec<_>>(), download, out_msg))
-                .unwrap_or(Ok(true))
+            download_used: usize,
+            mut sender: impl InfoSender + OkaySender + FailSender,
+        ) -> Result<CommandExecType, Error> {
+            let args = args.map(|v| v.to_str().unwrap().to_string()).collect::<Vec<_>>();
+            if args == ["oem test-oem"] {
+                block_on(sender.send_info(Self::GBL_OEM_CMD_INFO_MSG))?;
+                block_on(sender.send_okay(""))?;
+                Ok(CommandExecType::CustomImpl)
+            } else {
+                self.command_exec_download = download.to_vec();
+                let res = self
+                    .fastboot_command_exec_handler
+                    .as_mut()
+                    .map(|v| v(args, download, download_used))
+                    .unwrap_or(Ok(Default::default()));
+
+                let sender = &mut Some(sender);
+                if let Some(mut messages) = self.command_exec_send_messages.pop_front() {
+                    messages.drain(..).for_each(|val| {
+                        match val {
+                            SenderMessage::Info(s) => {
+                                block_on(sender.as_mut().unwrap().send_info(&s)).unwrap()
+                            }
+                            SenderMessage::Okay(s) => {
+                                block_on(sender.take().unwrap().send_okay(&s)).unwrap()
+                            }
+                            SenderMessage::Fail(s) => {
+                                block_on(sender.take().unwrap().send_fail(&s)).unwrap()
+                            }
+                        };
+                    });
+                }
+
+                res
+            }
         }
 
         fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {

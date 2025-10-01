@@ -118,6 +118,30 @@ pub trait Transport {
 /// versions.
 const TCP_HANDSHAKE_MESSAGE: &[u8] = b"FB01";
 
+// Check if command is protected from overriding
+fn is_protected_command<'a>(mut args: impl Iterator<Item = &'a CStr> + Clone) -> bool {
+    const PROTECTED_FASTBOOT_COMMANDS: &[&CStr] = &[
+        // LINT.IfChange
+        c"continue",
+        c"download",
+        c"fetch",
+        c"getvar",
+        c"reboot",
+        c"reboot-bootloader",
+        c"reboot-fastboot",
+        c"reboot-recovery",
+        c"set_active",
+        c"upload",
+        // LINT.ThenChange(/gbl/docs/gbl_efi_fastboot_protocol.md)
+    ];
+
+    if let Some(cmd) = args.next() {
+        PROTECTED_FASTBOOT_COMMANDS.contains(&cmd)
+    } else {
+        false
+    }
+}
+
 /// A trait representing a TCP stream reader/writer. Fastboot over TCP has additional handshake
 /// process and uses a length-prefixed wire message format. It is recommended that caller
 /// implements this trait instead of `Transport`, and uses the API `Fastboot::run_tcp_session()`
@@ -241,6 +265,18 @@ pub enum LockState {
     Locked,
     /// Unlocked
     Unlocked,
+}
+
+/// Specifies command implementation to be used
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub enum CommandExecType {
+    /// Default GBL implementation
+    #[default]
+    DefaultImpl,
+    /// Custom vendor imlementation
+    CustomImpl,
+    /// Command is not allowed
+    Prohibited,
 }
 
 /// Implementation for Fastboot command backends.
@@ -435,8 +471,6 @@ pub trait FastbootImplementation {
     ///
     /// * `cmd`: The OEM command string that comes after "oem ".
     /// * `responder`: An instance of `InfoSender + OkaySender + FailSender`.
-    /// * `res`: A buffer for backend to construct messages. The buffer is guaranteed large enough
-    ///   for a fastboot OKAY/FAIL/INFO message.
     ///
     /// * If backend does not plan to return from the function, or wants to construct custom result
     ///   message, it should send either a OKAY or FAIL messgae with `responder`, otherwise host
@@ -449,7 +483,6 @@ pub trait FastbootImplementation {
         &mut self,
         cmd: &str,
         responder: impl InfoSender + OkaySender + FailSender,
-        res: &mut [u8],
     ) -> CommandResult<()>;
 
     /// Handler for `fastboot flashing lock|unlock` and
@@ -465,14 +498,31 @@ pub trait FastbootImplementation {
         lock_state: LockState,
     ) -> CommandResult<()>;
 
-    /// Checks whether a command is allowed.
+    /// Checks whether a command is allowed and if to use custom implementation or default.
     ///
-    /// Returns Ok(()) if command is allowed.
-    /// Returns Err(e) otherweise.
-    async fn is_command_allowed(
+    /// # Args
+    ///
+    /// * `args`: The command string.
+    /// * `responder`: An instance of `InfoSender + OkaySender + FailSender`.
+    ///
+    /// Returns CommandExecType
+    ///
+    /// * DefaultImpl - Default implementation will run for the command if available.
+    /// * CustomImpl - Vendor has overridden the command. `fastboot oem ...` is one of the cases
+    /// that is implemented using this approach.
+    /// * Prohibited - short cut for CustomImpl that just bans the command.
+    async fn command_exec(
         &mut self,
         args: impl Iterator<Item = &'_ CStr> + Clone,
-    ) -> CommandResult<()>;
+        responder: impl InfoSender + OkaySender + FailSender,
+    ) -> CommandResult<CommandExecType>;
+
+    /// Logs message if implementation is provided
+    ///
+    /// # Args
+    ///
+    /// * `message`: string to be printed.
+    fn log_line(&mut self, message: &str);
 
     // TODO(b/322540167): Add methods for other commands.
 }
@@ -1020,12 +1070,56 @@ async fn oem(
     fb_impl: &mut impl FastbootImplementation,
 ) -> Result<()> {
     let mut resp = Responder::new(transport);
-    let mut oem_out = [0u8; MAX_RESPONSE_SIZE - 4];
-    let oem_res = fb_impl.oem(cmd, &mut resp, &mut oem_out[..]).await;
+    let oem_res = fb_impl.oem(cmd, &mut resp).await;
     match oem_res {
         _ if resp.result_message_sent => Ok(()), // Assumes backend has handled the error.
         Ok(()) => reply_okay!(resp, ""),
         Err(e) => reply_fail!(resp, "{}", e.to_str()),
+    }
+}
+
+/// Helper for handling command execute
+///
+/// # Returns
+/// * Ok(CommandExecType) with value requested by fastboot implementation
+/// * Err() on error
+async fn command_exec(
+    args: impl Iterator<Item = &'_ CStr> + Clone,
+    transport: &mut impl Transport,
+    fb_impl: &mut impl FastbootImplementation,
+) -> Result<CommandExecType> {
+    if is_protected_command(args.clone()) {
+        return Ok(CommandExecType::DefaultImpl);
+    }
+
+    let mut resp = Responder::new(transport);
+    let cmd_res = fb_impl.command_exec(args, &mut resp).await;
+    if resp.result_message_sent {
+        match cmd_res {
+            Ok(CommandExecType::DefaultImpl) => fb_impl.log_line(
+                "ERROR: Incorrect `DefaultImpl` usage. Custom result message is not allowed.",
+            ),
+            Ok(CommandExecType::CustomImpl) => (),
+            Ok(CommandExecType::Prohibited) => fb_impl.log_line(
+                "ERROR: Incorrect `Prohibited` usage. Custom result message is not allowed.",
+            ),
+            Err(_) => fb_impl.log_line("ERROR: Result message sent but `command_exec()` failed"),
+        }
+        Err(Error::Other(None))
+    } else {
+        match cmd_res {
+            Ok(CommandExecType::DefaultImpl) => (),
+            Ok(CommandExecType::CustomImpl) => {
+                reply_okay!(resp, "")?;
+            }
+            Ok(CommandExecType::Prohibited) => {
+                reply_fail!(resp, "Command not allowed.")?;
+            }
+            Err(ref e) => {
+                reply_fail!(resp, "{}", e.to_str())?;
+            }
+        }
+        cmd_res.map_err(|_| Error::Other(None))
     }
 }
 
@@ -1074,9 +1168,11 @@ pub async fn process_next_command(
         return Ok(false);
     };
     let (cmd_c_args, cmd_len) = cmd_to_c_string_args(&mut packet[..]);
-    if let Err(e) = fb_impl.is_command_allowed(cmd_c_args).await {
-        transport.send_packet(fastboot_fail!(packet, "{}", e.to_str())).await?;
-        return Ok(false);
+    match command_exec(cmd_c_args, transport, fb_impl).await {
+        Ok(CommandExecType::DefaultImpl) => (),
+        Ok(CommandExecType::CustomImpl) | Ok(CommandExecType::Prohibited) | Err(_) => {
+            return Ok(false)
+        }
     }
     packet[..cmd_len].iter_mut().filter(|v| **v == 0).for_each(|v| *v = b':');
     let cmd_str = from_utf8(&packet[..cmd_size]).unwrap();
@@ -1085,7 +1181,7 @@ pub async fn process_next_command(
         return transport.send_packet(fastboot_fail!(packet, "No command")).await.map(|_| false);
     };
     match cmd {
-        "boot" => return boot(transport, fb_impl).await,
+        "boot" => return boot(transport, fb_impl).await.map(|v| v),
         "continue" => {
             r#continue(transport, fb_impl).await?;
             return Ok(true);
@@ -1201,8 +1297,9 @@ mod test {
         active_slot: Option<String>,
         boot_result: Option<CommandResult<()>>,
         last_set_lock_call: Option<(LockType, LockState)>,
-        is_command_allowed_args: String,
-        is_command_allowed: Option<CommandResult<()>>,
+        command_exec_args: String,
+        command_exec_res: Option<CommandResult<CommandExecType>>,
+        log_lines: Vec<String>,
     }
 
     impl FastbootImplementation for FastbootTest {
@@ -1303,7 +1400,6 @@ mod test {
             &mut self,
             cmd: &str,
             mut responder: impl InfoSender + OkaySender + FailSender,
-            _: &mut [u8],
         ) -> CommandResult<()> {
             let (resp, infos, res) = &mut self.oem_output;
             self.oem_command = cmd.into();
@@ -1327,13 +1423,18 @@ mod test {
             Ok(())
         }
 
-        async fn is_command_allowed(
+        async fn command_exec(
             &mut self,
             args: impl Iterator<Item = &'_ CStr> + Clone,
-        ) -> CommandResult<()> {
-            self.is_command_allowed_args =
+            _responder: impl InfoSender + OkaySender + FailSender,
+        ) -> CommandResult<CommandExecType> {
+            self.command_exec_args =
                 args.map(|v| String::from(v.to_str().unwrap())).collect::<Vec<_>>().join(":");
-            self.is_command_allowed.take().unwrap_or(Ok(()))
+            self.command_exec_res.take().unwrap_or(Ok(Default::default()))
+        }
+
+        fn log_line(&mut self, message: &str) {
+            self.log_lines.push(message.to_string());
         }
     }
 
@@ -2057,13 +2158,13 @@ mod test {
     }
 
     #[test]
-    fn test_is_command_allowed() {
+    fn test_command_exec() {
         let mut fastboot_impl: FastbootTest = Default::default();
-        fastboot_impl.is_command_allowed = Some(Err("test".into()));
+        fastboot_impl.command_exec_res = Some(Err("test".into()));
         let mut transport = TestTransport::new();
-        transport.add_input(b"getvar:all");
+        transport.add_input(b"flash test");
         block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
         assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"FAILtest".into()]));
-        assert_eq!(&fastboot_impl.is_command_allowed_args, "getvar:all");
+        assert_eq!(&fastboot_impl.command_exec_args, "flash test");
     }
 }
