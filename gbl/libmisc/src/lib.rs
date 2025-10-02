@@ -23,45 +23,78 @@
 #![cfg_attr(not(test), no_std)]
 
 use core::ffi::CStr;
-
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Ref};
-
 use liberror::{Error, Result};
+use static_assertions::const_assert;
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Ref, Unaligned};
 
 /// Android boot modes type
 /// Usually obtained from BCB block of misc partition
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AndroidBootMode {
     /// Boot normally using A/B slots.
     Normal = 0,
-    /// Boot into recovery mode using A/B slots.
-    Recovery,
     /// Stop in bootloader fastboot mode.
     BootloaderBootOnce,
+    /// Boot into recovery mode using A/B slots.
+    Recovery,
+    /// Boot into userspace fastboot.
+    Fastboot,
+    /// Boot into rescue mode.
+    Rescue,
 }
 
-impl core::fmt::Display for AndroidBootMode {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match *self {
-            AndroidBootMode::Normal => write!(f, "AndroidBootMode::Normal"),
-            AndroidBootMode::Recovery => write!(f, "AndroidBootMode::Recovery"),
-            AndroidBootMode::BootloaderBootOnce => write!(f, "AndroidBootMode::BootloaderBootOnce"),
+const ANDROID_BOOT_MODE_CMD_NORMAL: &'static [u8] = b"";
+const ANDROID_BOOT_MODE_CMD_BOOTLOADER: &'static [u8] = b"bootonce-bootloader";
+const ANDROID_BOOT_MODE_CMD_RECOVERY: &'static [u8] = b"boot-recovery";
+const ANDROID_BOOT_MODE_CMD_FASTBOOT: &'static [u8] = b"boot-fastboot";
+const ANDROID_BOOT_MODE_CMD_RESCUE: &'static [u8] = b"boot-rescue";
+
+impl TryFrom<&[u8]> for AndroidBootMode {
+    type Error = Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self> {
+        match bytes {
+            ANDROID_BOOT_MODE_CMD_NORMAL => Ok(AndroidBootMode::Normal),
+            ANDROID_BOOT_MODE_CMD_BOOTLOADER => Ok(AndroidBootMode::BootloaderBootOnce),
+            ANDROID_BOOT_MODE_CMD_RECOVERY => Ok(AndroidBootMode::Recovery),
+            ANDROID_BOOT_MODE_CMD_FASTBOOT => Ok(AndroidBootMode::Fastboot),
+            ANDROID_BOOT_MODE_CMD_RESCUE => Ok(AndroidBootMode::Rescue),
+            _ => Err(Error::Other(Some("Invalid BCB command"))),
         }
     }
 }
 
-/// BCB command field offset within BCB block.
-pub const COMMAND_FIELD_OFFSET: usize = 0;
+impl From<AndroidBootMode> for &'static [u8] {
+    fn from(mode: AndroidBootMode) -> Self {
+        match mode {
+            AndroidBootMode::Normal => ANDROID_BOOT_MODE_CMD_NORMAL,
+            AndroidBootMode::BootloaderBootOnce => ANDROID_BOOT_MODE_CMD_BOOTLOADER,
+            AndroidBootMode::Recovery => ANDROID_BOOT_MODE_CMD_RECOVERY,
+            AndroidBootMode::Fastboot => ANDROID_BOOT_MODE_CMD_FASTBOOT,
+            AndroidBootMode::Rescue => ANDROID_BOOT_MODE_CMD_RESCUE,
+        }
+    }
+}
+
+impl AndroidBootMode {
+    /// Whether the boot mode should be handled in recovery.
+    pub const fn should_enter_recovery(&self) -> bool {
+        match self {
+            AndroidBootMode::Recovery | AndroidBootMode::Fastboot | AndroidBootMode::Rescue => true,
+            AndroidBootMode::Normal | AndroidBootMode::BootloaderBootOnce => false,
+        }
+    }
+}
 
 /// BCB command field size in bytes.
-pub const COMMAND_FIELD_SIZE: usize = 32;
+const COMMAND_FIELD_SIZE: usize = 32;
 
 /// Android bootloader message structure that usually placed in the first block of misc partition
 ///
 /// Reference code:
 /// https://cs.android.com/android/platform/superproject/main/+/95ec3cc1d879b92dd9db3bb4c4345c5fc812cdaa:bootable/recovery/bootloader_message/include/bootloader_message/bootloader_message.h;l=67
 #[repr(C, packed)]
-#[derive(Copy, Clone, Debug, PartialEq, Immutable, FromBytes, IntoBytes, KnownLayout)]
+#[derive(Clone, Debug, PartialEq, Eq, Immutable, FromBytes, IntoBytes, KnownLayout, Unaligned)]
 pub struct BootloaderMessage {
     command: [u8; COMMAND_FIELD_SIZE],
     status: [u8; 32],
@@ -84,92 +117,101 @@ impl BootloaderMessage {
         ))
     }
 
+    fn command_cstr(&self) -> Result<&CStr> {
+        CStr::from_bytes_until_nul(&self.command)
+            .map_err(|_| Error::Other(Some("Cannot read BCB command")))
+    }
+
     /// Extract AndroidBootMode from BCB command field
     pub fn boot_mode(&self) -> Result<AndroidBootMode> {
-        let command = CStr::from_bytes_until_nul(&self.command)
-            .map_err(|_| Error::Other(Some("Cannot read BCB command")))?
-            .to_str()
-            .map_err(|_| Error::InvalidInput)?;
+        self.command_cstr()?.to_bytes().try_into()
+    }
 
-        match command {
-            "" => Ok(AndroidBootMode::Normal),
-            "boot-recovery" | "boot-fastboot" => Ok(AndroidBootMode::Recovery),
-            "bootonce-bootloader" => Ok(AndroidBootMode::BootloaderBootOnce),
-            _ => Err(Error::Other(Some("Wrong BCB command"))),
-        }
+    /// Get the BCB command as str.
+    pub fn boot_command(&self) -> Result<&str> {
+        Ok(self.command_cstr()?.to_str()?)
+    }
+
+    /// Update the BCB boot command with AndroidBootMode.
+    pub fn update_boot_command(&mut self, mode: AndroidBootMode) {
+        let boot_cmd: &[u8] = mode.into();
+        self.command.fill(0);
+        self.command[..boot_cmd.len()].copy_from_slice(boot_cmd);
     }
 }
 
+const_assert!(BootloaderMessage::SIZE_BYTES >= core::mem::size_of::<BootloaderMessage>());
+
 #[cfg(test)]
 mod test {
-    use crate::AndroidBootMode;
-    use crate::BootloaderMessage;
-    use zerocopy::IntoBytes;
+    use super::*;
+    use zerocopy::{FromZeros, IntoBytes};
 
-    impl Default for BootloaderMessage {
-        fn default() -> Self {
-            BootloaderMessage {
-                command: [0; 32],
-                status: [0; 32],
-                recovery: [0; 768],
-                stage: [0; 32],
-                reserved: [0; 1184],
-            }
-        }
+    fn test_parse_bcb(command: &[u8], expected_mode: Result<AndroidBootMode>) {
+        let mut bcb = BootloaderMessage::new_zeroed();
+        bcb.command[..command.len()].copy_from_slice(command);
+        assert_eq!(
+            BootloaderMessage::from_bytes_ref(bcb.as_bytes()).unwrap().boot_mode(),
+            expected_mode
+        );
     }
 
     #[test]
     fn test_bcb_empty_parsed_as_normal() {
-        let bcb = BootloaderMessage::default();
-
-        assert_eq!(
-            BootloaderMessage::from_bytes_ref(bcb.as_bytes()).unwrap().boot_mode().unwrap(),
-            AndroidBootMode::Normal
-        );
+        test_parse_bcb(b"", Ok(AndroidBootMode::Normal));
     }
 
     #[test]
     fn test_bcb_with_wrong_command_failed() {
-        let command = "boot-wrong";
-        let mut bcb = BootloaderMessage::default();
-        bcb.command[..command.len()].copy_from_slice(command.as_bytes());
-
-        assert!(BootloaderMessage::from_bytes_ref(bcb.as_bytes()).unwrap().boot_mode().is_err());
+        test_parse_bcb(b"boot-wrong", Err(Error::Other(Some("Invalid BCB command"))));
     }
 
     #[test]
     fn test_bcb_to_recovery_parsed() {
-        let command = "boot-recovery";
-        let mut bcb = BootloaderMessage::default();
-        bcb.command[..command.len()].copy_from_slice(command.as_bytes());
-
-        assert_eq!(
-            BootloaderMessage::from_bytes_ref(bcb.as_bytes()).unwrap().boot_mode().unwrap(),
-            AndroidBootMode::Recovery
-        );
+        test_parse_bcb(ANDROID_BOOT_MODE_CMD_RECOVERY, Ok(AndroidBootMode::Recovery));
     }
 
     #[test]
-    fn test_bcb_to_fastboot_parsed_as_recovery() {
-        let command = "boot-fastboot";
-        let mut bcb = BootloaderMessage::default();
-        bcb.command[..command.len()].copy_from_slice(command.as_bytes());
-
-        assert_eq!(
-            BootloaderMessage::from_bytes_ref(bcb.as_bytes()).unwrap().boot_mode().unwrap(),
-            AndroidBootMode::Recovery
-        );
+    fn test_bcb_to_fastboot_parsed() {
+        test_parse_bcb(ANDROID_BOOT_MODE_CMD_FASTBOOT, Ok(AndroidBootMode::Fastboot));
     }
 
     #[test]
     fn test_bcb_to_bootloader_once_parsed() {
-        let command = "bootonce-bootloader";
-        let mut bcb = BootloaderMessage::default();
-        bcb.command[..command.len()].copy_from_slice(command.as_bytes());
+        test_parse_bcb(ANDROID_BOOT_MODE_CMD_BOOTLOADER, Ok(AndroidBootMode::BootloaderBootOnce));
+    }
 
-        assert_eq!(
-            BootloaderMessage::from_bytes_ref(bcb.as_bytes()).unwrap().boot_mode().unwrap(),
-            AndroidBootMode::BootloaderBootOnce
-        );
+    #[test]
+    fn test_bcb_update_boot_command() {
+        macro_rules! assert_bcb_update_boot_command {
+            ($mode:expr) => {
+                let mut bcb = BootloaderMessage::new_zeroed();
+                bcb.update_boot_command($mode);
+                assert_eq!(bcb.boot_mode(), Ok($mode));
+            };
+        }
+
+        assert_bcb_update_boot_command!(AndroidBootMode::Normal);
+        assert_bcb_update_boot_command!(AndroidBootMode::BootloaderBootOnce);
+        assert_bcb_update_boot_command!(AndroidBootMode::Recovery);
+        assert_bcb_update_boot_command!(AndroidBootMode::Fastboot);
+        assert_bcb_update_boot_command!(AndroidBootMode::Rescue);
+    }
+
+    #[test]
+    fn test_android_boot_mode_into_from_bytes() {
+        macro_rules! assert_android_boot_mode {
+            ($mode:expr) => {
+                let boot_cmd: &[u8] = $mode.into();
+                assert!(boot_cmd.len() < COMMAND_FIELD_SIZE);
+                assert_eq!(boot_cmd.try_into(), Ok($mode));
+            };
+        }
+
+        assert_android_boot_mode!(AndroidBootMode::Normal);
+        assert_android_boot_mode!(AndroidBootMode::BootloaderBootOnce);
+        assert_android_boot_mode!(AndroidBootMode::Recovery);
+        assert_android_boot_mode!(AndroidBootMode::Fastboot);
+        assert_android_boot_mode!(AndroidBootMode::Normal);
     }
 }

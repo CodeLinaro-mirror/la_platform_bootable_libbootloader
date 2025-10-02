@@ -58,6 +58,7 @@ pub mod fuchsia_boot;
 pub mod slots;
 
 mod image_buffer;
+mod misc;
 
 use slots::{BootTarget, BootToken, Cursor, SuffixBytes};
 
