@@ -226,6 +226,7 @@ rust_bindgen(
         "--allowlist-function=avb_descriptor_(foreach|validate_and_byteswap)",
         "--allowlist-function=avb_sha(256|512)_(init|update|final)",
         "--allowlist-function=avb_slot_verify(_data_calculate_vbmeta_digest|_data_free)?",
+        "--allowlist-function=avb_vbmeta_image_(verify|header_to_host_byte_order)",
         "--allowlist-type=AVB_CERT_.*",
         "--allowlist-type=Avb.*Flags",
         "--allowlist-type=Avb(HashtreeErrorMode|PartitionData|SlotVerifyData|VBMetaData)",
