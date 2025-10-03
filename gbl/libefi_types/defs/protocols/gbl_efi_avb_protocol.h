@@ -45,12 +45,12 @@ static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED =
 // Os boot state color flags.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#communicating-verified-boot-state-to-users
-typedef uint64_t GblEfiAvbBootColor;
-static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_RED = 0x1 << 0;
-static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_ORANGE = 0x1 << 1;
-static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_YELLOW = 0x1 << 2;
-static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_GREEN = 0x1 << 3;
-static const GblEfiAvbBootColor GBL_EFI_AVB_BOOT_COLOR_RED_EIO = 0x1 << 4;
+typedef uint64_t GblEfiAvbBootColorFlags;
+static const GblEfiAvbBootColorFlags GBL_EFI_AVB_BOOT_COLOR_RED = 0x1 << 0;
+static const GblEfiAvbBootColorFlags GBL_EFI_AVB_BOOT_COLOR_ORANGE = 0x1 << 1;
+static const GblEfiAvbBootColorFlags GBL_EFI_AVB_BOOT_COLOR_YELLOW = 0x1 << 2;
+static const GblEfiAvbBootColorFlags GBL_EFI_AVB_BOOT_COLOR_GREEN = 0x1 << 3;
+static const GblEfiAvbBootColorFlags GBL_EFI_AVB_BOOT_COLOR_RED_EIO = 0x1 << 4;
 
 // Vbmeta key validation status.
 //
@@ -60,11 +60,15 @@ EFI_ENUM(GBL_EFI_AVB_KEY_VALIDATION_STATUS, GblEfiAvbKeyValidationStatus,
          GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY,
          GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID);
 
+typedef uint64_t GblEfiAvbPartitionFlags;
+static const GblEfiAvbPartitionFlags GBL_EFI_AVB_PARTITION_OPTIONAL = 0x1 << 0;
+
 typedef struct {
   // On input - `base_name` buffer size
   // On output - actual `base_name` length
   size_t base_name_len;
   uint8_t* base_name;
+  GblEfiAvbPartitionFlags flags;
 } GblEfiAvbPartition;
 
 typedef struct {
@@ -85,12 +89,12 @@ typedef struct {
 } GblEfiAvbProperty;
 
 typedef struct {
-  GblEfiAvbBootColor color_flags;
+  GblEfiAvbBootColorFlags color_flags;
   // Pointer to nul-terminated ASCII hex digest calculated by libavb. May be
   // null in case of verification failed (RED boot state color).
   const uint8_t* digest;
-  size_t num_loaded_partitions;
-  const GblEfiAvbLoadedPartition* loaded_partitions;
+  size_t num_partitions;
+  const GblEfiAvbLoadedPartition* partitions;
   size_t num_properties;
   const GblEfiAvbProperty* properties;
   uint64_t reserved[8];
