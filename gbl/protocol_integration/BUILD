@@ -50,7 +50,7 @@ rust_library(
 rust_binary(
     name = "required",
     srcs = glob(["required/**/*.rs"]),
-    binary_name = TEST_NAME,
+    binary_name = TEST_NAME + "_required",
     linker_script = select(
         {
             "@gbl//toolchain:gbl_rust_elf_riscv64": "@gbl//efi/arch/riscv64:riscv64_efi.lds",
@@ -114,7 +114,7 @@ filegroup(
 rust_binary(
     name = "optional",
     srcs = glob(["optional/**/*.rs"]),
-    binary_name = TEST_NAME,
+    binary_name = TEST_NAME + "_optional",
     linker_script = select(
         {
             "@gbl//toolchain:gbl_rust_elf_riscv64": "@gbl//efi/arch/riscv64:riscv64_efi.lds",

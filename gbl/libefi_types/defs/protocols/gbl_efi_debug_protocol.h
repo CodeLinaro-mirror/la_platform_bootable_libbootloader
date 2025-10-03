@@ -26,16 +26,20 @@
 #ifndef __GBL_EFI_DEBUG_PROTOCOL_H__
 #define __GBL_EFI_DEBUG_PROTOCOL_H__
 
+#include <gbl_protocol_utils.h>
 #include <types.h>
 
 static const uint64_t GBL_EFI_DEBUG_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 1);
+    GBL_PROTOCOL_REVISION(0, 2);
+
+// TODO (b/446226293): add additional tags.
+EFI_ENUM(GblEfiDebugErrorTag, uint64_t, GBL_EFI_DEBUG_ERROR_TAG_PANIC);
 
 typedef struct GblEfiDebugProtocol {
   uint64_t revision;
 
   EfiStatus (*fatal_error)(struct GblEfiDebugProtocol* self,
-                           const void* frame_ptr);
+                           const void* frame_ptr, GblEfiDebugErrorTag tag);
 } GblEfiDebugProtocol;
 
 #endif  // __GBL_EFI_DEBUG_PROTOCOL_H__ */

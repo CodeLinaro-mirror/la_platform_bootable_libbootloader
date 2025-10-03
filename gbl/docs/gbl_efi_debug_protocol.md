@@ -61,8 +61,9 @@ so that the firmware can store or log backtrace information.
 
 ```c
 typedef EFI_STATUS (EFIAPI *GBL_EFI_DEBUG_FATAL_ERROR)(
-    IN GBL_EFI_DEBUG_PROTOCOL *Self,
-    IN CONST VOID             *FramePtr,
+    IN GBL_EFI_DEBUG_PROTOCOL  *Self,
+    IN CONST VOID              *FramePtr,
+    IN GBL_EFI_DEBUG_ERROR_TAG Tag,
     );
 ```
 
@@ -81,12 +82,44 @@ is usually the GBL entry point, but it can also be UEFI code to which GBL passed
 Frames further back may be valid, but this depends on whether the firmware was compiled
 with frame pointers enabled.
 
-On aarch64, the frame pointer
-is x29. On x86_64, the frame pointer is rbp. On RISC-V, the frame pointer is x8.
+On aarch64, the frame pointer is x29. On x86_64, the frame pointer is rbp. On RISC-V,
+the frame pointer is x8.
 
 **Note:** for aarch64 and RISC-V, the register used to store the frame pointer is an
 ABI convention, not a hard and fast rule. Compilers may use other registers to store
 the frame pointer.
+
+#### Tag [in]
+
+A tag used to describe the type of error being logged.
+See [`Related Definitions`](#related-definitions) for expected tags and their semantics.
+
+### Related Definitions
+
+```c
+enum {
+    GBL_EFI_DEBUG_ERROR_TAG_PANIC,
+};
+typedef uint64_t GBL_EFI_DEBUG_ERROR_TAG;
+```
+
+### Description
+
+`FatalError()` is called by GBL to alert the firmware that a fatal error has occurred
+and that it may be helpful to display or save debugging information for postmortem
+analysis. The current frame pointer is passed in case the firmware wishes to conduct
+a stack trace, and a best-effort tag is passed to provide additional context about
+the cause of the error.
+
+Note: when invoked automatically from the panic handler, e.g. when accessing an array
+at an invalid index, the tag variant will be GBL_EFI_DEBUG_ERROR_TAG_PANIC.
+Other tag values are provided on a best effort basis. Additional tag variants may be
+added as part of a non-breaking update.
+
+Note: only fatal errors that occur within GBL will automatically invoke `FatalError()`
+as part of the panic handler. Any errors that occur within protocol drivers or the
+UEFI runtime are not visible to GBL and will not trigger automatic calls to
+`FatalError()`.
 
 ### Status Codes Returned
 

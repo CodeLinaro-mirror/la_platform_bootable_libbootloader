@@ -244,7 +244,7 @@ mod test {
             // Safety:
             // * `efi_entry` is valid for the duration of this test.
             crate::GLOBAL_EFI_ENTRY
-                .with(|e| *e.borrow_mut() = Some(std::ptr::from_ref(&efi_entry)));
+                .with(|e| *e.borrow_mut() = Some(std::ptr::NonNull::from_ref(&efi_entry)));
 
             let mut hasher = (test_struct.init)();
             let mut digest = Algorithm::DigestType::new_zeroed();

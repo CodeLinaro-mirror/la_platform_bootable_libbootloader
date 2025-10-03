@@ -18,7 +18,9 @@ use crate::{
     protocol::{Protocol, ProtocolInfo, Requirement},
     versioned_protocol,
 };
-use efi_types::{EfiGuid, GblEfiDebugProtocol, GBL_EFI_DEBUG_PROTOCOL_REVISION};
+use efi_types::{
+    EfiGuid, GblEfiDebugErrorTag, GblEfiDebugProtocol, GBL_EFI_DEBUG_PROTOCOL_REVISION,
+};
 use libutils::get_frame_ptr;
 
 /// Wraps `GBL_EFI_DEBUG_PROTOCOL`.
@@ -37,7 +39,7 @@ impl ProtocolInfo for GblDebugProtocol {
 
 impl<'a> Protocol<'a, GblDebugProtocol> {
     /// Wrapper of `GBL_EFI_DEBUG_PROTOCOL.fatal_error()`
-    pub fn fatal_error(&self) {
+    pub fn fatal_error(&self, tag: GblEfiDebugErrorTag) {
         // SAFETY:
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
@@ -45,7 +47,8 @@ impl<'a> Protocol<'a, GblDebugProtocol> {
             efi_call!(
                 self.interface().fatal_error,
                 self.interface_ptr(),
-                get_frame_ptr() as *const core::ffi::c_void
+                get_frame_ptr() as *const core::ffi::c_void,
+                tag
             )
         };
     }

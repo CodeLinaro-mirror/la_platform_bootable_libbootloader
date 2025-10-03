@@ -17,16 +17,19 @@
 #![no_std]
 #![no_main]
 
-use efi::{efi_println, initialize, panic, utils::wait, EfiAllocator};
+use efi::{efi_panic, efi_println, initialize, utils::wait, EfiAllocator};
 use efi_types::{
-    EfiHandle, EfiStatus, EfiSystemTable, EFI_STATUS_PROTOCOL_ERROR, EFI_STATUS_SUCCESS,
+    EfiHandle, EfiStatus, EfiSystemTable, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_PROTOCOL_ERROR,
+    EFI_STATUS_SUCCESS,
 };
 use gbl_async::block_on;
 use libprotocol_test::test_all_optional_protocols;
 
 #[panic_handler]
 fn handle_panic(p_info: &core::panic::PanicInfo) -> ! {
-    panic(p_info)
+    // Safety:
+    // * The very first thing done on entry is to initialize the global EFI entry.
+    unsafe { efi_panic(p_info) }
 }
 
 #[no_mangle]
@@ -46,7 +49,10 @@ pub unsafe extern "C" fn efi_main(
     // SAFETY:
     // * caller provides valid `image_handle` and `systab_ptr` objects
     // * we only call `initialize()` once
-    let entry = unsafe { initialize(image_handle, systab_ptr) }.unwrap();
+    let Ok(entry) = (unsafe { initialize(image_handle, systab_ptr) }) else {
+        // Can't panic, can't log. Just return.
+        return EFI_STATUS_INVALID_PARAMETER;
+    };
     efi_println!(&entry, "Running GBL UEFI integration test for optional protocols");
 
     let res = test_all_optional_protocols(&entry)
