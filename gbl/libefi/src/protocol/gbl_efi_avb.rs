@@ -235,7 +235,7 @@ mod test {
     use super::*;
     use crate::{test::run_test_with_mock_protocol, Error};
     use efi_types::defs::{
-        EfiStatus, GblEfiAvbBootColor, GblEfiAvbDeviceStatus, EFI_STATUS_BUFFER_TOO_SMALL,
+        EfiStatus, GblEfiAvbBootColorFlags, GblEfiAvbDeviceStatus, EFI_STATUS_BUFFER_TOO_SMALL,
         EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS, GBL_EFI_AVB_BOOT_COLOR_RED,
     };
     use std::{ptr, slice};
@@ -501,7 +501,7 @@ mod test {
 
     #[test]
     fn handle_verification_result_data_provided() {
-        const COLOR: GblEfiAvbBootColor = GBL_EFI_AVB_BOOT_COLOR_RED;
+        const COLOR: GblEfiAvbBootColorFlags = GBL_EFI_AVB_BOOT_COLOR_RED;
 
         // C callback implementation that returns success.
         unsafe extern "efiapi" fn c_return_success(

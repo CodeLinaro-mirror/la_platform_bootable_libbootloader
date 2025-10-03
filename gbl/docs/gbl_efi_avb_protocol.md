@@ -120,11 +120,26 @@ typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_READ_PARTITIONS_TO_VERIFY) (
   IN GBL_EFI_AVB_PROTOCOL *Self,
-  IN OUT UINTN *NumberOfPartitions,
+  IN OUT UINTN *NumPartitions,
   IN OUT GBL_EFI_AVB_PARTITION *Partitions);
 ```
 
 ### Related Definitions
+
+#### GBL_EFI_AVB_PARTITION_FLAGS
+
+```c
+typedef UINT64 GBL_EFI_AVB_PARTITION_FLAGS;
+STATIC CONST GBL_EFI_AVB_PARTITION_FLAGS GBL_EFI_AVB_PARTITION_OPTIONAL = 0x1 << 0;
+```
+
+##### GBL_EFI_AVB_PARTITION_OPTIONAL
+
+Flag indicating the partition is optional for loading/verification. This allows
+firmware to handle its absence at runtime instead of triggering a GBL failure.
+If set, GBL can boot even if the partition is missing or not referenced by the
+`vbmeta` header. Otherwise, the partition is required, and its absence causes
+GBL boot failure in locked mode.
 
 #### GBL_EFI_AVB_PARTITION
 
@@ -133,6 +148,7 @@ typedef
 struct GblEfiAvbPartition {
   UINTN BaseNameLen;
   UINT8* BaseName;
+  GBL_EFI_AVB_PARTITION_FLAGS Flags;
 } GBL_EFI_AVB_PARTITION;
 ```
 
@@ -147,7 +163,7 @@ the number of bytes copied into the buffer pointed by `BaseName`.
 
 A pointer to a buffer of `BaseNameLen` bytes available for the implementation to
 copy the UTF-8 slotless partition name (e.g `boot` for `boot_a`). A null
-terminator is not required be included.
+terminator is not required to be included.
 
 ### Parameters
 
@@ -155,17 +171,22 @@ terminator is not required be included.
 
 A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
-#### NumberOfPartitions
+#### NumPartitions
 
 Number of `Partitions` available to be filled by the FW. Must be updated to the
 number of partitions returned. If there are no extra partitions to be verified,
-`NumberOfPartitions` must be set to 0.
+`NumPartitions` must be set to 0.
 
 #### Partitions
 
 Pointer to an array of [`GBL_EFI_AVB_PARTITION`](#gbl_efi_avb_partition) with
-`NumberOfPartitions` elements, to be filled by the FW with additional partitions
-that GBL will load and verify.
+`NumPartitions` elements, to be filled by the FW with additional partitions that
+GBL will load and verify.
+
+#### Flags
+
+A bitmask of flags providing additional metadata for a partition request. See
+[`GBL_EFI_AVB_PARTITION_FLAGS`](#gbl_efi_avb_partition_flags) for details.
 
 ### Description
 
@@ -181,14 +202,14 @@ the firmware to handle device-specific partitions content via
 complete.
 
 For example, to provide N additional partitions, firmware must update the
-`NumberOfPartitions` to N and fill first N elements of `Partitions` following
-the [`GBL_EFI_AVB_PARTITION`](#gbl_efi_avb_partition) format. If no extra
-partitions are required to be verified, `NumberOfPartitions` must be set to 0 or
+`NumPartitions` to N and fill first N elements of `Partitions` following the
+[`GBL_EFI_AVB_PARTITION`](#gbl_efi_avb_partition) format. If no extra partitions
+are requested to be verified, `NumPartitions` must be set to 0 or
 `EFI_UNSUPPORTED` is returned.
 
-If a requested partition does not have a corresponding hash descriptor in
-`vbmeta` or chained partition then it cannot be verified. GBL will treat it the
-following way:
+If a requested partition (excluding those marked as optional) doesn't exist or
+lacks a corresponding hash descriptor in `vbmeta` or a chained partition, it
+cannot be verified. GBL will handle this case as follows:
 
 1. For a locked device: `RED` boot status color, so fail to boot.
 2. For an unlocked device: `ORANGE` boot status color, still can boot.
@@ -199,7 +220,7 @@ following way:
 | --- | --- |
 | `EFI_SUCCESS` | Successfully provided additional partitions to verify |
 | `EFI_UNSUPPORTED` | No extra partitions need to be verified |
-| `EFI_BUFFER_TOO_SMALL` | Provided list of `Partitions` is too small; `NumberOfPartitions` has been updated with the required amount. GBL will call this method again with extended `Partitions`. |
+| `EFI_BUFFER_TOO_SMALL` | Provided list of `Partitions` is too small; `NumPartitions` has been updated with the required amount. GBL will call this method again with extended `Partitions`. |
 | `EFI_BAD_BUFFER_SIZE` | One of provided `Partition.NameLen` values is not sufficient to hold the partition name. GBL will fail to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadDeviceStatus()
@@ -616,23 +637,24 @@ EFI_STATUS
 
 ### Related Definitions
 
-#### GBL_EFI_AVB_BOOT_COLOR
+#### GBL_EFI_AVB_BOOT_COLOR_FLAGS
 
 ```c
-typedef UINT64 GBL_EFI_AVB_BOOT_COLOR;
+typedef UINT64 GBL_EFI_AVB_BOOT_COLOR_FLAGS;
 
-STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_RED = 0x1 << 0;
-STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_ORANGE = 0x1 << 1;
-STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_YELLOW = 0x1 << 2;
-STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_GREEN = 0x1 << 3;
-STATIC CONST GBL_EFI_AVB_BOOT_COLOR GBL_EFI_AVB_BOOT_COLOR_RED_EIO = 0x1 << 4;
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR_FLAGS GBL_EFI_AVB_BOOT_COLOR_RED = 0x1 << 0;
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR_FLAGS GBL_EFI_AVB_BOOT_COLOR_ORANGE = 0x1 << 1;
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR_FLAGS GBL_EFI_AVB_BOOT_COLOR_YELLOW = 0x1 << 2;
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR_FLAGS GBL_EFI_AVB_BOOT_COLOR_GREEN = 0x1 << 3;
+STATIC CONST GBL_EFI_AVB_BOOT_COLOR_FLAGS GBL_EFI_AVB_BOOT_COLOR_RED_EIO = 0x1 << 4;
 ```
 
 ##### GBL_EFI_AVB_BOOT_COLOR_RED
 
-Flag indicating that verification failed (including fatal errors on an unlocked
-device). A corresponding notification [must][boot_flow_red] be shown to inform
-the user that no valid OS is detected. Boot cannot proceed.
+Flag indicating a verification failure, including fatal errors on unlocked
+devices and missing required partitions on locked devices. A corresponding
+notification [must][boot_flow_red] be shown to inform the user that no valid OS
+was detected. Boot cannot proceed.
 
 ##### GBL_EFI_AVB_BOOT_COLOR_ORANGE
 
@@ -717,10 +739,10 @@ Points to a buffer containing the loaded partition data of `DataSize` bytes.
 
 ```c
 typedef struct {
-  GBL_EFI_AVB_BOOT_COLOR             ColorFlags;
+  GBL_EFI_AVB_BOOT_COLOR_FLAGS       ColorFlags;
   CONST CHAR8                        *Digest;
-  UINTN                              NumLoadedPartitions;
-  CONST GBL_EFI_AVB_LOADED_PARTITION *LoadedPartitions;
+  UINTN                              NumPartitions;
+  CONST GBL_EFI_AVB_LOADED_PARTITION *Partitions;
   UINTN                              NumProperties;
   CONST GBL_EFI_AVB_PROPERTY         *Properties;
   UINT32                             Reserved[8];
@@ -729,7 +751,7 @@ typedef struct {
 
 ##### ColorFlags
 
-Represents the verification result using `GBL_EFI_AVB_BOOT_COLOR` flags. Only
+Represents the verification result using `GBL_EFI_AVB_BOOT_COLOR_FLAGS`. Only
 one of the following may be set at a time to indicate the boot state for
 firmware to request user confirmation, as required by the boot flow
 [documentation][boot_flow]:
@@ -750,18 +772,16 @@ See the corresponding section above for more details.
 Points to null-terminated UTF-8 hex string with the result digest calculated by
 the `libavb`.
 
-##### NumLoadedPartitions
+##### NumPartitions
 
-The number of loaded partitions referenced by the `LoadedPartitions` array. May
-be `0` if no extra partitions were requested or if verification fails (so `RED`
-state color).
+The number of verified partitions referenced by the `Partitions` array. May be
+`0` if verification fails (so `RED` state color).
 
-##### LoadedPartitions
+##### Partitions
 
-Pointer to an array of `NumLoadedPartitions` `GBL_EFI_AVB_LOADED_PARTITION`
-items containing the loaded data for extra partitions that were requested by
-[`ReadPartitionsToVerify()`][readpartitionstoverify]. May be `NULL` if no extra
-partitions are requested or if verification fails (so `RED` state color).
+Pointer to an array of `NumPartitions` `GBL_EFI_AVB_LOADED_PARTITION` items,
+each containing a verified partition content. May be `NULL` if verification
+fails (so `RED` state color).
 
 ##### NumProperties
 
@@ -799,7 +819,8 @@ used for:
 
 1. Update the root of trust along with the device state.
 2. Handle anti-tampering mechanisms.
-3. Handle device-specific partitions data requested via
+3. Handle data for all partitions loaded by GBL, including device-specific
+   partitions requested through
    [`ReadPartitionsToVerify()`][readpartitionstoverify].
 4. Display the appropriate UI and obtaining user confirmation for states
    that may affect the device's security guarantees.

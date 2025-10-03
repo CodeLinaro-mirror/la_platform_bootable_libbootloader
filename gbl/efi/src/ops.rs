@@ -533,8 +533,8 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
                         color_flags: gbl_verification_status_to_efi_color_flags(status),
                         digest: digest.map_or(null(), |p| p.as_ptr() as _),
                         // TODO(b/337846185): Provide loaded partitions to the FW.
-                        num_loaded_partitions: 0,
-                        loaded_partitions: null(),
+                        num_partitions: 0,
+                        partitions: null(),
                         num_properties: avb_properties_efi.0.len(),
                         properties: match avb_properties_efi.0.is_empty() {
                             false => avb_properties_efi.0.as_ptr(),
