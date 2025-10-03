@@ -55,8 +55,8 @@ static const GblEfiAvbBootColorFlags GBL_EFI_AVB_BOOT_COLOR_RED_EIO = 0x1 << 4;
 // Vbmeta key validation status.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
-EFI_ENUM(GBL_EFI_AVB_KEY_VALIDATION_STATUS, GblEfiAvbKeyValidationStatus,
-         uint32_t, GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID,
+EFI_ENUM(GblEfiAvbKeyValidationStatus, uint32_t,
+         GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID,
          GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY,
          GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID);
 

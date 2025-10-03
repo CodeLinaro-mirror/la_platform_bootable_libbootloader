@@ -31,7 +31,7 @@
 
 #include "types.h"
 
-EFI_ENUM(GBL_EFI_DEVICE_TREE_TYPE, GblEfiDeviceTreeType, uint32_t,
+EFI_ENUM(GblEfiDeviceTreeType, uint32_t,
          // HLOS device tree.
          GBL_EFI_DEVICE_TREE_TYPE_DEVICE_TREE,
          // HLOS device tree overlay.
@@ -39,7 +39,7 @@ EFI_ENUM(GBL_EFI_DEVICE_TREE_TYPE, GblEfiDeviceTreeType, uint32_t,
          // pVM device assignment overlay.
          GBL_EFI_DEVICE_TREE_TYPE_PVM_DA_OVERLAY);
 
-EFI_ENUM(GBL_EFI_DEVICE_TREE_SOURCE, GblEfiDeviceTreeSource, uint32_t,
+EFI_ENUM(GblEfiDeviceTreeSource, uint32_t,
          // Device tree loaded from boot partition.
          GBL_EFI_DEVICE_TREE_SOURCE_BOOT,
          // Device tree loaded from vendor_boot partition.
@@ -86,10 +86,10 @@ typedef struct GblEfiOsConfigurationProtocol {
                                    size_t num_device_trees);
 
   // Selects FIT configuration to be used.
-  EfiStatus (*select_fit_configuration)(struct GblEfiOsConfigurationProtocol* self,
-                                        size_t fit_size, const uint8_t* fit,
-                                        size_t metadata_size, const uint8_t* metadata,
-                                        size_t* selected_configuration_offset);
+  EfiStatus (*select_fit_configuration)(
+      struct GblEfiOsConfigurationProtocol* self, size_t fit_size,
+      const uint8_t* fit, size_t metadata_size, const uint8_t* metadata,
+      size_t* selected_configuration_offset);
 
 } GblEfiOsConfigurationProtocol;
 

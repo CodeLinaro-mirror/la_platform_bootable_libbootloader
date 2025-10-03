@@ -48,12 +48,12 @@ rust_bindgen(
         "--use-core",
         "--with-derive-partialeq",
         "--with-derive-default",
-        "--with-derive-custom-enum=EFI_MEMORY_ATTRIBUTE=Immutable,IntoBytes,FromBytes,KnownLayout",
-        "--with-derive-custom-enum=EFI_MEMORY_TYPE=Immutable,IntoBytes,FromBytes,KnownLayout",
-        "--with-derive-custom-struct=EfiMemoryDescriptor=Immutable,IntoBytes,FromBytes,KnownLayout",
-        "--with-derive-custom-struct=EfiMemoryAttributesTableHeader=Immutable,IntoBytes,FromBytes,KnownLayout",
-        "--with-derive-custom-struct=EfiGuid=Immutable,IntoBytes,FromBytes,KnownLayout",
+        "--with-derive-custom-enum=EfiMemoryAttribute=Immutable,IntoBytes,FromBytes,KnownLayout",
+        "--with-derive-custom-enum=EfiMemoryType=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--with-derive-custom-struct=EfiDevicePathProtocol=Immutable,IntoBytes,FromBytes,KnownLayout,Unaligned",
+        "--with-derive-custom-struct=EfiGuid=Immutable,IntoBytes,FromBytes,KnownLayout",
+        "--with-derive-custom-struct=EfiMemoryAttributesTableHeader=Immutable,IntoBytes,FromBytes,KnownLayout",
+        "--with-derive-custom-struct=EfiMemoryDescriptor=Immutable,IntoBytes,FromBytes,KnownLayout",
         "--no-prepend-enum-name",
         # Note: don't use newtype, constified-module, or bitfield
         #       because the upcase enum name becomes a necessary prefix
@@ -62,7 +62,7 @@ rust_bindgen(
         "newtype_global",
         # Cannot yet use arbitrary types as const generics.
         "--constified-enum",
-        "EFI_TPL",
+        "EfiTpl",
         "--no-layout-tests",
         "--override-abi",
         ".*=efiapi",

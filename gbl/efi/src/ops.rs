@@ -1052,7 +1052,7 @@ mod test {
         protocol::{gbl_efi_ab_slot::GblABSlotProtocol, gbl_efi_avb::GblAvbProtocol},
         MockEfi,
     };
-    use efi_types::{defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GBL_EFI_BOOT_MODE};
+    use efi_types::{defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GblEfiBootMode};
     use mockall::predicate::eq;
     use std::{cell::RefCell, rc::Rc, slice};
 
@@ -1656,7 +1656,7 @@ mod test {
     }
 
     /// Helper for testing `set_boot_mode`
-    fn test_set_reboot_mode(input: RebootMode, expect: GBL_EFI_BOOT_MODE) {
+    fn test_set_reboot_mode(input: RebootMode, expect: GblEfiBootMode) {
         let mut mock_efi = MockEfi::new();
         mock_efi.boot_services.expect_find_first_and_open::<GblABSlotProtocol>().return_once(
             move || {
@@ -1694,7 +1694,7 @@ mod test {
     }
 
     /// Helper for testing `get_boot_mode`
-    fn test_get_reboot_mode(input: GBL_EFI_BOOT_MODE, expect: RebootMode) {
+    fn test_get_reboot_mode(input: GblEfiBootMode, expect: RebootMode) {
         let mut mock_efi = MockEfi::new();
         mock_efi.boot_services.expect_find_first_and_open::<GblABSlotProtocol>().return_once(
             move || {

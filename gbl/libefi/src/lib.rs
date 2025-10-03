@@ -114,13 +114,12 @@ use core::{marker::PhantomData, ptr::null_mut, slice::from_raw_parts, time::Dura
 use efi_types::{
     defs::{
         EfiAllocatorType, EfiBootService, EfiConfigurationTable, EfiEvent, EfiGuid, EfiHandle,
-        EfiMemoryAttributesTableHeader, EfiMemoryDescriptor, EfiMemoryType, EfiRuntimeService,
-        EfiSystemTable, EfiTimerDelay, EfiTpl, EFI_EVENT_TYPE_NOTIFY_SIGNAL,
-        EFI_EVENT_TYPE_NOTIFY_WAIT, EFI_EVENT_TYPE_RUNTIME,
+        EfiMemoryAttributesTableHeader, EfiMemoryDescriptor, EfiMemoryType, EfiResetType,
+        EfiRuntimeService, EfiStatus, EfiSystemTable, EfiTimerDelay, EfiTpl,
+        EFI_EVENT_TYPE_NOTIFY_SIGNAL, EFI_EVENT_TYPE_NOTIFY_WAIT, EFI_EVENT_TYPE_RUNTIME,
         EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES, EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
         EFI_EVENT_TYPE_TIMER, EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL,
-        EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE, EFI_RESET_TYPE_COLD,
-        EFI_STATUS, EFI_STATUS_SUCCESS,
+        EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS,
     },
     tpl::TplControl,
 };
@@ -741,8 +740,8 @@ impl RuntimeServices {
     /// Wrapper of `EFI_RUNTIME_SERVICES.reset_system`.
     pub fn reset_system(
         &self,
-        reset_type: EFI_RESET_TYPE,
-        reset_status: EFI_STATUS,
+        reset_type: EfiResetType,
+        reset_status: EfiStatus,
         reset_data: Option<&mut [u8]>,
     ) -> ! {
         let (reset_data_len, reset_data_ptr) = match reset_data {

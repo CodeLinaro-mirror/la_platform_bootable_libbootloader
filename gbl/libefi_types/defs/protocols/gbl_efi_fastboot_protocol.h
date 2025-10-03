@@ -42,7 +42,7 @@
 typedef void (*GetVarAllCallback)(void* context, const char* const* args,
                                   size_t num_args, const char* val);
 
-EFI_ENUM(GBL_GBL_EFI_FASTBOOT_MESSAGE_TYPE, GblEfiFastbootMessageType, uint32_t,
+EFI_ENUM(GblEfiFastbootMessageType, uint32_t,
          GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL,
          GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO);
 
@@ -53,14 +53,14 @@ typedef EfiStatus (*FastbootMessageSender)(void* context,
 static const uint64_t GBL_EFI_FASTBOOT_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 2);
 
-EFI_ENUM(GBL_EFI_FASTBOOT_ERASE_ACTION, GblEfiFastbootEraseAction, uint32_t,
+EFI_ENUM(GblEfiFastbootEraseAction, uint32_t,
          // Treats the partition as a physical on disk partition and erases it.
          GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
          // Ignores the partition.
          GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP);
 
-EFI_ENUM(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT, GblEfiFastbootCommandExecResult,
-         uint32_t, GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
+EFI_ENUM(GblEfiFastbootCommandExecResult, uint32_t,
+         GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
          GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
          GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL);
 
