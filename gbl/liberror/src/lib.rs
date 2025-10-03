@@ -168,6 +168,8 @@ pub enum Error {
     DeviceError,
     /// The connected peripheral or network peer has disconnected.
     Disconnected,
+    /// OpenDICE error.
+    DiceError(opendice::error::DiceError),
     /// The end of the file was reached.
     EndOfFile,
     /// Beginning or end of media was reached
@@ -272,6 +274,12 @@ impl From<&'static str> for Error {
 impl From<safemath::Error> for Error {
     fn from(err: safemath::Error) -> Self {
         Self::ArithmeticOverflow(err)
+    }
+}
+
+impl From<opendice::error::DiceError> for Error {
+    fn from(err: opendice::error::DiceError) -> Self {
+        Self::DiceError(err)
     }
 }
 

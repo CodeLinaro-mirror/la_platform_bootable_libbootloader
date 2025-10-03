@@ -125,7 +125,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
 
     let pvmfw = match images.pvmfw.is_empty() {
         true => None,
-        _ => Some(loader.pvmfw_load(ops, images.pvmfw, &verify_data)?),
+        _ => Some(loader.pvmfw_load(ops, images.pvmfw, &verify_data, unlocked, is_recovery)?),
     };
     loader.ramdisk_load(&images.ramdisks[..])?;
     loader.kernel_load(ops, images.kernel)?;
@@ -625,7 +625,7 @@ pub(crate) mod tests {
             AvbProperty, PartitionBuffer,
         },
     };
-    use avf::test::dummy_pvmfw_partition;
+    use avf::test::{dummy_pvmfw_partition, DUMMY_VENDOR_HANDOVER};
     use bootparams::bootconfig::{BootConfigBuilder, BOOTCONFIG_TRAILER_SIZE};
     use fdt::std_props;
     use libbuild_number::BUILD_NUMBER;
@@ -1854,6 +1854,8 @@ androidboot.veritymode.managed=yes
         // Rollback required by `vbmeta_disabled.img`.
         ops.avb_ops.rollbacks = HashMap::from([(0, Ok(0))]);
         ops.avf_is_supported = true;
+        ops.avb_ops.unlock_state = Ok(true);
+        ops.avf_vendor_dice_handover = Some(&DUMMY_VENDOR_HANDOVER[..]);
         let (ramdisk, fdt, _, _) =
             android_load_verify_fixup(&mut ops, slot('a'), false, boot_buffer).unwrap();
 

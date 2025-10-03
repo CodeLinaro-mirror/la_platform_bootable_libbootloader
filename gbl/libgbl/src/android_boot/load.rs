@@ -496,14 +496,17 @@ impl<'a> BootBufferLoader<'a> {
         ops: &mut impl GblOps<'b, 'c>,
         img: &[u8],
         verify_data: &SlotVerifyData,
+        unlocked: bool,
+        is_recovery: bool,
     ) -> Result<&'a mut [u8], Error> {
         // Parse the partition header and extract the pvmfw binary
         let info = BootImageV3Info::new(img)?;
         let pvmfw_bin = img.get(info.kernel_range.clone()).ok_or(Error::BadBufferSize)?;
-        // TODO(b/429168146): Handled configuration from AVF protocols.
         Ok(match self.bufs.pvmfw_data.as_mut() {
-            Some(v) => build_pvmfw_data_region(ops, v, pvmfw_bin, verify_data)
-                .map(|sz| &mut take(v)[..sz])?,
+            Some(v) => {
+                build_pvmfw_data_region(ops, v, pvmfw_bin, verify_data, unlocked, is_recovery)
+                    .map(|sz| &mut take(v)[..sz])?
+            }
             _ => {
                 // Split out buffer from general load for loading pvmfw.
                 // Buffer must not be used yet.
@@ -517,6 +520,8 @@ impl<'a> BootBufferLoader<'a> {
                     &mut self.bufs.general[off..],
                     pvmfw_bin,
                     verify_data,
+                    unlocked,
+                    is_recovery,
                 )?;
                 let (pvmfw, general) = take(&mut self.bufs.general)[off..].split_at_mut(sz);
                 self.bufs.general = general;

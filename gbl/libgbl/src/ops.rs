@@ -1159,8 +1159,11 @@ pub(crate) mod test {
         /// [avb_cert_read_permanent_attributes_hash].
         pub avb_cert_read_permanent_attributes_hash_not_implemented: bool,
 
-        /// For returned by `avf_is_supported`
+        /// For return by `avf_is_supported`
         pub avf_is_supported: bool,
+
+        /// For return by `avf_read_vendor_dice_handover`
+        pub avf_vendor_dice_handover: Option<&'a [u8]>,
 
         /// Handler of `fastboot_get_staged`
         pub get_staged_handler:
@@ -1444,9 +1447,10 @@ pub(crate) mod test {
             if !self.avf_is_supported {
                 return Err(Error::NotImplemented);
             }
-
-            let (out, _) = buffer.split_at_mut(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER.len());
-            out.copy_from_slice(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER);
+            let data =
+                self.avf_vendor_dice_handover.unwrap_or(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER);
+            let (out, _) = buffer.split_at_mut(data.len());
+            out.copy_from_slice(data);
             Ok(out)
         }
 

@@ -15,7 +15,10 @@
 //! Android virtualization framework support for GBL
 
 use crate::{android_boot::load::split, constants::PAGE_SIZE, gbl_println, GblOps, KiB};
-use avb::SlotVerifyData;
+use avb::{SlotVerifyData, VbmetaVerifyError};
+use avb_bindgen::{
+    avb_sha512_final, avb_sha512_init, avb_sha512_update, AvbSHA512Ctx, AVB_SHA512_DIGEST_SIZE,
+};
 use bootparams::bootconfig::BootConfigBuilder;
 use core::{
     ffi::CStr,
@@ -24,12 +27,52 @@ use core::{
 };
 use fdt::{fdt_encode_cell_sized_property, std_props, Fdt};
 use liberror::{Error, Result};
+use opendice::{
+    dice::{Config, DiceMode, InputValues, HASH_SIZE, HIDDEN_SIZE},
+    dice_android_format_config_descriptor, dice_android_handover_main_flow, DiceAndroidConfig,
+};
 use safemath::SafeNum;
 use static_assertions::const_assert;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 pub const DEFAULT_PVMFW_PART_NAME_CSTR: &CStr = c"pvmfw";
 const NUM_PVMFW_CONFIG_ENTRIES: usize = 4;
+
+// TODO: replace this with a dedicated hash crate (b/429168146).
+struct Sha512(AvbSHA512Ctx);
+
+impl Sha512 {
+    const DIGEST_SIZE: usize = AVB_SHA512_DIGEST_SIZE as usize;
+
+    fn new() -> Sha512 {
+        let mut ctx = AvbSHA512Ctx::default();
+        // Safety: We are passing a non-null, aligned pointer to a valid, stack-allocated instance.
+        // The pointer is valid for the duration of the C call.
+        unsafe { avb_sha512_init(&mut ctx as *mut AvbSHA512Ctx) };
+        Self(ctx)
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        // Safety: The first argument is a non-null, aligned pointer to `self.0`, which is a valid
+        // `AvbSHA512Ctx` guaranteed to be initialized by the `new()` constructor. `data.as_ptr()`
+        // points to a valid buffer (a byte slice), which is guaranteed to be readable for
+        // `data.len()` bytes.
+        unsafe { avb_sha512_update(&mut self.0 as *mut AvbSHA512Ctx, data.as_ptr(), data.len()) };
+    }
+
+    fn finish(&mut self) -> [u8; Sha512::DIGEST_SIZE] {
+        // Safety: The first argument is a non-null, aligned pointer to `self.0`, which is a valid
+        // `AvbSHA512Ctx` guaranteed to be initialized by the `new()` constructor. The C function
+        // `avb_sha512_final` valid, non-null pointer to an internal buffer containing the final
+        // digest. The C API guarantees this buffer is at least `DIGEST_SIZE` bytes. The pointer's
+        // lifetime is tied to `&mut self`. It is used immediately with `from_raw_parts` to create a
+        // slice and copy the data into an array (via `try_into`).
+        unsafe {
+            let ptr = avb_sha512_final(&mut self.0 as *mut AvbSHA512Ctx);
+            core::slice::from_raw_parts(ptr, Self::DIGEST_SIZE).try_into().unwrap()
+        }
+    }
+}
 
 fn align_up(size: usize, alignment: usize) -> Result<usize> {
     Ok(SafeNum::from(size).round_up(alignment).try_into().map_err(Error::ArithmeticOverflow)?)
@@ -44,6 +87,15 @@ const fn align_up_const(size: usize, alignment: usize) -> usize {
 pub(crate) trait AVFVerificationData {
     /// Returns the vendor hashtree digest if it exists.
     fn vendor_hashtree_digest(&self) -> Option<&[u8]>;
+
+    /// Returns the root vbmeta hash.
+    fn vbmeta_digest(&self) -> [u8; HASH_SIZE];
+
+    /// Returns the hash of the vbmeta public key
+    fn public_key_digest(&self) -> core::result::Result<[u8; HASH_SIZE], VbmetaVerifyError>;
+
+    /// Returns vbmeta rollback index
+    fn vbmeta_rollback_index(&self) -> core::result::Result<Option<u64>, VbmetaVerifyError>;
 }
 
 impl AVFVerificationData for SlotVerifyData<'_> {
@@ -55,6 +107,32 @@ impl AVFVerificationData for SlotVerifyData<'_> {
         // https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/docs/microdroid_vendor_modules.md,
         const HASHTREE_DIGEST_PROPNAME: &str = "com.android.build.microdroid-vendor.root_digest";
         self.vbmeta_data().iter().find_map(|data| data.get_property_value(HASHTREE_DIGEST_PROPNAME))
+    }
+
+    fn vbmeta_digest(&self) -> [u8; HASH_SIZE] {
+        self.calculate_sha512_digest()
+    }
+
+    fn public_key_digest(&self) -> core::result::Result<[u8; HASH_SIZE], VbmetaVerifyError> {
+        // TODO: a more precise approach identifying vbmetas that cover relevant partitions, and
+        // extracting their public keys (b/429168146).
+        let mut hasher = Sha512::new();
+        self.vbmeta_data().iter().try_for_each(|data| {
+            hasher.update(data.header_verified()?.public_key());
+            Ok(())
+        })?;
+        Ok(hasher.finish())
+    }
+
+    fn vbmeta_rollback_index(&self) -> core::result::Result<Option<u64>, VbmetaVerifyError> {
+        // TODO:: consider including indexes from other vbmetas (b/448363880).
+        let Some(data) =
+            self.vbmeta_data().iter().find(|d| d.partition_name().to_str() == Ok("vbmeta"))
+        else {
+            return Ok(None);
+        };
+        let idx_loc = data.header_verified()?.rollback_index_location() as usize;
+        Ok(self.rollback_indexes().get(idx_loc).copied())
     }
 }
 
@@ -80,6 +158,7 @@ impl AVFVerificationData for SlotVerifyData<'_> {
 /// * `output_buffer` - the target load buffer.
 /// * `pvmfw_binary` - a byte slice containing a preloaded pvmfw binary
 /// * `verify_data` - an `AVFVerificationData` implementation (eg `SlotVerifyData`)
+/// * `unlocked` - `true` if the bootloader is unlocked
 ///
 /// # Returns
 ///
@@ -93,6 +172,8 @@ pub fn build_pvmfw_data_region<'a, 'b>(
     output_buffer: &mut [u8],
     pvmfw_binary: &[u8],
     verify_data: &impl AVFVerificationData,
+    unlocked: bool,
+    is_recovery: bool,
 ) -> Result<usize> {
     // Copy the binary to the start of pvmfw region
     let pvmfw_bin_size = pvmfw_binary.len();
@@ -102,7 +183,7 @@ pub fn build_pvmfw_data_region<'a, 'b>(
     binary.copy_from_slice(pvmfw_binary);
 
     // Append the pvmfw configuration data and update host dt
-    let config_size = write_pvmfw_config(ops, config, verify_data)?;
+    let config_size = write_pvmfw_config(ops, config, verify_data, unlocked, is_recovery)?;
     // Size must be aligned to the page size used by the hypervisor
     let total_size = align_up(
         (SafeNum::from(pvmfw_bin_size) + config_size)
@@ -235,14 +316,16 @@ fn write_pvmfw_config<'a, 'b>(
     ops: &mut impl GblOps<'a, 'b>,
     config_out: &mut [u8],
     verify_data: &impl AVFVerificationData,
+    unlocked: bool,
+    is_recovery: bool,
 ) -> Result<usize> {
     let (header, entries) = PvmfwConfHeader::init_padded_prefix_mut(config_out)?;
 
     // Write pvmfw config entries
-    let (ref_dt_len, ref_dt_padded_len, _rest) =
-        pvmfw_build_reference_dt(ops, entries, verify_data)?;
-    // Empty entries except reference dt
-    let entry_sizes = [(0, 0), (0, 0), (0, 0), (ref_dt_len, ref_dt_padded_len)];
+    let (bcc_len, bcc_padded_len, rest) =
+        pvmfw_build_dice_handover(ops, entries, verify_data, unlocked, is_recovery)?;
+    let (ref_dt_len, ref_dt_padded_len, _) = pvmfw_build_reference_dt(ops, rest, verify_data)?;
+    let entry_sizes = [(bcc_len, bcc_padded_len), (0, 0), (0, 0), (ref_dt_len, ref_dt_padded_len)];
 
     // Finally, update header config entries
     header.set_config_entries(entry_sizes)?;
@@ -351,6 +434,81 @@ pub fn avf_update_bootconfig<'a, 'b>(
     Ok(())
 }
 
+type Hidden = [u8; HIDDEN_SIZE];
+type Hash = [u8; HASH_SIZE];
+type DiceInputs = (Hash, Hash, Hidden, DiceMode, Option<u64>);
+
+fn prepare_dice_inputs(
+    verify_data: &impl AVFVerificationData,
+    unlocked: bool,
+    is_recovery: bool,
+) -> Result<DiceInputs> {
+    let authority = if unlocked {
+        verify_data.public_key_digest().unwrap_or([0u8; Sha512::DIGEST_SIZE])
+    } else {
+        verify_data.public_key_digest().map_err(|_| Error::Other(Some("vbmeta verify error")))?
+    };
+    let mode = match (is_recovery, unlocked) {
+        (false, false) => DiceMode::kDiceModeNormal,
+        (false, true) => DiceMode::kDiceModeDebug,
+        (true, _) => DiceMode::kDiceModeMaintenance,
+    };
+    let code = verify_data.vbmeta_digest();
+    let hidden = [0u8; HIDDEN_SIZE]; // Leave hidden input empty.
+    let rollback_idx = verify_data
+        .vbmeta_rollback_index()
+        .map_err(|_| Error::Other(Some("vbmeta verify error")))?;
+    if !unlocked && rollback_idx.is_none() {
+        return Err(Error::Other(Some("cannot determine rollback index")));
+    }
+    Ok((authority, code, hidden, mode, rollback_idx))
+}
+
+/// Prepare the DICE handover config entry of pvmfw
+fn pvmfw_build_dice_handover<'a, 'b, 'c>(
+    ops: &mut impl GblOps<'a, 'b>,
+    output_buffer: &'c mut [u8],
+    verify_data: &impl AVFVerificationData,
+    unlocked: bool,
+    is_recovery: bool,
+) -> Result<(usize, usize, &'c mut [u8])> {
+    const MAX_CONFIG_SIZE: usize = 64; // Enough for our config descriptor
+    const VENDOR_HANDOVER_SIZE: usize = KiB!(1); // Enough for vendor DICE handover
+
+    // Get vendor handover
+    let mut vendor_handover_buffer = [0u8; VENDOR_HANDOVER_SIZE];
+    let vendor_handover = ops.avf_read_vendor_dice_handover(&mut vendor_handover_buffer)?;
+    if vendor_handover.is_empty() {
+        return Err(Error::Other(Some("empty vendor handover")));
+    }
+    let (authority, code, hidden, mode, rollback_idx) =
+        prepare_dice_inputs(verify_data, unlocked, is_recovery)
+            .inspect_err(|e| gbl_println!(ops, "Error preparing DICE inputs: {e}"))?;
+
+    // Create config
+    let config_values = DiceAndroidConfig {
+        component_name: Some(c"pvmfw"),
+        resettable: true,
+        security_version: rollback_idx,
+        rkp_vm_marker: true,
+        ..Default::default()
+    };
+
+    let mut conf_desc_buffer = [0u8; MAX_CONFIG_SIZE];
+    let conf_size = dice_android_format_config_descriptor(&config_values, &mut conf_desc_buffer)
+        .map_err(Error::DiceError)?;
+    let config_desc = Config::Descriptor(&conf_desc_buffer[..conf_size]);
+
+    // Get next handover
+    let input_values = InputValues::new(code, config_desc, authority, mode, hidden);
+    let entry_size =
+        dice_android_handover_main_flow(&vendor_handover, &input_values, output_buffer)
+            .map_err(Error::DiceError)?;
+
+    let (entry_padded_size, rest) = pad_entry_split_rest(output_buffer, entry_size)?;
+    Ok((entry_size, entry_padded_size, rest))
+}
+
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
@@ -360,11 +518,44 @@ pub(crate) mod test {
     };
     use libtestutils::AlignedBuffer;
 
-    struct TestVerifyData<T: AsRef<[u8]>>(Option<T>);
+    struct TestVerifyData<T: AsRef<[u8]>> {
+        vendor_digest: Option<T>,
+        rollback_index: Option<u64>,
+    }
+
+    impl<T: AsRef<[u8]>> TestVerifyData<T> {
+        fn new(vendor_digest: Option<T>, rollback_index: Option<u64>) -> Self {
+            Self { vendor_digest, rollback_index }
+        }
+    }
+
+    impl Default for TestVerifyData<&[u8]> {
+        fn default() -> Self {
+            Self { vendor_digest: None, rollback_index: None }
+        }
+    }
+
+    fn sha512(data: &[u8]) -> [u8; HASH_SIZE] {
+        let mut ctx = Sha512::new();
+        ctx.update(data);
+        ctx.finish()
+    }
 
     impl<T: AsRef<[u8]>> AVFVerificationData for TestVerifyData<T> {
         fn vendor_hashtree_digest(&self) -> Option<&[u8]> {
-            self.0.as_ref().map(|t| t.as_ref())
+            self.vendor_digest.as_ref().map(|t| t.as_ref())
+        }
+
+        fn vbmeta_digest(&self) -> [u8; HASH_SIZE] {
+            sha512(&[1, 2, 3, 4, 5])
+        }
+
+        fn public_key_digest(&self) -> core::result::Result<[u8; HASH_SIZE], VbmetaVerifyError> {
+            Ok(sha512(&[5, 4, 3, 2, 1]))
+        }
+
+        fn vbmeta_rollback_index(&self) -> core::result::Result<Option<u64>, VbmetaVerifyError> {
+            Ok(self.rollback_index)
         }
     }
 
@@ -397,12 +588,30 @@ pub(crate) mod test {
         (partition, align_up(fill_count, PAGE_SIZE).unwrap() + PvmfwConfHeader::PADDED_SIZE)
     }
 
+    pub(crate) const DUMMY_VENDOR_HANDOVER: [u8; 99] = [
+        0xa3, // CDI attest
+        0x01, 0x58, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, // CDI seal
+        0x02, 0x58, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, // DICE chain
+        0x03, 0x82, 0xa6, 0x01, 0x02, 0x03, 0x27, 0x04, 0x02, 0x20, 0x01, 0x21, 0x40, 0x22, 0x40,
+        0x84, 0x40, 0xa0, 0x40, 0x40,
+        // 8-bytes of trailing data that aren't part of the DICE chain.
+        0x84, 0x41, 0x55, 0xa0, 0x42, 0x11, 0x22, 0x40,
+    ];
+
     #[test]
     fn test_build_pvmfw_data_region() {
         let mut out_pvmfw_buf = AlignedBuffer::new(0x100000, PVMFW_DATA_ALIGNMENT);
         let storage = FakeGblOpsStorage::default();
         let mut ops = FakeGblOps::new(&storage);
-        let testdigest = TestVerifyData(Some([1, 2, 3, 4, 5]));
+        ops.avf_is_supported = true;
+        ops.avb_ops.unlock_state = Ok(true);
+        ops.avb_ops.rollbacks.insert(0, Ok(1));
+        ops.avf_vendor_dice_handover = Some(&DUMMY_VENDOR_HANDOVER[..]);
+        let testdigest = TestVerifyData::new(Some([1, 2, 3, 4, 5]), Some(0));
 
         const FILL_VALUE: u8 = 0xAB;
         const FILL_COUNT: usize = 0xc00;
@@ -411,6 +620,8 @@ pub(crate) mod test {
             &mut out_pvmfw_buf,
             &dummy_pvmfw_binary(FILL_VALUE, FILL_COUNT),
             &testdigest,
+            false,
+            false,
         )
         .unwrap();
         assert!(used_bytes > PAGE_SIZE);
@@ -458,16 +669,24 @@ pub(crate) mod test {
         let storage = FakeGblOpsStorage::default();
         let mut ops = FakeGblOps::new(&storage);
         ops.avf_is_supported = true;
-        let testdigest = TestVerifyData(Some([1, 2, 3, 4, 5]));
+        ops.avb_ops.unlock_state = Ok(true);
+        ops.avb_ops.rollbacks.insert(0, Ok(1));
+        ops.avf_vendor_dice_handover = Some(&DUMMY_VENDOR_HANDOVER[..]);
+        let testdigest = TestVerifyData::new(Some([1, 2, 3, 4, 5]), Some(0));
 
-        let sz = write_pvmfw_config(&mut ops, &mut buf, &testdigest).unwrap();
+        let sz = write_pvmfw_config(&mut ops, &mut buf, &testdigest, false, false).unwrap();
         let header = PvmfwConfHeader::ref_from_prefix(&buf).unwrap().0;
+
         let exp_refdt_size = 0xd3u32;
+        let exp_handover_size = 0x249u32;
+        let exp_refdt_offset = (PvmfwConfHeader::PADDED_SIZE
+            + align_up(exp_handover_size as usize, PvmfwConfEntry::ALIGNMENT).unwrap())
+            as u32;
         let expected_entries = [
-            PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: 0 },
-            PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: 0 },
-            PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: 0 },
-            PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: exp_refdt_size },
+            PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: exp_handover_size },
+            PvmfwConfEntry { offset: exp_refdt_offset, size: 0 },
+            PvmfwConfEntry { offset: exp_refdt_offset, size: 0 },
+            PvmfwConfEntry { offset: exp_refdt_offset, size: exp_refdt_size },
         ];
         let expected_header = PvmfwConfHeader {
             magic: PvmfwConfHeader::MAGIC,
@@ -503,7 +722,7 @@ pub(crate) mod test {
     #[test]
     fn test_fixup_host_dt() {
         let test_digest = [5u8; 64];
-        let digest = TestVerifyData(Some(&test_digest));
+        let digest = TestVerifyData::new(Some(&test_digest), None);
         let sk_key = FakeGblOps::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY;
         let mut ops = FakeGblOps::new(&[][..]);
         ops.avf_is_supported = true;
@@ -521,7 +740,7 @@ pub(crate) mod test {
     #[test]
     fn test_write_reference_dt() {
         let test_digest = [5u8; 64];
-        let digest = TestVerifyData(Some(&test_digest));
+        let digest = TestVerifyData::new(Some(&test_digest), None);
         let sk_key = FakeGblOps::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY;
         let mut ops = FakeGblOps::new(&[][..]);
         ops.avf_is_supported = true;
@@ -539,7 +758,7 @@ pub(crate) mod test {
 
     #[test]
     fn test_write_empty_reference_dt() {
-        let digest = TestVerifyData::<[u8; 0]>(None);
+        let digest = TestVerifyData::default();
         let mut ops = FakeGblOps::new(&[][..]);
         ops.avf_is_supported = false;
 
@@ -551,5 +770,23 @@ pub(crate) mod test {
         let refdt = Fdt::new(&refdt_buf[..ref_dt_size]).unwrap();
         refdt.get_property(REF_DT_AVF_PATH, VENDOR_HASH_PROP).unwrap_err();
         refdt.get_property(REF_DT_AVF_PATH, SK_PUB_KEY_PROP).unwrap_err();
+    }
+
+    #[test]
+    fn test_dice_inputs() {
+        let verify_data = TestVerifyData::new(Some(&[][..]), Some(1));
+        for (unlocked, is_recovery, exp_mode) in [
+            (false, false, DiceMode::kDiceModeNormal),
+            (true, false, DiceMode::kDiceModeDebug),
+            (false, true, DiceMode::kDiceModeMaintenance),
+        ] {
+            let (authority, code, hidden, mode, rollback_idx) =
+                prepare_dice_inputs(&verify_data, unlocked, is_recovery).unwrap();
+            assert_eq!(authority, sha512(&[5, 4, 3, 2, 1]));
+            assert_eq!(hidden, [0u8; HIDDEN_SIZE]);
+            assert_eq!(code, sha512(&[1, 2, 3, 4, 5]));
+            assert_eq!(mode, exp_mode);
+            assert_eq!(rollback_idx, Some(1));
+        }
     }
 }
