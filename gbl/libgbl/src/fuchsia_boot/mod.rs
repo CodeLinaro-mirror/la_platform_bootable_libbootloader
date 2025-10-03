@@ -15,7 +15,8 @@
 //! This file provides APIs for loading, verifying and booting Fuchsia/Zircon.
 
 use crate::{
-    constants::ImageType, gbl_println, image_buffer::ImageBuffer, GblOps, Result as GblResult,
+    constants::ImageType, gbl_println, image_buffer::ImageBuffer, ops::OneShotBootMode, GblOps,
+    Result as GblResult,
 };
 pub use abr::{get_and_clear_one_shot_bootloader, get_boot_slot, Ops as AbrOps, SlotIndex};
 use bytes::buf::UninitSlice;
@@ -242,18 +243,21 @@ pub fn zircon_check_enter_fastboot<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) -> boo
         _ => {}
     };
 
-    match ops.should_stop_in_fastboot() {
-        Ok(true) => {
-            gbl_println!(ops, "Platform instructs GBL to enter fastboot mode");
-            return true;
-        }
-        Err(e) => {
-            gbl_println!(ops, "Warning: error while checking platform fastboot trigger ({:?})", e);
-            gbl_println!(ops, "Ignoring error and considered not triggered");
-        }
-        _ => {}
-    };
-    false
+    let one_shot_boot_mode = ops
+        .get_one_shot_boot_mode()
+        .inspect_err(|e| {
+            gbl_println!(ops, "Failed to check hardware triggered boot mode override: {e}");
+            gbl_println!(ops, "Ignoring error and assuming not triggered");
+        })
+        .unwrap_or(None);
+    gbl_println!(ops, "Hardware triggered boot mode override: {one_shot_boot_mode:?}");
+
+    if matches!(one_shot_boot_mode, Some(OneShotBootMode::Bootloader)) {
+        gbl_println!(ops, "Hardware trigger instructs GBL to enter fastboot mode");
+        true
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -738,18 +742,12 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_check_enter_fastboot_stop_in_fastboot() {
+    fn test_check_enter_fastboot_via_get_one_shot_boot_mode() {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
-
-        ops.stop_in_fastboot = Ok(false).into();
         assert!(!zircon_check_enter_fastboot(&mut ops));
-
-        ops.stop_in_fastboot = Ok(true).into();
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
         assert!(zircon_check_enter_fastboot(&mut ops));
-
-        ops.stop_in_fastboot = Err(Error::NotImplemented).into();
-        assert!(!zircon_check_enter_fastboot(&mut ops));
     }
 
     #[test]
@@ -767,9 +765,9 @@ pub(crate) mod test {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
         set_one_shot_bootloader(&mut GblAbrOps(&mut ops), true).unwrap();
-        ops.stop_in_fastboot = Ok(true).into();
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
         assert!(zircon_check_enter_fastboot(&mut ops));
-        ops.stop_in_fastboot = Ok(false).into();
+        ops.one_shot_boot_mode = None;
         // A/B/R metadata should be prioritized in the previous check and thus one-shot-booloader
         // flag should be cleared.
         assert!(!zircon_check_enter_fastboot(&mut ops));

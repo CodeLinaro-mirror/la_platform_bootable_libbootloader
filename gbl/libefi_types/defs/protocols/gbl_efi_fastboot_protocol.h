@@ -51,7 +51,7 @@ typedef EfiStatus (*FastbootMessageSender)(void* context,
                                            const char* msg, size_t msg_len);
 
 static const uint64_t GBL_EFI_FASTBOOT_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 2);
+    GBL_PROTOCOL_REVISION(0, 3);
 
 EFI_ENUM(GblEfiFastbootEraseAction, uint32_t,
          // Treats the partition as a physical on disk partition and erases it.
@@ -90,7 +90,6 @@ typedef struct GblEfiFastbootProtocol {
   EfiStatus (*vendor_erase)(struct GblEfiFastbootProtocol* self,
                             const uint8_t* part_name, size_t part_name_len,
                             GblEfiFastbootEraseAction* action);
-  bool (*should_stop_in_fastboot)(struct GblEfiFastbootProtocol* self);
   EfiStatus (*command_exec)(struct GblEfiFastbootProtocol* self,
                             size_t num_args, const char* const* args,
                             size_t download_data_used_len,

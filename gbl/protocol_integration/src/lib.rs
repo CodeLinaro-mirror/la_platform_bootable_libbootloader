@@ -335,6 +335,11 @@ fn test_gbl_boot_target(entry: &EfiEntry) -> Result<()> {
         res = Err(e);
     }
 
+    if let Err(e) = protocol.get_one_shot_boot_mode() {
+        efi_println!(entry, "Could not get one-shot boot mode");
+        res = Err(e);
+    }
+
     if let Err(e) = field_check!(protocol, set_active_slot) {
         res = Err(e);
     }
@@ -385,7 +390,6 @@ fn test_gbl_fastboot(entry: &EfiEntry) -> Result<()> {
         set_lock,
         get_lock,
         vendor_erase,
-        should_stop_in_fastboot,
         command_exec,
         start_local_session,
         update_local_session,

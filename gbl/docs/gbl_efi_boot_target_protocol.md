@@ -42,11 +42,12 @@ See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisio
 
 ```c
 typedef struct GBL_EFI_BOOT_TARGET_PROTOCOL {
-  UINT64                                Revision;
-  GBL_EFI_BOOT_TARGET_LOAD_BOOT_DATA    LoadBootData;
-  GBL_EFI_BOOT_TARGET_GET_SLOT_INFO     GetSlotInfo;
-  GBL_EFI_BOOT_TARGET_GET_CURRENT_SLOT  GetCurrentSlot;
-  GBL_EFI_BOOT_TARGET_SET_ACTIVE_SLOT   SetActiveSlot;
+  UINT64                                      Revision;
+  GBL_EFI_BOOT_TARGET_LOAD_BOOT_DATA          LoadBootData;
+  GBL_EFI_BOOT_TARGET_GET_SLOT_INFO           GetSlotInfo;
+  GBL_EFI_BOOT_TARGET_GET_CURRENT_SLOT        GetCurrentSlot;
+  GBL_EFI_BOOT_TARGET_SET_ACTIVE_SLOT         SetActiveSlot;
+  GBL_EFI_BOOT_TARGET_GET_ONE_SHOT_BOOT_MODE  GetOneShotBootMode;
 } GBL_EFI_BOOT_TARGET_PROTOCOL;
 ```
 
@@ -78,6 +79,11 @@ See [`GBL_EFI_BOOT_TARGET_PROTOCOL.GetCurrentSlot()`](#gbl_efi_boot_target_proto
 
 Marks the specified slot as the active boot target.
 See [`GBL_EFI_BOOT_TARGET_PROTOCOL.SetActiveSlot()`](#gbl_efi_boot_target_protocol_setactiveslot).
+
+**GetOneShotBootMode**
+
+Returns the hardware triggered one-shot boot mode.
+See [`GBL_EFI_BOOT_TARGET_PROTOCOL.GetOneShotBootMode()`](#gbl_efi_boot_target_protocol_getoneshotbootmode).
 
 ## GBL_EFI_BOOT_TARGET_PROTOCOL.LoadBootData()
 
@@ -307,3 +313,60 @@ explicitly may be prohibited.
 | `EFI_INVALID_PARAMETER` | One of *Self* or *Info* is `NULL` or improperly aligned, or the value of *Idx* was invalid.                   |
 | `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                  |
 | `EFI_ACCESS_DENIED`     | Device policy prohibited the boot slot target change.                                                         |
+
+## GBL_EFI_BOOT_TARGET_PROTOCOL.GetOneShotBootMode()
+
+### Summary
+
+Gets the hardware triggered one-shot boot mode.
+
+### Prototype
+
+```c
+typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_GET_ONE_SHOT_BOOT_MODE)(
+    IN GBL_EFI_BOOT_TARGET_PROTOCOL *Self,
+    OUT UINT32                      *Mode
+);
+```
+
+### Related Definitions
+
+```c
+typedef enum _GBL_EFI_ONE_SHOT_BOOT_MODE {
+  GBL_EFI_ONE_SHOT_BOOT_MODE_NONE = 0,
+  GBL_EFI_ONE_SHOT_BOOT_MODE_BOOLOADER,
+  GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY,
+} GBL_EFI_ONE_SHOT_BOOT_MODE;
+```
+
+### Parameters
+
+*Self*
+
+A pointer to the [`GBL_EFI_BOOT_TARGET_PROTOCOL`](#protocol-interface-structure)
+instance.
+
+*Mode*
+
+On exit contains the overridding boot mode.
+See the definition of `GBL_EFI_ONE_SHOT_BOOT_MODE` for the possible value.
+
+### Description
+
+Devices often define custom mechanisms for determining whether to enter
+bootloader or recovery mode on boot. For example, press and hold the
+"volume down" button while booting the device.
+
+This method checks whether a hardware key combo is triggered, and returns the
+triggered one-shot boot mode.
+
+Note: This method should **only** return boot mode caused by hardware button
+press. It must not check the boot mode provided by metadata stored on persistent
+storage.
+
+### Status Codes Returned
+
+| Return Code             | Semantics                                                                                                     |
+|:------------------------|:--------------------------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`           | The call completed successfully.                                                                              |
+| `EFI_INVALID_PARAMETER` | One of *Self* or *Mode* is `NULL` or improperly aligned.                                                      |

@@ -31,7 +31,7 @@ requires cooperation with vendor firmware, OEM commands,
 ### Revision Number
 
 ```c
-#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
+#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 3)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -50,7 +50,6 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   GBL_EFI_FASTBOOT_SET_LOCK                     SetLock;
   GBL_EFI_FASTBOOT_GET_LOCK                     GetLock;
   GBL_EFI_FASTBOOT_VENDOR_ERASE                 VendorErase;
-  GBL_EFI_FASTBOOT_SHOULD_STOP_IN_FASTBOOT      ShouldStopInFastboot;
   GBL_EFI_FASTBOOT_COMMAND_EXEC                 CommandExec;
   GBL_EFI_FASTBOOT_START_LOCAL_SESSION          StartLocalSession;
   GBL_EFI_FASTBOOT_UPDATE_LOCAL_SESSION         UpdateLocalSession;
@@ -103,11 +102,6 @@ See [`GBL_EFI_FASTBOOT_PROTOCOL.GetLock()`](#gbl_efi_fastboot_protocolGetLock).
 Performs vendor specific erase for a partition during handling of
 `fastboot erase <partition>`
 See [`GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`](#gbl_efi_fastboot_protocolvendorerase).
-
-**ShouldStopInFastboot**
-
-Checks whether boot should stop in fastboot mode. See
-[`GBL_EFI_FASTBOOT_PROTOCOL.ShouldStopInFastboot()`](#gbl_efi_fastboot_protocolshouldstopinfastboot)
 
 **CommandExec**
 
@@ -519,45 +513,6 @@ typedef enum  {
 | `EFI_SUCCESS`           | The partition permision information was successfully queried. |
 | `EFI_INVALID_PARAMETER` | *PartName* or *Action* is `NULL`. |
 | `EFI_DEVICE_ERROR` | An internal device error occurred. |
-
-## `GBL_EFI_FASTBOOT_PROTOCOL.ShouldStopInFastboot()`
-
-### Summary
-
-Checks custom inputs to determine whether the device should stop in fastboot on boot.
-
-### Prototype
-
-```c
-typedef
-BOOL
-(EFIAPI * GBL_EFI_FASTBOOT_SHOULD_STOP_IN_FASTBOOT)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-);
-```
-
-### Parameters
-
-*Self*
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
-
-### Description
-
-Devices often define custom mechanisms for determining whether to enter fastboot mode
-on boot. A specific button press combination is common,
-e.g. pressing 'volume down' for three seconds while booting.
-
-`ShouldStopInFastboot()` returns whether the device should stop in fastboot mode
-due to device input.
-
-**Note:** `ShouldStopInFastboot()` should ONLY return `true` if the device specific
-button press is active. In particular, if the device supports
-[`GBL_EFI_AB_SLOT_PROTOCOL`](./gbl_efi_ab_slot_protocol.md),
-`ShouldStopInFastboot()` should NOT check the information provided by
-`GBL_EFI_AB_SLOT_PROTOCOL.GetBootReason()` or the underlying persistent boot reason.
-
-Any errors should cause a return value of `false`.
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.CommandExec()`
 

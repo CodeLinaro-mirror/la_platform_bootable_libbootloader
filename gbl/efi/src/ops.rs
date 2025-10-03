@@ -14,18 +14,14 @@
 
 //! Implements [Gbl::Ops] for the EFI environment.
 
-use crate::{
-    efi,
-    efi_blocks::EfiGblDisk,
-    utils::{get_efi_fdt, wait_key_stroke},
-};
+use crate::{efi, efi_blocks::EfiGblDisk, utils::get_efi_fdt};
 use alloc::alloc::{alloc, handle_alloc_error, Layout};
 #[cfg(feature = "fuchsia")]
 use alloc::vec::Vec;
 use arrayvec::ArrayVec;
 use core::{
     ffi::CStr, fmt::Write, iter::repeat_with, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut,
-    ptr::null, slice::from_raw_parts_mut, time::Duration,
+    ptr::null, slice::from_raw_parts_mut,
 };
 use efi::{
     efi_print, efi_println,
@@ -44,7 +40,7 @@ use efi::{
     EfiEntry,
 };
 use efi_types::{
-    EfiInputKey, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbLoadedPartition,
+    GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbLoadedPartition,
     GblEfiAvbPartition, GblEfiAvbProperty, GblEfiAvbVerificationResult, GblEfiDeviceTreeMetadata,
     GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL,
@@ -52,7 +48,8 @@ use efi_types::{
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
     GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION, GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP,
     GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL, GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO,
-    GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, PARTITION_NAME_LEN_U16,
+    GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, GBL_EFI_ONE_SHOT_BOOT_MODE_BOOTLOADER,
+    GBL_EFI_ONE_SHOT_BOOT_MODE_NONE, GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY, PARTITION_NAME_LEN_U16,
 };
 use fastboot::CommandExecType;
 use fdt::Fdt;
@@ -73,8 +70,8 @@ use libgbl::{
     gbl_println,
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
-        ImageBuffer, InfoSender, LockState, LockType, OkaySender, Partition, PartitionBuffer, Slot,
-        SlotsMetadata, SHA256_DIGEST_SIZE,
+        ImageBuffer, InfoSender, LockState, LockType, OkaySender, OneShotBootMode, Partition,
+        PartitionBuffer, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -342,35 +339,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     /// UEFI console uses \r\n newline.
     fn console_newline(&self) -> &'static str {
         "\r\n"
-    }
-
-    fn should_stop_in_fastboot(&mut self) -> Result<bool> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()
-            .map(|v| v.should_stop_in_fastboot())
-        {
-            // If protocol is not implemented or unsupported, provides a built-in mechanism of
-            // stopping in fastboot by pressing f key from the console.
-            Err(Error::NotFound) | Err(Error::Unsupported) => {
-                efi_println!(self.efi_entry, "Press 'f' to enter fastboot");
-                let pred = |key: EfiInputKey| key.unicode_char == b'f' as _;
-                let res = wait_key_stroke(self.efi_entry, pred, Duration::from_secs(2))
-                    .inspect_err(|e| efi_println!(self.efi_entry, "Failed to wait for key: {e}"));
-                res.is_ok_and(|v| v).then(|| efi_println!(self.efi_entry, "'f' pressed"));
-                res
-            }
-            Err(e) => {
-                efi_println!(
-                    self.efi_entry,
-                    "Error when checking should_stop_in_fastboot: {e}, Continues."
-                );
-                Ok(false)
-            }
-            v => return v,
-        }
     }
 
     /// Reboots the system into the last set boot mode.
@@ -1018,6 +986,39 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
     fn set_active_slot(&mut self, slot: u8) -> Result<()> {
         self.open_boot_target_protocol()?.set_active_slot(slot)
+    }
+
+    fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>> {
+        match self.open_boot_target_protocol().and_then(|p| p.get_one_shot_boot_mode()) {
+            Ok(GBL_EFI_ONE_SHOT_BOOT_MODE_NONE) => Ok(None),
+            Ok(GBL_EFI_ONE_SHOT_BOOT_MODE_BOOTLOADER) => Ok(Some(OneShotBootMode::Bootloader)),
+            Ok(GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY) => Ok(Some(OneShotBootMode::Recovery)),
+            Ok(v) => {
+                efi_println!(self.efi_entry, "Unexpected GBL_EFI_ONE_SHOT_BOOT_MODE value: {v:?}");
+                Err(Error::InvalidInput)
+            }
+            // If protocol method is not implemented or unsupported, provides a built-in mechanism
+            // of stopping in fastboot by pressing f key from the console.
+            #[cfg(feature = "gbl_dev")]
+            Err(Error::NotFound | Error::Unsupported) => {
+                use crate::utils::wait_key_stroke;
+                use core::time::Duration;
+                efi_println!(self.efi_entry, "Press 'f' to enter fastboot");
+                let pred = |key: efi_types::EfiInputKey| key.unicode_char == b'f' as _;
+                match wait_key_stroke(self.efi_entry, pred, Duration::from_secs(2)) {
+                    Ok(true) => {
+                        efi_println!(self.efi_entry, "'f' pressed");
+                        Ok(Some(OneShotBootMode::Bootloader))
+                    }
+                    Ok(false) => Ok(None),
+                    Err(e) => {
+                        efi_println!(self.efi_entry, "wait_key_stroke failed: {e}");
+                        Err(e)
+                    }
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn slots_metadata(&mut self) -> Result<SlotsMetadata> {

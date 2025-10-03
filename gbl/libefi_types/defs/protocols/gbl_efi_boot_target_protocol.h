@@ -44,6 +44,10 @@ EFI_ENUM(GblEfiUnbootableReason, uint8_t,
          GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED,
          GBL_EFI_UNBOOTABLE_REASON_VERIFICATION_FAILURE);
 
+EFI_ENUM(GblEfiOneShotBootMode, uint32_t, GBL_EFI_ONE_SHOT_BOOT_MODE_NONE,
+         GBL_EFI_ONE_SHOT_BOOT_MODE_BOOTLOADER,
+         GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY);
+
 typedef struct {
   // One UTF-8 encoded single character
   uint32_t suffix;
@@ -80,6 +84,9 @@ typedef struct GblEfiBootTargetProtocol {
   // Slot metadata manipulation methods
   EfiStatus (*set_active_slot)(struct GblEfiBootTargetProtocol* self,
                                /* in */ uint8_t index);
+  // Boot mode methods
+  EfiStatus (*get_one_shot_boot_mode)(struct GblEfiBootTargetProtocol* self,
+                                      /* out */ GblEfiOneShotBootMode* mode);
 } GblEfiBootTargetProtocol;
 
 #endif  // __GBL_EFI_BOOT_TARGET_PROTOCOL_H__

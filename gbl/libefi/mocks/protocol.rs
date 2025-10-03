@@ -396,11 +396,6 @@ pub mod gbl_efi_fastboot {
             unimplemented!()
         }
 
-        /// Protocol<'_, GblFastbootProtocol>::should_stop_in_fastboot.
-        pub fn should_stop_in_fastboot(&self) -> bool {
-            unimplemented!()
-        }
-
         /// Protocol<'_, GblFastbootProtocol>::set_lock()`
         pub fn set_lock(&self, _: bool, _: bool) -> Result<()> {
             unimplemented!()
@@ -436,7 +431,7 @@ pub mod gbl_efi_fastboot {
 pub mod gbl_efi_boot_target {
     use super::*;
     use efi::protocol::gbl_efi_boot_target::GblSlot;
-    use efi_types::GblEfiSlotMetadataBlock;
+    use efi_types::{GblEfiOneShotBootMode, GblEfiSlotMetadataBlock};
 
     mock! {
         /// Mock of [GblBootTargetProtocol]
@@ -452,6 +447,9 @@ pub mod gbl_efi_boot_target {
 
             /// Mock of GblBootTargetProtocol::set_active_slot.
             pub fn set_active_slot(&self, idx: u8) -> Result<()>;
+
+            /// Mock of GblBootTargetProtocol::get_one_shot_boot_mode.
+            pub fn get_one_shot_boot_mode(&self) -> Result<GblEfiOneShotBootMode>;
         }
     }
 

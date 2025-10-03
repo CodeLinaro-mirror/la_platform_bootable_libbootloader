@@ -59,17 +59,13 @@ pub enum Os {
     Fuchsia,
 }
 
-/// Contains reboot mode for instructing GBL to boot to different modes.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum RebootMode {
-    /// Normal boot.
-    Normal,
-    /// Recovery mode.
-    Recovery,
-    /// Userspace Fastboot mode.
-    FastbootD,
-    /// Bootloader Fastboot mode.
+/// One-shot boot mode override options.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum OneShotBootMode {
+    /// Bootloader.
     Bootloader,
+    /// Recovery.
+    Recovery,
 }
 
 /// Represents a partition buffer for return by `GblOps::get_partition_buffer()`.
@@ -106,10 +102,6 @@ pub trait GblOps<'a, 'd> {
     fn console_newline(&self) -> &'static str {
         "\n"
     }
-
-    /// This method can be used to implement platform specific mechanism for deciding whether boot
-    /// should abort and enter Fastboot mode.
-    fn should_stop_in_fastboot(&mut self) -> Result<bool, Error>;
 
     /// Reboots the system into the last set boot mode.
     ///
@@ -532,6 +524,9 @@ pub trait GblOps<'a, 'd> {
     /// * `slot`: The numeric index of the slot.
     fn set_active_slot(&mut self, _slot: u8) -> Result<(), Error>;
 
+    /// Gets the one-shot boot mode.
+    fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>, Error>;
+
     /// Returns the base stack pointer if available
     fn get_base_sp(&mut self) -> Option<usize>;
 
@@ -631,10 +626,6 @@ impl<'a, T> RambootOps<'a, T> {
 impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
     fn console_out(&mut self) -> Option<&mut dyn Write> {
         self.ops.console_out()
-    }
-
-    fn should_stop_in_fastboot(&mut self) -> Result<bool, Error> {
-        self.ops.should_stop_in_fastboot()
     }
 
     fn reboot(&mut self) {
@@ -862,6 +853,11 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!()
     }
 
+    fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>, Error> {
+        // Ramboot is not suppose to call this interface.
+        unreachable!()
+    }
+
     fn get_base_sp(&mut self) -> Option<usize> {
         self.ops.get_base_sp()
     }
@@ -1029,9 +1025,6 @@ pub(crate) mod test {
         /// fake storage, so that we can more accurately test our storage implementation.
         pub avb_ops: AvbTestOps<'static>,
 
-        /// Value returned by `should_stop_in_fastboot`.
-        pub stop_in_fastboot: Option<Result<bool, Error>>,
-
         /// For returned by `fn get_zbi_bootloader_files_buffer()`
         #[cfg(feature = "fuchsia")]
         pub zbi_bootloader_files_buffer: Vec<u8>,
@@ -1079,6 +1072,9 @@ pub(crate) mod test {
 
         /// slot index last set active by `set_active()`.
         pub last_set_active_slot: Option<u8>,
+
+        /// For returned by `get_one_shot_boot_mode`.
+        pub one_shot_boot_mode: Option<OneShotBootMode>,
 
         /// For returned by `slot_metadata`
         pub slot_metadata_result: Option<Result<SlotsMetadata, Error>>,
@@ -1241,10 +1237,6 @@ pub(crate) mod test {
     impl<'a, 'd> GblOps<'a, 'd> for FakeGblOps<'a, 'd> {
         fn console_out(&mut self) -> Option<&mut dyn Write> {
             Some(self)
-        }
-
-        fn should_stop_in_fastboot(&mut self) -> Result<bool, Error> {
-            self.stop_in_fastboot.unwrap_or(Ok(false))
         }
 
         fn reboot(&mut self) {
@@ -1644,6 +1636,10 @@ pub(crate) mod test {
         fn set_active_slot(&mut self, slot: u8) -> Result<(), Error> {
             self.last_set_active_slot = Some(slot);
             Ok(())
+        }
+
+        fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>, Error> {
+            Ok(self.one_shot_boot_mode)
         }
 
         fn get_base_sp(&mut self) -> Option<usize> {

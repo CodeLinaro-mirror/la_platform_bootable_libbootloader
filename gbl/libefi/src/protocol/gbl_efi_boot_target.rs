@@ -21,9 +21,9 @@ use crate::{
     versioned_protocol,
 };
 use efi_types::{
-    EfiGuid, GblEfiBootTargetProtocol, GblEfiSlotInfo, GblEfiSlotMetadataBlock,
-    GblEfiUnbootableReason, GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION,
-    GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
+    EfiGuid, GblEfiBootTargetProtocol, GblEfiOneShotBootMode, GblEfiSlotInfo,
+    GblEfiSlotMetadataBlock, GblEfiUnbootableReason, GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION,
+    GBL_EFI_ONE_SHOT_BOOT_MODE_NONE, GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
     GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE as SYSTEM_UPDATE,
     GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED as USER_REQUESTED,
     GBL_EFI_UNBOOTABLE_REASON_VERIFICATION_FAILURE as VERIFICATION_FAILURE,
@@ -121,5 +121,18 @@ impl<'a> Protocol<'a, GblBootTargetProtocol> {
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         unsafe { efi_call!(self.interface().set_active_slot, self.interface_ptr(), idx) }
+    }
+
+    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.get_one_shot_boot_mode()`
+    pub fn get_one_shot_boot_mode(&self) -> Result<GblEfiOneShotBootMode> {
+        let mut mode = GBL_EFI_ONE_SHOT_BOOT_MODE_NONE;
+        // SAFETY:
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
+        // `mode` is an output parameter and will not be retained. It outlives the call.
+        unsafe {
+            efi_call!(self.interface().get_one_shot_boot_mode, self.interface_ptr(), &mut mode)?
+        };
+        Ok(mode)
     }
 }

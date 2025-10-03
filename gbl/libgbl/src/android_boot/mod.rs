@@ -26,7 +26,7 @@ use crate::{
     gbl_avb::{ArrayMaxParts, ArrayMaxRequestedParts},
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message},
-    ops::PartitionBuffer,
+    ops::{OneShotBootMode, PartitionBuffer},
     slots::Slot,
     GblOps, Result,
 };
@@ -594,17 +594,21 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     }
     gbl_println!(ops, "Boot mode from BCB: {boot_mode:?}");
 
+    let one_shot_boot_mode = ops
+        .get_one_shot_boot_mode()
+        .inspect_err(|e| {
+            gbl_println!(ops, "Failed to check hardware triggered boot mode override: {e}");
+            gbl_println!(ops, "Ignoring error and assuming not triggered");
+        })
+        .unwrap_or(None);
+    gbl_println!(ops, "Hardware triggered boot mode override: {one_shot_boot_mode:?}");
+
     // Checks and enters fastboot.
     let result = &mut Default::default();
-    if matches!(boot_mode, AndroidBootMode::BootloaderBootOnce)
-        || ops
-            .should_stop_in_fastboot()
-            .inspect_err(|e| {
-                gbl_println!(ops, "Warning: error while checking fastboot trigger ({:?})", e);
-                gbl_println!(ops, "Ignoring error and continuing with normal boot");
-            })
-            .unwrap_or(false)
-    {
+    if matches!(
+        (one_shot_boot_mode, boot_mode),
+        (Some(OneShotBootMode::Bootloader), _) | (None, AndroidBootMode::BootloaderBootOnce)
+    ) {
         gbl_println!(ops, "Entering fastboot mode...");
         // TODO(b/430068343): Support designated buffers for `fastboot boot`.
         run_fastboot(GblFastbootEntry { ops, boot_buffer: boot_buffer.as_borrowed(), result });
@@ -627,7 +631,8 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
         return Err(Error::UnexpectedReturn.into());
     }
 
-    let is_recovery = boot_mode.should_enter_recovery();
+    let is_recovery = boot_mode.should_enter_recovery()
+        || matches!(one_shot_boot_mode, Some(OneShotBootMode::Recovery));
     android_load_verify_fixup(ops, slot, is_recovery, boot_buffer)
 }
 
@@ -1988,6 +1993,9 @@ androidboot.veritymode.managed=yes
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
+
+        let bcb = read_bootloader_message(&mut ops).unwrap();
+        assert_eq!(bcb.boot_mode(), Ok(AndroidBootMode::Recovery));
         checks_loaded_v2_slot_a_recovery_mode(ramdisk, kernel)
     }
 
@@ -2110,14 +2118,69 @@ androidboot.veritymode.managed=yes
     }
 
     #[test]
-    fn test_android_main_enter_fastboot_via_should_stop_in_fastboot() {
+    fn test_android_main_enter_fastboot_via_get_one_shot_boot_mode() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
         storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
-        ops.stop_in_fastboot = Some(Ok(true));
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
+
         test_fastboot_is_triggered(&mut ops);
+    }
+
+    #[test]
+    fn test_android_main_enter_fastboot_via_get_one_shot_boot_mode_recovery_via_bcb() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.write_to_partition_sync("misc", 0, &mut b"boot-recovery".to_vec()).unwrap();
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
+        let listener: SharedTestListener = Default::default();
+        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+
+        let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer.as_mut().into(), |fb| {
+            listener.add_usb_input(b"getvar:max-fetch-size");
+            listener.add_usb_input(b"continue");
+            fb.run_n::<2>(
+                &mut vec![0u8; 256 * 1024],
+                Some(&mut TestLocalSession::default()),
+                Some(&listener),
+                Some(&listener),
+            )
+        })
+        .unwrap();
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[b"OKAY0x7fffffff", b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+        let bcb = read_bootloader_message(&mut ops).unwrap();
+        assert_eq!(bcb.boot_mode(), Ok(AndroidBootMode::Recovery));
+        checks_loaded_v2_slot_a_recovery_mode(ramdisk, kernel)
+    }
+
+    #[test]
+    fn test_android_main_enter_recovery_mode_via_get_one_shot_boot_mode() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.write_to_partition_sync("misc", 0, &mut b"bootonce-bootloader".to_vec()).unwrap();
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Recovery);
+        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+
+        let (ramdisk, _, kernel, _) =
+            android_main(&mut ops, load_buffer.as_mut().into(), |_| {}).unwrap();
+
+        let bcb = read_bootloader_message(&mut ops).unwrap();
+        assert_eq!(bcb.boot_mode(), Ok(AndroidBootMode::Normal));
+        checks_loaded_v2_slot_a_recovery_mode(ramdisk, kernel)
     }
 
     #[test]
@@ -2126,7 +2189,7 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
-        ops.stop_in_fastboot = Some(Ok(true));
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
         ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
@@ -2168,7 +2231,7 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
-        ops.stop_in_fastboot = Some(Ok(true));
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
         ops.current_slot = Some(Ok(slot('a')));
 
         let general = &mut AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
@@ -2223,7 +2286,7 @@ androidboot.veritymode.managed=yes
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
-        ops.stop_in_fastboot = Some(Ok(true));
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
         ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
@@ -2277,7 +2340,7 @@ androidboot.veritymode.managed=yes
         let mut ops = default_test_gbl_ops(&storage);
         ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
         ops.sync_partition_buffer_handler = Some(&mut sync_partition_buffer_handler);
-        ops.stop_in_fastboot = Some(Ok(true));
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
         ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
@@ -2338,7 +2401,7 @@ androidboot.veritymode.managed=yes
         let mut ops = default_test_gbl_ops(&storage);
         ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
         ops.sync_partition_buffer_handler = Some(&mut sync_partition_buffer_handler);
-        ops.stop_in_fastboot = Some(Ok(true));
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
         ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
