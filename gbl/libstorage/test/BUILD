@@ -23,8 +23,10 @@ filegroup(
     srcs = [
         ":boot_a.bin",
         ":boot_b.bin",
+        ":gpt_256_test_1.bin",
         ":gpt_test_1.bin",
         ":gpt_test_2.bin",
+        ":gpt_too_big.bin",
         ":vendor_boot_a.bin",
         ":vendor_boot_b.bin",
     ],

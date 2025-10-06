@@ -15,6 +15,7 @@
 # limitations under the License.
 
 set -e
+set -x
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
@@ -33,6 +34,13 @@ python3 ${SCRIPT_DIR}/../../tools/gen_gpt_disk.py ${SCRIPT_DIR}/gpt_test_1.bin 6
     --partition "${BOOT_A_NAME},${BOOT_A_SIZE_KB}k,${BOOT_A_PART_FILE}" \
     --partition "${BOOT_B_NAME},${BOOT_B_SIZE_KB}k,${BOOT_B_PART_FILE}"
 
+python3 ${SCRIPT_DIR}/../../tools/gen_gpt_disk.py ${SCRIPT_DIR}/gpt_256_test_1.bin 128K \
+    --entries_count 256 \
+    --partition "${BOOT_A_NAME},${BOOT_A_SIZE_KB}k,${BOOT_A_PART_FILE}" \
+    --partition "${BOOT_B_NAME},${BOOT_B_SIZE_KB}k,${BOOT_B_PART_FILE}"
+
+python3 ${SCRIPT_DIR}/../../tools/gen_gpt_disk.py ${SCRIPT_DIR}/gpt_too_big.bin 128K \
+    --entries_count 260
 
 VENDOR_BOOT_A_NAME="vendor_boot_a"
 VENDOR_BOOT_A_SIZE_KB="4"
