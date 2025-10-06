@@ -80,12 +80,13 @@ cat << EOF > $(OUTS)
 #ifndef __BINDGEN_UNIFIED_HEADER_H__
 #define __BINDGEN_UNIFIED_HEADER_H__
 
-#include "libavb/avb_crypto_ops_impl.h"
-#include "libavb/libavb.h"
 #include "libavb_cert/libavb_cert.h"
+#include "libavb/avb_cmdline.h"
+#include "libavb/avb_crypto_ops_impl.h"
 #include "libavb/avb_rsa.h"
 #include "libavb/avb_sha.h"
 #include "libavb/avb_sysdeps.h"
+#include "libavb/libavb.h"
 
 #endif // __BINDGEN_UNIFIED_HEADER_H__
 EOF

@@ -16,7 +16,7 @@
 
 // TODO(b/380392958) Cleanup other used of the constants. Move them here as well.
 
-use crate::partition::RawName;
+use crate::gbl_avb::RequestedPartition;
 use arrayvec::ArrayString;
 use core::{
     ffi::CStr,
@@ -135,7 +135,7 @@ impl Display for ImageType {
 }
 
 /// Represents a standard boot partition.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Partition {
     /// boot
     Boot,
@@ -152,8 +152,9 @@ pub enum Partition {
     /// pVM firmware data
     Pvmfw,
     /// Platform specific partition.
-    // Use our custom `RawName` instead of ArrayString for its better CStr support.
-    PlatformSpecific(RawName),
+    // Use `RequestedPartition` to be compatible with FW-specific partitions and libavb partition
+    // name size limitations.
+    PlatformSpecific(RequestedPartition),
 }
 
 impl Partition {
@@ -172,7 +173,17 @@ impl Partition {
             Self::Dtb => c"dtb",
             Self::Dtbo => c"dtbo",
             Self::Pvmfw => c"pvmfw",
-            Self::PlatformSpecific(v) => v.to_cstr(),
+            Self::PlatformSpecific(v) => v.name_cstr(),
+        }
+    }
+
+    /// Returns flag indecating partition is optional to be loaded/verified.
+    pub fn optional(&self) -> bool {
+        match self {
+            Self::PlatformSpecific(v) => v.optional,
+            // Treat all standard partitions as optional. The loading logic will decide which ones
+            // are actually required.
+            _ => true,
         }
     }
 }

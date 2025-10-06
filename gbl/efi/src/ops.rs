@@ -24,8 +24,8 @@ use alloc::alloc::{alloc, handle_alloc_error, Layout};
 use alloc::vec::Vec;
 use arrayvec::ArrayVec;
 use core::{
-    ffi::CStr, fmt::Write, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut, ptr::null,
-    slice::from_raw_parts_mut, time::Duration,
+    ffi::CStr, fmt::Write, iter::repeat_with, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut,
+    ptr::null, slice::from_raw_parts_mut, time::Duration,
 };
 use efi::{
     efi_print, efi_println,
@@ -44,9 +44,9 @@ use efi::{
     EfiEntry,
 };
 use efi_types::{
-    EfiInputKey, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbProperty,
-    GblEfiAvbVerificationResult, GblEfiBootMode, GblEfiDeviceTreeMetadata,
-    GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    EfiInputKey, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbLoadedPartition,
+    GblEfiAvbPartition, GblEfiAvbProperty, GblEfiAvbVerificationResult, GblEfiBootMode,
+    GblEfiDeviceTreeMetadata, GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
@@ -65,12 +65,16 @@ use libgbl::{
         DeviceTreeComponent, DeviceTreeComponentSource, DeviceTreeComponentType,
         DeviceTreeComponentsRegistry, MAXIMUM_DEVICE_TREE_COMPONENTS,
     },
-    gbl_avb::state::{BootStateColor, KeyValidationStatus, VerificationStatus},
+    gbl_avb::{
+        state::{BootStateColor, KeyValidationStatus, VerificationStatus},
+        ArrayMaxParts, ArrayMaxRequestedParts, AvbDeviceStatus, AvbPartition, AvbProperty,
+        RequestedPartition,
+    },
     gbl_println,
     ops::{
-        AvbDeviceStatus, AvbIoError, AvbIoResult, AvbProperty, CertPermanentAttributes, FailSender,
-        FastbootEraseAction, ImageBuffer, InfoSender, LockState, LockType, OkaySender, Partition,
-        PartitionBuffer, RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
+        AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
+        ImageBuffer, InfoSender, LockState, LockType, OkaySender, Partition, PartitionBuffer,
+        RebootMode, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -397,6 +401,61 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         unimplemented!();
     }
 
+    fn avb_read_partitions_to_verify(
+        &mut self,
+    ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
+        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
+        {
+            Ok(protocol) => {
+                let mut partitions_ffi = ArrayMaxRequestedParts::new();
+                let mut partitions = ArrayMaxRequestedParts::new();
+                partitions_ffi.extend(
+                    repeat_with(GblEfiAvbPartition::default).take(partitions_ffi.capacity()),
+                );
+                partitions
+                    .extend(repeat_with(RequestedPartition::default).take(partitions.capacity()));
+
+                partitions.iter_mut().zip(partitions_ffi.iter_mut()).for_each(
+                    |(partition, partition_ffi)| {
+                        let buffer = partition.name_buffer_mut();
+                        // -1 to ensure we can null-terminate after the FW call.
+                        partition_ffi.base_name_len = buffer.len() - 1;
+                        partition_ffi.base_name = buffer.as_mut_ptr();
+                        partition_ffi.flags = 0;
+                    },
+                );
+
+                // SAFETY:
+                // * Each `partitions_ffi[N].base_name` points to a non-null, writable buffer of at
+                //   least `partitions_ffi[N].base_name_len` bytes guaranteed to be available during
+                //   `read_partitions_to_verify`.
+                let num_provided =
+                    unsafe { protocol.read_partitions_to_verify(&mut partitions_ffi) }
+                        .map_err(efi_error_to_avb_error)?;
+
+                partitions_ffi.iter().take(num_provided).zip(partitions.iter_mut()).for_each(
+                    |(partition_ffi, partition)| {
+                        let provided_len = partition_ffi.base_name_len;
+                        let buffer = partition.name_buffer_mut();
+
+                        // FW-provided partition name is beyond the partition name buffer, which
+                        // should never happen. This likely indicates memory corruption.
+                        assert!(provided_len < buffer.len(), "Provided partition name is too long");
+
+                        // Add the null terminator.
+                        buffer[provided_len] = 0;
+                        partition.optional =
+                            (partition_ffi.flags & efi_types::GBL_EFI_AVB_PARTITION_OPTIONAL) != 0;
+                    },
+                );
+                partitions.truncate(num_provided);
+
+                Ok(partitions)
+            }
+            Err(_) => Err(AvbIoError::NotImplemented),
+        }
+    }
+
     fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
         match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
         {
@@ -502,6 +561,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         status: VerificationStatus,
         digest: Option<&CStr>,
         properties: Option<impl Iterator<Item = AvbProperty<'c>>>,
+        partitions: Option<impl Iterator<Item = AvbPartition<'c>>>,
     ) -> AvbIoResult<()> {
         // TODO(b/337846185): Cover `avb_handle_verification_result` with unittests.
 
@@ -550,13 +610,18 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
                     }
                 }
 
+                let partitions_efi: ArrayMaxParts<GblEfiAvbLoadedPartition> = partitions
+                    .map_or_else(ArrayMaxParts::new, |p| p.map(gbl_to_efi_avb_partition).collect());
+
                 protocol
                     .handle_verification_result(&GblEfiAvbVerificationResult {
                         color_flags: gbl_verification_status_to_efi_color_flags(status),
                         digest: digest.map_or(null(), |p| p.as_ptr() as _),
-                        // TODO(b/337846185): Provide loaded partitions to the FW.
-                        num_partitions: 0,
-                        partitions: null(),
+                        num_partitions: partitions_efi.len(),
+                        partitions: match partitions_efi.is_empty() {
+                            false => partitions_efi.as_ptr(),
+                            true => null(),
+                        },
                         num_properties: avb_properties_efi.0.len(),
                         properties: match avb_properties_efi.0.is_empty() {
                             false => avb_properties_efi.0.as_ptr(),
@@ -621,7 +686,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
     fn get_partition_buffer(
         &self,
-        part: Partition,
+        part: &Partition,
     ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'b>> {
         Ok(match gbl_get_partition_buffer(self.efi_entry, part.name())? {
             v if v.is_preloaded() => PartitionBuffer::Preloaded(v),
@@ -978,6 +1043,15 @@ fn gbl_to_efi_boot_mode(mode: RebootMode) -> GblEfiBootMode {
     }
 }
 
+/// Converts a [AvbPartition] to [GblEfiAvbLoadedPartition]
+fn gbl_to_efi_avb_partition(partition: AvbPartition) -> GblEfiAvbLoadedPartition {
+    GblEfiAvbLoadedPartition {
+        base_name: partition.name.as_ptr() as _,
+        data_size: partition.data.len(),
+        data: partition.data.as_ptr(),
+    }
+}
+
 /// Converts a [AvbProperty] to [GblEfiAvbProperty]
 fn gbl_to_efi_avb_property(property: AvbProperty) -> GblEfiAvbProperty {
     GblEfiAvbProperty {
@@ -1052,7 +1126,9 @@ mod test {
         protocol::{gbl_efi_ab_slot::GblABSlotProtocol, gbl_efi_avb::GblAvbProtocol},
         MockEfi,
     };
-    use efi_types::{defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GblEfiBootMode};
+    use efi_types::{
+        defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GblEfiBootMode, GBL_EFI_AVB_PARTITION_OPTIONAL,
+    };
     use mockall::predicate::eq;
     use std::{cell::RefCell, rc::Rc, slice};
 
@@ -1077,6 +1153,86 @@ mod test {
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert!(write!(&mut ops, "{} {}", "foo", "bar").is_ok());
+    }
+
+    /// Helper for testing `avb_read_partitions_to_verify`.
+    fn test_avb_read_partitions_to_verify(
+        call_status: ProtocolCallStatus<&[(&str, bool)]>,
+    ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
+        let mut mock_efi = MockEfi::new();
+
+        let mut avb = GblAvbProtocol::default();
+        avb.read_partitions_to_verify_result = match call_status {
+            ProtocolCallStatus::Success(data) => Some(Ok(data
+                .iter()
+                .cloned()
+                .map(|(name, optional)| {
+                    let flags = match optional {
+                        true => GBL_EFI_AVB_PARTITION_OPTIONAL,
+                        false => 0,
+                    };
+                    (name.to_owned(), flags)
+                })
+                .collect())),
+            ProtocolCallStatus::ProtocolCallError(err) => Some(Err(err)),
+            _ => None,
+        };
+
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(
+            match call_status {
+                ProtocolCallStatus::ProtocolLookupError(err) => Err(err),
+                _ => Ok(avb),
+            },
+        );
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+        ops.avb_read_partitions_to_verify()
+    }
+
+    #[test]
+    fn ops_avb_read_partitions_to_verify_provided() {
+        let partitions_to_verify =
+            &[("boot", false), ("vendor_boot", true), (&"a".repeat(28), false)];
+
+        let result =
+            test_avb_read_partitions_to_verify(ProtocolCallStatus::Success(partitions_to_verify))
+                .unwrap();
+
+        assert_eq!(
+            result
+                .iter()
+                .map(|p| (p.name_cstr().to_str().unwrap(), p.optional))
+                .collect::<Vec<_>>(),
+            partitions_to_verify
+        );
+    }
+
+    #[test]
+    fn ops_avb_read_partitions_to_verify_provided_empty() {
+        let result = test_avb_read_partitions_to_verify(ProtocolCallStatus::Success(&[])).unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn ops_avb_read_partitions_to_verify_protocol_error() {
+        assert_eq!(
+            test_avb_read_partitions_to_verify(ProtocolCallStatus::ProtocolCallError(
+                Error::InvalidInput
+            )),
+            Err(AvbIoError::InvalidValueSize)
+        );
+    }
+
+    #[test]
+    fn ops_avb_read_partitions_to_verify_protocol_not_found() {
+        assert_eq!(
+            test_avb_read_partitions_to_verify(ProtocolCallStatus::ProtocolLookupError(
+                Error::NotFound
+            )),
+            Err(AvbIoError::NotImplemented)
+        );
     }
 
     /// Helper for testing `avb_read_device_status`.

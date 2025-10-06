@@ -18,16 +18,18 @@
 //! to either one using the same path.
 
 use crate::{DeviceHandle, MOCK_EFI};
+use alloc::vec::Vec;
 use core::{ffi::CStr, fmt::Write};
 pub use efi::protocol::{gbl_efi_image_loading::EfiImageBufferInfo, Revision, Versioned};
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
-    GblEfiAvbPartition, GblEfiAvbVerificationResult, GblEfiFastbootCommandExecResult,
-    GblEfiFastbootEraseAction, GblEfiFastbootMessageType, GblEfiImageInfo,
-    GblEfiVerifiedDeviceTree,
+    GblEfiAvbPartition, GblEfiAvbPartitionFlags, GblEfiAvbVerificationResult,
+    GblEfiFastbootCommandExecResult, GblEfiFastbootEraseAction, GblEfiFastbootMessageType,
+    GblEfiImageInfo, GblEfiVerifiedDeviceTree,
 };
-use liberror::Result;
+use liberror::{Error, Result};
 use mockall::mock;
+use std::{ptr, string::String};
 
 /// Mock `Protocol` type.
 pub type Protocol<'a, T> = T;
@@ -250,7 +252,8 @@ pub mod gbl_efi_avb {
     #[derive(Clone, Default)]
     pub struct GblAvbProtocol {
         /// Expected return value from `read_partitions_to_verify`.
-        pub read_partitions_to_verify_result: Option<Result<usize>>,
+        pub read_partitions_to_verify_result:
+            Option<Result<Vec<(String, GblEfiAvbPartitionFlags)>>>,
         /// Expected return value from `read_device_status`
         pub read_device_status_result: Option<Result<GblEfiAvbDeviceStatus>>,
         /// Expected return value from `validate_vbmeta_public_key`.
@@ -269,11 +272,43 @@ pub mod gbl_efi_avb {
 
     impl GblAvbProtocol {
         /// Wraps `GBL_EFI_AVB_PROTOCOL.read_partitions_to_verify()`.
-        pub fn read_partitions_to_verify(
+        ///
+        /// SAFETY:
+        /// * Each `partitions[N].base_name` must point to non-null writable buffer of at least
+        /// `partitions[N].base_name_len` bytes.
+        pub unsafe fn read_partitions_to_verify(
             &self,
-            _partitions: &mut [GblEfiAvbPartition],
+            partitions: &mut [GblEfiAvbPartition],
         ) -> Result<usize> {
-            self.read_partitions_to_verify_result.unwrap()
+            match &self.read_partitions_to_verify_result {
+                Some(Ok(names)) => {
+                    names.iter().zip(partitions.iter_mut()).for_each(
+                        |((name, flags), partition)| {
+                            let name_bytes = name.as_bytes();
+                            let name_len = name_bytes.len();
+
+                            assert!(name_len <= partition.base_name_len);
+                            // SAFETY:
+                            // * `name_bytes.as_ptr()` points to `name_len` valid bytes.
+                            // * `partition.base_name` points to unique writable buffer of at least
+                            //   `name_len` bytes (per contract, assert, and `iter_mut()`).
+                            unsafe {
+                                ptr::copy_nonoverlapping(
+                                    name_bytes.as_ptr(),
+                                    partition.base_name,
+                                    name_len,
+                                );
+                            }
+                            partition.base_name_len = name_len;
+                            partition.flags = *flags;
+                        },
+                    );
+
+                    Ok(names.len())
+                }
+                Some(Err(e)) => Err(*e),
+                None => Err(Error::NotImplemented),
+            }
         }
 
         /// Wraps `GBL_EFI_AVB_PROTOCOL.read_device_status()`.

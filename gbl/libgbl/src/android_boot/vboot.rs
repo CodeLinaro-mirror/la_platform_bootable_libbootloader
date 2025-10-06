@@ -15,59 +15,54 @@
 //! Contains APIs for performaing android verified boot.
 
 use crate::{
+    constants::Partition,
     gbl_avb::{
         ops::{GblAvbOps, PreloadBufferState, AVB_DIGEST_KEY},
         state::{BootStateColor, KeyValidationStatus, VerificationStatus},
+        ArrayMaxParts, MAX_PARTITIONS_TO_VERIFY,
     },
     gbl_println,
     ops::{PartitionBuffer, Slot},
     slots::Bootability,
-    GblOps, Result,
+    GblOps, IntegrationError, Result,
 };
 use abr::SlotIndex;
-use arrayvec::ArrayVec;
 use avb::{
-    slot_verify, HashtreeErrorMode, SlotVerifyData, SlotVerifyError, SlotVerifyFlags,
+    slot_verify, HashtreeErrorMode, IoError, SlotVerifyData, SlotVerifyError, SlotVerifyFlags,
     SlotVerifyResult,
 };
 use bootparams::entry::CommandlineParser;
 use core::{ffi::CStr, ops::DerefMut};
 use liberror::Error;
 
-// Maximum number of partition allowed for verification.
-//
-// The value is randomly chosen for now. We can update it as we see more usecases.
-pub(crate) const MAX_NUM_PARTITION: usize = 16;
-
-// Type alias for ArrayVec of size `MAX_NUM_PARTITION`:
-pub(crate) type ArrayMaxParts<T> = ArrayVec<T, MAX_NUM_PARTITION>;
-
 /// A container holding partitions for libavb verification
 pub struct PartitionsToVerify<'a> {
-    partitions: ArrayMaxParts<&'a CStr>,
+    partitions: ArrayMaxParts<&'a Partition>,
     preloaded: ArrayMaxParts<(&'a str, PreloadBufferState<'a>)>,
 }
 
 impl<'a> PartitionsToVerify<'a> {
     /// Appends a partition to verify
-    pub fn try_push(&mut self, name: &'a CStr) -> Result<()> {
-        self.partitions.try_push(name).or(Err(Error::TooManyPartitions(MAX_NUM_PARTITION)))?;
+    pub fn try_push(&mut self, partition: &'a Partition) -> Result<()> {
+        self.partitions
+            .try_push(partition)
+            .or(Err(Error::TooManyPartitions(MAX_PARTITIONS_TO_VERIFY)))?;
         Ok(())
     }
 
     /// Appends a preloaded partition buffer.
     pub fn try_push_preloaded(
         &mut self,
-        name: &'a CStr,
+        partition: &'a Partition,
         buf: &'a mut PartitionBuffer<impl DerefMut<Target = [u8]>>,
     ) -> Result<()> {
         let buf = match buf {
             PartitionBuffer::Preloaded(ref v) => PreloadBufferState::Loaded(&v[..]),
             PartitionBuffer::Designated(ref mut v) => PreloadBufferState::ToLoad(&mut v[..]),
         };
-        let err = Err(Error::TooManyPartitions(MAX_NUM_PARTITION));
-        self.partitions.try_push(name).or(err)?;
-        self.preloaded.try_push((name.to_str().unwrap(), buf)).or(err)?;
+        let err = Err(Error::TooManyPartitions(MAX_PARTITIONS_TO_VERIFY));
+        self.partitions.try_push(partition).or(err)?;
+        self.preloaded.try_push((partition.name_cstr().to_str().unwrap(), buf)).or(err)?;
         Ok(())
     }
 }
@@ -128,32 +123,62 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
         flags |= SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION;
     }
 
+    let mut names: ArrayMaxParts<&'c CStr> = partitions.iter().map(|p| p.name_cstr()).collect();
     let verify_result = slot_verify(
         &mut avb_ops,
-        partitions,
+        &names,
         Some(slot_index.into()),
         flags,
         HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_MANAGED_RESTART_AND_EIO,
     );
+    let mut missed_partitions_error: Option<IntegrationError> = None;
     let (color, verify_data) = match verify_result {
         Ok(ref verify_data) => {
-            let color = match status.is_unlocked {
-                false
-                    if avb_ops.key_validation_status()? == KeyValidationStatus::ValidCustomKey =>
-                {
-                    BootStateColor::Yellow
+            // Reuse `names` to store missed required partitions.
+            names.clear();
+            // Look for not verified required partitions.
+            names.extend(
+                partitions.iter().filter(|p| !p.optional()).map(|p| p.name_cstr()).filter(|name| {
+                    !verify_data.partition_data().iter().any(|v| v.partition_name() == *name)
+                }),
+            );
+            let have_missed_partitions = !names.is_empty();
+            if have_missed_partitions {
+                gbl_println!(
+                    avb_ops.gbl_ops,
+                    "AVB verification passed, but required partitions missed: {:?}.",
+                    names
+                );
+            }
+
+            let (color, data) = match (status.is_unlocked, have_missed_partitions) {
+                // Unlocked.
+                (true, _) => (BootStateColor::Orange, Some(verify_data)),
+                // Have missed partitions.
+                (false, true) => {
+                    missed_partitions_error =
+                        Some(IntegrationError::AvbIoError(IoError::NoSuchPartition));
+                    (BootStateColor::Red, None)
                 }
-                false => BootStateColor::Green,
-                true => BootStateColor::Orange,
+                // Locked, all partitions presented.
+                (false, false) => {
+                    let color = match avb_ops.key_validation_status()? {
+                        KeyValidationStatus::ValidCustomKey => BootStateColor::Yellow,
+                        _ => BootStateColor::Green,
+                    };
+                    (color, Some(verify_data))
+                }
             };
 
             gbl_println!(
                 avb_ops.gbl_ops,
-                "AVB verification passed. Device is unlocked: {}. Color: {color}",
+                "AVB verification passed. Device is unlocked: {}. Missed partitions: {}. \
+                Color: {color}.",
                 status.is_unlocked,
+                names.len(),
             );
 
-            (color, Some(verify_data))
+            (color, data)
         }
         // Non-fatal error, can continue booting since verify_data is available.
         Err(ref e) if e.verification_data().is_some() && status.is_unlocked => {
@@ -214,7 +239,11 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
     }
 
     match color {
-        BootStateColor::Red => Err(verify_result.unwrap_err().without_verify_data().into()),
+        // Check both libavb and missed partitions errors for RED color.
+        BootStateColor::Red => Err(verify_result
+            .err()
+            .map(|e| e.without_verify_data().into())
+            .unwrap_or_else(|| missed_partitions_error.unwrap())),
         _ => {
             Ok((into_verify_data(verify_result).unwrap(), verification_status, status.is_unlocked))
         }
@@ -225,15 +254,22 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
 mod test {
     use super::*;
     use crate::{
-        android_boot::tests::{read_test_data, TEST_ROLLBACK_INDEX, TEST_ROLLBACK_INDEX_LOCATION},
+        android_boot::tests::{
+            read_test_data, EXPECTED_AVB_PROPS, TEST_ROLLBACK_INDEX, TEST_ROLLBACK_INDEX_LOCATION,
+        },
+        gbl_avb::{AvbDeviceStatus, AvbPartition, AvbProperty, RequestedPartition},
         ops::{
             test::{slot, slot_successful, FakeGblOps, FakeGblOpsStorage},
-            AvbDeviceStatus, AvbProperty, Slot,
+            Slot,
         },
         IntegrationError::AvbIoError,
     };
     use avb::{IoError, SlotVerifyError};
-    use std::{collections::HashMap, ffi::CStr};
+    use std::{
+        collections::{HashMap, HashSet},
+        ffi::CStr,
+        string::String,
+    };
 
     /// FW rollback index before verification.
     const TEST_ROLLBACK_INDEX_BEFORE_VERIFY: u64 = TEST_ROLLBACK_INDEX - 1;
@@ -248,6 +284,7 @@ mod test {
         slot: Slot,
         expected_updated_fw_rollback: Option<u64>,
         expected_reported_status: Option<VerificationStatus>,
+        expected_reported_partitions: Option<&[&str]>,
     ) -> Result<()> {
         let mut storage = FakeGblOpsStorage::default();
         for (part, file) in partitions {
@@ -260,8 +297,29 @@ mod test {
         };
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, fw_rollback_result)]);
         let mut out_status = None;
-        let mut handler = |status, _: Option<&CStr>, _: Option<Vec<AvbProperty<'_>>>| {
+        let mut out_properties: Vec<(String, String)> = Vec::new();
+        let mut out_partitions: HashSet<String> = HashSet::new();
+        let mut handler = |status,
+                           _: Option<&CStr>,
+                           properties: Option<Vec<AvbProperty<'_>>>,
+                           partitions: Option<Vec<AvbPartition<'_>>>| {
             out_status = Some(status);
+            if let Some(properties) = properties {
+                out_properties.extend(properties.iter().map(|p| {
+                    (
+                        p.key.to_str().unwrap().to_owned(),
+                        CStr::from_bytes_with_nul(p.value_with_nul)
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .to_owned(),
+                    )
+                }))
+            }
+            if let Some(partitions) = partitions {
+                out_partitions
+                    .extend(partitions.iter().map(|p| p.name.to_str().unwrap().to_owned()));
+            }
             Ok(())
         };
         ops.avb_handle_verification_result = Some(&mut handler);
@@ -274,6 +332,16 @@ mod test {
         }
         assert_eq!(out_status, expected_reported_status);
         let (_, status, unlocked) = res?;
+        if let Some(expected_reported_partitions) = expected_reported_partitions {
+            assert_eq!(
+                out_partitions,
+                expected_reported_partitions.into_iter().map(|p| p.to_string()).collect()
+            );
+        }
+        assert_eq!(
+            out_properties.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect::<Vec<_>>(),
+            EXPECTED_AVB_PROPS
+        );
         assert_eq!(out_status.unwrap(), status);
         if let Ok(device_status) = device_status {
             assert_eq!(unlocked, device_status.is_unlocked);
@@ -281,16 +349,26 @@ mod test {
         Ok(())
     }
 
+    fn custom_partition(name: &CStr, optional: bool) -> Partition {
+        let mut requested = RequestedPartition::default();
+        requested.name_buffer_mut()[..name.to_bytes().len()].copy_from_slice(name.to_bytes());
+        requested.optional = optional;
+        Partition::PlatformSpecific(requested.clone())
+    }
+
     #[test]
     fn test_avb_verify_slot_success() {
+        let fw = custom_partition(c"fw", false);
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(c"boot").unwrap();
-        partitions_to_verify.try_push(c"init_boot").unwrap();
-        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(&fw).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
             (c"vendor_boot_a", "vendor_boot_v4_a.img"),
+            (c"fw_a", "fw_a.img"),
             (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
         ];
 
@@ -307,6 +385,73 @@ mod test {
                 // Rollback index is expected to be updated.
                 Some(TEST_ROLLBACK_INDEX),
                 Some(VerificationStatus { color: BootStateColor::Green, is_eio: false }),
+                Some(&["boot", "init_boot", "vendor_boot", "fw"])
+            ),
+            Ok(()),
+        );
+    }
+
+    #[test]
+    fn test_avb_verify_slot_success_required_partition_missed() {
+        let not_presented = custom_partition(c"not_presented", false);
+        let mut partitions_to_verify = PartitionsToVerify::default();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(&not_presented).unwrap();
+        let partitions_data = [
+            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "init_boot_a.img"),
+            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+        ];
+        assert_eq!(
+            test_avb_verify_slot(
+                &partitions_data,
+                &mut partitions_to_verify,
+                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
+                KeyValidationStatus::Valid,
+                // FW rollback index result.
+                Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
+                // Slot has been already successfully booted before.
+                slot_successful('a'),
+                // Partition isn't found, slot cannot be booted. Index hasn't been updated.
+                Some(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
+                Some(VerificationStatus { color: BootStateColor::Red, is_eio: false }),
+                None,
+            ),
+            Err(IoError::NoSuchPartition.into()),
+        );
+    }
+
+    #[test]
+    fn test_avb_verify_slot_success_optional_partition_missed() {
+        let not_presented = custom_partition(c"not_presented", true);
+        let mut partitions_to_verify = PartitionsToVerify::default();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(&not_presented).unwrap();
+        let partitions_data = [
+            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "init_boot_a.img"),
+            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+        ];
+        assert_eq!(
+            test_avb_verify_slot(
+                &partitions_data,
+                &mut partitions_to_verify,
+                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
+                KeyValidationStatus::Valid,
+                // FW rollback index result.
+                Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
+                // Slot has been already successfully booted before.
+                slot_successful('a'),
+                // Rollback index is expected to be updated.
+                Some(TEST_ROLLBACK_INDEX),
+                Some(VerificationStatus { color: BootStateColor::Green, is_eio: false }),
+                Some(&["boot", "init_boot", "vendor_boot"])
             ),
             Ok(()),
         );
@@ -315,9 +460,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_success_custom_key() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(c"boot").unwrap();
-        partitions_to_verify.try_push(c"init_boot").unwrap();
-        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -338,6 +483,7 @@ mod test {
                 // Rollback index is expected to be updated.
                 Some(TEST_ROLLBACK_INDEX),
                 Some(VerificationStatus { color: BootStateColor::Yellow, is_eio: false }),
+                None,
             ),
             Ok(()),
         );
@@ -350,13 +496,13 @@ mod test {
         let mut vendor_boot = read_test_data("vendor_boot_v4_a.img");
 
         let mut preloaded = [
-            (c"boot", PartitionBuffer::Preloaded(&mut boot[..])),
-            (c"init_boot", PartitionBuffer::Preloaded(&mut init_boot[..])),
-            (c"vendor_boot", PartitionBuffer::Preloaded(&mut vendor_boot[..])),
+            (&Partition::Boot, PartitionBuffer::Preloaded(&mut boot[..])),
+            (&Partition::InitBoot, PartitionBuffer::Preloaded(&mut init_boot[..])),
+            (&Partition::VendorBoot, PartitionBuffer::Preloaded(&mut vendor_boot[..])),
         ];
         let mut partitions_to_verify = PartitionsToVerify::default();
-        for (n, v) in &mut preloaded {
-            partitions_to_verify.try_push_preloaded(n, v).unwrap();
+        for (p, v) in &mut preloaded {
+            partitions_to_verify.try_push_preloaded(p, v).unwrap();
         }
         let partitions_data = [
             // Required images aren't presented. Have to rely on preloaded.
@@ -374,6 +520,7 @@ mod test {
                 // First boot for slot. Index hasn't been updated.
                 Some(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
                 Some(VerificationStatus { color: BootStateColor::Green, is_eio: false }),
+                None,
             ),
             Ok(()),
         );
@@ -381,14 +528,17 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_success_unlocked() {
+        let fw = custom_partition(c"fw", false);
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(c"boot").unwrap();
-        partitions_to_verify.try_push(c"init_boot").unwrap();
-        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(&fw).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
             (c"vendor_boot_a", "vendor_boot_v4_a.img"),
+            (c"fw_a", "fw_a.img"),
             (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
         ];
         assert_eq!(
@@ -403,6 +553,42 @@ mod test {
                 // Device is unlocked. Index hasn't been updated.
                 Some(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
                 Some(VerificationStatus { color: BootStateColor::Orange, is_eio: false }),
+                Some(&["boot", "init_boot", "vendor_boot", "fw"]),
+            ),
+            Ok(()),
+        );
+    }
+
+    #[test]
+    fn test_avb_verify_slot_success_unlocked_required_partition_missed() {
+        let fw = custom_partition(c"fw", false);
+        let not_presented = custom_partition(c"not_presented", false);
+        let mut partitions_to_verify = PartitionsToVerify::default();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(&fw).unwrap();
+        partitions_to_verify.try_push(&not_presented).unwrap();
+        let partitions_data = [
+            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "init_boot_a.img"),
+            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
+            (c"fw_a", "fw_a.img"),
+            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+        ];
+        assert_eq!(
+            test_avb_verify_slot(
+                &partitions_data,
+                &mut partitions_to_verify,
+                Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
+                KeyValidationStatus::Valid,
+                // FW rollback index result.
+                Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
+                slot_successful('a'),
+                // Device is unlocked. Index hasn't been updated.
+                Some(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
+                Some(VerificationStatus { color: BootStateColor::Orange, is_eio: false }),
+                Some(&["boot", "init_boot", "vendor_boot", "fw"]),
             ),
             Ok(()),
         );
@@ -411,9 +597,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_verification_failed_unlocked() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(c"boot").unwrap();
-        partitions_to_verify.try_push(c"init_boot").unwrap();
-        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
         let partitions_data = [
             // Wrong boot image, expect verification to fail.
             (c"boot_a", "boot_v0_a.img"),
@@ -433,6 +619,7 @@ mod test {
                 // Device is unlocked. Index hasn't been updated.
                 Some(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
                 Some(VerificationStatus { color: BootStateColor::Orange, is_eio: false }),
+                None,
             ),
             // Device is unlocked, so can continue boot.
             Ok(()),
@@ -442,9 +629,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_verification_fatal_failed_unlocked() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(c"boot").unwrap();
-        partitions_to_verify.try_push(c"init_boot").unwrap();
-        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -463,6 +650,7 @@ mod test {
                 // Getting FW rollback index is failed. Index cannot be updated and checked.
                 None,
                 Some(VerificationStatus { color: BootStateColor::Red, is_eio: false }),
+                None,
             ),
             Err(SlotVerifyError::Io.into())
         )
@@ -471,9 +659,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_verification_failed_locked() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(c"boot").unwrap();
-        partitions_to_verify.try_push(c"init_boot").unwrap();
-        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
         let partitions_data = [
             // Wrong boot image, expect verification to fail.
             (c"boot_a", "boot_v0_a.img"),
@@ -494,6 +682,7 @@ mod test {
                 // Verification failed. Index hasn't been updated.
                 Some(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
                 Some(VerificationStatus { color: BootStateColor::Red, is_eio: false }),
+                None,
             ),
             // Cannot continue boot.
             Err(SlotVerifyError::Verification(None).into()),
@@ -503,9 +692,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_success_eio_mode() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(c"boot").unwrap();
-        partitions_to_verify.try_push(c"init_boot").unwrap();
-        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -526,6 +715,7 @@ mod test {
                 Some(TEST_ROLLBACK_INDEX),
                 // Expected verification status.
                 Some(VerificationStatus { color: BootStateColor::Green, is_eio: true }),
+                None,
             ),
             Ok(()),
         );
@@ -549,6 +739,7 @@ mod test {
                 Some(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
                 // Expected verification status.
                 None,
+                None,
             ),
             // Cannot continue boot.
             Err(AvbIoError(IoError::NoSuchValue)),
@@ -559,9 +750,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_avb_not_implemented_dev_gbl() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(c"boot").unwrap();
-        partitions_to_verify.try_push(c"init_boot").unwrap();
-        partitions_to_verify.try_push(c"vendor_boot").unwrap();
+        partitions_to_verify.try_push(&Partition::Boot).unwrap();
+        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
+        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -581,6 +772,7 @@ mod test {
                 // Getting FW rollback index is failed. Index cannot be updated and checked.
                 None,
                 Some(VerificationStatus { color: BootStateColor::Orange, is_eio: false }),
+                None,
             ),
             Ok(()),
         );

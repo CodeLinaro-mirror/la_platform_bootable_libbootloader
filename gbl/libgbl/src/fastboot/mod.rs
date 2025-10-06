@@ -1224,8 +1224,7 @@ pub(crate) mod test {
             checks_loaded_v2_slot_a_normal_mode, checks_loaded_v2_slot_b_normal_mode,
             default_test_gbl_ops, read_test_data,
         },
-        constants::KiB,
-        constants::KERNEL_ALIGNMENT,
+        constants::{KiB, KERNEL_ALIGNMENT},
         ops::{
             test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage, SenderMessage},
             Partition, PartitionBuffer,
@@ -3373,11 +3372,11 @@ pub(crate) mod test {
             (Partition::InitBoot, "init_boot_a.img"),
         ];
         let buffers = HashMap::<Partition, RefCell<Vec<u8>>>::from_iter(
-            preloaded.iter().map(|(p, f)| (*p, read_test_data(f).into())),
+            preloaded.iter().map(|(p, f)| (p.clone(), read_test_data(f).into())),
         );
-        let get_partition_buffer_handler = |n| {
+        let get_partition_buffer_handler = |n: &Partition| {
             Ok(PartitionBuffer::Preloaded(into_refmut_bytes(
-                buffers.get(&n).ok_or(Error::NotFound)?.borrow_mut(),
+                buffers.get(n).ok_or(Error::NotFound)?.borrow_mut(),
             )))
         };
 

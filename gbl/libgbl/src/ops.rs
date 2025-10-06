@@ -19,7 +19,10 @@ use crate::fuchsia_boot::GblAbrOps;
 use crate::{
     constants::ImageType,
     error::Result as GblResult,
-    gbl_avb::state::{KeyValidationStatus, VerificationStatus},
+    gbl_avb::{
+        state::{KeyValidationStatus, VerificationStatus},
+        ArrayMaxRequestedParts, AvbDeviceStatus, AvbPartition, AvbProperty, RequestedPartition,
+    },
     gbl_println,
     partition::{
         check_part_unique, read_unique_partition, read_unique_partition_sync,
@@ -85,25 +88,6 @@ pub enum FastbootEraseAction {
     Noop,
     /// Erase as a physical partition.
     EraseAsPhysicalPartition,
-}
-
-/// Represents AVB (Android Verified Boot) device status information.
-#[derive(Clone, Debug, PartialEq)]
-pub struct AvbDeviceStatus {
-    /// Indicates if the device is currently in an unlocked state.
-    pub is_unlocked: bool,
-    /// Indicates if a dm-verity error has been detected.
-    pub is_dm_verity_error: bool,
-}
-
-/// Represents AVB vbmeta property.
-pub struct AvbProperty<'a> {
-    /// Name of the source partition.
-    pub partition: &'a CStr,
-    /// Property key name.
-    pub key: &'a CStr,
-    /// Property value.
-    pub value_with_nul: &'a [u8],
 }
 
 // https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
@@ -296,6 +280,11 @@ pub trait GblOps<'a, 'd> {
     // by GBL's usage of AVB. The rest of the APIs are either not relevant to or are implemented and
     // managed by GBL APIs.
 
+    /// Reads the partitions GBL will try to load and verify.
+    fn avb_read_partitions_to_verify(
+        &mut self,
+    ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>>;
+
     /// Reads the AVB device status.
     fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus>;
 
@@ -358,6 +347,7 @@ pub trait GblOps<'a, 'd> {
         status: VerificationStatus,
         digest: Option<&CStr>,
         properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
+        partitions: Option<impl Iterator<Item = AvbPartition<'b>>>,
     ) -> AvbIoResult<()>;
 
     /// Check AVF vendor implementations are provided.
@@ -395,8 +385,7 @@ pub trait GblOps<'a, 'd> {
     /// data.
     fn get_partition_buffer(
         &self,
-        img: Partition,
-        //) -> Result<(impl DerefMut<Target = [u8]> + 'a, bool), Error>;
+        img: &Partition,
     ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error>;
 
     /// Notifies the firmware to inspect or update buffer for return by `get_partition_buffer()`.
@@ -732,6 +721,12 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.load_slot_interface(_fnmut, _boot_token)
     }
 
+    fn avb_read_partitions_to_verify(
+        &mut self,
+    ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
+        self.ops.avb_read_partitions_to_verify()
+    }
+
     fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
         self.ops.avb_read_device_status()
     }
@@ -772,7 +767,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 
     fn get_partition_buffer(
         &self,
-        img: Partition,
+        img: &Partition,
     ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
         self.ops.get_partition_buffer(img)
     }
@@ -863,8 +858,9 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         status: VerificationStatus,
         digest: Option<&CStr>,
         properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
+        partitions: Option<impl Iterator<Item = AvbPartition<'b>>>,
     ) -> AvbIoResult<()> {
-        self.ops.avb_handle_verification_result(status, digest, properties)
+        self.ops.avb_handle_verification_result(status, digest, properties, partitions)
     }
 
     fn avb_validate_vbmeta_public_key(
@@ -985,8 +981,8 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 pub(crate) mod test {
     use super::*;
     use crate::{
-        android_boot::BOOTARGS_PROP, device_tree::DeviceTreeComponentType, error::IntegrationError,
-        partition::GblDisk, slots::Bootability,
+        android_boot::BOOTARGS_PROP, constants::Partition, device_tree::DeviceTreeComponentType,
+        error::IntegrationError, partition::GblDisk, slots::Bootability,
     };
     #[cfg(feature = "fuchsia")]
     use abr::{get_and_clear_one_shot_bootloader, get_boot_slot};
@@ -1105,6 +1101,9 @@ pub(crate) mod test {
         /// For return by `Self::expected_os()`
         pub os: Option<Os>,
 
+        /// For return by `Self::avb_read_partitions_to_verify`
+        pub avb_partitions_to_verify: Option<AvbIoResult<Vec<String>>>,
+
         /// For return by `Self::avb_read_device_status`
         pub avb_device_status_error: Option<AvbIoError>,
 
@@ -1126,6 +1125,7 @@ pub(crate) mod test {
                 VerificationStatus,
                 Option<&CStr>,
                 Option<Vec<AvbProperty<'_>>>,
+                Option<Vec<AvbPartition<'_>>>,
             ) -> AvbIoResult<()>,
         >,
 
@@ -1174,7 +1174,7 @@ pub(crate) mod test {
 
         /// Handler for `get_partition_buffer`
         pub get_partition_buffer_handler:
-            Option<&'a dyn Fn(Partition) -> Result<PartitionBuffer<RefMut<'a, [u8]>>, Error>>,
+            Option<&'a dyn Fn(&Partition) -> Result<PartitionBuffer<RefMut<'a, [u8]>>, Error>>,
 
         /// Handler for `sync_partition_buffer`
         pub sync_partition_buffer_handler:
@@ -1358,6 +1358,22 @@ pub(crate) mod test {
             unimplemented!();
         }
 
+        fn avb_read_partitions_to_verify(
+            &mut self,
+        ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
+            let mut requested_partitions = ArrayMaxRequestedParts::new();
+            let names =
+                self.avb_partitions_to_verify.clone().unwrap_or(Err(AvbIoError::NotImplemented))?;
+
+            names.iter().for_each(|n| {
+                let mut requested_partition = RequestedPartition::default();
+                requested_partition.name_buffer_mut()[..n.len()].copy_from_slice(n.as_bytes());
+                requested_partitions.push(requested_partition.clone());
+            });
+
+            Ok(requested_partitions)
+        }
+
         fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
             match self.avb_device_status_error {
                 Some(ref err) => Err(err.clone()),
@@ -1429,9 +1445,15 @@ pub(crate) mod test {
             status: VerificationStatus,
             digest: Option<&CStr>,
             properties: Option<impl Iterator<Item = AvbProperty<'b>>>,
+            partitions: Option<impl Iterator<Item = AvbPartition<'b>>>,
         ) -> AvbIoResult<()> {
             match self.avb_handle_verification_result.as_mut() {
-                Some(f) => (*f)(status, digest, properties.map(|p| p.collect())),
+                Some(f) => (*f)(
+                    status,
+                    digest,
+                    properties.map(|p| p.collect()),
+                    partitions.map(|p| p.collect()),
+                ),
                 _ => Ok(()),
             }
         }
@@ -1469,7 +1491,7 @@ pub(crate) mod test {
 
         fn get_partition_buffer(
             &self,
-            img: Partition,
+            img: &Partition,
         ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
             self.get_partition_buffer_handler.as_ref().ok_or(Error::NotFound)?(img)
         }

@@ -15,8 +15,10 @@
 //! Gbl AVB operations.
 
 use crate::{
-    gbl_avb::state::{KeyValidationStatus, VerificationStatus},
-    ops::{AvbDeviceStatus, AvbProperty},
+    gbl_avb::{
+        state::{KeyValidationStatus, VerificationStatus},
+        AvbDeviceStatus, AvbPartition, AvbProperty,
+    },
     GblOps,
 };
 use abr::SlotIndex;
@@ -127,7 +129,7 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
             None => None,
         };
 
-        // Extracts all the provided properties.
+        // Extracts all provided properties.
         let properties = slot_verify.map(|slot_verify| {
             slot_verify.vbmeta_data().iter().flat_map(|data| {
                 let partition = data.partition_name();
@@ -142,8 +144,15 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
                 })
             })
         });
+        // Extracts all provided partitions.
+        let partitions = slot_verify.map(|slot_verify| {
+            slot_verify
+                .partition_data()
+                .into_iter()
+                .map(|p| AvbPartition { name: p.partition_name(), data: p.data() })
+        });
 
-        self.gbl_ops.avb_handle_verification_result(status, digest_cstr, properties)
+        self.gbl_ops.avb_handle_verification_result(status, digest_cstr, properties, partitions)
     }
 
     /// Helper for updating rollback indexes after verification is done.
