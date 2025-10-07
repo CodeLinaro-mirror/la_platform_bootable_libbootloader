@@ -256,6 +256,6 @@ where
 
     /// "fastboot getvar slot-count"
     fn get_var_slot_count<'s>(&mut self, out: &'s mut [u8]) -> CommandResult<&'s str> {
-        Ok(snprintf!(out, "{}", self.gbl_ops.slot_count()?))
+        Ok(snprintf!(out, "{}", self.gbl_ops.get_slot_count()?))
     }
 }

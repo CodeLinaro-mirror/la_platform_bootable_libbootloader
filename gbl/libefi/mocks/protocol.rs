@@ -431,19 +431,19 @@ pub mod gbl_efi_fastboot {
 pub mod gbl_efi_boot_target {
     use super::*;
     use efi::protocol::gbl_efi_boot_target::GblSlot;
-    use efi_types::{GblEfiOneShotBootMode, GblEfiSlotMetadataBlock};
+    use efi_types::GblEfiOneShotBootMode;
 
     mock! {
         /// Mock of [GblBootTargetProtocol]
         pub GblBootTargetProtocol {
+            /// Mock of GblBootTargetProtocol::get_slot_count.
+            pub fn get_slot_count(&self) -> Result<u8>;
+
             /// Mock of GblBootTargetProtocol::get_slot_info.
-            pub fn get_slot_info(&mut self, idx: u8) -> Result<GblSlot>;
+            pub fn get_slot_info(&self, idx: u8) -> Result<GblSlot>;
 
             /// Mock of GblBootTargetProtocol::get_current_slot.
             pub fn get_current_slot(&self) -> Result<GblSlot>;
-
-            /// Mock of GblBootTargetProtocol::load_boot_data.
-            pub fn load_boot_data(&self) -> Result<GblEfiSlotMetadataBlock>;
 
             /// Mock of GblBootTargetProtocol::set_active_slot.
             pub fn set_active_slot(&self, idx: u8) -> Result<()>;

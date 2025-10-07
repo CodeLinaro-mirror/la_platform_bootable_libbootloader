@@ -31,12 +31,6 @@
 #include "system_table.h"
 #include "types.h"
 
-EFI_ENUM(GblEfiSlotMergeStatus, uint8_t, GBL_EFI_SLOT_MERGE_STATUS_NONE,
-         GBL_EFI_SLOT_MERGE_STATUS_UNKNOWN,
-         GBL_EFI_SLOT_MERGE_STATUS_SNAPSHOTTED,
-         GBL_EFI_SLOT_MERGE_STATUS_MERGING,
-         GBL_EFI_SLOT_MERGE_STATUS_CANCELLED);
-
 EFI_ENUM(GblEfiUnbootableReason, uint8_t,
          GBL_EFI_UNBOOTABLE_REASON_UNKNOWN_REASON,
          GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES,
@@ -60,22 +54,14 @@ typedef struct {
   uint8_t successful;
 } GblEfiSlotInfo;
 
-typedef struct {
-  // Value of 1 if persistent metadata tracks slot unbootable reasons.
-  uint8_t unbootable_metadata;
-  uint8_t max_retries;
-  uint8_t slot_count;
-  GblEfiSlotMergeStatus merge_status;
-} GblEfiSlotMetadataBlock;
-
 static const uint64_t GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 2);
 
 typedef struct GblEfiBootTargetProtocol {
   uint64_t revision;
   // Slot metadata query methods
-  EfiStatus (*load_boot_data)(struct GblEfiBootTargetProtocol* self,
-                              /* out */ GblEfiSlotMetadataBlock* metadata);
+  EfiStatus (*get_slot_count)(struct GblEfiBootTargetProtocol* self,
+                              /* out */ uint8_t* slot_count);
   EfiStatus (*get_slot_info)(struct GblEfiBootTargetProtocol* self,
                              /* in */ uint8_t index,
                              /* out */ GblEfiSlotInfo* info);

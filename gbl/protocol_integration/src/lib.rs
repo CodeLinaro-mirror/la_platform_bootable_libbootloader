@@ -320,10 +320,10 @@ fn test_gbl_boot_target(entry: &EfiEntry) -> Result<()> {
 
     let mut res = Ok(());
 
-    let boot_data = protocol
-        .load_boot_data()
-        .inspect_err(|_| efi_println!(entry, "Could not load slot data"))?;
-    for i in 0..boot_data.slot_count {
+    let slot_count = protocol
+        .get_slot_count()
+        .inspect_err(|_| efi_println!(entry, "Could not get number of boot slots"))?;
+    for i in 0..slot_count {
         if let Err(e) = protocol.get_slot_info(i) {
             efi_println!(entry, "Could not load info for slot: {}", i);
             res = Err(e);

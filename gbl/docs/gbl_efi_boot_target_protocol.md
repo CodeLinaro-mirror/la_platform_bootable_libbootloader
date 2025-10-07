@@ -43,7 +43,7 @@ See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisio
 ```c
 typedef struct GBL_EFI_BOOT_TARGET_PROTOCOL {
   UINT64                                      Revision;
-  GBL_EFI_BOOT_TARGET_LOAD_BOOT_DATA          LoadBootData;
+  GBL_EFI_BOOT_TARGET_GET_SLOT_COUNT          GetSlotCount;
   GBL_EFI_BOOT_TARGET_GET_SLOT_INFO           GetSlotInfo;
   GBL_EFI_BOOT_TARGET_GET_CURRENT_SLOT        GetCurrentSlot;
   GBL_EFI_BOOT_TARGET_SET_ACTIVE_SLOT         SetActiveSlot;
@@ -59,11 +59,10 @@ The revision to which the `GBL_EFI_BOOT_TARGET_PROTOCOL` adheres.
 All future version must be backwards compatible.
 If a future version is not backwards compatible, a different GUID must be used.
 
-**LoadBootData**
+**GetSlotCount**
 
-Loads slot metadata from persistent storage. Other slot operations may call
-this method internally.
-See [`GBL_EFI_BOOT_TARGET_PROTOCOL.LoadBootData()`](#gbl_efi_boot_target_protocol_loadbootdata).
+Returns the number of boot slots.
+See [`GBL_EFI_BOOT_TARGET_PROTOCOL.GetSlotCount()`](#gbl_efi_boot_target_protocol_getslotcount).
 
 **GetSlotInfo**
 
@@ -85,40 +84,19 @@ See [`GBL_EFI_BOOT_TARGET_PROTOCOL.SetActiveSlot()`](#gbl_efi_boot_target_protoc
 Returns the hardware triggered one-shot boot mode.
 See [`GBL_EFI_BOOT_TARGET_PROTOCOL.GetOneShotBootMode()`](#gbl_efi_boot_target_protocol_getoneshotbootmode).
 
-## GBL_EFI_BOOT_TARGET_PROTOCOL.LoadBootData()
+## GBL_EFI_BOOT_TARGET_PROTOCOL.GetSlotCount()
 
 ### Summary
 
-Loads metadata about system boot slots.
+Returns the number of boot slots.
 
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_LOAD_BOOT_DATA)(
+typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_GET_SLOT_COUNT)(
     IN GBL_EFI_BOOT_TARGET_PROTOCOL *Self,
-    OUT GBL_EFI_SLOT_METADATA_BLOCK *Metadata
+    OUT UINT8                       *SlotCount
 );
-```
-
-### Related Definitions
-
-```c
-typedef enum _GBL_EFI_SLOT_MERGE_STATUS {
-  GBL_EFI_SLOT_MERGE_STATUS_NONE = 0,
-  GBL_EFI_SLOT_MERGE_STATUS_UNKNOWN,
-  GBL_EFI_SLOT_MERGE_STATUS_SNAPSHOTTED,
-  GBL_EFI_SLOT_MERGE_STATUS_MERGING,
-  GBL_EFI_SLOT_MERGE_STATUS_CANCELLED,
-} GBL_EFI_SLOT_MERGE_STATUS;
-
-typedef struct _GBL_EFI_SLOT_METADATA_BLOCK {
-  // Value of 1 if persistent metadata tracks slot unbootable reasons.
-  UINT8 UnbootableMetadata;
-  UINT8 MaxRetries;
-  UINT8 SlotCount;
-  // See the definition of GBL_EFI_SLOT_MERGE_STATUS.
-  UINT8 MergeStatus;
-} GBL_EFI_SLOT_METADATA_BLOCK;
 ```
 
 ### Parameters
@@ -128,32 +106,23 @@ typedef struct _GBL_EFI_SLOT_METADATA_BLOCK {
 A pointer to the [`GBL_EFI_BOOT_TARGET_PROTOCOL`](#protocol-interface-structure)
 instance.
 
-*Metadata*
+*SlotCount*
 
-On return contains device-specific immutable information about the AB slot
-implementation. See [`Related Definitions`](#related-definitions) for the layout
-of the metadata structure and its fields.
+On return contains the number of boot slots.
 
 ### Description
 
-In addition to information about individual slots, EFI applications need
-overarching metadata about AB boot slot implementations.
-In particular, implementations might not store persistent metadata detailing why
-specific slots are not bootable (i.e. unbootable metadata). Developers may want
-to know whether a device supports unbootable metadata to ease in debugging.
+Returns the number of boot slots.
 
-Certain operations may be prohibited due to the device's A/B merge status.
-For more information about the *MergeStatus* field and Android Virtual A/B, see
-the documentation
-[here](https://source.android.com/docs/core/ota/virtual_ab/implement).
+This method could be called multiple times during a boot or fastboot session.
+Subsequent calls to this method should always return the same value.
 
 ### Status Codes Returned
 
 | Return Code             | Semantics                                                                                                     |
 |:------------------------|:--------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | Slot metadata was successfully read from persistent storage.                                                  |
-| `EFI_INVALID_PARAMETER` | One of *Self* or *Metadata* is `NULL` or improperly aligned.                                                  |
-| `EFI_DEVICE_ERROR`      | There was an error while performing the read operation.                                                       |
+| `EFI_INVALID_PARAMETER` | One of *Self* or *SlotCount* is `NULL` or improperly aligned.                                                  |
 
 ## GBL_EFI_BOOT_TARGET_PROTOCOL.GetSlotInfo()
 

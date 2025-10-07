@@ -43,7 +43,7 @@ pub use avb::{
 pub use fastboot::{CommandExecType, FailSender, InfoSender, LockState, LockType, OkaySender};
 pub use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
-pub use slots::{Slot, SlotsMetadata};
+pub use slots::Slot;
 #[cfg(feature = "fuchsia")]
 pub use zbi::{ZbiContainer, ZBI_ALIGNMENT_USIZE};
 
@@ -493,19 +493,8 @@ pub trait GblOps<'a, 'd> {
         sender: Sender,
     ) -> Result<CommandExecType, Error>;
 
-    /// Returns a [SlotsMetadata] for the platform.
-    fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error>;
-
-    /// Returns the slot count
-    fn slot_count(&mut self) -> Result<usize, Error> {
-        Ok(match self.slots_metadata() {
-            Ok(v) => v.slot_count,
-            #[cfg(feature = "fuchsia")]
-            Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => 2,
-            Err(Error::Unsupported) => 0,
-            Err(e) => return Err(e.into()),
-        })
-    }
+    /// Returns the slot count.
+    fn get_slot_count(&mut self) -> Result<u8, Error>;
 
     /// Get the slot info for provided index.
     ///
@@ -834,7 +823,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.avf_read_secretkeeper_public_key(buffer)
     }
 
-    fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {
+    fn get_slot_count(&mut self) -> Result<u8, Error> {
         // Ramboot is not suppose to call this interface.
         unreachable!()
     }
@@ -1076,8 +1065,8 @@ pub(crate) mod test {
         /// For returned by `get_one_shot_boot_mode`.
         pub one_shot_boot_mode: Option<OneShotBootMode>,
 
-        /// For returned by `slot_metadata`
-        pub slot_metadata_result: Option<Result<SlotsMetadata, Error>>,
+        /// For returned by `slot_count`.
+        pub slot_count: Option<Result<u8, Error>>,
 
         /// For returned by `get_base_sp`.
         pub base_sp: Option<usize>,
@@ -1621,8 +1610,8 @@ pub(crate) mod test {
             }
         }
 
-        fn slots_metadata(&mut self) -> Result<SlotsMetadata, Error> {
-            self.slot_metadata_result.unwrap_or(Err(Error::Unsupported))
+        fn get_slot_count(&mut self) -> Result<u8, Error> {
+            self.slot_count.unwrap()
         }
 
         fn get_slot_info(&mut self, _: u8) -> Result<Slot, Error> {

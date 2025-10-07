@@ -71,7 +71,7 @@ use libgbl::{
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
         ImageBuffer, InfoSender, LockState, LockType, OkaySender, OneShotBootMode, Partition,
-        PartitionBuffer, Slot, SlotsMetadata, SHA256_DIGEST_SIZE,
+        PartitionBuffer, Slot, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -1021,15 +1021,12 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
-    fn slots_metadata(&mut self) -> Result<SlotsMetadata> {
-        Ok(SlotsMetadata {
-            slot_count: self
-                .open_boot_target_protocol()?
-                .load_boot_data()?
-                .slot_count
-                .try_into()
-                .unwrap(),
-        })
+    fn get_slot_count(&mut self) -> Result<u8> {
+        match self.open_boot_target_protocol().and_then(|p| p.get_slot_count()) {
+            #[cfg(feature = "fuchsia")]
+            Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => Ok(2),
+            v => v,
+        }
     }
 
     fn get_base_sp(&mut self) -> Option<usize> {
@@ -2264,5 +2261,19 @@ mod test {
             // Error catched.
             Err(Error::AccessDenied),
         );
+    }
+
+    #[test]
+    #[cfg(feature = "fuchsia")]
+    fn test_slot_count_fuchsia_abr_default() {
+        let mut mock_efi = MockEfi::new();
+        mock_efi
+            .boot_services
+            .expect_find_first_and_open::<GblBootTargetProtocol>()
+            .returning(|| Err(Error::Unsupported));
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], Some(Os::Fuchsia), 0);
+
+        assert_eq!(ops.get_slot_count(), Ok(2));
     }
 }

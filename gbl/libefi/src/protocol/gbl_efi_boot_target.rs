@@ -22,8 +22,8 @@ use crate::{
 };
 use efi_types::{
     EfiGuid, GblEfiBootTargetProtocol, GblEfiOneShotBootMode, GblEfiSlotInfo,
-    GblEfiSlotMetadataBlock, GblEfiUnbootableReason, GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION,
-    GBL_EFI_ONE_SHOT_BOOT_MODE_NONE, GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
+    GblEfiUnbootableReason, GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION, GBL_EFI_ONE_SHOT_BOOT_MODE_NONE,
+    GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
     GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE as SYSTEM_UPDATE,
     GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED as USER_REQUESTED,
     GBL_EFI_UNBOOTABLE_REASON_VERIFICATION_FAILURE as VERIFICATION_FAILURE,
@@ -82,15 +82,17 @@ impl TryFrom<GblSlot> for libgbl::slots::Slot {
 }
 
 impl<'a> Protocol<'a, GblBootTargetProtocol> {
-    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.load_boot_data()`
-    pub fn load_boot_data(&self) -> Result<GblEfiSlotMetadataBlock> {
-        let mut block: GblEfiSlotMetadataBlock = Default::default();
+    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.get_slot_count()`
+    pub fn get_slot_count(&self) -> Result<u8> {
+        let mut slot_count = 0;
         // SAFETY:
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        // `block` is an output parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface().load_boot_data, self.interface_ptr(), &mut block)? }
-        Ok(block)
+        // `slot_count` is an output parameter and will not be retained. It outlives the call.
+        unsafe {
+            efi_call!(self.interface().get_slot_count, self.interface_ptr(), &mut slot_count)?
+        }
+        Ok(slot_count)
     }
 
     /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.get_slot_info()`
