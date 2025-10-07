@@ -15,6 +15,7 @@
 //! This file implements storage and partition logic for libgbl.
 
 use crate::fastboot::sparse::{is_sparse_image, write_sparse_image, SparseRawWriter};
+use arrayvec::ArrayVec;
 use bytes::buf::UninitSlice;
 use core::cell::{RefCell, RefMut};
 use core::{
@@ -53,6 +54,12 @@ impl RawName {
     /// Gets as CStr.
     pub fn to_cstr(&self) -> &CStr {
         CStr::from_bytes_until_nul(&self.0[..]).unwrap()
+    }
+}
+
+impl AsRef<str> for RawName {
+    fn as_ref(&self) -> &str {
+        self.to_str()
     }
 }
 
@@ -202,7 +209,10 @@ where
     /// If `part` is `None`, an IO for the whole block device is returned.
     pub fn partition_io(&self, part: Option<&str>) -> Result<PartitionIo<'_, B>, Error> {
         let (part_start, part_end) = self.find_partition(part)?.absolute_range()?;
-        Ok(PartitionIo { disk: Disk::transpose_ref_mut(self.get_disk()?), part_start, part_end })
+        Ok(PartitionIo {
+            disks: [Disk::transpose_ref_mut(self.get_disk()?)].into(),
+            parts: [(0, part_start, part_end)].into(),
+        })
     }
 
     /// Finds a partition.
@@ -318,39 +328,37 @@ where
     }
 }
 
-/// `PartitionIo` provides read/write APIs to a partition.
-pub struct PartitionIo<'a, B: BlockIo> {
-    disk: Disk<RefMut<'a, B>, RefMut<'a, [u8]>>,
-    part_start: u64,
-    part_end: u64,
+/// An alias to `MultiPartitionIo` with `N = 1`.
+pub type PartitionIo<'a, B> = MultiPartitionIo<'a, B, 1>;
+
+/// `MultiPartitionIo` provides read/write APIs to one or more partitions.
+pub struct MultiPartitionIo<'a, B: BlockIo, const N: usize> {
+    disks: ArrayVec<Disk<RefMut<'a, B>, RefMut<'a, [u8]>>, N>,
+    // (Index in `disks`, partition start, partition end)
+    parts: ArrayVec<(usize, u64, u64), N>,
 }
 
-impl<'a, B: BlockIo> PartitionIo<'a, B> {
-    /// Returns the size of the partition.
-    pub fn size(&self) -> u64 {
-        // Corrects by construction. Should not fail.
-        self.part_end.checked_sub(self.part_start).unwrap()
-    }
-
-    /// Gets the block device.
-    pub fn dev(&mut self) -> &mut Disk<RefMut<'a, B>, RefMut<'a, [u8]>> {
-        &mut self.disk
-    }
-
-    /// Checks the read/write parameters and returns the absolute offset in the block.
-    fn check_rw_range(&self, off: u64, size: impl Into<SafeNum>) -> Result<u64, Error> {
-        let ab_range_end = SafeNum::from(self.part_start) + off + size.into();
-        // Checks overflow by computing the difference between range end and partition end and
-        // making sure it succeeds.
-        (SafeNum::from(self.part_end) - ab_range_end)
-            .try_into()
-            .and_then(|_: u64| (SafeNum::from(self.part_start) + off).try_into())
-            .map_err(|_| Error::OutOfRange)
-    }
-
-    /// Writes to the partition.
-    pub async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
-        self.disk.write(self.check_rw_range(off, data.len())?, data).await
+impl<'a, B: BlockIo, const N: usize> MultiPartitionIo<'a, B, N> {
+    /// Checks the read/write parameters and returns the absolute offsets for read/write in each
+    /// partition.
+    fn check_rw_range(
+        &self,
+        off: u64,
+        size: impl Into<SafeNum>,
+    ) -> Result<ArrayVec<u64, N>, Error> {
+        let size = size.into();
+        let mut res = ArrayVec::default();
+        for (_, part_start, part_end) in &self.parts {
+            let ab_range_end = SafeNum::from(*part_start) + off + size;
+            // Checks overflow by computing the difference between range end and partition end and
+            // making sure it succeeds.
+            let abs_off = (SafeNum::from(*part_end) - ab_range_end)
+                .try_into()
+                .and_then(|_: u64| (SafeNum::from(*part_start) + off).try_into())
+                .map_err(|_| Error::OutOfRange)?;
+            res.push(abs_off);
+        }
+        Ok(res)
     }
 
     /// Reads from the partition.
@@ -359,45 +367,85 @@ impl<'a, B: BlockIo> PartitionIo<'a, B> {
         off: u64,
         out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
+        if self.parts.len() > 1 {
+            return Err(Error::InvalidState);
+        }
         let out = out.into();
-        self.disk.read(self.check_rw_range(off, out.len())?, out).await
+        let abs_off = self.check_rw_range(off, out.len())?[0];
+        self.disks[self.parts[0].0].read(abs_off, out).await
     }
 
-    /// Writes zeroes to the partition.
-    pub async fn zeroize(&mut self, scratch: &mut [u8]) -> Result<(), Error> {
-        self.disk.fill(self.part_start, self.size(), 0, scratch).await
-    }
-
-    /// Performs io-specific erase.
-    pub async fn erase(&mut self, scratch: &mut [u8]) -> Result<(), Error> {
-        self.disk.erase(self.part_start, self.size(), scratch).await
+    /// Writes to the partition.
+    pub async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
+        let abs_offs = self.check_rw_range(off, data.len())?;
+        for ((disk_idx, _, _), abs_off) in self.parts.iter().zip(abs_offs.iter()) {
+            self.disks[*disk_idx].write(*abs_off, data).await?;
+        }
+        Ok(())
     }
 
     /// Writes sparse image to the partition.
     pub async fn write_sparse(&mut self, off: u64, img: &mut [u8]) -> Result<(), Error> {
         let sz = is_sparse_image(img).map_err(|_| Error::InvalidInput)?.data_size();
-        write_sparse_image(img, &mut (self.check_rw_range(off, sz)?, &mut self.disk)).await?;
+        let abs_offs = self.check_rw_range(off, sz)?;
+        write_sparse_image(img, &mut (&abs_offs, self)).await?;
+        Ok(())
+    }
+
+    /// Writes zeroes to the partition.
+    pub async fn zeroize(&mut self, scratch: &mut [u8]) -> Result<(), Error> {
+        for (disk_idx, start, end) in self.parts.iter() {
+            self.disks[*disk_idx]
+                .fill(*start, end.checked_sub(*start).unwrap(), 0, scratch)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Performs io-specific erase.
+    pub async fn erase(&mut self, scratch: &mut [u8]) -> Result<(), Error> {
+        for (disk_idx, start, end) in self.parts.iter() {
+            self.disks[*disk_idx].erase(*start, end.checked_sub(*start).unwrap(), scratch).await?;
+        }
         Ok(())
     }
 
     /// Turns this IO into one for a subrange in the partition.
-    pub fn sub(self, off: u64, sz: u64) -> Result<Self, Error> {
+    pub fn sub(mut self, off: u64, sz: u64) -> Result<Self, Error> {
         self.check_rw_range(off, sz)?;
-        let mut sub = self;
-        sub.part_start += off;
-        sub.part_end = sub.part_start + sz;
-        Ok(sub)
+        for (_, part_start, part_end) in self.parts.iter_mut() {
+            *part_start += off;
+            *part_end = *part_start + sz;
+        }
+        Ok(self)
     }
 }
 
-// Implements `SparseRawWriter` for tuple (<flash offset>, <block device>)
-impl<B, S> SparseRawWriter for (u64, &mut Disk<B, S>)
-where
-    B: BlockIo,
-    S: DerefMut<Target = [u8]>,
+impl<'a, B: BlockIo> MultiPartitionIo<'a, B, 1> {
+    /// Returns the size of the partition.
+    pub fn size(&self) -> u64 {
+        let (_, start, end) = self.parts[0];
+        // Corrects by construction. Should not fail.
+        end.checked_sub(start).unwrap()
+    }
+
+    /// Gets the block device.
+    pub fn dev(&mut self) -> &mut Disk<RefMut<'a, B>, RefMut<'a, [u8]>> {
+        &mut self.disks[0]
+    }
+}
+
+// Implements `SparseRawWriter` for tuple (array of flash offsets, MultiPartitionIo)
+impl<'a, B: BlockIo, const N: usize> SparseRawWriter
+    for (&ArrayVec<u64, N>, &mut MultiPartitionIo<'a, B, N>)
 {
     async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
-        Ok(self.1.write((SafeNum::from(off) + self.0).try_into()?, data).await?)
+        for ((disk_idx, _, _), abs_off) in self.1.parts.iter().zip(self.0.iter()) {
+            self.1.disks[*disk_idx]
+                .write((SafeNum::from(off) + *abs_off).try_into()?, data)
+                .await?;
+        }
+        Ok(())
     }
 }
 
@@ -420,6 +468,42 @@ pub fn check_part_unique(
         (Some(_), Some(_)) => Err(Error::NotUnique),
         _ => Err(Error::NotFound),
     }
+}
+
+/// Creates a `MultiPartitionIo` given a list of (disk index, start, end) tuples.
+pub fn create_multi_partition_io<'a, B: BlockIo, const N: usize>(
+    devs: &'a [GblDisk<Disk<B, impl DerefMut<Target = [u8]>>, Gpt<impl DerefMut<Target = [u8]>>>],
+    parts_info: ArrayVec<(usize, u64, u64), N>,
+) -> Result<MultiPartitionIo<'a, B, N>, Error> {
+    let mut parts_info = parts_info.clone();
+    parts_info.sort();
+    let mut parts = ArrayVec::new();
+    let mut disks = ArrayVec::new();
+    // Checks duplication.
+    if !parts_info.windows(2).all(|v| v[0] != v[1]) {
+        return Err(Error::InvalidInput);
+    }
+    for (i, (id, start, end)) in parts_info.iter().enumerate() {
+        if i == 0 || parts_info[i - 1].0 != *id {
+            disks.push(Disk::transpose_ref_mut(devs[*id].get_disk()?));
+        }
+        parts.push((disks.len().checked_sub(1).unwrap(), *start, *end));
+    }
+    Ok(MultiPartitionIo { disks, parts })
+}
+
+/// Searches and creates a `MultiPartitionIo` given a list of partitions.
+pub fn find_multi_partition_io<'a, B: BlockIo, const N: usize>(
+    devs: &'a [GblDisk<Disk<B, impl DerefMut<Target = [u8]>>, Gpt<impl DerefMut<Target = [u8]>>>],
+    parts: &[impl AsRef<str>; N],
+) -> Result<MultiPartitionIo<'a, B, N>, Error> {
+    let mut parts_info = ArrayVec::new();
+    for part in parts.iter().map(|v| v.as_ref()) {
+        let (id, p) = check_part_unique(devs, part)?;
+        let (start, end) = p.absolute_range()?;
+        parts_info.push((id, start, end));
+    }
+    create_multi_partition_io(devs, parts_info)
 }
 
 /// Checks that a partition is unique among all block devices and reads from it.
@@ -634,6 +718,30 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn test_multi_part_write() {
+        let mut devs = FakeGblOpsStorage::default();
+        devs.add_gpt_device(include_bytes!("../../libstorage/test/gpt_test_1.bin"));
+        devs.add_gpt_device(include_bytes!("../../libstorage/test/gpt_test_2.bin"));
+        devs.add_raw_device(c"raw_0", [0xaau8; 4 * 1024]);
+        devs.add_raw_device(c"raw_1", [0x55u8; 4 * 1024]);
+
+        let parts = &["boot_a", "vendor_boot_a", "raw_0", "raw_1"];
+        let mut data = [0x11u8; 1024];
+        {
+            let mut io = find_multi_partition_io(&devs, parts).unwrap();
+            block_on(io.write(1024, &mut data)).unwrap();
+        }
+
+        let mut expect = vec![0u8; 1024 + 1024];
+        expect[1024..][..data.len()].clone_from_slice(&data);
+        let sz: u64 = data.len().try_into().unwrap();
+        check_read_partition(&devs, "boot_a", &expect, 1024, sz);
+        check_read_partition(&devs, "vendor_boot_a", &expect, 1024, sz);
+        check_read_partition(&devs, "raw_0", &expect, 1024, sz);
+        check_read_partition(&devs, "raw_1", &expect, 1024, sz);
+    }
+
+    #[test]
     fn test_read_write_partition_overflow() {
         let disk = include_bytes!("../../libstorage/test/gpt_test_1.bin");
         let gpt = gpt_disk(&disk[..]);
@@ -671,6 +779,23 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn test_sub_overflow_multi_part() {
+        let mut devs = FakeGblOpsStorage::default();
+        devs.add_gpt_device(include_bytes!("../../libstorage/test/gpt_test_1.bin"));
+        devs.add_raw_device(c"raw_0", [0xaau8; 4 * 1024]);
+        devs.add_raw_device(c"raw_1", [0x55u8; 3 * 1024]);
+
+        let parts = &["boot_a", "boot_b"];
+        assert!(BOOT_A_SZ <= BOOT_B_SZ);
+        assert!(find_multi_partition_io(&devs, parts).unwrap().sub(0, BOOT_A_SZ + 1).is_err());
+        assert!(find_multi_partition_io(&devs, parts).unwrap().sub(1, BOOT_A_SZ).is_err());
+
+        let parts = &["raw_0", "raw_1"];
+        assert!(find_multi_partition_io(&devs, parts).unwrap().sub(1, 3 * 1024).is_err());
+        assert!(find_multi_partition_io(&devs, parts).unwrap().sub(0, 3 * 1024 + 1).is_err());
+    }
+
+    #[test]
     fn test_write_sparse() {
         let sparse_raw = include_bytes!("../testdata/sparse_test_raw.bin");
         let mut sparse = include_bytes!("../testdata/sparse_test.bin").to_vec();
@@ -687,6 +812,24 @@ pub(crate) mod test {
         let mut expected = vec![0u8; raw.len()];
         expected[1 + 1..][..sparse_raw.len()].clone_from_slice(sparse_raw);
         test_part_read(&blk, Some("raw"), &expected, 1, sparse_raw.len().try_into().unwrap());
+    }
+
+    #[test]
+    fn test_write_sparse_multi_part() {
+        let sparse_raw = include_bytes!("../testdata/sparse_test_raw.bin");
+        let mut sparse = include_bytes!("../testdata/sparse_test.bin").to_vec();
+        let mut devs = FakeGblOpsStorage::default();
+        devs.add_raw_device(c"raw_0", vec![0u8; sparse_raw.len() + 512]);
+        devs.add_raw_device(c"raw_1", vec![0u8; sparse_raw.len() + 1024]);
+        {
+            let mut io = find_multi_partition_io(&devs, &["raw_0", "raw_1"]).unwrap();
+            io = io.sub(1, u64::try_from(sparse_raw.len()).unwrap() + 1).unwrap();
+            block_on(io.write_sparse(1, &mut sparse)).unwrap();
+        }
+        let mut expected = vec![0u8; sparse_raw.len() + 2];
+        expected[1 + 1..][..sparse_raw.len()].clone_from_slice(sparse_raw);
+        test_part_read(&devs[0], Some("raw_0"), &expected, 1, sparse_raw.len().try_into().unwrap());
+        test_part_read(&devs[1], Some("raw_1"), &expected, 1, sparse_raw.len().try_into().unwrap());
     }
 
     #[test]
@@ -816,5 +959,22 @@ pub(crate) mod test {
         assert!(block_on(write_unique_partition(&devs, "boot_a", 0, &mut [],)).is_err());
         assert!(block_on(read_unique_partition(&devs, "raw", 0, &mut [] as &mut [u8],)).is_err());
         assert!(block_on(write_unique_partition(&devs, "raw", 0, &mut [],)).is_err());
+    }
+
+    #[test]
+    fn test_find_multi_partition_io_fails_on_duplicate() {
+        let mut devs = FakeGblOpsStorage::default();
+        devs.add_raw_device(c"raw_0", [0x55u8; 4 * 1024]);
+        devs.add_raw_device(c"raw_1", [0x55u8; 4 * 1024]);
+        assert!(find_multi_partition_io(&devs, &["raw_0", "raw_1", "raw_0"]).is_err());
+    }
+
+    #[test]
+    fn test_multi_part_io_read_fails_on_multi_part() {
+        let mut devs = FakeGblOpsStorage::default();
+        devs.add_raw_device(c"raw_0", [0x55u8; 4 * 1024]);
+        devs.add_raw_device(c"raw_1", [0x55u8; 4 * 1024]);
+        let mut io = find_multi_partition_io(&devs, &["raw_0", "raw_1"]).unwrap();
+        assert!(block_on(io.read(0, &mut [0u8; 1024][..])).is_err());
     }
 }
