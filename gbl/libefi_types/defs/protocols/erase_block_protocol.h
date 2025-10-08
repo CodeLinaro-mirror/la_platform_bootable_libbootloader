@@ -26,7 +26,6 @@
 #ifndef __ERASE_BLOCK_PROTOCOL_H__
 #define __ERASE_BLOCK_PROTOCOL_H__
 
-#include "block_io_protocol.h"
 #include "gbl_protocol_utils.h"
 #include "types.h"
 
@@ -43,7 +42,7 @@ typedef struct {
 struct EfiEraseBlockProtocol {
   uint64_t revision;
   uint32_t erase_length_granularity;
-  EfiStatus (*erase_blocks)(EfiBlockIoProtocol* self, uint32_t media_id,
+  EfiStatus (*erase_blocks)(EfiEraseBlockProtocol* self, uint32_t media_id,
                             uint64_t lba, EfiEraseBlockToken* token,
                             size_t size);
 };
