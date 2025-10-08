@@ -23,8 +23,8 @@
  * terms apply by default.
  */
 
-#ifndef __GBL_EFI_BOOT_TARGET_PROTOCOL_H__
-#define __GBL_EFI_BOOT_TARGET_PROTOCOL_H__
+#ifndef __GBL_EFI_BOOT_CONTROL_PROTOCOL_H__
+#define __GBL_EFI_BOOT_CONTROL_PROTOCOL_H__
 
 #include <stdint.h>
 
@@ -54,25 +54,25 @@ typedef struct {
   uint8_t successful;
 } GblEfiSlotInfo;
 
-static const uint64_t GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION =
+static const uint64_t GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 2);
 
-typedef struct GblEfiBootTargetProtocol {
+typedef struct GblEfiBootControlProtocol {
   uint64_t revision;
   // Slot metadata query methods
-  EfiStatus (*get_slot_count)(struct GblEfiBootTargetProtocol* self,
+  EfiStatus (*get_slot_count)(struct GblEfiBootControlProtocol* self,
                               /* out */ uint8_t* slot_count);
-  EfiStatus (*get_slot_info)(struct GblEfiBootTargetProtocol* self,
+  EfiStatus (*get_slot_info)(struct GblEfiBootControlProtocol* self,
                              /* in */ uint8_t index,
                              /* out */ GblEfiSlotInfo* info);
-  EfiStatus (*get_current_slot)(struct GblEfiBootTargetProtocol* self,
+  EfiStatus (*get_current_slot)(struct GblEfiBootControlProtocol* self,
                                 /* out */ GblEfiSlotInfo* info);
   // Slot metadata manipulation methods
-  EfiStatus (*set_active_slot)(struct GblEfiBootTargetProtocol* self,
+  EfiStatus (*set_active_slot)(struct GblEfiBootControlProtocol* self,
                                /* in */ uint8_t index);
   // Boot mode methods
-  EfiStatus (*get_one_shot_boot_mode)(struct GblEfiBootTargetProtocol* self,
+  EfiStatus (*get_one_shot_boot_mode)(struct GblEfiBootControlProtocol* self,
                                       /* out */ GblEfiOneShotBootMode* mode);
-} GblEfiBootTargetProtocol;
+} GblEfiBootControlProtocol;
 
-#endif  // __GBL_EFI_BOOT_TARGET_PROTOCOL_H__
+#endif  // __GBL_EFI_BOOT_CONTROL_PROTOCOL_H__

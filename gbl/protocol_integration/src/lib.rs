@@ -39,8 +39,8 @@ use efi::{
         erase_block::EraseBlockProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
+        gbl_efi_boot_control::GblBootControlProtocol,
         gbl_efi_boot_memory::GblBootMemoryProtocol,
-        gbl_efi_boot_target::GblBootTargetProtocol,
         gbl_efi_debug::GblDebugProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_fastboot_transport::GblFastbootTransportProtocol,
@@ -237,7 +237,7 @@ pub fn test_all_required_protocols(entry: &EfiEntry) -> Result<()> {
         #[cfg(target_arch = "riscv64")]
         test_entry!(test_riscv_boot_protocol),
         test_entry!(test_gbl_avb),
-        test_entry!(test_gbl_boot_target),
+        test_entry!(test_gbl_boot_control),
     ];
 
     let mut res = Ok(());
@@ -315,8 +315,8 @@ fn test_erase_block(entry: &EfiEntry) -> Result<()> {
     res
 }
 
-fn test_gbl_boot_target(entry: &EfiEntry) -> Result<()> {
-    let protocol = expect_one_handle_for_protocol::<GblBootTargetProtocol>(entry)?;
+fn test_gbl_boot_control(entry: &EfiEntry) -> Result<()> {
+    let protocol = expect_one_handle_for_protocol::<GblBootControlProtocol>(entry)?;
 
     let mut res = Ok(());
 

@@ -30,8 +30,8 @@ use efi::{
         dt_fixup::DtFixupProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
+        gbl_efi_boot_control::GblBootControlProtocol,
         gbl_efi_boot_memory::{gbl_get_partition_buffer, gbl_sync_partition_buffer},
-        gbl_efi_boot_target::GblBootTargetProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
@@ -252,26 +252,26 @@ impl<'a, 'b> Ops<'a, 'b> {
         Ok(ImageBuffer::new(image_type, buf)?)
     }
 
-    /// Helper for opening GblBootTargetProtocol protocol.
+    /// Helper for opening GblBootControlProtocol protocol.
     /// Maps `Error::NotFound` to `Error::Unsupported`
     /// TODO(b/442975038): Don't map `Error::NotFound` as this protocol is required.
-    fn open_boot_target_protocol(&mut self) -> Result<Protocol<'a, GblBootTargetProtocol>> {
+    fn open_boot_control_protocol(&mut self) -> Result<Protocol<'a, GblBootControlProtocol>> {
         match self
             .efi_entry
             .system_table()
             .boot_services()
-            .find_first_and_open::<GblBootTargetProtocol>()
+            .find_first_and_open::<GblBootControlProtocol>()
         {
             Ok(protocol)
-                if protocol.revision() >= Protocol::<'_, GblBootTargetProtocol>::REVISION =>
+                if protocol.revision() >= Protocol::<'_, GblBootControlProtocol>::REVISION =>
             {
                 Ok(protocol)
             }
             Ok(protocol) => {
                 efi_println!(
                     self.efi_entry,
-                    "GblBootTargetProtocol version is too low, expected: {} actual: {}",
-                    Protocol::<'_, GblBootTargetProtocol>::REVISION,
+                    "GblBootControlProtocol version is too low, expected: {} actual: {}",
+                    Protocol::<'_, GblBootControlProtocol>::REVISION,
                     protocol.revision()
                 );
                 Err(Error::UnsupportedVersion)
@@ -977,19 +977,19 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     }
 
     fn get_slot_info(&mut self, slot: u8) -> Result<Slot> {
-        self.open_boot_target_protocol()?.get_slot_info(slot)?.try_into()
+        self.open_boot_control_protocol()?.get_slot_info(slot)?.try_into()
     }
 
     fn get_current_slot(&mut self) -> Result<Slot> {
-        self.open_boot_target_protocol()?.get_current_slot()?.try_into()
+        self.open_boot_control_protocol()?.get_current_slot()?.try_into()
     }
 
     fn set_active_slot(&mut self, slot: u8) -> Result<()> {
-        self.open_boot_target_protocol()?.set_active_slot(slot)
+        self.open_boot_control_protocol()?.set_active_slot(slot)
     }
 
     fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>> {
-        match self.open_boot_target_protocol().and_then(|p| p.get_one_shot_boot_mode()) {
+        match self.open_boot_control_protocol().and_then(|p| p.get_one_shot_boot_mode()) {
             Ok(GBL_EFI_ONE_SHOT_BOOT_MODE_NONE) => Ok(None),
             Ok(GBL_EFI_ONE_SHOT_BOOT_MODE_BOOTLOADER) => Ok(Some(OneShotBootMode::Bootloader)),
             Ok(GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY) => Ok(Some(OneShotBootMode::Recovery)),
@@ -1022,7 +1022,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     }
 
     fn get_slot_count(&mut self) -> Result<u8> {
-        match self.open_boot_target_protocol().and_then(|p| p.get_slot_count()) {
+        match self.open_boot_control_protocol().and_then(|p| p.get_slot_count()) {
             #[cfg(feature = "fuchsia")]
             Err(Error::Unsupported) if self.expected_os_is_fuchsia()? => Ok(2),
             v => v,
@@ -2269,7 +2269,7 @@ mod test {
         let mut mock_efi = MockEfi::new();
         mock_efi
             .boot_services
-            .expect_find_first_and_open::<GblBootTargetProtocol>()
+            .expect_find_first_and_open::<GblBootControlProtocol>()
             .returning(|| Err(Error::Unsupported));
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], Some(Os::Fuchsia), 0);

@@ -1,4 +1,4 @@
-# GBL EFI Boot Target Protocol
+# GBL EFI Boot Control Protocol
 
 The protocol defines interfaces that can be used by EFI applications to query
 and manipulate boot targets.
@@ -10,7 +10,7 @@ protocol to implement A/B boot flows.
 |:------------|-----------------:|
 | **Created** |        2024-9-17 |
 
-## GBL_EFI_BOOT_TARGET_PROTOCOL
+## GBL_EFI_BOOT_CONTROL_PROTOCOL
 
 ### Summary
 
@@ -22,7 +22,7 @@ and changing the target boot slot.
 
 ```c
 // {d382db1b-9ac2-11f0-84c7-047bcba96019}
-#define GBL_EFI_BOOT_TARGET_PROTOCOL_GUID            \
+#define GBL_EFI_BOOT_CONTROL_PROTOCOL_GUID           \
   {                                                  \
     0xd382db1b, 0x9ac2, 0x11f0, {                    \
       0x84, 0xc7, 0x04, 0x7b, 0xcb, 0xa9, 0x60, 0x19 \
@@ -33,7 +33,7 @@ and changing the target boot slot.
 ### Protocol Revision
 
 ```c
-#define GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 2)
+#define GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 2)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -41,50 +41,50 @@ See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisio
 ### Protocol Interface Structure
 
 ```c
-typedef struct GBL_EFI_BOOT_TARGET_PROTOCOL {
+typedef struct GBL_EFI_BOOT_CONTROL_PROTOCOL {
   UINT64                                      Revision;
-  GBL_EFI_BOOT_TARGET_GET_SLOT_COUNT          GetSlotCount;
-  GBL_EFI_BOOT_TARGET_GET_SLOT_INFO           GetSlotInfo;
-  GBL_EFI_BOOT_TARGET_GET_CURRENT_SLOT        GetCurrentSlot;
-  GBL_EFI_BOOT_TARGET_SET_ACTIVE_SLOT         SetActiveSlot;
-  GBL_EFI_BOOT_TARGET_GET_ONE_SHOT_BOOT_MODE  GetOneShotBootMode;
-} GBL_EFI_BOOT_TARGET_PROTOCOL;
+  GBL_EFI_BOOT_CONTROL_GET_SLOT_COUNT         GetSlotCount;
+  GBL_EFI_BOOT_CONTROL_GET_SLOT_INFO          GetSlotInfo;
+  GBL_EFI_BOOT_CONTROL_GET_CURRENT_SLOT       GetCurrentSlot;
+  GBL_EFI_BOOT_CONTROL_SET_ACTIVE_SLOT        SetActiveSlot;
+  GBL_EFI_BOOT_CONTROL_GET_ONE_SHOT_BOOT_MODE GetOneShotBootMode;
+} GBL_EFI_BOOT_CONTROL_PROTOCOL;
 ```
 
 ### Parameters
 
 **Revision**
 
-The revision to which the `GBL_EFI_BOOT_TARGET_PROTOCOL` adheres.
+The revision to which the `GBL_EFI_BOOT_CONTROL_PROTOCOL` adheres.
 All future version must be backwards compatible.
 If a future version is not backwards compatible, a different GUID must be used.
 
 **GetSlotCount**
 
 Returns the number of boot slots.
-See [`GBL_EFI_BOOT_TARGET_PROTOCOL.GetSlotCount()`](#gbl_efi_boot_target_protocol_getslotcount).
+See [`GBL_EFI_BOOT_CONTROL_PROTOCOL.GetSlotCount()`](#gbl_efi_boot_control_protocol_getslotcount).
 
 **GetSlotInfo**
 
 Returns information about a slot by index.
-See [`GBL_EFI_BOOT_TARGET_PROTOCOL.GetSlotInfo()`](#gbl_efi_boot_target_protocol_getslotinfo).
+See [`GBL_EFI_BOOT_CONTROL_PROTOCOL.GetSlotInfo()`](#gbl_efi_boot_control_protocol_getslotinfo).
 
 **GetCurrentSlot**
 
 Returns the information of the currently booted slot.
-See [`GBL_EFI_BOOT_TARGET_PROTOCOL.GetCurrentSlot()`](#gbl_efi_boot_target_protocol_getcurrentslot).
+See [`GBL_EFI_BOOT_CONTROL_PROTOCOL.GetCurrentSlot()`](#gbl_efi_boot_control_protocol_getcurrentslot).
 
 **SetActiveSlot**
 
 Marks the specified slot as the active boot target.
-See [`GBL_EFI_BOOT_TARGET_PROTOCOL.SetActiveSlot()`](#gbl_efi_boot_target_protocol_setactiveslot).
+See [`GBL_EFI_BOOT_CONTROL_PROTOCOL.SetActiveSlot()`](#gbl_efi_boot_control_protocol_setactiveslot).
 
 **GetOneShotBootMode**
 
 Returns the hardware triggered one-shot boot mode.
-See [`GBL_EFI_BOOT_TARGET_PROTOCOL.GetOneShotBootMode()`](#gbl_efi_boot_target_protocol_getoneshotbootmode).
+See [`GBL_EFI_BOOT_CONTROL_PROTOCOL.GetOneShotBootMode()`](#gbl_efi_boot_control_protocol_getoneshotbootmode).
 
-## GBL_EFI_BOOT_TARGET_PROTOCOL.GetSlotCount()
+## GBL_EFI_BOOT_CONTROL_PROTOCOL.GetSlotCount()
 
 ### Summary
 
@@ -93,9 +93,9 @@ Returns the number of boot slots.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_GET_SLOT_COUNT)(
-    IN GBL_EFI_BOOT_TARGET_PROTOCOL *Self,
-    OUT UINT8                       *SlotCount
+typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_CONTROL_GET_SLOT_COUNT)(
+    IN GBL_EFI_BOOT_CONTROL_PROTOCOL  *Self,
+    OUT UINT8                         *SlotCount
 );
 ```
 
@@ -103,7 +103,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_GET_SLOT_COUNT)(
 
 *Self*
 
-A pointer to the [`GBL_EFI_BOOT_TARGET_PROTOCOL`](#protocol-interface-structure)
+A pointer to the [`GBL_EFI_BOOT_CONTROL_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *SlotCount*
@@ -124,7 +124,7 @@ Subsequent calls to this method should always return the same value.
 | `EFI_SUCCESS`           | Slot metadata was successfully read from persistent storage.                                                  |
 | `EFI_INVALID_PARAMETER` | One of *Self* or *SlotCount* is `NULL` or improperly aligned.                                                  |
 
-## GBL_EFI_BOOT_TARGET_PROTOCOL.GetSlotInfo()
+## GBL_EFI_BOOT_CONTROL_PROTOCOL.GetSlotInfo()
 
 ### Summary
 
@@ -133,10 +133,10 @@ Queries info about a boot slot by index.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_GET_SLOT_INFO)(
-    IN GBL_EFI_BOOT_TARGET_PROTOCOL *Self,
-    IN UINT8                        Idx,
-    OUT GBL_EFI_SLOT_INFO           *Info
+typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_CONTROL_GET_SLOT_INFO)(
+    IN GBL_EFI_BOOT_CONTROL_PROTOCOL  *Self,
+    IN UINT8                          Idx,
+    OUT GBL_EFI_SLOT_INFO             *Info
 );
 ```
 
@@ -169,7 +169,7 @@ typedef struct _GBL_EFI_SLOT_INFO {
 
 *Self*
 
-A pointer to the [`GBL_EFI_BOOT_TARGET_PROTOCOL`](#protocol-interface-structure)
+A pointer to the [`GBL_EFI_BOOT_CONTROL_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Idx*
@@ -195,7 +195,7 @@ slots as part of debugging or logging.
 | `EFI_INVALID_PARAMETER` | One of *Self* or *Info* is `NULL` or improperly aligned, or the value of *Idx* invalid.                       |
 | `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                  |
 
-## GBL_EFI_BOOT_TARGET_PROTOCOL.GetCurrentSlot()
+## GBL_EFI_BOOT_CONTROL_PROTOCOL.GetCurrentSlot()
 
 ### Summary
 
@@ -204,9 +204,9 @@ Returns the information of the currently booted slot.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_GET_CURRENT_SLOT)(
-    IN GBL_EFI_BOOT_TARGET_PROTOCOL *Self,
-    OUT GBL_EFI_SLOT_INFO           *Info
+typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_CONTROL_GET_CURRENT_SLOT)(
+    IN GBL_EFI_BOOT_CONTROL_PROTOCOL  *Self,
+    OUT GBL_EFI_SLOT_INFO             *Info
 );
 ```
 
@@ -214,7 +214,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_GET_CURRENT_SLOT)(
 
 *Self*
 
-A pointer to the [`GBL_EFI_BOOT_TARGET_PROTOCOL`](#protocol-interface-structure)
+A pointer to the [`GBL_EFI_BOOT_CONTROL_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Info*
@@ -237,7 +237,7 @@ This is identical to knowing the index of the current slot and calling
 | `EFI_SUCCESS`           | The call completed successfully.   |
 | `EFI_INVALID_PARAMETER` | One of *Self* or *Info* is `NULL`. |
 
-## GBL_EFI_BOOT_TARGET_PROTOCOL.SetActiveSlot()
+## GBL_EFI_BOOT_CONTROL_PROTOCOL.SetActiveSlot()
 
 ### Summary
 
@@ -246,9 +246,9 @@ Sets the active slot by index. Makes it the highest priority bootable slot.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_SET_ACTIVE_SLOT)(
-    IN GBL_EFI_BOOT_TARGET_PROTOCOL *Self,
-    IN UINT8                        Idx
+typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_CONTROL_SET_ACTIVE_SLOT)(
+    IN GBL_EFI_BOOT_CONTROL_PROTOCOL  *Self,
+    IN UINT8                          Idx
 );
 ```
 
@@ -256,7 +256,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_SET_ACTIVE_SLOT)(
 
 *Self*
 
-A pointer to the [`GBL_EFI_BOOT_TARGET_PROTOCOL`](#protocol-interface-structure)
+A pointer to the [`GBL_EFI_BOOT_CONTROL_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Idx*
@@ -283,7 +283,7 @@ explicitly may be prohibited.
 | `EFI_DEVICE_ERROR`      | There was an error reading metadata from persistent storage.                                                  |
 | `EFI_ACCESS_DENIED`     | Device policy prohibited the boot slot target change.                                                         |
 
-## GBL_EFI_BOOT_TARGET_PROTOCOL.GetOneShotBootMode()
+## GBL_EFI_BOOT_CONTROL_PROTOCOL.GetOneShotBootMode()
 
 ### Summary
 
@@ -292,9 +292,9 @@ Gets the hardware triggered one-shot boot mode.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_TARGET_GET_ONE_SHOT_BOOT_MODE)(
-    IN GBL_EFI_BOOT_TARGET_PROTOCOL *Self,
-    OUT UINT32                      *Mode
+typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_CONTROL_GET_ONE_SHOT_BOOT_MODE)(
+    IN GBL_EFI_BOOT_CONTROL_PROTOCOL  *Self,
+    OUT UINT32                        *Mode
 );
 ```
 
@@ -312,7 +312,7 @@ typedef enum _GBL_EFI_ONE_SHOT_BOOT_MODE {
 
 *Self*
 
-A pointer to the [`GBL_EFI_BOOT_TARGET_PROTOCOL`](#protocol-interface-structure)
+A pointer to the [`GBL_EFI_BOOT_CONTROL_PROTOCOL`](#protocol-interface-structure)
 instance.
 
 *Mode*
