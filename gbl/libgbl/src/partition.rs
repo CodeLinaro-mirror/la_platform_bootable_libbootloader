@@ -17,9 +17,10 @@
 use crate::fastboot::sparse::{is_sparse_image, write_sparse_image, SparseRawWriter};
 use arrayvec::ArrayVec;
 use bytes::buf::UninitSlice;
-use core::cell::{RefCell, RefMut};
 use core::{
+    cell::{RefCell, RefMut},
     ffi::CStr,
+    fmt::{Arguments, Write},
     ops::{Deref, DerefMut},
 };
 use gbl_async::block_on;
@@ -28,6 +29,7 @@ use gbl_storage::{
     Partition as GptPartition,
 };
 use liberror::Error;
+use libutils::FormattedBytes;
 use safemath::SafeNum;
 
 /// Maximum name length for raw partition.
@@ -38,6 +40,16 @@ pub const RAW_PARTITION_NAME_LEN: usize = 72;
 pub struct RawName([u8; RAW_PARTITION_NAME_LEN]);
 
 impl RawName {
+    /// Creates a new instance with formatted string.
+    pub fn new_formatted(args: Arguments) -> Result<Self, Error> {
+        let mut buf = [0u8; RAW_PARTITION_NAME_LEN];
+        let mut bytes = FormattedBytes::new(&mut buf[..RAW_PARTITION_NAME_LEN - 1]);
+        Write::write_fmt(&mut bytes, args).unwrap();
+        CStr::from_bytes_until_nul(&buf[..])?;
+        Ok(Self(buf))
+    }
+
+    /// Creates a new instance from a Cstring
     fn new(name: &CStr) -> Result<Self, Error> {
         let mut buf = [0u8; RAW_PARTITION_NAME_LEN];
         name.to_str().map_err(|_| Error::InvalidInput)?;
@@ -93,6 +105,19 @@ impl Partition {
             Partition::Gpt(gpt) => gpt.absolute_range()?,
             Partition::Raw(_, size) => (0, *size),
         })
+    }
+
+    /// Computes the absolute range of a sub window for the given relative offset and size.
+    pub fn sub(&self, off: Option<u64>, sz: Option<u64>) -> Result<(u64, u64), Error> {
+        let (start, end) = self.absolute_range()?;
+        let off = off.unwrap_or(0);
+        let abs_start = SafeNum::from(start) + off;
+        let sz = sz.map_or(SafeNum::from(end) - abs_start, |v| v.into());
+        let abs_end = u64::try_from(abs_start + sz)?;
+        match abs_end <= end {
+            true => Ok((abs_start.try_into()?, abs_end)),
+            _ => Err(Error::OutOfRange),
+        }
     }
 }
 

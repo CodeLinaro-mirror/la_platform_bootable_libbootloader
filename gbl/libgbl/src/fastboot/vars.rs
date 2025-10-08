@@ -135,14 +135,21 @@ where
         })?)
     }
 
+    /// Parses and finds the size of the given partition.
+    pub(crate) fn partition_size<'s>(&self, part: &'s str) -> CommandResult<u64> {
+        let (part, blk_id, off, sz) = self.parse_partition_arg(part)?;
+        let (_, part_info) = self.find_partition(part, blk_id)?;
+        let (start, end) = part_info.sub(off, sz)?;
+        Ok(end - start)
+    }
+
     /// "fastboot getvar partition-size"
     fn get_var_partition_size<'s, 't>(
         &mut self,
         mut args: impl Iterator<Item = &'t str> + Clone,
         out: &'s mut [u8],
     ) -> CommandResult<&'s str> {
-        let (_, _, _, sz) = self.parse_partition(args.next().ok_or("Missing partition")?)?;
-        Ok(snprintf!(out, "{:#x}", sz))
+        Ok(snprintf!(out, "{:#x}", self.partition_size(args.next().ok_or("Missing partition")?)?))
     }
 
     /// "fastboot getvar partition-type"
@@ -151,7 +158,7 @@ where
         mut args: impl Iterator<Item = &'t str> + Clone,
         out: &'s mut [u8],
     ) -> CommandResult<&'s str> {
-        self.parse_partition(args.next().ok_or("Missing partition")?)?;
+        self.partition_size(args.next().ok_or("Missing partition")?)?;
         Ok(snprintf!(out, "raw"))
     }
 
