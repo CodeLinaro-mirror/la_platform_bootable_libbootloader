@@ -16,13 +16,13 @@
 
 use crate::{
     efi_call, efi_println,
-    protocol::{block_io::BlockIoProtocol, block_io2::wait_completion, Protocol, ProtocolInfo},
+    protocol::{block_io2::wait_completion, Protocol, ProtocolInfo},
     versioned_protocol, EventNotify, EventType, Tpl,
 };
 use core::sync::atomic::{AtomicBool, Ordering};
 use efi_types::{
-    EfiBlockIoProtocol, EfiEraseBlockProtocol, EfiEraseBlockToken, EfiGuid,
-    EFI_ERASE_BLOCK_PROTOCOL_REVISION, EFI_STATUS_NOT_READY,
+    EfiEraseBlockProtocol, EfiEraseBlockToken, EfiGuid, EFI_ERASE_BLOCK_PROTOCOL_REVISION,
+    EFI_STATUS_NOT_READY,
 };
 use gbl_async::assert_return;
 use liberror::{efi_status_to_result, Result};
@@ -44,16 +44,6 @@ impl Protocol<'_, EraseBlockProtocol> {
     /// Returns `EFI_ERASE_BLOCK_PROTOCOL.erase_length_granularity`
     pub fn erase_length_granularity(&self) -> u32 {
         self.interface().erase_length_granularity
-    }
-
-    /// Gets the corresponding BlockIoProtocol for the same device handle.
-    fn block_io_interface(&self) -> Result<*mut EfiBlockIoProtocol> {
-        Ok(self
-            .efi_entry()
-            .system_table()
-            .boot_services()
-            .open_protocol::<BlockIoProtocol>(self.device)?
-            .interface() as *const _ as *mut _)
     }
 
     /// Wrapper of `EFI_ERASE_BLOCK_PROTOCOL.erase_blocks`
@@ -81,7 +71,7 @@ impl Protocol<'_, EraseBlockProtocol> {
         unsafe {
             efi_call!(
                 self.interface().erase_blocks,
-                self.block_io_interface()?,
+                self.interface_ptr(),
                 media_id,
                 lba,
                 &mut EfiEraseBlockToken {
@@ -115,7 +105,7 @@ impl Protocol<'_, EraseBlockProtocol> {
         unsafe {
             efi_call!(
                 self.interface().erase_blocks,
-                self.block_io_interface()?,
+                self.interface_ptr(),
                 media_id,
                 lba,
                 &mut token,
