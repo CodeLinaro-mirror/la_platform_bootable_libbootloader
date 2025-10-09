@@ -53,6 +53,7 @@
 // warnings when upgrading the toolchain. Just enable this feature for now and remove
 // when toolchain is upreved to 1.89.0.
 #![feature(non_null_from_ref)]
+#![feature(never_type)]
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -115,12 +116,12 @@ use efi_types::{
     defs::{
         EfiAllocatorType, EfiBootService, EfiConfigurationTable, EfiEvent, EfiGuid, EfiHandle,
         EfiMemoryAttributesTableHeader, EfiMemoryDescriptor, EfiMemoryType, EfiResetType,
-        EfiRuntimeService, EfiStatus, EfiSystemTable, EfiTimerDelay, EfiTpl,
+        EfiRuntimeService, EfiStatus, EfiSystemTable, EfiTimerDelay, EfiTpl, GblEfiDebugErrorTag,
         EFI_EVENT_TYPE_NOTIFY_SIGNAL, EFI_EVENT_TYPE_NOTIFY_WAIT, EFI_EVENT_TYPE_RUNTIME,
         EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES, EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
         EFI_EVENT_TYPE_TIMER, EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL,
         EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS,
-        GBL_EFI_DEBUG_ERROR_TAG_PANIC,
+        GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR,
     },
     tpl::TplControl,
 };
@@ -226,9 +227,13 @@ pub unsafe fn initialize(
 /// Existing heap allocated memories will maintain their states. All system memory including them
 /// will be under onwership of the subsequent OS or OS loader code.
 pub fn exit_boot_services(entry: EfiEntry, mmap_buffer: &mut [u8]) -> Result<EfiMemoryMap> {
-    let aligned = aligned_subslice(mmap_buffer, core::mem::align_of::<EfiMemoryDescriptor>())?;
+    let aligned = aligned_subslice(mmap_buffer, core::mem::align_of::<EfiMemoryDescriptor>())
+        .inspect_err(|e| report_error_and_reset(&entry, e, GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR))?;
 
-    let res = entry.system_table().boot_services().get_memory_map(aligned)?;
+    let res =
+        entry.system_table().boot_services().get_memory_map(aligned).inspect_err(|e| {
+            report_error_and_reset(&entry, e, GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR)
+        })?;
     entry.system_table().boot_services().exit_boot_services(&res)?;
     // SAFETY:
     // At this point, UEFI has successfully exited boot services and no event/notification can be
@@ -744,7 +749,7 @@ impl RuntimeServices {
         reset_type: EfiResetType,
         reset_status: EfiStatus,
         reset_data: Option<&mut [u8]>,
-    ) -> ! {
+    ) -> Result<!> {
         let (reset_data_len, reset_data_ptr) = match reset_data {
             Some(v) => (v.len(), v.as_mut_ptr() as _),
             _ => (0, null_mut()),
@@ -761,11 +766,11 @@ impl RuntimeServices {
             );
         }
 
-        unreachable!();
+        Err(Error::Aborted)
     }
 
     /// Performs a cold reset without status code or data.
-    pub fn cold_reset(&self) -> ! {
+    pub fn cold_reset(&self) -> Result<!> {
         self.reset_system(EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS, None)
     }
 }
@@ -1107,7 +1112,6 @@ macro_rules! efi_println {
 }
 
 mod log_fatal {
-    use super::with_global_efi_entry;
     use crate::{protocol, EfiEntry};
     use efi_types::defs::GblEfiDebugErrorTag;
 
@@ -1120,56 +1124,96 @@ mod log_fatal {
         }
     }
 
-    /// Logs a fatal error, invoking `GblDebugProtocol.fatal_error()`.
+    /// Generic internal code for fatal errors.
+    /// In the long term, to improve flexibility, consider allowing application to
+    /// install a custom handler into `EfiEntry` to be called here.
     ///
-    /// Safety:
-    /// * It is the caller's responsibility to guarantee that the global EFI entry
-    ///   has been properly initialized and is live.
-    pub(super) unsafe fn log_fatal_error(tag: GblEfiDebugErrorTag) -> FatalErrorToken {
-        let log = |entry: &EfiEntry| {
-            let _ = entry
-                .system_table()
-                .boot_services()
-                .find_first_and_open::<protocol::gbl_efi_debug::GblDebugProtocol>()
-                .map(|protocol| protocol.fatal_error(tag));
-        };
+    /// Note: std::panic::PanicHookInfo and core::panic::PanicInfo are (now) different
+    ///       types, but we just want to print the panic info out, so just require Display.
+    pub(super) fn report_fatal_error_and_reset_internal<P: core::fmt::Display, T>(
+        entry: &EfiEntry,
+        panic: &P,
+        tag: GblEfiDebugErrorTag,
+        reset_func: fn(&EfiEntry, FatalErrorToken) -> T,
+    ) -> T {
+        efi_print!(entry, "Fatal error! {}\r\n", panic);
+        let _ = entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<protocol::gbl_efi_debug::GblDebugProtocol>()
+            .map(|protocol| protocol.fatal_error(tag));
 
-        // Safety:
-        // * It is the responsibility of the environment to initialize the global EFI entry
-        //   whether in test or in an EFI application.
-        let _ = unsafe { with_global_efi_entry(log) };
-
-        FatalErrorToken::new()
+        reset_func(entry, FatalErrorToken::new())
     }
 }
 
-/// Resets system. Hangs if not supported.
+/// "Panic function" for test code.
+///
+/// Call directly to panic while passing an explicit error tag.
+#[cfg(test)]
+fn report_error_and_reset<P: core::fmt::Display>(
+    entry: &EfiEntry,
+    panic_info: &P,
+    tag: GblEfiDebugErrorTag,
+) {
+    fn reset(entry: &EfiEntry, _: log_fatal::FatalErrorToken) {
+        efi_print!(entry, "Resetting...\r\n");
+        test::efi_call_traces().with(|traces| {
+            traces
+                .borrow_mut()
+                .reset_trace
+                .inputs
+                .push_back((EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS))
+        })
+    }
+
+    log_fatal::report_fatal_error_and_reset_internal(entry, panic_info, tag, reset)
+}
+
+/// Production panic function.
+///
+/// Call directly to panic while passing an explicit error tag.
 #[cfg(not(test))]
-fn reset(_: log_fatal::FatalErrorToken) -> ! {
-    efi_try_print!("Resetting...\r\n");
-    match allocation::internal_efi_entry_and_rt().1 {
-        Some(rt) => rt.cold_reset(),
-        _ => efi_try_print!("Runtime services not supported. Hangs...\r\n"),
+pub fn report_error_and_reset<P: core::fmt::Display>(
+    entry: &EfiEntry,
+    panic_info: &P,
+    tag: GblEfiDebugErrorTag,
+) -> ! {
+    fn reset(entry: &EfiEntry, _: log_fatal::FatalErrorToken) -> ! {
+        efi_print!(entry, "Resetting...\r\n");
+        match allocation::internal_efi_entry_and_rt().1 {
+            Some(rt) => {
+                let _ = rt
+                    .cold_reset()
+                    .inspect_err(|_| efi_print!(entry, "Failed to reset system. Hanging...\r\n"));
+            }
+            _ => efi_print!(entry, "Runtime services not supported. Hanging...\r\n"),
+        }
+        loop {}
     }
-    loop {}
+
+    log_fatal::report_fatal_error_and_reset_internal(entry, panic_info, tag, reset)
 }
 
-/// Provides a builtin panic handler.
-/// In the long term, to improve flexibility, consider allowing application to install a custom
-/// handler into `EfiEntry` to be called here.
-/// Don't set this as the panic handler so that other crates' tests can depend on libefi.
+/// Calls `report_error_and_reset` with the global EFI entry.
+/// Register this function as a panic handler within the main.rs of your EFI application
+///
+/// Don't set this as the panic handler within libefi so that other crates' tests
+/// can depend on libefi.
 ///
 /// Safety:
-/// * It is the caller's responsibility to guarantee that the global EFI entry has
-///   been initialized and is live.
-#[cfg(not(test))]
-pub unsafe fn efi_panic(panic: &core::panic::PanicInfo) -> ! {
-    efi_try_print!("Panic! {}\r\n", panic);
+/// * It is the caller's responsibility to guarantee that the global EfiEntry has
+///   been initialized and is live and valid.
+pub unsafe fn report_error_and_reset_with_global_entry<P: core::fmt::Display>(
+    panic_info: &P,
+    tag: GblEfiDebugErrorTag,
+) -> ! {
     // Safety:
-    // * It is the caller's responsibility to guarantee that the global EFI entry has
-    //   been initialized and is live.
-    let tok = unsafe { log_fatal::log_fatal_error(GBL_EFI_DEBUG_ERROR_TAG_PANIC) };
-    reset(tok)
+    // * It is the caller's responsibility to guarantee that the global EfiEntry has
+    //   been initialized and is live and valid.
+    let _ =
+        unsafe { with_global_efi_entry(|entry| report_error_and_reset(entry, panic_info, tag)) };
+    loop {}
 }
 
 /// Cryptographic hash interfaces based on the EfiHash2Protocol.
@@ -1209,7 +1253,7 @@ mod test {
         EfiTpl, GblEfiDebugErrorTag, GblEfiDebugProtocol, EFI_MEMORY_TYPE_LOADER_CODE,
         EFI_MEMORY_TYPE_LOADER_DATA, EFI_STATUS_DEVICE_ERROR, EFI_STATUS_INVALID_PARAMETER,
         EFI_STATUS_NOT_FOUND, EFI_STATUS_NOT_READY, EFI_STATUS_SUCCESS, EFI_STATUS_UNSUPPORTED,
-        EFI_TIMER_DELAY_TIMER_PERIODIC,
+        EFI_TIMER_DELAY_TIMER_PERIODIC, GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
     };
     use std::{cell::RefCell, collections::VecDeque, mem::size_of, slice::from_raw_parts_mut};
     use utils::RecurringTimer;
@@ -1233,20 +1277,21 @@ mod test {
     /// A structure to store the traces of arguments/outputs for EFI methods.
     #[derive(Default)]
     pub struct EfiCallTraces {
-        pub free_pool_trace: FreePoolTrace,
-        pub open_protocol_trace: OpenProtocolTrace,
-        pub close_protocol_trace: CloseProtocolTrace,
-        pub handle_protocol_trace: HandleProtocolTrace,
-        pub locate_handle_buffer_trace: LocateHandleBufferTrace,
-        pub get_memory_map_trace: GetMemoryMapTrace,
-        pub exit_boot_services_trace: ExitBootServicespTrace,
-        pub create_event_trace: CreateEventTrace,
-        pub close_event_trace: CloseEventTrace,
         pub check_event_trace: CheckEventTrace,
-        pub set_timer_trace: SetTimerTrace,
-        pub set_watchdog_timer_trace: SetWatchdogTimerTrace,
+        pub close_event_trace: CloseEventTrace,
+        pub close_protocol_trace: CloseProtocolTrace,
         // Special case
         pub console_out_trace: ConsoleOutTrace,
+        pub create_event_trace: CreateEventTrace,
+        pub exit_boot_services_trace: ExitBootServicespTrace,
+        pub free_pool_trace: FreePoolTrace,
+        pub get_memory_map_trace: GetMemoryMapTrace,
+        pub handle_protocol_trace: HandleProtocolTrace,
+        pub locate_handle_buffer_trace: LocateHandleBufferTrace,
+        pub open_protocol_trace: OpenProtocolTrace,
+        pub reset_trace: ResetTrace,
+        pub set_timer_trace: SetTimerTrace,
+        pub set_watchdog_timer_trace: SetWatchdogTimerTrace,
     }
 
     // Declares a global instance of EfiCallTraces.
@@ -1544,6 +1589,12 @@ mod test {
             let trace = &mut traces.borrow_mut().check_event_trace;
             trace.outputs.pop_front().unwrap()
         })
+    }
+
+    /// EFI_RUNTIME_SERVICES.reset_system
+    #[derive(Default)]
+    pub struct ResetTrace {
+        pub inputs: VecDeque<(EfiResetType, EfiStatus)>,
     }
 
     /// EFI_BOOT_SERVICE.SetTimer.
@@ -2505,19 +2556,30 @@ mod test {
                     VecDeque::from([(as_efi_handle(&mut debug_proto), EFI_STATUS_SUCCESS)]);
             });
 
-            // Note: due to the never-return type of `efi_panic`, we can't make it
-            // a panic hook directly. This diminishes the guarantees provided by the
-            // test, but it's better than nothing.
-            std::panic::set_hook(Box::new(|_| {
+            std::panic::set_hook(Box::new(|p_info| {
                 // Safety:
                 // * `GLOBAL_EFI_ENTRY` has been initialized and is live.
-                unsafe { log_fatal::log_fatal_error(GBL_EFI_DEBUG_ERROR_TAG_PANIC) };
+                unsafe {
+                    let _ = with_global_efi_entry(|entry| {
+                        report_error_and_reset(
+                            entry,
+                            p_info,
+                            GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
+                        )
+                    });
+                };
             }));
 
             let res =
                 std::panic::catch_unwind(|| panic!("Don't Panic! You know where your towel is."));
             assert!(res.is_err());
             assert_eq!(PANICS_CAUGHT.with(|pc| pc.load(Ordering::Relaxed)), 1);
+            efi_call_traces().with(|trace| {
+                assert_eq!(
+                    trace.borrow().reset_trace.inputs,
+                    [(EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS)]
+                )
+            });
         });
     }
 }

@@ -33,7 +33,9 @@ static const uint64_t GBL_EFI_DEBUG_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 2);
 
 // TODO (b/446226293): add additional tags.
-EFI_ENUM(GblEfiDebugErrorTag, uint64_t, GBL_EFI_DEBUG_ERROR_TAG_PANIC);
+EFI_ENUM(GblEfiDebugErrorTag, uint64_t, GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
+         GBL_EFI_DEBUG_ERROR_TAG_PARTITION, GBL_EFI_DEBUG_ERROR_TAG_LOAD_IMAGE,
+         GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR);
 
 typedef struct GblEfiDebugProtocol {
   uint64_t revision;

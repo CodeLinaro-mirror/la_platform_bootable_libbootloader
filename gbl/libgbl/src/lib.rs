@@ -25,6 +25,7 @@
 //! * libavb
 //! * kernel decompression
 
+#![feature(never_type)]
 #![cfg_attr(not(any(test, android_dylib)), no_std)]
 // TODO: b/312610985 - return warning for unused partitions
 #![allow(async_fn_in_trait)]

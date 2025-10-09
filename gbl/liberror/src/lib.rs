@@ -90,6 +90,8 @@ pub enum GptError {
         /// Expected range.
         expect_range: (u64, u64),
     },
+    /// The block device does not have a valid GUID Partition Table.
+    NoGpt,
     /// Number of entries greater than maximum allowed.
     NumberOfEntriesOverflow {
         /// Actual number of entries,
@@ -204,8 +206,6 @@ pub enum Error {
     MissingImage,
     /// A valid Flattened Device Tree was not found.
     NoFdt,
-    /// The block device does not have a valid GUID Partition Table.
-    NoGpt,
     /// A mapping to a device does not exist.
     NoMapping,
     /// The device does not contain any medium to perform the operation.

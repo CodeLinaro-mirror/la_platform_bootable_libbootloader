@@ -64,6 +64,7 @@
 //! let result = run(&mut transport, &mut fastboot_impl, &[]);
 //! ```
 
+#![feature(never_type)]
 #![cfg_attr(not(test), no_std)]
 #![allow(async_fn_in_trait)]
 
@@ -268,7 +269,7 @@ pub enum LockState {
 }
 
 /// Specifies command implementation to be used
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum CommandExecType {
     /// Default GBL implementation
     #[default]
@@ -436,7 +437,7 @@ pub trait FastbootImplementation {
         &mut self,
         mode: RebootMode,
         responder: impl InfoSender + OkaySender,
-    ) -> CommandError;
+    ) -> CommandResult<!>;
 
     /// Method for handling `fastboot continue` clean up.
     ///
@@ -1014,10 +1015,11 @@ async fn reboot(
     mode: RebootMode,
     transport: &mut impl Transport,
     fb_impl: &mut impl FastbootImplementation,
-) -> Result<()> {
+) -> Result<!> {
     let mut resp = Responder::new(transport);
-    let e = fb_impl.reboot(mode, &mut resp).await;
-    reply_fail!(resp, "{}", e.to_str())
+    let Err(e) = fb_impl.reboot(mode, &mut resp).await;
+    reply_fail!(resp, "{}", e.to_str())?;
+    Err(Error::Aborted)
 }
 
 // Handles `fastboot boot`
@@ -1191,10 +1193,10 @@ pub async fn process_next_command(
         "fetch" => fetch(cmd_str, args, transport, fb_impl).await,
         "flash" => flash(cmd_str, transport, fb_impl).await,
         "getvar" => get_var(&mut packet[..], transport, fb_impl).await,
-        "reboot" => reboot(RebootMode::Normal, transport, fb_impl).await,
-        "reboot-bootloader" => reboot(RebootMode::Bootloader, transport, fb_impl).await,
-        "reboot-fastboot" => reboot(RebootMode::Fastboot, transport, fb_impl).await,
-        "reboot-recovery" => reboot(RebootMode::Recovery, transport, fb_impl).await,
+        "reboot" => reboot(RebootMode::Normal, transport, fb_impl).await?,
+        "reboot-bootloader" => reboot(RebootMode::Bootloader, transport, fb_impl).await?,
+        "reboot-fastboot" => reboot(RebootMode::Fastboot, transport, fb_impl).await?,
+        "reboot-recovery" => reboot(RebootMode::Recovery, transport, fb_impl).await?,
         "set_active" => set_active(args, transport, fb_impl).await,
         "upload" => upload(transport, fb_impl).await,
         _ if cmd_str.starts_with("flashing ") => {
@@ -1381,10 +1383,10 @@ mod test {
             &mut self,
             mode: RebootMode,
             responder: impl InfoSender + OkaySender,
-        ) -> CommandError {
+        ) -> CommandResult<!> {
             responder.send_okay("").await.unwrap();
             self.reboot_mode = Some(mode);
-            "reboot-return".into()
+            Err("reboot-return".into())
         }
 
         async fn r#continue(&mut self, mut responder: impl InfoSender) -> CommandResult<()> {
@@ -2018,7 +2020,8 @@ mod test {
         let mut fastboot_impl: FastbootTest = Default::default();
         let mut transport = TestTransport::new();
         transport.add_input(b"reboot");
-        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        let res = block_on(process_next_command(&mut transport, &mut fastboot_impl));
+        assert_eq!(res, Err(Error::Aborted));
         assert_eq!(fastboot_impl.reboot_mode, Some(RebootMode::Normal));
         assert_eq!(transport.out_queue[0], b"OKAY");
         // Failure is expected here because test reboot implementation always returns, which
@@ -2031,7 +2034,8 @@ mod test {
         let mut fastboot_impl: FastbootTest = Default::default();
         let mut transport = TestTransport::new();
         transport.add_input(b"reboot-bootloader");
-        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        let res = block_on(process_next_command(&mut transport, &mut fastboot_impl));
+        assert_eq!(res, Err(Error::Aborted));
         assert_eq!(fastboot_impl.reboot_mode, Some(RebootMode::Bootloader));
         assert_eq!(transport.out_queue[0], b"OKAY");
         // Failure is expected here because test reboot implementation always returns, which
@@ -2044,7 +2048,8 @@ mod test {
         let mut fastboot_impl: FastbootTest = Default::default();
         let mut transport = TestTransport::new();
         transport.add_input(b"reboot-fastboot");
-        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        let res = block_on(process_next_command(&mut transport, &mut fastboot_impl));
+        assert_eq!(res, Err(Error::Aborted));
         assert_eq!(fastboot_impl.reboot_mode, Some(RebootMode::Fastboot));
         assert_eq!(transport.out_queue[0], b"OKAY");
         // Failure is expected here because test reboot implementation always returns, which
@@ -2057,7 +2062,8 @@ mod test {
         let mut fastboot_impl: FastbootTest = Default::default();
         let mut transport = TestTransport::new();
         transport.add_input(b"reboot-recovery");
-        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        let res = block_on(process_next_command(&mut transport, &mut fastboot_impl));
+        assert_eq!(res, Err(Error::Aborted));
         assert_eq!(fastboot_impl.reboot_mode, Some(RebootMode::Recovery));
         assert_eq!(transport.out_queue[0], b"OKAY");
         // Failure is expected here because test reboot implementation always returns, which

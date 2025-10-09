@@ -17,6 +17,7 @@
 //! `android_boot:android_boot_demo()` and `fuchsia_boot:fuchsia_boot_demo()` for
 //! supported/unsupported features at the moment.
 
+#![feature(never_type)]
 #![cfg_attr(not(test), no_std)]
 
 // For the `vec!` macro
@@ -55,7 +56,7 @@ use {
         ops::Ops,
     },
     cfg_if::cfg_if,
-    efi::{efi_println, EfiEntry},
+    efi::{efi_println, report_error_and_reset, EfiEntry},
     libgbl::{Os, Result},
     utils::loaded_image_path,
 };
@@ -107,7 +108,9 @@ pub fn app_main(entry: EfiEntry) -> Result<()> {
         efi_println!(entry, "Image path: {}", v);
     }
 
-    let disks = find_block_devices(&entry)?;
+    let disks = find_block_devices(&entry).inspect_err(|e| {
+        report_error_and_reset(&entry, e, efi_types::GBL_EFI_DEBUG_ERROR_TAG_PARTITION)
+    })?;
     match get_target_os(&entry, &disks) {
         #[cfg(feature = "fuchsia")]
         TargetOs::Fuchsia => {

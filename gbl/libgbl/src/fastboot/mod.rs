@@ -46,8 +46,8 @@ use core::{
 };
 use fastboot::{
     local_session::LocalSession, next_arg, next_arg_u64, process_next_command, run_tcp_session,
-    CommandError, CommandResult, FailSender, FastbootImplementation, InfoSender, LockState,
-    LockType, OkaySender, RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
+    CommandResult, FailSender, FastbootImplementation, InfoSender, LockState, LockType, OkaySender,
+    RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
 };
 use gbl_async::{join, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
@@ -666,7 +666,7 @@ where
         &mut self,
         mode: RebootMode,
         mut resp: impl InfoSender + OkaySender,
-    ) -> CommandResult<()> {
+    ) -> CommandResult<!> {
         resp.send_info("Syncing storage...").await?;
         self.sync_all_blocks().await?;
         let msg = match mode {
@@ -686,8 +686,7 @@ where
         };
         resp.send_info(msg).await?;
         resp.send_okay("").await?;
-        self.gbl_ops.reboot();
-        Ok(())
+        self.gbl_ops.reboot()?
     }
 
     /// Appends a staged payload as bootloader file.
@@ -984,11 +983,8 @@ where
         &mut self,
         mode: RebootMode,
         resp: impl InfoSender + OkaySender,
-    ) -> CommandError {
-        match self.sync_tasks_and_reboot(mode, resp).await {
-            Err(e) => e,
-            _ => "Unknown".into(),
-        }
+    ) -> CommandResult<!> {
+        self.sync_tasks_and_reboot(mode, resp).await
     }
 
     async fn r#continue(&mut self, mut resp: impl InfoSender) -> CommandResult<()> {
@@ -3385,7 +3381,7 @@ pub(crate) mod test {
                 b"INFOSyncing storage...",
                 expected_info,
                 b"OKAY",
-                b"FAILUnknown",
+                b"FAILAborted",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),
@@ -3457,7 +3453,7 @@ pub(crate) mod test {
                 b"INFOSyncing storage...",
                 b"INFORebooting to bootloader...",
                 b"OKAY",
-                b"FAILUnknown",
+                b"FAILAborted",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),
@@ -3497,7 +3493,7 @@ pub(crate) mod test {
                 b"INFOSyncing storage...",
                 b"INFORebooting to recovery...",
                 b"OKAY",
-                b"FAILUnknown",
+                b"FAILAborted",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),

@@ -105,12 +105,10 @@ pub trait GblOps<'a, 'd> {
 
     /// Reboots the system into the last set boot mode.
     ///
-    /// The method is not expected to return. Errors should be handled internally by the
-    /// implementation. In most cases, implementation should continue to reset even in the presence
-    /// of errors (users can force power cycle anyway). If there are error cases where reboot
-    /// absolutely can't be taken, implementation should hang and notify platform user in its own
-    /// way.
-    fn reboot(&mut self);
+    /// If successful this method will not return.
+    /// If an error is generated instead, the caller is expected to log the error
+    /// and bring the system to a halt, usually by entering an infinte loop.
+    fn reboot(&mut self) -> Result<!, Error>;
 
     /// Returns the list of disk devices on this platform.
     ///
@@ -634,7 +632,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.console_out()
     }
 
-    fn reboot(&mut self) {
+    fn reboot(&mut self) -> Result<!, Error> {
         self.ops.reboot()
     }
 
@@ -1254,8 +1252,9 @@ pub(crate) mod test {
             Some(self)
         }
 
-        fn reboot(&mut self) {
+        fn reboot(&mut self) -> Result<!, Error> {
             self.rebooted = true;
+            Err(Error::Aborted)
         }
 
         fn disks(

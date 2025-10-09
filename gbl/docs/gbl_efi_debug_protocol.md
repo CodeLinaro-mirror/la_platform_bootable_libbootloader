@@ -47,9 +47,6 @@ a different GUID must be used.
 
 Alerts the firmware that a fatal error has occured.
 
-**Note:** this method will only be called in the GBL panic handler. On return, GBL
-will attempt to reset the system. If the reset fails, GBL will hang via loop.
-
 ## GBL_EFI_DEBUG_PROTOCOL.FatalError()
 
 ### Summary
@@ -98,7 +95,14 @@ See [`Related Definitions`](#related-definitions) for expected tags and their se
 
 ```c
 enum {
-    GBL_EFI_DEBUG_ERROR_TAG_PANIC,
+    // Error was generated automatically due to an assertion failure
+    GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
+    // General partition related error
+    GBL_EFI_DEBUG_ERROR_TAG_PARTITION,
+    // Failed to load required image
+    GBL_EFI_DEBUG_ERROR_TAG_LOAD_IMAGE,
+    // General boot failure
+    GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR
 };
 typedef uint64_t GBL_EFI_DEBUG_ERROR_TAG;
 ```
@@ -112,7 +116,7 @@ a stack trace, and a best-effort tag is passed to provide additional context abo
 the cause of the error.
 
 Note: when invoked automatically from the panic handler, e.g. when accessing an array
-at an invalid index, the tag variant will be GBL_EFI_DEBUG_ERROR_TAG_PANIC.
+at an invalid index, the tag variant will be GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR.
 Other tag values are provided on a best effort basis. Additional tag variants may be
 added as part of a non-breaking update.
 

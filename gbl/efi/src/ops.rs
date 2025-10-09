@@ -345,8 +345,8 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
     }
 
     /// Reboots the system into the last set boot mode.
-    fn reboot(&mut self) {
-        self.efi_entry.system_table().runtime_services().cold_reset();
+    fn reboot(&mut self) -> Result<!> {
+        self.efi_entry.system_table().runtime_services().cold_reset()
     }
 
     fn disks(

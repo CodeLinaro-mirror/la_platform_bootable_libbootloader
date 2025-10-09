@@ -27,10 +27,10 @@ mod riscv64;
 use cfg_if::cfg_if;
 use core::panic::PanicInfo;
 use efi::{
-    efi_panic, efi_println, initialize,
-    protocol::random_number_generator::RandomNumberGeneratorProtocol, EfiAllocator, EfiEntry,
+    efi_println, initialize, protocol::random_number_generator::RandomNumberGeneratorProtocol,
+    report_error_and_reset_with_global_entry, EfiAllocator, EfiEntry,
 };
-use efi_types::{EfiHandle, EfiSystemTable};
+use efi_types::{EfiHandle, EfiSystemTable, GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR};
 use gbl_efi::app_main;
 
 use libstack::initialize_canary;
@@ -38,8 +38,10 @@ use libstack::initialize_canary;
 #[panic_handler]
 fn handle_panic(p_info: &PanicInfo) -> ! {
     // Safety:
-    // * The very first thing done on entry is to initialize the global EFI entry.
-    unsafe { efi_panic(p_info) }
+    // * The very first thing the application does is initialize the global EFI entry.
+    unsafe {
+        report_error_and_reset_with_global_entry(p_info, GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR)
+    }
 }
 
 #[no_mangle]

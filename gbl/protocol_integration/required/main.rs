@@ -17,10 +17,12 @@
 #![no_std]
 #![no_main]
 
-use efi::{efi_panic, efi_println, initialize, utils::wait, EfiAllocator};
+use efi::{
+    efi_println, initialize, report_error_and_reset_with_global_entry, utils::wait, EfiAllocator,
+};
 use efi_types::{
     EfiHandle, EfiStatus, EfiSystemTable, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_PROTOCOL_ERROR,
-    EFI_STATUS_SUCCESS,
+    EFI_STATUS_SUCCESS, GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
 };
 use gbl_async::block_on;
 use libprotocol_test::test_all_required_protocols;
@@ -28,8 +30,10 @@ use libprotocol_test::test_all_required_protocols;
 #[panic_handler]
 fn handle_panic(p_info: &core::panic::PanicInfo) -> ! {
     // Safety:
-    // * The very first thing done on entry is to initialize the global EFI entry.
-    unsafe { efi_panic(p_info) }
+    // * The very first thing the application does is initialize the global EFI entry.
+    unsafe {
+        report_error_and_reset_with_global_entry(p_info, GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR)
+    }
 }
 
 #[no_mangle]

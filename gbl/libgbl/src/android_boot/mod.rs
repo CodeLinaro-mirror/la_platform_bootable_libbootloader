@@ -637,8 +637,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     let slot = get_boot_slot(ops)?;
     if matches!(result.last_set_active_slot, Some(s) if s != slot.suffix.as_char()) {
         gbl_println!(ops, "Active slot changed by \"fastboot set_active\". Reset..");
-        ops.reboot();
-        return Err(Error::UnexpectedReturn.into());
+        ops.reboot()?;
     }
 
     let is_recovery = boot_mode.should_enter_recovery()
@@ -2314,7 +2313,7 @@ androidboot.veritymode.managed=yes
                 )
             })
             .unwrap_err(),
-            Error::UnexpectedReturn.into()
+            Error::Aborted.into()
         );
 
         assert_eq!(
