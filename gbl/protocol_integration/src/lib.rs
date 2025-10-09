@@ -39,8 +39,8 @@ use efi::{
         erase_block::EraseBlockProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
+        gbl_efi_boot_control::GblBootControlProtocol,
         gbl_efi_boot_memory::GblBootMemoryProtocol,
-        gbl_efi_boot_target::GblBootTargetProtocol,
         gbl_efi_debug::GblDebugProtocol,
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_fastboot_transport::GblFastbootTransportProtocol,
@@ -237,7 +237,7 @@ pub fn test_all_required_protocols(entry: &EfiEntry) -> Result<()> {
         #[cfg(target_arch = "riscv64")]
         test_entry!(test_riscv_boot_protocol),
         test_entry!(test_gbl_avb),
-        test_entry!(test_gbl_boot_target),
+        test_entry!(test_gbl_boot_control),
     ];
 
     let mut res = Ok(());
@@ -315,15 +315,15 @@ fn test_erase_block(entry: &EfiEntry) -> Result<()> {
     res
 }
 
-fn test_gbl_boot_target(entry: &EfiEntry) -> Result<()> {
-    let protocol = expect_one_handle_for_protocol::<GblBootTargetProtocol>(entry)?;
+fn test_gbl_boot_control(entry: &EfiEntry) -> Result<()> {
+    let protocol = expect_one_handle_for_protocol::<GblBootControlProtocol>(entry)?;
 
     let mut res = Ok(());
 
-    let boot_data = protocol
-        .load_boot_data()
-        .inspect_err(|_| efi_println!(entry, "Could not load slot data"))?;
-    for i in 0..boot_data.slot_count {
+    let slot_count = protocol
+        .get_slot_count()
+        .inspect_err(|_| efi_println!(entry, "Could not get number of boot slots"))?;
+    for i in 0..slot_count {
         if let Err(e) = protocol.get_slot_info(i) {
             efi_println!(entry, "Could not load info for slot: {}", i);
             res = Err(e);

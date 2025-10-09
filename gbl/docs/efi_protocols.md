@@ -258,9 +258,9 @@ This can be enabled by itself, or in addition to fastboot over TCP.
 Used for device tree selection and bootconfig fixup. If not provided, the data
 from boot partitions will be used without FW-specific modifications.
 
-### GblBootTargetProtocol
+### GblBootControlProtocol
 
-* [`GBL_EFI_BOOT_TARGET_PROTOCOL`](./gbl_efi_boot_target_protocol.md)
+* [`GBL_EFI_BOOT_CONTROL_PROTOCOL`](./gbl_efi_boot_control_protocol.md)
 * required: enables A/B slotted booting and boot mode selection
 
 Used to read and write A/B slot metadata.

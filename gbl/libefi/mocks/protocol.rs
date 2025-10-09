@@ -427,33 +427,33 @@ pub mod gbl_efi_fastboot {
     pub type Var = MockVar;
 }
 
-/// Mock gbl_efi_boot_target
-pub mod gbl_efi_boot_target {
+/// Mock gbl_efi_boot_control
+pub mod gbl_efi_boot_control {
     use super::*;
-    use efi::protocol::gbl_efi_boot_target::GblSlot;
-    use efi_types::{GblEfiOneShotBootMode, GblEfiSlotMetadataBlock};
+    use efi::protocol::gbl_efi_boot_control::GblSlot;
+    use efi_types::GblEfiOneShotBootMode;
 
     mock! {
-        /// Mock of [GblBootTargetProtocol]
-        pub GblBootTargetProtocol {
-            /// Mock of GblBootTargetProtocol::get_slot_info.
-            pub fn get_slot_info(&mut self, idx: u8) -> Result<GblSlot>;
+        /// Mock of [GblBootControlProtocol]
+        pub GblBootControlProtocol {
+            /// Mock of GblBootControlProtocol::get_slot_count.
+            pub fn get_slot_count(&self) -> Result<u8>;
 
-            /// Mock of GblBootTargetProtocol::get_current_slot.
+            /// Mock of GblBootControlProtocol::get_slot_info.
+            pub fn get_slot_info(&self, idx: u8) -> Result<GblSlot>;
+
+            /// Mock of GblBootControlProtocol::get_current_slot.
             pub fn get_current_slot(&self) -> Result<GblSlot>;
 
-            /// Mock of GblBootTargetProtocol::load_boot_data.
-            pub fn load_boot_data(&self) -> Result<GblEfiSlotMetadataBlock>;
-
-            /// Mock of GblBootTargetProtocol::set_active_slot.
+            /// Mock of GblBootControlProtocol::set_active_slot.
             pub fn set_active_slot(&self, idx: u8) -> Result<()>;
 
-            /// Mock of GblBootTargetProtocol::get_one_shot_boot_mode.
+            /// Mock of GblBootControlProtocol::get_one_shot_boot_mode.
             pub fn get_one_shot_boot_mode(&self) -> Result<GblEfiOneShotBootMode>;
         }
     }
 
-    impl Versioned for MockGblBootTargetProtocol {
+    impl Versioned for MockGblBootControlProtocol {
         const REVISION: Revision = Revision { major: 0, minor: 2 };
 
         fn revision(&self) -> Revision {
@@ -462,7 +462,7 @@ pub mod gbl_efi_boot_target {
     }
 
     /// Map to the libefi name so code under test can just use one name.
-    pub type GblBootTargetProtocol = MockGblBootTargetProtocol;
+    pub type GblBootControlProtocol = MockGblBootControlProtocol;
 }
 
 /// Mock gbl_efi_boot_memory

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Rust wrapper for `GBL_EFI_BOOT_TARGET_PROTOCOL`.
+//! Rust wrapper for `GBL_EFI_BOOT_CONTROL_PROTOCOL`.
 extern crate libgbl;
 
 use crate::efi_call;
@@ -21,8 +21,8 @@ use crate::{
     versioned_protocol,
 };
 use efi_types::{
-    EfiGuid, GblEfiBootTargetProtocol, GblEfiOneShotBootMode, GblEfiSlotInfo,
-    GblEfiSlotMetadataBlock, GblEfiUnbootableReason, GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION,
+    EfiGuid, GblEfiBootControlProtocol, GblEfiOneShotBootMode, GblEfiSlotInfo,
+    GblEfiUnbootableReason, GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION,
     GBL_EFI_ONE_SHOT_BOOT_MODE_NONE, GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
     GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE as SYSTEM_UPDATE,
     GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED as USER_REQUESTED,
@@ -32,13 +32,13 @@ use liberror::Result;
 
 use libgbl::slots::{Bootability, Slot, Suffix, UnbootableReason};
 
-/// Wraps `GBL_EFI_BOOT_TARGET_PROTOCOL`.
-pub struct GblBootTargetProtocol;
+/// Wraps `GBL_EFI_BOOT_CONTROL_PROTOCOL`.
+pub struct GblBootControlProtocol;
 
-versioned_protocol!(GblBootTargetProtocol, GBL_EFI_BOOT_TARGET_PROTOCOL_REVISION);
+versioned_protocol!(GblBootControlProtocol, GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION);
 
-impl ProtocolInfo for GblBootTargetProtocol {
-    type InterfaceType = GblEfiBootTargetProtocol;
+impl ProtocolInfo for GblBootControlProtocol {
+    type InterfaceType = GblEfiBootControlProtocol;
 
     const GUID: EfiGuid =
         EfiGuid::new(0xd382db1b, 0x9ac2, 0x11f0, [0x84, 0xc7, 0x04, 0x7b, 0xcb, 0xa9, 0x60, 0x19]);
@@ -81,19 +81,21 @@ impl TryFrom<GblSlot> for libgbl::slots::Slot {
     }
 }
 
-impl<'a> Protocol<'a, GblBootTargetProtocol> {
-    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.load_boot_data()`
-    pub fn load_boot_data(&self) -> Result<GblEfiSlotMetadataBlock> {
-        let mut block: GblEfiSlotMetadataBlock = Default::default();
+impl<'a> Protocol<'a, GblBootControlProtocol> {
+    /// Wrapper of `GBL_EFI_BOOT_CONTROL_PROTOCOL.get_slot_count()`
+    pub fn get_slot_count(&self) -> Result<u8> {
+        let mut slot_count = 0;
         // SAFETY:
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        // `block` is an output parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface().load_boot_data, self.interface_ptr(), &mut block)? }
-        Ok(block)
+        // `slot_count` is an output parameter and will not be retained. It outlives the call.
+        unsafe {
+            efi_call!(self.interface().get_slot_count, self.interface_ptr(), &mut slot_count)?
+        }
+        Ok(slot_count)
     }
 
-    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.get_slot_info()`
+    /// Wrapper of `GBL_EFI_BOOT_CONTROL_PROTOCOL.get_slot_info()`
     pub fn get_slot_info(&self, idx: u8) -> Result<GblSlot> {
         let mut info: GblEfiSlotInfo = Default::default();
         // SAFETY:
@@ -104,7 +106,7 @@ impl<'a> Protocol<'a, GblBootTargetProtocol> {
         Ok(info.into())
     }
 
-    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.get_current_slot()`
+    /// Wrapper of `GBL_EFI_BOOT_CONTROL_PROTOCOL.get_current_slot()`
     pub fn get_current_slot(&self) -> Result<GblSlot> {
         let mut info: GblEfiSlotInfo = Default::default();
         // SAFETY:
@@ -115,7 +117,7 @@ impl<'a> Protocol<'a, GblBootTargetProtocol> {
         Ok(info.into())
     }
 
-    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.set_active_slot()`
+    /// Wrapper of `GBL_EFI_BOOT_CONTROL_PROTOCOL.set_active_slot()`
     pub fn set_active_slot(&self, idx: u8) -> Result<()> {
         // SAFETY:
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
@@ -123,7 +125,7 @@ impl<'a> Protocol<'a, GblBootTargetProtocol> {
         unsafe { efi_call!(self.interface().set_active_slot, self.interface_ptr(), idx) }
     }
 
-    /// Wrapper of `GBL_EFI_BOOT_TARGET_PROTOCOL.get_one_shot_boot_mode()`
+    /// Wrapper of `GBL_EFI_BOOT_CONTROL_PROTOCOL.get_one_shot_boot_mode()`
     pub fn get_one_shot_boot_mode(&self) -> Result<GblEfiOneShotBootMode> {
         let mut mode = GBL_EFI_ONE_SHOT_BOOT_MODE_NONE;
         // SAFETY:
