@@ -46,8 +46,8 @@ use core::{
 };
 use fastboot::{
     local_session::LocalSession, next_arg, next_arg_u64, process_next_command, run_tcp_session,
-    CommandResult, FailSender, FastbootImplementation, InfoSender, LockState, LockType, OkaySender,
-    RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
+    CommandError, CommandResult, FailSender, FastbootImplementation, InfoSender, LockState,
+    LockType, OkaySender, RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
 };
 use gbl_async::{join, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
@@ -207,7 +207,7 @@ impl GblFastbootResult {
         let [ramdisk_sz, fdt_sz, kernel_sz] = [&ramdisk, &fdt, &kernel].map(|v| ptr_range_len(v));
 
         // Partitions the general load buffer.
-        let general_buf = boot_buffer.take_scratch();
+        let general_buf = boot_buffer.take_boot_items().split_unused();
         let general = &general_buf.as_ptr_range();
         let ramdisk = sub_slice_range(general, ramdisk).unwrap_or(0..0);
         let fdt = sub_slice_range(general, fdt).unwrap_or(ramdisk.end..ramdisk.end);
@@ -825,8 +825,15 @@ where
     }
 
     /// Helper for checking and getting an `BootItemContainer` from general load buffer.
-    fn boot_item_container(&mut self) -> CommandResult<BootItemContainer> {
-        self.boot_buffer.as_borrowed().take_boot_items().ok_or("Not enough general buffer".into())
+    fn boot_item_container(&mut self) -> CommandResult<&mut BootItemContainer<'b>> {
+        let v = self.boot_buffer.boot_items();
+        match v.check_valid() {
+            Err(_) => v.init().map_err(|e| {
+                CommandError::from(format_args!("Failed to initialize boot item container {e})"))
+            })?,
+            _ => {}
+        }
+        Ok(v)
     }
 
     /// Helper for checking whether device is unlocked.
@@ -1070,6 +1077,12 @@ where
                 self.check_unlocked()?;
                 let arg = next_arg(&mut args).ok_or("Missing bootconfig arg")?;
                 Ok(self.boot_item_container()?.append_item(BootItem::Bootconfig, arg.as_bytes())?)
+            }
+            "gbl-add-staged-data" => {
+                self.check_unlocked()?;
+                let arg = next_arg(&mut args).ok_or("Missing tag")?;
+                let (data, sz) = self.take_download().ok_or("No download")?;
+                Ok(self.boot_item_container()?.append_blob(arg, &data[..sz])?)
             }
             #[cfg(feature = "gbl_dev")]
             "stack-smash-demo" => {
@@ -4337,6 +4350,11 @@ pub(crate) mod test {
         listener.add_usb_input(b"oem gbl-add-bootconfig arg1=val2");
         listener.add_usb_input(b"oem gbl-add-cmdline arg2=val2");
         listener.add_usb_input(b"oem gbl-add-bootconfig arg3=val3");
+        let download_data = b"some test data";
+        listener.add_usb_input(format!("download:{:#x}", download_data.len()).as_bytes());
+        listener.add_usb_input(download_data);
+        listener.add_usb_input(b"oem gbl-add-staged-data"); // Failed. Missing tag.
+        listener.add_usb_input(b"oem gbl-add-staged-data test");
         listener.add_usb_input(b"continue");
         let mut general = vec![0u8; 1024];
         block_on(run_gbl_fastboot_stack::<2>(
@@ -4357,6 +4375,10 @@ pub(crate) mod test {
                 b"OKAY",
                 b"OKAY",
                 b"OKAY",
+                b"DATA0000000e",
+                b"OKAY",
+                b"FAILMissing tag",
+                b"OKAY",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),
@@ -4364,14 +4386,18 @@ pub(crate) mod test {
             listener.dump_usb_out_queue()
         );
 
-        let container = BootItemContainer::from(&mut general[..], false).unwrap();
+        let container = BootItemContainer::new(&mut general[..]);
         assert_eq!(
-            container.iter().collect::<Vec<_>>(),
+            container
+                .iter()
+                .map(|(i, v)| (i, String::from_utf8(v.to_vec()).unwrap()))
+                .collect::<Vec<_>>(),
             vec![
-                (BootItem::Cmdline, b"arg0=val0" as _),
-                (BootItem::Bootconfig, b"arg1=val2" as _),
-                (BootItem::Cmdline, b"arg2=val2" as _),
-                (BootItem::Bootconfig, b"arg3=val3" as _),
+                (BootItem::Cmdline, "arg0=val0".into()),
+                (BootItem::Bootconfig, "arg1=val2".into()),
+                (BootItem::Cmdline, "arg2=val2".into()),
+                (BootItem::Bootconfig, "arg3=val3".into()),
+                (BootItem::Bootconfig, "gbl.blob.test=c29tZSB0ZXN0IGRhdGE=".into()),
             ]
         );
     }
@@ -4386,6 +4412,10 @@ pub(crate) mod test {
         let (usb, tcp) = (&listener, &listener);
         listener.add_usb_input(b"oem gbl-add-cmdline arg0=val0");
         listener.add_usb_input(b"oem gbl-add-bootconfig arg1=val2");
+        let download_data = b"some test data";
+        listener.add_usb_input(format!("download:{:#x}", download_data.len()).as_bytes());
+        listener.add_usb_input(download_data);
+        listener.add_usb_input(b"oem gbl-add-staged-data test");
         listener.add_usb_input(b"continue");
         let mut general = vec![0u8; 1024];
         block_on(run_gbl_fastboot_stack::<2>(
@@ -4402,6 +4432,9 @@ pub(crate) mod test {
             make_expected_usb_out(&[
                 b"FAILDevice is not unlocked",
                 b"FAILDevice is not unlocked",
+                b"DATA0000000e",
+                b"OKAY",
+                b"FAILDevice is not unlocked",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),
@@ -4409,7 +4442,6 @@ pub(crate) mod test {
             listener.dump_usb_out_queue()
         );
 
-        let container = BootItemContainer::from(&mut general[..], false).unwrap();
-        assert_eq!(container.iter().next(), None);
+        assert_eq!(BootItemContainer::new(&mut general[..]).iter().next(), None);
     }
 }

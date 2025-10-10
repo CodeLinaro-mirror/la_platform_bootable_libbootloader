@@ -515,7 +515,7 @@ mod test {
                 Some(&mut TestLocalSession::default()),
                 Some(listener),
                 Some(listener),
-            )
+            );
         })
     }
 
@@ -662,7 +662,6 @@ mod test {
         let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         let mut bootimg = read_test_data("zircon_fastboot_bootimg");
         let kernel_len = read_test_data("zircon_slotless.zbi").len();
-        println!("kernel_len: {kernel_len}, bootimg: {}", bootimg.len());
         bootimg[4096 + kernel_len..].fill(0);
         let LoadedVerifiedZircon { zbi_items, kernel, .. } =
             zircon_main_fastboot_boot(&mut ops, &mut load_buffer[..], &bootimg, &listener).unwrap();

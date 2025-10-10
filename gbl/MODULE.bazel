@@ -453,6 +453,11 @@ gbl_rust_crate_repository(
     path = "external/rust/android-crates-io/crates/bytes",
 )
 
+gbl_rust_crate_repository(
+    name = "base64",
+    path = "external/rust/android-crates-io/crates/base64",
+)
+
 # Set up a repo to export LLVM tool/library/header/sysroot paths
 gbl_llvm_prebuilts = use_repo_rule("@gbl//toolchain:gbl_workspace_util.bzl", "gbl_llvm_prebuilts")
 

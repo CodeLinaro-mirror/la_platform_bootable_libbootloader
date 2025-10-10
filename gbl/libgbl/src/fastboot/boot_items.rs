@@ -17,7 +17,11 @@
 //! between different stages of the boot process. It is not dependent on any external
 //! formats and is specific to GBL's internal workings.
 
-use core::mem::{size_of, take};
+use base64::{engine::general_purpose, Engine as _};
+use core::{
+    fmt::Write,
+    mem::{size_of, take},
+};
 use liberror::Error;
 use safemath::SafeNum;
 use zerocopy::{ByteSlice, FromBytes, Immutable, IntoBytes, KnownLayout, Ref, SplitByteSlice};
@@ -72,7 +76,7 @@ struct BootItemHeader {
     payload_size: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct BootItemContainer<'a>(&'a mut [u8]);
 
 /// Helper for parsing header and payload.
@@ -82,18 +86,28 @@ fn parse_container<B: ByteSlice + SplitByteSlice>(
     Ref::<_, BootItemContainerHeader>::from_prefix(buffer).map_err(|_| Error::InvalidInput)
 }
 
-// TODO(b/450268123): Removed when integrated into android_load_verify_fixup.
-#[allow(dead_code)]
+/// Helper for parsing header and payload.
+fn parse_checked<B: ByteSlice + SplitByteSlice>(
+    buffer: B,
+) -> Result<(Ref<B, BootItemContainerHeader>, B), Error> {
+    let (header, payload) = parse_container(buffer)?;
+    match header.magic == BOOT_ITEM_CONTAINER_MAGIC && header.total_size <= payload.len() {
+        true => Ok((header, payload)),
+        _ => Err(Error::InvalidInput),
+    }
+}
+
 impl<'a> BootItemContainer<'a> {
-    /// Creates a new instance.
-    pub(crate) fn new(buffer: &'a mut [u8]) -> Result<Self, Error> {
-        buffer.get_mut(0).map(|v| *v = 0);
-        Self::from(buffer, true)
+    /// Creates a new instance
+    pub(crate) fn new(buffer: &'a mut [u8]) -> Self {
+        Self(buffer)
     }
 
-    /// Gets the raw buffer.
-    pub(crate) fn raw_buffer(&mut self) -> &mut [u8] {
-        self.0 as _
+    /// Initializes the container.
+    pub(crate) fn init(&mut self) -> Result<(), Error> {
+        let (mut header, _) = parse_container(&mut self.0[..])?;
+        *header = BootItemContainerHeader { magic: BOOT_ITEM_CONTAINER_MAGIC, total_size: 0 };
+        Ok(())
     }
 
     /// Creates an instance that borrows internal fields.
@@ -101,31 +115,16 @@ impl<'a> BootItemContainer<'a> {
         BootItemContainer(self.0)
     }
 
-    /// Initialized from a buffer with an existing container. Creates if none exists and `create`
-    /// is true.
-    pub(crate) fn from(buffer: &'a mut [u8], create: bool) -> Result<Self, Error> {
-        let (mut header, payload) = parse_container(&mut buffer[..])?;
-        match header.magic == BOOT_ITEM_CONTAINER_MAGIC && header.total_size <= payload.len() {
-            true => Ok(BootItemContainer(buffer)),
-            _ if create => {
-                header.magic = BOOT_ITEM_CONTAINER_MAGIC;
-                header.total_size = 0;
-                Ok(BootItemContainer(buffer))
-            }
-            _ => Err(Error::InvalidInput),
-        }
+    /// Check whether the container is valid.
+    pub(crate) fn check_valid(&self) -> Result<(), Error> {
+        parse_checked(&self.0[..])?;
+        Ok(())
     }
 
-    /// Initializes from a buffer with an existing container and splits out the unused buffer.
-    pub(crate) fn from_prefix(buffer: &'a mut [u8], create: bool) -> (Option<Self>, &'a mut [u8]) {
-        match BootItemContainer::from(buffer, create).is_ok() {
-            true => {
-                let mut res = Self::from(buffer, create).unwrap();
-                let unused = res.split_unused();
-                (Some(res), unused)
-            }
-            _ => return (None, buffer),
-        }
+    /// Gets the raw buffer.
+    #[cfg(test)]
+    pub(crate) fn raw_buffer(&mut self) -> &mut [u8] {
+        &mut self.0[..]
     }
 
     /// Appends using the given construction closure.
@@ -133,12 +132,12 @@ impl<'a> BootItemContainer<'a> {
         &mut self,
         f: impl FnOnce(&mut [u8]) -> Result<(BootItem, usize), Error>,
     ) -> Result<(), Error> {
+        let (mut header, payload) = parse_checked(&mut self.0[..])?;
         let (mut item_header, payload) =
-            Ref::<_, BootItemHeader>::from_prefix(self.get_unused())
+            Ref::<_, BootItemHeader>::from_prefix(&mut payload[header.total_size..])
                 .map_err(|_| Error::BufferTooSmall(Some(size_of::<BootItemHeader>())))?;
         let (item, sz) = f(payload)?;
         *item_header = BootItemHeader { item_type: item as _, payload_size: sz };
-        let (mut header, _) = parse_container(&mut self.0[..]).unwrap();
         header.total_size =
             usize::try_from(SafeNum::from(sz) + size_of::<BootItemHeader>() + header.total_size)?;
         Ok(())
@@ -156,8 +155,10 @@ impl<'a> BootItemContainer<'a> {
 
     /// Returns an iterator to all items.
     pub(crate) fn iter(&self) -> BootItemContainerIter {
-        let (header, payload) = parse_container(&self.0[..]).unwrap();
-        BootItemContainerIter(&payload[..header.total_size])
+        match parse_checked(&self.0[..]) {
+            Ok((header, payload)) => BootItemContainerIter(&payload[..header.total_size]),
+            Err(_) => BootItemContainerIter(&[][..]),
+        }
     }
 
     /// Returns an iterator to specific items.
@@ -175,17 +176,38 @@ impl<'a> BootItemContainer<'a> {
 
     /// Gets the unused buffer.
     pub(crate) fn get_unused(&mut self) -> &mut [u8] {
-        let (header, payload) = parse_container(&mut self.0[..]).unwrap();
-        &mut payload[header.total_size..]
+        self.as_borrowed().split_unused()
     }
 
     /// Splits out the unused part of the buffer.
     pub(crate) fn split_unused(&mut self) -> &'a mut [u8] {
-        let total_size = parse_container(&self.0[..]).unwrap().0.total_size;
-        let (buffer, unused) =
-            take(&mut self.0).split_at_mut(total_size + size_of::<BootItemContainerHeader>());
-        self.0 = buffer;
-        unused
+        match parse_checked(&self.0[..]).map(|(v, _)| v.total_size) {
+            Ok(total_size) => {
+                let (buffer, unused) = take(&mut self.0)
+                    .split_at_mut(total_size + size_of::<BootItemContainerHeader>());
+                self.0 = buffer;
+                unused
+            }
+            _ => take(&mut self.0),
+        }
+    }
+
+    /// Encode a data blob as base64 and appends as a bootconfig.
+    ///
+    /// Format is "gbl.blob.<tag>=<base64 encoded blob>"
+    pub(crate) fn append_blob(&mut self, tag: &str, data: &[u8]) -> Result<(), Error> {
+        let sz_needed = (SafeNum::from(data.len()) + 2) / 3 * 4;
+        self.append_with(|buf| {
+            let mut b = libutils::FormattedBytes::new(buf);
+            write!(&mut b, "gbl.blob.{tag}=").unwrap();
+            let off = b.size();
+            let buf = &mut b.buffer()[off..];
+            let sz_needed = usize::try_from(sz_needed + off).ok();
+            let sz = general_purpose::STANDARD
+                .encode_slice(data, &mut buf[..])
+                .map_err(|_| Error::BufferTooSmall(sz_needed))?;
+            Ok((BootItem::Bootconfig, sz.checked_add(off).unwrap()))
+        })
     }
 }
 
@@ -211,7 +233,8 @@ mod test {
     #[test]
     fn test_append() {
         let mut buffer = vec![0u8; 4096];
-        let mut container = BootItemContainer::new(&mut buffer[..]).unwrap();
+        let mut container = BootItemContainer::new(&mut buffer[..]);
+        container.init().unwrap();
         container.append_item(BootItem::Cmdline, "arg_0=val_0".as_bytes()).unwrap();
         container.append_item(BootItem::Cmdline, "arg_1=val_1".as_bytes()).unwrap();
         container.append_item(BootItem::Bootconfig, "arg_2=val_2".as_bytes()).unwrap();
@@ -232,14 +255,15 @@ mod test {
     }
 
     #[test]
-    fn test_from() {
+    fn test_new_from_existing() {
         let mut buffer = vec![0u8; 4096];
-        let mut container = BootItemContainer::new(&mut buffer[..]).unwrap();
+        let mut container = BootItemContainer::new(&mut buffer[..]);
+        container.init().unwrap();
         container.append_item(BootItem::Cmdline, "arg_0=val_0".as_bytes()).unwrap();
         container.append_item(BootItem::Cmdline, "arg_1=val_1".as_bytes()).unwrap();
         container.append_item(BootItem::Bootconfig, "arg_2=val_2".as_bytes()).unwrap();
         assert_eq!(
-            BootItemContainer::from(&mut buffer[..], false).unwrap().iter().collect::<Vec<_>>(),
+            BootItemContainer::new(&mut buffer[..]).iter().collect::<Vec<_>>(),
             vec![
                 (BootItem::Cmdline, b"arg_0=val_0" as _),
                 (BootItem::Cmdline, b"arg_1=val_1" as _),
@@ -249,37 +273,59 @@ mod test {
     }
 
     #[test]
-    fn test_from_invalid() {
+    fn test_uninit() {
         let mut buffer = vec![0u8; 4096];
-        assert!(BootItemContainer::from(&mut buffer[..], false).is_err());
+        let mut container = BootItemContainer::new(&mut buffer[..]);
+        assert_eq!(container.iter().collect::<Vec<_>>(), vec![]);
+        assert!(container.append_item(BootItem::Cmdline, b"a").is_err());
 
         let (mut header, payload) =
             Ref::<_, BootItemContainerHeader>::from_prefix(&mut buffer[..]).unwrap();
         header.magic = BOOT_ITEM_CONTAINER_MAGIC;
         header.total_size = payload.len() + 1;
-        assert!(BootItemContainer::from(&mut buffer[..], false).is_err());
+        let mut container = BootItemContainer::new(&mut buffer[..]);
+        assert_eq!(container.iter().collect::<Vec<_>>(), vec![]);
+        assert!(container.append_item(BootItem::Cmdline, b"a").is_err());
     }
 
     #[test]
     fn test_buffer_too_small() {
         assert!(BootItemContainer::new(&mut vec![0u8; size_of::<BootItemContainerHeader>() - 1])
+            .init()
             .is_err());
 
         let mut buffer =
             vec![0u8; size_of::<BootItemContainerHeader>() + size_of::<BootItemHeader>() - 1];
-        let mut container = BootItemContainer::new(&mut buffer[..]).unwrap();
+        let mut container = BootItemContainer::new(&mut buffer[..]);
+        container.init().unwrap();
         assert!(container.append_item(BootItem::Cmdline, b"").is_err());
 
         let mut buffer =
             vec![0u8; size_of::<BootItemContainerHeader>() + size_of::<BootItemHeader>()];
-        let mut container = BootItemContainer::new(&mut buffer[..]).unwrap();
+        let mut container = BootItemContainer::new(&mut buffer[..]);
+        container.init().unwrap();
         assert!(container.append_item(BootItem::Cmdline, b"a").is_err());
 
         let mut buffer =
             vec![0u8; size_of::<BootItemContainerHeader>() + size_of::<BootItemHeader>() + 1];
-        let mut container = BootItemContainer::new(&mut buffer[..]).unwrap();
+        let mut container = BootItemContainer::new(&mut buffer[..]);
+        container.init().unwrap();
         container.append_item(BootItem::Cmdline, b"a").unwrap();
         container.split_unused();
         assert!(container.append_item(BootItem::Cmdline, b"a").is_err());
+    }
+
+    #[test]
+    fn test_append_base64_blob() {
+        let mut buffer = vec![0u8; 4096];
+        let mut container = BootItemContainer::new(&mut buffer[..]);
+        container.init().unwrap();
+        container.append_blob("tag", b"abc").unwrap();
+        container.append_blob("tag", b"abcd").unwrap();
+        container.append_blob("tag", b"abcde").unwrap();
+        assert_eq!(
+            container.utf8_items(BootItem::Bootconfig).collect::<Vec<_>>(),
+            vec!["gbl.blob.tag=YWJj", "gbl.blob.tag=YWJjZA==", "gbl.blob.tag=YWJjZGU=",]
+        );
     }
 }

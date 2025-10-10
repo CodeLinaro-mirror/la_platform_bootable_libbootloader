@@ -590,9 +590,10 @@ impl<'a> BootBufferLoader<'a> {
     }
 
     /// Splits out the unused buffer and take the boot item container.
-    pub(super) fn take_boot_items(&mut self) -> Option<BootItemContainer> {
-        self.general = self.bufs.take_scratch();
-        self.bufs.take_boot_items()
+    pub(super) fn take_boot_items(&mut self) -> BootItemContainer<'a> {
+        let mut boot_items = self.bufs.take_boot_items();
+        self.general = boot_items.split_unused();
+        boot_items
     }
 
     /// Loads pvmfw image.
