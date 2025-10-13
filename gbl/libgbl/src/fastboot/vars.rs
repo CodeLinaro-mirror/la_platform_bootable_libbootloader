@@ -136,10 +136,22 @@ where
     }
 
     /// Parses and finds the size of the given partition.
-    pub(crate) fn partition_size<'s>(&self, part: &'s str) -> CommandResult<u64> {
+    pub(crate) fn partition_size<'s>(&mut self, part: &'s str) -> CommandResult<u64> {
         let (part, blk_id, off, sz) = self.parse_partition_arg(part)?;
-        let (_, part_info) = self.find_partition(part, blk_id)?;
-        let (start, end) = part_info.sub(off, sz)?;
+        let parts = self.resolve_slotted_partitions(part, blk_id)?;
+        // Slotted partition-size only make sense if they are all the same. Because it may be used
+        // to copy AVB footer.
+        for (_, p) in &parts[1..] {
+            if p.size()? != parts[0].1.size()? {
+                return Err(format_args!(
+                    "{} and {} has different partition sizes",
+                    p.name().unwrap_or("?"),
+                    parts[0].1.name().unwrap_or("?")
+                )
+                .into());
+            }
+        }
+        let (start, end) = parts[0].1.sub(off, sz)?;
         Ok(end - start)
     }
 
