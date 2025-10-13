@@ -297,13 +297,13 @@ pub(crate) struct GblEfiBootBuffer {
 
 impl GblEfiBootBuffer {
     pub(crate) fn to_boot_buffer(&mut self) -> BootBuffer<'_> {
-        BootBuffer {
-            general: self.general.get(),
-            kernel: self.kernel.as_mut().map(|v| v as _),
-            ramdisk: self.ramdisk.as_mut().map(|v| v as _),
-            fdt: self.fdt.as_mut().map(|v| v as _),
-            pvmfw_data: self.pvmfw_data.as_mut().map(|v| v.get()),
-        }
+        BootBuffer::new(
+            self.general.get(),
+            self.kernel.as_mut().map(|v| v as _),
+            self.ramdisk.as_mut().map(|v| v as _),
+            self.fdt.as_mut().map(|v| v as _),
+            self.pvmfw_data.as_mut().map(|v| v.get()),
+        )
     }
 }
 

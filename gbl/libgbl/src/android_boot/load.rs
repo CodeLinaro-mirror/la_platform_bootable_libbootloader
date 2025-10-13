@@ -17,6 +17,7 @@ use crate::{
     android_boot::{avf::DEFAULT_PVMFW_PART_NAME_CSTR, build_pvmfw_data_region},
     constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
     decompress::decompress_kernel,
+    fastboot::boot_items::BootItemContainer,
     gbl_println,
     ops::GblOps,
     partition::RAW_PARTITION_NAME_LEN,
@@ -476,6 +477,7 @@ pub fn get_kernel(boot: &[u8]) -> Result<&[u8], Error> {
 #[derive(Default)]
 pub(super) struct BootBufferLoader<'a> {
     bufs: BootBuffer<'a>,
+    general: &'a mut [u8],
 
     pub(super) ramdisk_sz: usize,
     pub(super) bootconfig_sz: usize,
@@ -488,6 +490,12 @@ pub(super) struct BootBufferLoader<'a> {
 impl<'a> BootBufferLoader<'a> {
     pub(super) fn new(bufs: BootBuffer<'a>) -> Self {
         Self { bufs, ..Default::default() }
+    }
+
+    /// Splits out the unused buffer and take the boot item container.
+    pub(super) fn take_boot_items(&mut self) -> Option<BootItemContainer> {
+        self.general = self.bufs.take_scratch();
+        self.bufs.take_boot_items()
     }
 
     /// Loads pvmfw image.
@@ -515,17 +523,17 @@ impl<'a> BootBufferLoader<'a> {
                 assert_eq!(self.bootconfig_sz, 0);
                 assert_eq!(self.general_fdt, 0..0);
                 assert_eq!(self.general_kernel, 0..0);
-                let off = aligned_offset(&self.bufs.general[..], PVMFW_DATA_ALIGNMENT)?;
+                let off = aligned_offset(&self.general[..], PVMFW_DATA_ALIGNMENT)?;
                 let sz = build_pvmfw_data_region(
                     ops,
-                    &mut self.bufs.general[off..],
+                    &mut self.general[off..],
                     pvmfw_bin,
                     verify_data,
                     unlocked,
                     is_recovery,
                 )?;
-                let (pvmfw, general) = take(&mut self.bufs.general)[off..].split_at_mut(sz);
-                self.bufs.general = general;
+                let (pvmfw, general) = take(&mut self.general)[off..].split_at_mut(sz);
+                self.general = general;
                 (pvmfw, pvmfw_bin_len)
             }
         })
@@ -537,7 +545,7 @@ impl<'a> BootBufferLoader<'a> {
         ops: &mut impl GblOps<'b, 'c>,
         kernel: &[u8],
     ) -> Result<(), Error> {
-        self.general_kernel = self.bufs.general.len()..self.bufs.general.len();
+        self.general_kernel = self.general.len()..self.general.len();
         self.kernel_sz = match self.bufs.kernel.as_mut() {
             // Designated buffer, decompresses directly into it.
             Some(v) => decompress_kernel(ops, kernel, v)?,
@@ -546,8 +554,8 @@ impl<'a> BootBufferLoader<'a> {
                 // This step assumes ramdisk has been loaded, bootconfig and fdt haven't.
                 assert_eq!(self.bootconfig_sz, 0);
                 assert_eq!(self.general_fdt.len(), 0);
-                let general_range = self.bufs.general.as_ptr_range();
-                let buffer = &mut self.bufs.general[self.ramdisk_sz..];
+                let general_range = self.general.as_ptr_range();
+                let buffer = &mut self.general[self.ramdisk_sz..];
                 let sz = decompress_kernel(ops, kernel, &mut buffer[..])?;
                 // TODO(b/430068343): We place the kenrel at the tail because we haven't fixup
                 // FDT/bootconfig yet and don't know their exact size. However the fixup requires
@@ -577,8 +585,8 @@ impl<'a> BootBufferLoader<'a> {
                 assert_eq!(self.bootconfig_sz, 0);
                 assert_eq!(self.general_fdt.len(), 0);
                 self.general_fdt = self.ramdisk_sz..self.ramdisk_sz;
-                self.bufs.general = aligned_subslice(take(&mut self.bufs.general), PAGE_SIZE)?;
-                split(self.bufs.general, self.ramdisk_sz)?.0
+                self.general = aligned_subslice(take(&mut self.general), PAGE_SIZE)?;
+                split(self.general, self.ramdisk_sz)?.0
             }
         };
         let mut curr;
@@ -596,11 +604,11 @@ impl<'a> BootBufferLoader<'a> {
             Some(v) => Ok(&mut v[self.ramdisk_sz..]),
             _ => {
                 // Moves FDT to the right most position to make more space for bootconfig fixup.
-                let buffer = &mut self.bufs.general[..self.general_kernel.start];
+                let buffer = &mut self.general[..self.general_kernel.start];
                 let off = aligned_tail_offset(buffer as _, self.general_fdt.len(), FDT_ALIGNMENT)?;
                 buffer.copy_within(self.general_fdt.clone(), off);
                 self.general_fdt = off..off + self.general_fdt.len();
-                Ok(&mut self.bufs.general[self.ramdisk_sz..off])
+                Ok(&mut self.general[self.ramdisk_sz..off])
             }
         }
     }
@@ -629,7 +637,7 @@ impl<'a> BootBufferLoader<'a> {
     ) -> Result<(Option<&mut [u8]>, &mut [u8]), Error> {
         let unused_off = self.general_bootconfig_end()?;
         let fdt = self.bufs.fdt.as_mut().map(|v| v as _);
-        Ok((fdt, &mut self.bufs.general[unused_off..self.general_kernel.start]))
+        Ok((fdt, &mut self.general[unused_off..self.general_kernel.start]))
     }
 
     /// Sets FDT range.
@@ -639,7 +647,7 @@ impl<'a> BootBufferLoader<'a> {
     pub(super) fn set_fdt_range(&mut self, fdt: Range<*const u8>) {
         // Updates `self.general_fdt` if fdt is loaded to general load buffer.
         if self.bufs.fdt.is_none() {
-            self.general_fdt = sub_slice_range(&self.bufs.general.as_ptr_range(), &fdt).unwrap();
+            self.general_fdt = sub_slice_range(&self.general.as_ptr_range(), &fdt).unwrap();
             self.check_general_fdt_range();
         }
     }
@@ -656,9 +664,10 @@ impl<'a> BootBufferLoader<'a> {
                 // Moves FDT to the left most position.
                 // Starts at PAGE_SIZE aligned address to make sure that the preceding ramdisk
                 // image (if no designated ramdisk buffer is provided), has a page aligned end.
+                let align = self.bufs.ramdisk.as_ref().map_or(PAGE_SIZE, |_| FDT_ALIGNMENT);
                 self.general_fdt =
-                    move_left(self.bufs.general, &self.general_fdt, bootconfig_end, PAGE_SIZE)?;
-                Ok(&mut self.bufs.general[self.general_fdt.start..self.general_kernel.start])
+                    move_left(self.general, &self.general_fdt, bootconfig_end, align)?;
+                Ok(&mut self.general[self.general_fdt.start..self.general_kernel.start])
             }
         }
     }
@@ -681,9 +690,7 @@ impl<'a> BootBufferLoader<'a> {
         let bound = self.general_fdt.end;
         self.general_kernel = match self.bufs.kernel {
             Some(_) => bound..bound,
-            _ => {
-                move_left(self.bufs.general, &self.general_kernel, bound, KERNEL_ALIGNMENT).unwrap()
-            }
+            _ => move_left(self.general, &self.general_kernel, bound, KERNEL_ALIGNMENT).unwrap(),
         }
     }
 
@@ -691,6 +698,7 @@ impl<'a> BootBufferLoader<'a> {
     pub(super) fn splits(&mut self) -> [&mut [u8]; 4] {
         BootBufferLoader {
             bufs: self.bufs.as_borrowed(),
+            general: self.general,
             ramdisk_sz: self.ramdisk_sz,
             bootconfig_sz: self.bootconfig_sz,
             kernel_sz: self.kernel_sz,
@@ -702,7 +710,7 @@ impl<'a> BootBufferLoader<'a> {
 
     /// Consumes the loader and splits out the [ramdisk, fdt, kernel, unused] buffers
     pub(super) fn into_splits(self) -> [&'a mut [u8]; 4] {
-        let (rem, unused) = self.bufs.general.split_at_mut(self.general_kernel.end);
+        let (rem, unused) = self.general.split_at_mut(self.general_kernel.end);
         let (rem, kernel) = rem.split_at_mut(self.general_kernel.start);
         let (ramdisk, fdt) = rem.split_at_mut(self.general_fdt.start);
         // Use designated buffers if provided, otherwise falls back to `general`
