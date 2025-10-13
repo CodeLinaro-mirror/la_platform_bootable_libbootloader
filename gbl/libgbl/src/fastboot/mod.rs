@@ -27,10 +27,11 @@ use crate::{
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message},
     ops::{CommandExecType, FastbootEraseAction, RambootOps},
-    partition::{check_part_unique, GblDisk, PartitionIo},
+    partition::{check_part_unique, GblDisk, MultiPartitionIo, Partition, PartitionIo, RawName},
     GblOps,
 };
 pub use abr::{mark_slot_active, set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
+use arrayvec::ArrayVec;
 use core::{
     array::from_fn,
     cmp::min,
@@ -80,14 +81,18 @@ pub use fastboot::{TcpStream, Transport};
 /// Reserved name for indicating flashing GPT.
 const FLASH_GPT_PART: &str = "gpt";
 
+/// Maximum number of partitions for `MultiPartitionIo` in the fastboot context.
+/// This is determined by the maximum number slots supported.
+const MAX_IO_PARTS: usize = 2;
+
 /// Represents the workload of a GBL Fastboot async task.
 enum TaskWorkload<'a, 'b, B: BlockIo, P: BufferPool> {
     /// Image flashing task. (partition io, downloaded data, data size)
-    Flash(PartitionIo<'a, B>, ScopedBuffer<'b, P>, usize),
+    Flash(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>, usize),
     /// Sparse image flashing task. (partition io, downloaded data)
-    FlashSparse(PartitionIo<'a, B>, ScopedBuffer<'b, P>),
+    FlashSparse(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>),
     // Image erase task.
-    Erase(PartitionIo<'a, B>, ScopedBuffer<'b, P>),
+    Erase(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>),
     None,
 }
 
@@ -471,30 +476,39 @@ where
         Ok(Some((blk_id, resize)))
     }
 
-    /// Parses and checks the partition argument and returns the partition name, block device
-    /// index, start offset and size.
-    pub(crate) fn parse_partition<'s>(
+    /// Helper for parsing partition argument.
+    ///
+    ///   <partition>/<blk id>/<offset>/<size>
+    fn parse_partition_arg<'s>(
         &self,
         part: &'s str,
-    ) -> CommandResult<(Option<&'s str>, usize, u64, u64)> {
-        let devs = self.disks;
+    ) -> CommandResult<(Option<&'s str>, Option<usize>, Option<u64>, Option<u64>)> {
         let mut args = part.split('/');
         // Parses partition name.
         let part = next_arg(&mut args);
         // Parses block device ID.
         let blk_id = self.check_next_arg_blk_id(&mut args)?;
         // Parses sub window offset.
-        let window_offset = next_arg_u64(&mut args)?.unwrap_or(0);
+        let window_offset = next_arg_u64(&mut args)?;
         // Parses sub window size.
         let window_size = next_arg_u64(&mut args)?;
+        Ok((part, blk_id, window_offset, window_size))
+    }
+
+    /// Helper for resolving the block device ID and partition info for given optional partition
+    /// name and block device ID.
+    fn find_partition<'s>(
+        &self,
+        part: Option<&'s str>,
+        blk_id: Option<usize>,
+    ) -> Result<(usize, Partition), Error> {
+        let devs = self.disks;
         // Checks uniqueness of the partition and resolves its block device ID.
         let find = |p: Option<&'s str>| match blk_id {
-            None => {
-                Ok::<_, Error>((check_part_unique(devs, p.ok_or("Must provide a partition")?)?, p))
-            }
-            Some(v) => Ok(((v, devs[v].find_partition(p)?), p)),
+            None => Ok::<_, Error>(check_part_unique(devs, p.ok_or("Must provide a partition")?)?),
+            Some(v) => Ok((v, devs[v].find_partition(p)?)),
         };
-        let ((blk_id, partition), actual) = match find(part) {
+        Ok(match find(part) {
             // Some legacy Fuchsia devices in the field uses name "fuchsia-fvm" for the standard
             // "fvm" partition. However all of our infra uses the standard name "fvm" when flashing.
             // Here we do a one off mapping if the device falls into this case. Once we have a
@@ -505,11 +519,67 @@ where
             #[cfg(feature = "fuchsia")]
             Err(Error::NotFound) if part == Some("fvm") => find(Some("fuchsia-fvm"))?,
             v => v?,
-        };
-        let part_sz = SafeNum::from(partition.size()?);
-        let window_size = window_size.unwrap_or((part_sz - window_offset).try_into()?);
-        u64::try_from(part_sz - window_size - window_offset)?;
-        Ok((actual, blk_id, window_offset, window_size))
+        })
+    }
+
+    /// Helper for finding partitions with special handling for slotted syntax. The following are
+    /// checked in order:
+    //
+    //  1. If there is an exact match of the partition, return the match.
+    //  2. If partition has format "<base>_ab", checks "<base>_a" and "<base>_b".
+    //  3. Otherwise checks "<base>_<current slot>".
+    fn resolve_slotted_partitions(
+        &mut self,
+        part: Option<&str>,
+        blk_id: Option<usize>,
+    ) -> Result<ArrayVec<(usize, Partition), MAX_IO_PARTS>, Error> {
+        match self.find_partition(part, blk_id) {
+            // If there is an exact match, returns as it is.
+            Ok(v) => return Ok((&[v][..]).try_into().unwrap()),
+            // Checks slotted extension. Currently only support A/B two-slot scheme.
+            Err(Error::NotFound) => match part {
+                // If the partition doesn't exist but ends with "_ab", expands to "_a" and "_b"
+                // respectively.
+                Some(p) if p.ends_with("_ab") => {
+                    let mut res = ArrayVec::new();
+                    let base = p.strip_suffix("_ab").unwrap();
+                    for suffix in ["a", "b"] {
+                        let part = RawName::new_formatted(format_args!("{base}_{suffix}"))?;
+                        res.push(self.find_partition(Some(part.to_str()), blk_id)?);
+                    }
+                    Ok(res)
+                }
+                // Otherwise appends with current slot and checks again.
+                Some(p) => {
+                    let mut res = ArrayVec::new();
+                    let slot = self.gbl_ops.get_current_slot()?.suffix.as_char();
+                    let part = RawName::new_formatted(format_args!("{p}_{slot}"))?;
+                    res.push(self.find_partition(Some(part.to_str()), blk_id)?);
+                    Ok(res)
+                }
+                _ => Err(Error::NotFound),
+            },
+            Err(e) => return Err(e),
+        }
+    }
+
+    /// Parses and resolves partition and wait until the corresponding IO can be obtained.
+    pub(crate) async fn parse_and_get_partition_io<'s>(
+        &mut self,
+        part: &'s str,
+    ) -> CommandResult<MultiPartitionIo<'a, B, MAX_IO_PARTS>> {
+        let (part, blk_id, off, sz) = self.parse_partition_arg(part)?;
+        let mut parts_info = ArrayVec::new();
+        for (id, p) in self.resolve_slotted_partitions(part, blk_id)? {
+            let (start, end) = p.sub(off, sz)?;
+            parts_info.push((id, start, end));
+        }
+        loop {
+            match crate::partition::create_multi_partition_io(self.disks, parts_info.clone()) {
+                Err(Error::NotReady) => yield_now().await,
+                v => return Ok(v?),
+            }
+        }
     }
 
     /// Takes the download data and resets download size.
@@ -531,16 +601,7 @@ where
         }
     }
 
-    /// An internal helper for parsing a partition and getting the partition IO
-    async fn parse_and_get_partition_io(
-        &self,
-        part: &str,
-    ) -> CommandResult<(usize, PartitionIo<'a, B>)> {
-        let (part, blk_idx, start, sz) = self.parse_partition(part)?;
-        Ok((blk_idx, self.wait_partition_io(blk_idx, part).await?.sub(start, sz)?))
-    }
-
-    /// Helper for scheduiling an async task.
+    /// Helper for scheduling an async task.
     ///
     /// * If `Self::enable_async_task` is true, the method will add the task to the background task
     ///   list. Otherwise it simply runs the task.
@@ -817,7 +878,7 @@ where
             };
         }
 
-        let (_, part_io) = self.parse_and_get_partition_io(part).await?;
+        let part_io = self.parse_and_get_partition_io(part).await?;
         let (data, sz) = self.take_download().ok_or("No download")?;
         let mut task = Task::new(match is_sparse_image(&data) {
             Ok(v) => TaskWorkload::FlashSparse(part_io.sub(0, v.data_size())?, data),
@@ -847,7 +908,7 @@ where
             return Ok(());
         }
 
-        let (_, part_io) = self.parse_and_get_partition_io(part).await?;
+        let part_io = self.parse_and_get_partition_io(part).await?;
         self.get_download_buffer().await;
         let mut task = Task::new(TaskWorkload::Erase(part_io, self.take_download().unwrap().0));
         task.set_context(|f| write!(f, "erase:{part}"));
@@ -903,7 +964,7 @@ where
         size: u32,
         mut responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()> {
-        let (_, mut part_io) = self.parse_and_get_partition_io(part).await?;
+        let mut part_io = self.parse_and_get_partition_io(part).await?;
         let buffer = self.get_download_buffer().await;
         let end = u64::try_from(SafeNum::from(offset) + size)?;
         let mut curr = offset;
@@ -1514,6 +1575,7 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(slot('a')));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -1646,19 +1708,35 @@ pub(crate) mod test {
     /// A helper function to flash data to a partition
     fn flash_part(fb: &mut impl FastbootImplementation, part: &str, data: &[u8]) {
         // Prepare a download buffer.
-        let dl_size = data.len();
         let download = data.to_vec();
         let resp: TestResponder = Default::default();
         set_download(fb, &download[..]);
         block_on(fb.flash(part, &resp)).unwrap();
-        assert_eq!(fetch(fb, part.into(), 0, dl_size).unwrap(), download);
     }
 
-    /// A helper for testing partition flashing.
-    fn check_flash_part(fb: &mut impl FastbootImplementation, part: &str, expected: &[u8]) {
+    /// A helper for testing multi partition flashing.
+    fn check_flash_multi_part(
+        fb: &mut impl FastbootImplementation,
+        part: &str,
+        actual_parts: &[&str],
+        expected: &[u8],
+    ) {
         flash_part(fb, part, expected);
+        assert!(actual_parts
+            .iter()
+            .all(|v| fetch(fb, (*v).into(), 0, expected.len()).unwrap() == *expected));
+
         // Also flashes bit-wise reversed version in case the initial content is the same.
-        flash_part(fb, part, &flipped_bits(expected));
+        let expected = &flipped_bits(expected);
+        flash_part(fb, part, expected);
+        assert!(actual_parts
+            .iter()
+            .all(|v| fetch(fb, (*v).into(), 0, expected.len()).unwrap() == *expected));
+    }
+
+    /// A helper for testing single partition flashing.
+    fn check_flash_part(fb: &mut impl FastbootImplementation, part: &str, expected: &[u8]) {
+        check_flash_multi_part(fb, part, &[part], expected);
     }
 
     #[test]
@@ -1672,6 +1750,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0", [0xaau8; KiB!(4)]);
         storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(slot('b')));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -1686,14 +1765,29 @@ pub(crate) mod test {
         check_flash_part(&mut gbl_fb, "raw_1", &[0x55u8; KiB!(8)]);
         check_flash_part(&mut gbl_fb, "/0", disk_0);
         check_flash_part(&mut gbl_fb, "/1", disk_1);
+        check_flash_multi_part(&mut gbl_fb, "boot_ab", &["boot_a", "boot_b"], expect_boot_a);
+        check_flash_multi_part(&mut gbl_fb, "boot", &["boot_b"], expect_boot_a);
 
         // Partital flash
-        let off = 0x200;
-        let size = 1024;
-        check_flash_part(&mut gbl_fb, "boot_a//200", &expect_boot_a[off..size]);
-        check_flash_part(&mut gbl_fb, "boot_b//200", &expect_boot_b[off..size]);
-        check_flash_part(&mut gbl_fb, "/0/200", &disk_0[off..size]);
-        check_flash_part(&mut gbl_fb, "/1/200", &disk_1[off..size]);
+        let range = 0x200..0x400;
+        check_flash_part(&mut gbl_fb, "boot_a//200", &expect_boot_a[range.clone()]);
+        check_flash_part(&mut gbl_fb, "boot_b//200", &expect_boot_b[range.clone()]);
+        // Maps to all slots
+        check_flash_multi_part(
+            &mut gbl_fb,
+            "boot_ab//200",
+            &["boot_a//200", "boot_b//200"],
+            &expect_boot_a[range.clone()],
+        );
+        // Maps to current slot
+        check_flash_multi_part(
+            &mut gbl_fb,
+            "boot//200",
+            &["boot_b//200"],
+            &expect_boot_a[range.clone()],
+        );
+        check_flash_part(&mut gbl_fb, "/0/200", &disk_0[range.clone()]);
+        check_flash_part(&mut gbl_fb, "/1/200", &disk_1[range.clone()]);
     }
 
     #[test]
@@ -1703,7 +1797,11 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"raw", vec![0u8; raw.len()]);
+        storage.add_raw_device(c"raw_0_a", vec![0u8; raw.len()]);
+        storage.add_raw_device(c"raw_0_b", vec![0u8; raw.len()]);
+        storage.add_raw_device(c"raw_1_b", vec![0u8; raw.len()]);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(slot('b')));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -1715,6 +1813,36 @@ pub(crate) mod test {
         set_download(&mut gbl_fb, &download[..]);
         block_on(gbl_fb.flash("/0", &resp)).unwrap();
         assert_eq!(fetch(&mut gbl_fb, "/0".into(), 0, raw.len()).unwrap(), raw);
+
+        // Maps to both slots
+        set_download(&mut gbl_fb, &download[..]);
+        block_on(gbl_fb.flash("raw_0_ab", &resp)).unwrap();
+        assert_eq!(fetch(&mut gbl_fb, "raw_0_a".into(), 0, raw.len()).unwrap(), raw);
+        assert_eq!(fetch(&mut gbl_fb, "raw_0_b".into(), 0, raw.len()).unwrap(), raw);
+        // Maps to current slot.
+        set_download(&mut gbl_fb, &download[..]);
+        block_on(gbl_fb.flash("raw_1", &resp)).unwrap();
+        assert_eq!(fetch(&mut gbl_fb, "raw_1_b".into(), 0, raw.len()).unwrap(), raw);
+    }
+
+    #[test]
+    fn test_flash_partition_ignore_slot_suffix_with_exact_match() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_ab", [0xaau8; KiB!(4)]);
+        storage.add_raw_device(c"boot", [0xaau8; KiB!(4)]);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(slot('b')));
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        // It should not attempt to write boot_a or boot_b partitions since there is a partition
+        // of exact match.
+        check_flash_part(&mut gbl_fb, "boot_ab", &[0x55u8; KiB!(4)]);
+        check_flash_part(&mut gbl_fb, "boot", &[0x55u8; KiB!(4)]);
     }
 
     /// A helper to invoke OEM commands.
@@ -1965,6 +2093,48 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn test_erase_multi_parts() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"raw_0_a", [0xaau8; KiB!(4)]);
+        storage.add_raw_device(c"raw_0_b", [0xaau8; KiB!(8)]);
+        storage.add_raw_device(c"raw_1_b", [0x55u8; KiB!(12)]);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(slot('b')));
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let resp: TestResponder = Default::default();
+
+        // Erases "raw_0_a/b"
+        block_on(gbl_fb.erase("raw_0_ab", &resp)).unwrap();
+        block_on(gbl_fb.erase("raw_1", &resp)).unwrap();
+
+        // The mock storage device erases data by flipping bits. Thus 0x55 <--> 0xaa.
+        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0x55u8; KiB!(4)]);
+        assert_eq!(storage[1].partition_io(None).unwrap().dev().io().storage, [0x55u8; KiB!(8)]);
+        assert_eq!(storage[2].partition_io(None).unwrap().dev().io().storage, [0xaau8; KiB!(12)]);
+
+        // Tests with additional offset/size
+        block_on(gbl_fb.erase("raw_0_ab//400/400", &resp)).unwrap();
+        block_on(gbl_fb.erase("raw_1//400/400", &resp)).unwrap();
+        assert_eq!(
+            storage[0].partition_io(None).unwrap().dev().io().storage,
+            [vec![0x55u8; KiB!(1)], vec![0xaau8; KiB!(1)], vec![0x55u8; KiB!(2)]].concat()
+        );
+        assert_eq!(
+            storage[1].partition_io(None).unwrap().dev().io().storage,
+            [vec![0x55u8; KiB!(1)], vec![0xaau8; KiB!(1)], vec![0x55u8; KiB!(6)]].concat()
+        );
+        assert_eq!(
+            storage[2].partition_io(None).unwrap().dev().io().storage,
+            [vec![0xaau8; KiB!(1)], vec![0x55u8; KiB!(1)], vec![0xaau8; KiB!(10)]].concat()
+        );
+    }
+
+    #[test]
     fn test_default_block() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
         let mut storage = FakeGblOpsStorage::default();
@@ -1977,6 +2147,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw", raw_a);
         storage.add_raw_device(c"raw", raw_b);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(slot('a')));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2873,7 +3044,7 @@ pub(crate) mod test {
     fn test_update_gpt_fail_on_raw_blk() {
         let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"raw_0", [0u8; KiB!(1024)]);
+        storage.add_raw_device(c"raw_0", vec![0u8; KiB!(1024)]);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         let listener: SharedTestListener = Default::default();
@@ -2956,7 +3127,7 @@ pub(crate) mod test {
     #[test]
     fn test_oem_erase_gpt_fail_on_raw_blk() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"raw_0", [0u8; KiB!(1024)]);
+        storage.add_raw_device(c"raw_0", vec![0u8; KiB!(1024)]);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         let listener: SharedTestListener = Default::default();
@@ -3830,6 +4001,7 @@ pub(crate) mod test {
         };
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.vendor_erase_handler = Some(&mut vendor_erase_handler);
+        gbl_ops.current_slot = Some(Ok(slot('a')));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
         // Succeeds due to `vendor_erase_handler` instructing it to skip, even if there is no such
