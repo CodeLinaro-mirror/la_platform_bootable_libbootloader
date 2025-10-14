@@ -32,6 +32,9 @@ bazel_dep(
     name = "bazel_skylib",
 )
 bazel_dep(
+    name = "googletest",
+)
+bazel_dep(
     name = "platforms",
 )
 bazel_dep(
@@ -66,6 +69,11 @@ local_path_override(
 local_path_override(
     module_name = "bazel_skylib",
     path = "external/bazel-skylib",
+)
+
+local_path_override(
+    module_name = "googletest",
+    path = "external/googletest",
 )
 
 local_path_override(

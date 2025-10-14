@@ -40,11 +40,6 @@ def define_gbl_workspace(name = None):
         path = "external/bazelbuild-rules_rust/extensions/bindgen",
     )
 
-    native.local_repository(
-        name = "googletest",
-        path = "external/googletest",
-    )
-
     native.new_local_repository(
         name = "llvm_linux_x86_64_prebuilts",
         path = "prebuilts/clang/host/linux-x86/clang-{}".format(_CLANG_VERSION),
