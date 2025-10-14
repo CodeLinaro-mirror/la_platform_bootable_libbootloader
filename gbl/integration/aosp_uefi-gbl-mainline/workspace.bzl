@@ -44,18 +44,6 @@ def define_gbl_workspace(name = None):
         path = "external/bazelbuild-rules_rust/extensions/bindgen",
     )
 
-    maybe(
-        repo_rule = native.local_repository,
-        name = "rules_shell",
-        path = "external/bazelbuild-rules_shell",
-    )
-
-    maybe(
-        repo_rule = native.local_repository,
-        name = "rules_license",
-        path = "external/bazelbuild-rules_license",
-    )
-
     native.local_repository(
         name = "googletest",
         path = "external/googletest",
