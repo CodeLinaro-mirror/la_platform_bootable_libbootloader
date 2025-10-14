@@ -99,7 +99,14 @@ where
     ) -> CommandResult<()> {
         let mut buf = [0u8; 32];
         send.send_var_info(VERSION_BOOTLOADER, [], VERSION_BOOTLOADER_VAL).await?;
-        send.send_var_info(SLOT_COUNT, [], self.get_var_slot_count(&mut buf)?).await?;
+        match self.get_var_slot_count(&mut buf) {
+            Ok(v) => send.send_var_info(SLOT_COUNT, [], v).await?,
+            Err(e) => {
+                gbl_println!(self.gbl_ops, "Failed to get {SLOT_COUNT}: {e:?}.");
+                #[cfg(not(feature = "gbl_dev"))]
+                return Err(e.into());
+            }
+        }
         send.send_var_info(MAX_FETCH_SIZE, [], MAX_FETCH_SIZE_VAL).await?;
         self.get_all_block_device(send).await?;
         send.send_var_info(DEFAULT_BLOCK, [], self.get_var_default_block(&mut buf)?).await?;
