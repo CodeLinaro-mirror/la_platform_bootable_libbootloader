@@ -81,21 +81,6 @@ cc_library(
 )
 
 gbl_new_local_repository(
-    name = "mkbootimg",
-    build_file_content = """
-load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files(glob(["**/*"]))
-cc_library(
-    name = "bootimg_header",
-    hdrs = ["include/bootimg/bootimg.h"],
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-)
-""",
-    path = "tools/mkbootimg",
-)
-
-gbl_new_local_repository(
     name = "libfdt_c",
     build_file = "@gbl//libfdt:BUILD.libfdt_c.bazel",
     path = "external/dtc/libfdt",
