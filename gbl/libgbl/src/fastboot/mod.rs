@@ -1552,6 +1552,41 @@ pub(crate) mod test {
         );
     }
 
+    #[cfg(feature = "gbl_dev")]
+    #[test]
+    fn test_get_var_all_skips_slot_count_if_unsupported() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.slot_count = Some(Err(Error::Unsupported));
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        let mut logger = TestVarSender(vec![]);
+        block_on(gbl_fb.get_var_all(&mut logger)).unwrap();
+        assert_eq!(
+            logger.0,
+            [
+                "version-bootloader: 1.0",
+                "max-fetch-size: 0x7fffffff",
+                "gbl-default-block: None",
+                format!("{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
+                    .as_str(),
+                format!("{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
+                    .as_str(),
+                format!(
+                    "{}: {}",
+                    FakeGblOps::GBL_TEST_VAR_UNSPLIT,
+                    FakeGblOps::GBL_TEST_VAR_UNSPLIT_VAL
+                )
+                .as_str(),
+            ]
+        );
+    }
+
     /// A helper for fetching partition from a `GblFastboot`
     fn fetch<EOff: core::fmt::Debug, ESz: core::fmt::Debug>(
         fb: &mut impl FastbootImplementation,
