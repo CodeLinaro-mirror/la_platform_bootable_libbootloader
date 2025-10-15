@@ -131,11 +131,40 @@ impl BootImageV3Info {
     }
 }
 
+#[repr(u32)]
+#[derive(Debug)]
+enum VendorBootRamdiskType {
+    NONE = VENDOR_RAMDISK_TYPE_NONE,
+    PLTFORM = VENDOR_RAMDISK_TYPE_PLATFORM,
+    RECOVERY = VENDOR_RAMDISK_TYPE_RECOVERY,
+    DLKM = VENDOR_RAMDISK_TYPE_DLKM,
+}
+
+impl TryFrom<u32> for VendorBootRamdiskType {
+    type Error = Error;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            VENDOR_RAMDISK_TYPE_NONE => Ok(VendorBootRamdiskType::NONE),
+            VENDOR_RAMDISK_TYPE_PLATFORM => Ok(VendorBootRamdiskType::PLTFORM),
+            VENDOR_RAMDISK_TYPE_RECOVERY => Ok(VendorBootRamdiskType::RECOVERY),
+            VENDOR_RAMDISK_TYPE_DLKM => Ok(VendorBootRamdiskType::DLKM),
+            _ => Err(Error::InvalidInput),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct VendorBootRamdiskEntry {
+    ramdisk_range: Range<usize>,
+    ramdisk_type: VendorBootRamdiskType,
+}
+
 /// Contains vendor boot image information.
 struct VendorBootImageInfo {
     ramdisk_range: Range<usize>,
     dtb_range: Range<usize>,
     bootconfig_range: Range<usize>,
+    ramdisk_table: arrayvec::ArrayVec<VendorBootRamdiskEntry, RAMDISK_TABLE_MAX_ENTRIES>,
 }
 
 impl VendorBootImageInfo {
@@ -159,7 +188,33 @@ impl VendorBootImageInfo {
         };
         let table = page_aligned_range(dtb_range.end, table_sz, page_size)?;
         let bootconfig_range = table.end..(table.end + usize::try_from(bootconfig_sz)?);
-        Ok(Self { ramdisk_range, dtb_range, bootconfig_range })
+        let mut ramdisk_table = arrayvec::ArrayVec::new();
+        if let VendorImageHeader::V4(hdr) = header {
+            if hdr.vendor_ramdisk_table_entry_num > 0 {
+                let table_entries: Ref<_, [vendor_ramdisk_table_entry_v4]> =
+                    Ref::from_prefix_with_elems(
+                        &buffer[table],
+                        hdr.vendor_ramdisk_table_entry_num as usize,
+                    )
+                    .map_err(|_| Error::InvalidInput)?
+                    .0;
+                if hdr.vendor_ramdisk_table_entry_num as usize > RAMDISK_TABLE_MAX_ENTRIES {
+                    return Err(Error::Other(Some(
+                        "Ramdisk table entry exceeded max supported entry count",
+                    )));
+                }
+
+                ramdisk_table.extend(table_entries.iter().map(|e| {
+                    let start = ramdisk_range.start + e.ramdisk_offset as usize;
+                    let end = start + e.ramdisk_size as usize;
+                    VendorBootRamdiskEntry {
+                        ramdisk_range: start..end,
+                        ramdisk_type: e.ramdisk_type.try_into().unwrap(),
+                    }
+                }));
+            }
+        }
+        Ok(Self { ramdisk_range, dtb_range, bootconfig_range, ramdisk_table })
     }
 
     /// Gets the v3 base header.
@@ -172,6 +227,16 @@ impl VendorBootImageInfo {
         cstr_bytes_to_str(&Self::v3(buffer).cmdline[..])
     }
 }
+
+// Max number of ramdisks supported in vendor_boot partition.
+// There's currently no limit on how many ramdisks entries can be
+// in the vendor_boot ramdisk table, so we set a reasonable limit here.
+// Feel free to adjust
+pub const RAMDISK_TABLE_MAX_ENTRIES: usize = 8;
+// init_boot/boot + however many ramdisks in vendor_boot
+//                + however many ramdisks in vendor_kernel_boot
+// Contains various loaded image components by `android_load_verify`
+pub const RAMDISK_MAX_ENTRIES: usize = RAMDISK_TABLE_MAX_ENTRIES * 2 + 2;
 
 /// Contains various loaded image components by `android_load_verify`
 #[derive(Default)]
@@ -199,7 +264,7 @@ pub struct LoadedImages<'a> {
     /// kernel from boot image,
     pub kernel: &'a [u8],
     /// ramdisks to be concatenated (vendor_boot+vendor_kernel_boot+init_boot/boot)
-    pub ramdisks: arrayvec::ArrayVec<&'a [u8], 3>,
+    pub ramdisks: arrayvec::ArrayVec<&'a [u8], RAMDISK_MAX_ENTRIES>,
 }
 
 impl LoadedImages<'_> {
@@ -279,12 +344,14 @@ fn log_and_parse_bootimg<'a, 'b, 'c>(
 /// * `ops`: An implementation of `GblOps`.
 /// * `slot`: The target slot to loader.
 /// * `unlocked`: The unlock state.
+/// * `is_recovery`: Whether we are booting to recovery.
 /// * `verify_data`: `SlotVerifyData` returns from `avb_slot_verify`.
 /// * `load`: The destination image assembly load buffer.
 pub(super) fn android_load_verified<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
     slot: Slot,
     unlocked: bool,
+    is_recovery: bool,
     verify_data: &'c SlotVerifyData,
 ) -> Result<LoadedImages<'c>, Error> {
     let mut images = LoadedImages::default();
@@ -297,9 +364,15 @@ pub(super) fn android_load_verified<'a, 'b, 'c>(
     let boot = get_verified_partition(ops, c"boot", slot, unlocked, false, verify_data)?;
     images.boot_hdr = boot;
     match log_and_parse_bootimg(ops, boot)? {
-        BootImage::V3(_) | BootImage::V4(_) => {
-            load_v3_and_v4_verified(ops, boot, slot, unlocked, verify_data, &mut images)
-        }
+        BootImage::V3(_) | BootImage::V4(_) => load_v3_and_v4_verified(
+            ops,
+            boot,
+            slot,
+            unlocked,
+            is_recovery,
+            verify_data,
+            &mut images,
+        ),
         BootImage::V0(_) | BootImage::V1(_) | BootImage::V2(_) => {
             load_v2_or_lower_verified(boot, &mut images)
         }
@@ -333,6 +406,29 @@ fn load_v2_or_lower_verified<'a, 'b, 'c>(
     Ok(())
 }
 
+fn parse_vendor_ramdisks<'a, const CAP: usize>(
+    image_data: &'a [u8],
+    info: &VendorBootImageInfo,
+    is_recovery: bool,
+    ramdisks: &mut arrayvec::ArrayVec<&'a [u8], CAP>,
+) -> Result<(), Error> {
+    // Recovery ramdisk is only needed in recovery mode. So if we are not
+    // booting recovery, skip recovery ramdisk
+    if info.ramdisk_table.is_empty() {
+        // No ramdisk table (v3 image), just load all ramdisks.
+        ramdisks.push(get_range(image_data, &info.ramdisk_range)?);
+    } else {
+        for e in info.ramdisk_table.iter() {
+            // Skips recovery ramdisk when booting to normal android
+            if !is_recovery && matches!(e.ramdisk_type, VendorBootRamdiskType::RECOVERY) {
+                continue;
+            }
+            ramdisks.push(get_range(image_data, &e.ramdisk_range)?);
+        }
+    }
+    Ok(())
+}
+
 /// Loads android boot images of version 3 and 4 from avb verified partitions.
 ///
 /// # Args
@@ -341,6 +437,7 @@ fn load_v2_or_lower_verified<'a, 'b, 'c>(
 /// * `boot`: A buffer containing the boot image.
 /// * `slot`: The target slot to loader.
 /// * `unlocked`: The unlock state.
+/// * `is_recovery`: Whether we are booting to recovery.
 /// * `verify_data`: `SlotVerifyData` returns from `avb_slot_verify`.
 /// * `load`: The destination image assembly load buffer.
 /// * `images`: The output `LoadedImages` that stores partitioned image slices loaded to `load` or
@@ -380,6 +477,7 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     boot: &'c [u8],
     slot: Slot,
     unlocked: bool,
+    is_recovery: bool,
     verify_data: &'c SlotVerifyData,
     images: &mut LoadedImages<'c>,
 ) -> Result<(), Error> {
@@ -394,9 +492,8 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     images.vendor_cmdline = VendorBootImageInfo::cmdline(vendor_boot)?;
     images.dtb = get_range(vendor_boot, &vendor_boot_info.dtb_range)?;
     images.vendor_bootconfig = get_range(vendor_boot, &vendor_boot_info.bootconfig_range)?;
-
     images.kernel = get_range(boot, &boot_info.kernel_range)?;
-    images.ramdisks.push(get_range(vendor_boot, &vendor_boot_info.ramdisk_range)?);
+    parse_vendor_ramdisks(&vendor_boot, &vendor_boot_info, is_recovery, &mut images.ramdisks)?;
 
     // Finds and loads vendor_kernel_boot partition if provided.
     let vendor_kernel_boot =
@@ -405,7 +502,7 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
         let info = VendorBootImageInfo::new(vendor_kernel_boot)?;
         // DTB should be provided by vendor_kerenl_boot if it exists.
         images.dtb = get_range(vendor_kernel_boot, &info.dtb_range)?;
-        images.ramdisks.push(get_range(vendor_kernel_boot, &info.ramdisk_range)?);
+        parse_vendor_ramdisks(&vendor_kernel_boot, &info, is_recovery, &mut images.ramdisks)?;
     }
 
     // Loads generic ramdisk, which may come from either boot or init_boot.

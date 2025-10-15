@@ -151,7 +151,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     }
 
     let (verify_data, status, unlocked) = avb_verify_slot(ops, slot, &mut partitions_to_verify)?;
-    let images = android_load_verified(ops, slot, unlocked, &verify_data)?;
+    let images = android_load_verified(ops, slot, unlocked, is_recovery, &verify_data)?;
 
     let pvmfw = match images.pvmfw.is_empty() {
         true => None,
