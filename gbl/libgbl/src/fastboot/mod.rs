@@ -2762,6 +2762,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.slot_count = Some(Ok(0));
+        gbl_ops.current_slot = Some(Ok(slot('a')));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -3086,6 +3087,7 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(slot('a')));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -4220,6 +4222,45 @@ pub(crate) mod test {
                 b"INFO2: raw_0, [0x0, 0x1000), 0x1000",
                 b"INFO3: raw_1, [0x0, 0x2000), 0x2000",
                 b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_gbl_getvar_slotted_partition() {
+        let mut storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
+        storage.add_raw_device(c"raw_a", [0xaau8; KiB!(4)]);
+        storage.add_raw_device(c"raw_b", [0x55u8; KiB!(4)]);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(slot('b')));
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"getvar:partition-size:boot_ab");
+        listener.add_usb_input(b"getvar:partition-size:raw_ab");
+        listener.add_usb_input(b"getvar:partition-size:boot");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"FAILboot_b and boot_a has different partition sizes",
+                b"OKAY0x1000",
+                b"OKAY0x3000",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),
