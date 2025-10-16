@@ -33,11 +33,7 @@ def define_gbl_workspace(name = None):
     Args:
         name (String): Placeholder for buildifier check.
     """
-    maybe(
-        repo_rule = native.local_repository,
-        name = "rules_rust",
-        path = "external/bazelbuild-rules_rust",
-    )
+
     maybe(
         repo_rule = native.local_repository,
         name = "rules_rust_bindgen",
@@ -47,17 +43,6 @@ def define_gbl_workspace(name = None):
     native.local_repository(
         name = "googletest",
         path = "external/googletest",
-    )
-
-    native.local_repository(
-        name = "build_bazel_apple_support",
-        path = "bootable/libbootloader/gbl/fake_modules/apple_support",
-    )
-
-    native.new_local_repository(
-        name = "rules_rust_tinyjson",
-        path = "external/rust/android-crates-io/crates/tinyjson",
-        build_file = "@rules_rust//util/process_wrapper:BUILD.tinyjson.bazel",
     )
 
     native.new_local_repository(
