@@ -431,7 +431,12 @@ pub mod gbl_efi_fastboot {
 pub mod gbl_efi_boot_control {
     use super::*;
     use efi::protocol::gbl_efi_boot_control::GblSlot;
-    use efi_types::GblEfiOneShotBootMode;
+    use efi_types::{GblEfiLoadedOs, GblEfiOneShotBootMode};
+
+    mock! {
+        /// Empty mock of [GblEfiOsEntryPoint]
+        pub GblEfiOsEntryPoint {}
+    }
 
     mock! {
         /// Mock of [GblBootControlProtocol]
@@ -450,6 +455,12 @@ pub mod gbl_efi_boot_control {
 
             /// Mock of GblBootControlProtocol::get_one_shot_boot_mode.
             pub fn get_one_shot_boot_mode(&self) -> Result<GblEfiOneShotBootMode>;
+
+            /// Mock of GblBootControlProtocol::handle_loaded_os.
+            pub fn handle_loaded_os(
+                &self,
+                os: &GblEfiLoadedOs
+            ) -> Result<Option<GblEfiOsEntryPoint>>;
         }
     }
 
@@ -461,6 +472,8 @@ pub mod gbl_efi_boot_control {
         }
     }
 
+    /// Map to the libefi name so code under test can just use one name.
+    pub type GblEfiOsEntryPoint = MockGblEfiOsEntryPoint;
     /// Map to the libefi name so code under test can just use one name.
     pub type GblBootControlProtocol = MockGblBootControlProtocol;
 }

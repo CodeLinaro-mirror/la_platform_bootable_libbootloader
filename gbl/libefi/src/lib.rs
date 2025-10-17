@@ -934,6 +934,11 @@ impl<'a> EfiMemoryMap<'a> {
         self.descriptor_version
     }
 
+    /// Returns the value of `descriptor_size`.
+    pub fn descriptor_size(&self) -> usize {
+        self.descriptor_size
+    }
+
     /// Returns the number of descriptors.
     pub fn len(&self) -> usize {
         self.buffer.len() / self.descriptor_size

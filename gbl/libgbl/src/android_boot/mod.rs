@@ -85,7 +85,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     slot: Slot,
     is_recovery: bool,
     boot_buffer: BootBuffer<'a>,
-) -> Result<(&'a mut [u8], &'a mut [u8], &'a mut [u8], &'a mut [u8])> {
+) -> Result<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
     let mut loader = BootBufferLoader::new(boot_buffer);
 
     let mut partitions: ArrayMaxParts<(Partition, Option<PartitionBuffer<_>>)> =
@@ -326,7 +326,17 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     loader.set_fdt_range(fdt_range);
     loader.move_kernel_left();
     let [ramdisk, fdt, kernel, unused] = loader.into_splits();
-    Ok((&mut ramdisk[..ramdisk_len], &mut fdt[..fdt_sz], &mut kernel[..kernel_len], unused))
+
+    let final_ramdisk = &ramdisk[..ramdisk_len];
+    let final_fdt = &fdt[..fdt_sz];
+    let final_kernel = &kernel[..kernel_len];
+    match ops.handle_loaded_os(kernel, ramdisk, fdt) {
+        // Loaded OS handling is optional.
+        Ok(_) | Err(Error::Unsupported) => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    Ok((final_ramdisk, final_fdt, final_kernel, unused))
 }
 
 /// Helper for appending one or more commandline strings to FDT chosen/bootarg
@@ -576,7 +586,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     ops: &mut G,
     mut boot_buffer: BootBuffer<'c>,
     run_fastboot: impl FnOnce(GblFastbootEntry<'_, G>),
-) -> Result<(&'c mut [u8], &'c mut [u8], &'c mut [u8], &'c mut [u8])> {
+) -> Result<(&'c [u8], &'c [u8], &'c [u8], &'c mut [u8])> {
     let bcb = read_bootloader_message_to(ops, boot_buffer.general).inspect_err(|e| {
         gbl_println!(ops, "Failed to read bootloader message from misc partition: {e}")
     })?;

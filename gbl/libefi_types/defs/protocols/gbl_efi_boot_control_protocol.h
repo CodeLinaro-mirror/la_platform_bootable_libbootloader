@@ -54,6 +54,22 @@ typedef struct {
   uint8_t successful;
 } GblEfiSlotInfo;
 
+typedef struct {
+  size_t kernel_size;
+  EfiPhysicalAddr kernel;
+  size_t ramdisk_size;
+  EfiPhysicalAddr ramdisk;
+  size_t device_tree_size;
+  EfiPhysicalAddr device_tree;
+  uint64_t reserved[8];
+} GblEfiLoadedOs;
+
+typedef void (*OsEntryPoint)(size_t descriptor_size,
+                             uint32_t descriptor_version,
+                             size_t num_descriptors,
+                             const EfiMemoryDescriptor* memory_map,
+                             const GblEfiLoadedOs* os);
+
 static const uint64_t GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 2);
 
@@ -70,9 +86,12 @@ typedef struct GblEfiBootControlProtocol {
   // Slot metadata manipulation methods
   EfiStatus (*set_active_slot)(struct GblEfiBootControlProtocol* self,
                                /* in */ uint8_t index);
-  // Boot mode methods
+  // Boot control methods
   EfiStatus (*get_one_shot_boot_mode)(struct GblEfiBootControlProtocol* self,
                                       /* out */ GblEfiOneShotBootMode* mode);
+  EfiStatus (*handle_loaded_os)(struct GblEfiBootControlProtocol* self,
+                                /* in */ const GblEfiLoadedOs* os,
+                                /* out */ OsEntryPoint* entry_point);
 } GblEfiBootControlProtocol;
 
 #endif  // __GBL_EFI_BOOT_CONTROL_PROTOCOL_H__

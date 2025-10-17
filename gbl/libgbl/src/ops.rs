@@ -516,6 +516,23 @@ pub trait GblOps<'a, 'd> {
     /// Gets the one-shot boot mode.
     fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>, Error>;
 
+    /// Handles a loaded OS before booting.
+    ///
+    /// # Args
+    ///
+    /// * `kernel`: Kernel image.
+    /// * `ramdisk`: Ramdisk image.
+    /// * `device_tree`: Device tree image.
+    ///
+    /// Returns Ok(()) if loaded OS images are successfully handled.
+    /// Returns Err(Error::Unsupported) if FW doesn't need to handle OS images.
+    fn handle_loaded_os(
+        &mut self,
+        kernel: &[u8],
+        ramdisk: &[u8],
+        device_tree: &[u8],
+    ) -> Result<(), Error>;
+
     /// Returns the base stack pointer if available
     fn get_base_sp(&mut self) -> Option<usize>;
 
@@ -845,6 +862,15 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
     fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>, Error> {
         // Ramboot is not suppose to call this interface.
         unreachable!()
+    }
+
+    fn handle_loaded_os(
+        &mut self,
+        kernel: &[u8],
+        ramdisk: &[u8],
+        device_tree: &[u8],
+    ) -> Result<(), Error> {
+        self.ops.handle_loaded_os(kernel, ramdisk, device_tree)
     }
 
     fn get_base_sp(&mut self) -> Option<usize> {
@@ -1629,6 +1655,15 @@ pub(crate) mod test {
 
         fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>, Error> {
             Ok(self.one_shot_boot_mode)
+        }
+
+        fn handle_loaded_os(
+            &mut self,
+            _kernel: &[u8],
+            _ramdisk: &[u8],
+            _device_tree: &[u8],
+        ) -> Result<(), Error> {
+            Ok(())
         }
 
         fn get_base_sp(&mut self) -> Option<usize> {
