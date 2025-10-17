@@ -32,7 +32,7 @@ bazel_dep(
     name = "bazel_skylib",
 )
 bazel_dep(
-    name = "googletest",
+    name = "gbl",
 )
 bazel_dep(
     name = "platforms",
@@ -41,22 +41,10 @@ bazel_dep(
     name = "rules_cc",
 )
 bazel_dep(
-    name = "rules_license",
-)
-bazel_dep(
-    name = "rules_pkg",
-)
-bazel_dep(
     name = "rules_python",
 )
 bazel_dep(
-    name = "rules_shell",
-)
-bazel_dep(
     name = "rules_rust",
-)
-bazel_dep(
-    name = "rules_rust_bindgen",
 )
 
 local_path_override(
@@ -72,6 +60,11 @@ local_path_override(
 local_path_override(
     module_name = "bazel_skylib",
     path = "external/bazel-skylib",
+)
+
+local_path_override(
+    module_name = "gbl",
+    path = "bootable/libbootloader/gbl",
 )
 
 local_path_override(
