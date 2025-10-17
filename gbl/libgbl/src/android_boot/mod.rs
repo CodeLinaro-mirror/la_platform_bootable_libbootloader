@@ -698,7 +698,7 @@ pub(crate) mod tests {
     ];
 
     // Test data path
-    const TEST_DATA_PATH: &str = "external/gbl/libgbl/testdata/android";
+    const TEST_DATA_PATH: &str = "external/gbl+/libgbl/testdata/android";
 
     // Expected FDT properties provided by `dtb_a`.
     const EXPECTED_DTB_PROPS_A: &[(&str, &CStr, Option<&[u8]>)] =

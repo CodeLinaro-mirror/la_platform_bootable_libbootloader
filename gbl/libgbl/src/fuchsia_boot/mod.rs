@@ -307,7 +307,7 @@ pub(crate) mod test {
 
     /// Reads a data file under libgbl/testdata/
     pub(crate) fn read_test_data(file: &str) -> Vec<u8> {
-        fs::read(Path::new(format!("external/gbl/libgbl/testdata/{}", file).as_str())).unwrap()
+        fs::read(Path::new(format!("external/gbl+/libgbl/testdata/{}", file).as_str())).unwrap()
     }
 
     /// Returns a default [FakeGblOpsStorage] with valid test images.
