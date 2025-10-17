@@ -33,13 +33,13 @@ def define_gbl_workspace(name = None):
         name (String): Placeholder for buildifier check.
     """
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "llvm_linux_x86_64_prebuilts",
         path = "prebuilts/clang/host/linux-x86/clang-{}".format(_CLANG_VERSION),
         build_file_content = "",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "linux_x86_64_sysroot",
         path = "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
         build_file_content = """
@@ -60,13 +60,13 @@ cc_library(
         build_file = "@gbl//toolchain:BUILD.android_rust_prebuilts.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "bindgen",
         path = "prebuilts/clang-tools/linux-x86/bin",
         build_file_content = """exports_files(["bindgen"])""",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "elfutils",
         path = "external/elfutils",
         build_file_content = """
@@ -79,7 +79,7 @@ cc_library(
 """,
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "mkbootimg",
         path = "tools/mkbootimg",
         build_file_content = """
@@ -94,43 +94,43 @@ cc_library(
 """,
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "libfdt_c",
         path = "external/dtc/libfdt",
         build_file = "@gbl//libfdt:BUILD.libfdt_c.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "libufdt_c",
         path = "external/libufdt",
         build_file = "@gbl//libfdt:BUILD.libufdt_c.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "libdttable_c",
         path = "external/libufdt/utils/src",
         build_file = "@gbl//libdttable:BUILD.libdttable_c.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "arm_trusted_firmware",
         path = "external/arm-trusted-firmware",
         build_file = "@gbl//libboot/aarch64_cache_helper:BUILD.arm_trusted_firmware.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "avb",
         path = "external/avb",
         build_file = "@gbl//libavb:BUILD.avb.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "uuid",
         path = "external/rust/android-crates-io/crates/uuid",
         build_file_content = rust_crate_build_file("uuid"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "spin",
         path = "external/rust/android-crates-io/crates/spin",
         build_file_content = rust_crate_build_file(
@@ -146,13 +146,13 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "static_assertions",
         path = "external/rust/android-crates-io/crates/static_assertions",
         build_file_content = rust_crate_build_file("static_assertions"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "managed",
         path = "external/rust/android-crates-io/crates/managed",
         build_file_content = rust_crate_build_file(
@@ -167,7 +167,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "itertools",
         path = "external/rust/android-crates-io/crates/itertools",
         build_file_content = rust_crate_build_file(
@@ -178,7 +178,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "itertools_noalloc",
         path = "external/rust/android-crates-io/crates/itertools",
         build_file_content = rust_crate_build_file(
@@ -190,7 +190,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "either",
         path = "external/rust/android-crates-io/crates/either",
         build_file_content = rust_crate_build_file(
@@ -199,7 +199,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "either_noalloc",
         path = "external/rust/android-crates-io/crates/either",
         build_file_content = rust_crate_build_file(
@@ -210,13 +210,13 @@ cc_library(
     )
 
     # TODO(b/383783832): migrate to android-crates-io
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "smoltcp",
         path = "external/rust/crates/smoltcp",
         build_file = "@gbl//smoltcp:BUILD.smoltcp.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "arrayvec",
         path = "external/rust/android-crates-io/crates/arrayvec",
         build_file_content = rust_crate_build_file(
@@ -225,7 +225,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "downcast",
         path = "external/rust/android-crates-io/crates/downcast",
         build_file_content = rust_crate_build_file(
@@ -234,19 +234,19 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "fragile",
         path = "external/rust/android-crates-io/crates/fragile",
         build_file_content = rust_crate_build_file("fragile"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "lazy_static",
         path = "external/rust/android-crates-io/crates/lazy_static",
         build_file_content = rust_crate_build_file("lazy_static"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "mockall",
         path = "external/rust/android-crates-io/crates/mockall",
         build_file_content = rust_crate_build_file(
@@ -263,7 +263,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "mockall_derive",
         path = "external/rust/android-crates-io/crates/mockall_derive",
         build_file_content = rust_crate_build_file(
@@ -273,7 +273,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "predicates",
         path = "external/rust/android-crates-io/crates/predicates",
         build_file_content = rust_crate_build_file(
@@ -282,13 +282,13 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "predicates_core",
         path = "external/rust/android-crates-io/crates/predicates-core",
         build_file_content = rust_crate_build_file("predicates_core"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "predicates_tree",
         path = "external/rust/android-crates-io/crates/predicates-tree",
         build_file_content = rust_crate_build_file(
@@ -297,20 +297,20 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "termcolor",
         path = "external/rust/android-crates-io/crates/termcolor",
         build_file_content = rust_crate_build_file("termcolor"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "termtree",
         path = "external/rust/android-crates-io/crates/termtree",
         build_file_content = rust_crate_build_file("termtree"),
     )
 
     # TODO(b/383783832): migrate to android-crates-io
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "zune_inflate",
         path = "external/rust/crates/zune-inflate",
         build_file_content = rust_crate_build_file(
@@ -319,7 +319,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "lz4_flex",
         path = "external/rust/android-crates-io/crates/lz4_flex",
         build_file_content = rust_crate_build_file(
@@ -329,13 +329,13 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "zbi",
         path = "prebuilts/fuchsia_sdk/",
         build_file = "//prebuilts/fuchsia_sdk:BUILD.zbi.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "zerocopy",
         path = "external/rust/android-crates-io/crates/zerocopy",
         build_file_content = rust_crate_build_file(
@@ -345,7 +345,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "zerocopy_derive",
         path = "external/rust/android-crates-io/crates/zerocopy-derive",
         build_file_content = rust_crate_build_file(
@@ -355,7 +355,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "zeroize",
         path = "external/rust/android-crates-io/crates/zeroize",
         build_file_content = rust_crate_build_file(
@@ -364,31 +364,31 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "bitflags",
         path = "external/rust/android-crates-io/crates/bitflags",
         build_file_content = rust_crate_build_file("bitflags"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "flagset",
         path = "external/rust/android-crates-io/crates/flagset",
         build_file_content = rust_crate_build_file("flagset"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "byteorder",
         path = "external/rust/android-crates-io/crates/byteorder",
         build_file_content = rust_crate_build_file("byteorder"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "cfg_if",
         path = "external/rust/android-crates-io/crates/cfg-if",
         build_file_content = rust_crate_build_file("cfg_if"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "crc32fast",
         path = "external/rust/android-crates-io/crates/crc32fast",
         build_file_content = rust_crate_build_file(
@@ -399,7 +399,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "hex",
         path = "external/rust/android-crates-io/crates/hex",
         build_file_content = rust_crate_build_file(
@@ -408,7 +408,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "quote",
         path = "external/rust/android-crates-io/crates/quote",
         build_file_content = rust_crate_build_file(
@@ -418,13 +418,13 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "unicode_ident",
         path = "external/rust/android-crates-io/crates/unicode-ident",
         build_file_content = rust_crate_build_file("unicode_ident"),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "syn",
         path = "external/rust/android-crates-io/crates/syn",
         build_file_content = rust_crate_build_file(
@@ -446,7 +446,7 @@ cc_library(
         ),
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "proc_macro2",
         path = "external/rust/android-crates-io/crates/proc-macro2",
         build_file_content = rust_crate_build_file(
@@ -462,13 +462,13 @@ cc_library(
         build_file = "@gbl//libboringssl:BUILD.boringssl.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "open_dice",
         path = "external/open-dice",
         build_file = "@gbl//libopendice:BUILD.open_dice.bazel",
     )
 
-    native.new_local_repository(
+    gbl_new_local_repository(
         name = "bytes",
         path = "external/rust/android-crates-io/crates/bytes",
         build_file_content = rust_crate_build_file(
