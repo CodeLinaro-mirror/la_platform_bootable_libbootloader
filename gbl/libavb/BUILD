@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
 package(
@@ -20,6 +21,12 @@ package(
 )
 
 exports_files(glob(["**/*"]))
+
+cc_library(
+    name = "avb_crypto_ops_impl",
+    hdrs = ["avb_crypto_ops_impl.h"],
+    includes = ["."],
+)
 
 rust_library(
     name = "sysdeps",

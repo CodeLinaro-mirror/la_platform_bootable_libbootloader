@@ -26,7 +26,6 @@ package(
 exports_files(glob(["**/*"]))
 
 avb_headers = [
-    "@gbl//libavb:avb_crypto_ops_impl.h",
     "libavb/avb_chain_partition_descriptor.h",
     "libavb/avb_cmdline.h",
     "libavb/avb_crypto.h",
@@ -150,11 +149,11 @@ cc_library(
     ],
     includes = [
         ".",
-        "../gbl/libavb/",
         "libavb/boringssl/",
     ],
     deps = [
         "@boringssl//:libcrypto_c_baremetal",
+        "@gbl//libavb:avb_crypto_ops_impl",
         "@gbl//libc:headers",
     ],
 )
