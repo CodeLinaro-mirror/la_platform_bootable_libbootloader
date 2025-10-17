@@ -485,3 +485,11 @@ cc_library(
     # targets, which allows them to be evaluated first during toolchain resolution.
 
     gbl_config(name = "gbl_config")
+
+# buildifier: disable=unused-variable
+def _gbl_repositories_ext_impl(module_ctx):
+    define_gbl_workspace()
+
+gbl_repositories_ext = module_extension(
+    implementation = _gbl_repositories_ext_impl,
+)
