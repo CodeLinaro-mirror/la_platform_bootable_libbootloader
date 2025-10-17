@@ -18,13 +18,13 @@ This file contains the `gbl_new_local_repository` rule
 
 def _gbl_new_local_repository_impl(repo_ctx):
     path = repo_ctx.workspace_root.get_child(repo_ctx.attr.path)
-
-    # Symlink everything into the assembled repo.
-    for entry in path.readdir():
-        # Ignore native BUILD file as we'll use override from `ctx.attr.build_file` instead.
-        if entry.basename == "BUILD" or entry.basename == "BUILD.bazel":
-            continue
-        repo_ctx.symlink(entry.realpath, entry.basename)
+    if path.exists:
+        # Symlink everything into the assembled repo.
+        for entry in path.readdir():
+            # Ignore native BUILD file as we'll use override from `ctx.attr.build_file` instead.
+            if entry.basename == "BUILD" or entry.basename == "BUILD.bazel":
+                continue
+            repo_ctx.symlink(entry, repo_ctx.path(entry.basename))
 
     # Symlink the provided build file
     repo_ctx.symlink(repo_ctx.attr.build_file, "BUILD")
