@@ -122,8 +122,9 @@ pub fn app_main(entry: EfiEntry) -> Result<()> {
             let mut ops = Ops::new(&entry, &disks[..], Some(Os::Android), get_sp());
             let (ramdisk, fdt, kernel, remains) =
                 android_boot::efi_android_load(&mut ops, load.to_boot_buffer())?;
+            let os_entry_point = ops.os_entry_point;
             drop(disks);
-            android_boot::efi_android_boot(entry, kernel, ramdisk, fdt, remains)?;
+            android_boot::efi_android_boot(entry, os_entry_point, kernel, ramdisk, fdt, remains)?;
         }
     }
 

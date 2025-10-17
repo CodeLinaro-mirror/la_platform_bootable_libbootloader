@@ -195,7 +195,7 @@ impl GblFastbootResult {
     pub(crate) fn split_loaded_android<'a>(
         &self,
         boot_buffer: BootBuffer<'a>,
-    ) -> Option<(&'a mut [u8], &'a mut [u8], &'a mut [u8], &'a mut [u8])> {
+    ) -> Option<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
         let Some(LoadedImageInfo::Android { ramdisk, fdt, kernel }) = &self.loaded_image_info
         else {
             return None;
@@ -3564,7 +3564,7 @@ pub(crate) mod test {
     fn test_fastboot_boot_slot(
         suffix: char,
         load_buffer: &mut [u8],
-    ) -> (&mut [u8], &mut [u8], &mut [u8], &mut [u8]) {
+    ) -> (&[u8], &[u8], &[u8], &mut [u8]) {
         let mut storage = FakeGblOpsStorage::default();
         let vbmeta = CString::new(format!("vbmeta_{suffix}")).unwrap();
         let vbmeta_img = read_test_data(format!("vbmeta_v2_{suffix}.img"));

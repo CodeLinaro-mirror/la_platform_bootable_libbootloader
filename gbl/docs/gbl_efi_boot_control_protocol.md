@@ -48,6 +48,7 @@ typedef struct GBL_EFI_BOOT_CONTROL_PROTOCOL {
   GBL_EFI_BOOT_CONTROL_GET_CURRENT_SLOT       GetCurrentSlot;
   GBL_EFI_BOOT_CONTROL_SET_ACTIVE_SLOT        SetActiveSlot;
   GBL_EFI_BOOT_CONTROL_GET_ONE_SHOT_BOOT_MODE GetOneShotBootMode;
+  GBL_EFI_BOOT_CONTROL_HANDLE_LOADED_OS       HandleLoadedOs;
 } GBL_EFI_BOOT_CONTROL_PROTOCOL;
 ```
 
@@ -83,6 +84,11 @@ See [`GBL_EFI_BOOT_CONTROL_PROTOCOL.SetActiveSlot()`](#gbl_efi_boot_control_prot
 
 Returns the hardware triggered one-shot boot mode.
 See [`GBL_EFI_BOOT_CONTROL_PROTOCOL.GetOneShotBootMode()`](#gbl_efi_boot_control_protocol_getoneshotbootmode).
+
+**HandleLoadedOs**
+
+Handles loaded OS images and provides OS entry point.
+See [`GBL_EFI_BOOT_CONTROL_PROTOCOL.HandleLoadedOs()`](#gbl_efi_boot_control_protocol_handleloadedos).
 
 ## GBL_EFI_BOOT_CONTROL_PROTOCOL.GetSlotCount()
 
@@ -339,3 +345,155 @@ storage.
 |:------------------------|:--------------------------------------------------------------------------------------------------------------|
 | `EFI_SUCCESS`           | The call completed successfully.                                                                              |
 | `EFI_INVALID_PARAMETER` | One of *Self* or *Mode* is `NULL` or improperly aligned.                                                      |
+
+## GBL_EFI_BOOT_CONTROL_PROTOCOL.HandleLoadedOs()
+
+### Summary
+
+Handles loaded OS images and provides OS entry point.
+
+### Prototype
+
+```c
+typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_CONTROL_HANDLE_LOADED_OS)(
+    IN GBL_EFI_BOOT_CONTROL_PROTOCOL  *Self,
+    IN CONST GBL_EFI_LOADED_OS        *Os,
+    OUT OS_ENTRY_POINT                *EntryPoint
+);
+```
+
+### Parameters
+
+*Self*
+
+A pointer to the [`GBL_EFI_BOOT_CONTROL_PROTOCOL`](#protocol-interface-structure)
+instance.
+
+*Os*
+
+A pointer to a `GBL_EFI_LOADED_OS` structure representing the loaded OS images.
+The underlying images are guaranteed to remain at the same physical address
+across `HandleLoadedOs` and `EntryPoint` calls — they are never relocated by
+GBL. However, the `Os` pointer itself is only valid within this call and must
+not be retained.
+
+*EntryPoint*
+
+On exit, contains a function pointer to the firmware-specific hardware
+preparation and kernel jump logic. It may remain untouched if no custom
+implementation is provided, in which case GBL's default handoff logic will be
+used. See `OS_ENTRY_POINT` definition below for more details about the expected
+input.
+
+Note: The provided function is executed after `ExitBootServices()` is called by
+GBL, so provided implementation must not rely on any Boot Services.
+
+Note: The provided function is expected to take over the subsequent boot chain
+steps and must never return to GBL. If control returns to GBL, it is treated as
+a fatal error.
+
+### Related Definitions
+
+#### GBL_EFI_LOADED_OS
+
+```c
+typedef struct _GBL_EFI_LOADED_OS {
+  UINTN                 KernelSize;
+  EFI_PHYSICAL_ADDRESS  Kernel;
+  UINTN                 RamdiskSize;
+  EFI_PHYSICAL_ADDRESS  Ramdisk;
+  UINTN                 DeviceTreeSize;
+  EFI_PHYSICAL_ADDRESS  DeviceTree;
+  UINT64                Reserved[8];
+} GBL_EFI_LOADED_OS;
+```
+
+*KernelSize*
+
+The size of provided `Kernel`.
+
+*Kernel*
+
+Physical memory address of `KernelSize` bytes containing the loaded kernel image
+GBL uses for boot.
+
+*RamdiskSize*
+
+The size of provided `Ramdisk`.
+
+*Ramdisk*
+
+Physical memory address of `RamdiskSize` bytes containing the loaded ramdisk GBL
+uses for boot.
+
+*DeviceTreeSize*
+
+The size of provided `DeviceTree`.
+
+*DeviceTree*
+
+Physical memory address of `DeviceTreeSize` bytes containing the loaded device
+tree GBL uses for boot.
+
+*Reserved*
+
+Reserved for future use.
+
+#### OS_ENTRY_POINT
+
+```c
+typedef VOID (*OS_ENTRY_POINT)(
+    IN UINTN                        DescriptorSize,
+    IN UINT32                       DescriptorVersion,
+    IN UINTN                        NumDescriptors,
+    IN CONST EFI_MEMORY_DESCRIPTOR  *MemoryMap,
+    IN CONST GBL_EFI_LOADED_OS      *Os
+);
+```
+
+*DescriptorSize*
+
+The size, in bytes, of an `EFI_MEMORY_DESCRIPTOR` structure.
+
+*DescriptorVersion*
+
+The version number associated with the provided `EFI_MEMORY_DESCRIPTOR` items.
+
+*NumDescriptors*
+
+The number of `EFI_MEMORY_DESCRIPTOR` items provided by `MemoryMap`.
+
+*MemoryMap*
+
+A pointer to the array of `EFI_MEMORY_DESCRIPTOR` representing the memory map
+GBL provided to `ExitBootServices()` prior to entry point call.
+
+*Os*
+
+A pointer to a `GBL_EFI_LOADED_OS` structure representing the loaded OS images.
+The provided physical addresses are meant to be used directly by the kernel
+handoff implementation.
+
+### Description
+
+This method allows the firmware to handle OS images after they have been loaded
+by GBL. It can be used to inspect the final kernel, ramdisk, and device tree
+images before the kernel handoff to finalize internal state or perform
+additional verification steps beyond those handled by GBL.
+
+The `EntryPoint` function pointer output argument allows the firmware to
+override GBL's handoff implementation with device-specific hardware preparation
+and kernel jump logic. See the `EntryPoint` documentation above for details.
+
+This method is optional. Returning either `EFI_SUCCESS` or `EFI_UNSUPPORTED`
+has the same effect - GBL continues the boot process.
+
+### Status Codes Returned
+
+| Return Code              | Semantics                                                                                  |
+|:-------------------------|:-------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`            | OS images are handled successfully.                                                        |
+| `EFI_UNSUPPORTED`        | FW does not need to handle OS images. GBL continues to boot.                               |
+| `EFI_INVALID_PARAMETER`  | One of *Self*, *Os*, or *EntryPoint* is `NULL` or improperly aligned. GBL rejects to boot. |
+| `EFI_SECURITY_VIOLATION` | Provided OS images fail to meet the device's security requirements. GBL rejects to boot.   |
+| `EFI_DEVICE_ERROR`       | Any other error occurred while handling OS images. GBL rejects to boot.                    |
