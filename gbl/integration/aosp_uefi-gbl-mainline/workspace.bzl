@@ -332,7 +332,9 @@ cc_library(
     gbl_new_local_repository(
         name = "zbi",
         path = "prebuilts/fuchsia_sdk/",
-        build_file = "//prebuilts/fuchsia_sdk:BUILD.zbi.bazel",
+        # TODO: b/413506174 - clean up ref to outer module
+        # buildifier: disable=canonical-repository
+        build_file = "@@//prebuilts/fuchsia_sdk:BUILD.zbi.bazel",
     )
 
     gbl_new_local_repository(
