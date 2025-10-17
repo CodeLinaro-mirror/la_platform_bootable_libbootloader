@@ -47,6 +47,7 @@ pub mod device_tree;
 pub mod error;
 pub mod fastboot;
 pub mod gbl_avb;
+pub mod misc;
 pub mod ops;
 pub mod partition;
 
@@ -58,7 +59,6 @@ pub mod fuchsia_boot;
 pub mod slots;
 
 mod image_buffer;
-mod misc;
 
 use slots::{BootTarget, BootToken, Cursor, SuffixBytes};
 

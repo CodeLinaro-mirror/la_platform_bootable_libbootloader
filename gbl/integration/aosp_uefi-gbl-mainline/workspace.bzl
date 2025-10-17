@@ -378,6 +378,12 @@ cc_library(
     )
 
     native.new_local_repository(
+        name = "flagset",
+        path = "external/rust/android-crates-io/crates/flagset",
+        build_file_content = rust_crate_build_file("flagset"),
+    )
+
+    native.new_local_repository(
         name = "byteorder",
         path = "external/rust/android-crates-io/crates/byteorder",
         build_file_content = rust_crate_build_file("byteorder"),

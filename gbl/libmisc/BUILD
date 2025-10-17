@@ -26,6 +26,7 @@ rust_library(
     edition = "2021",
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
+        "@flagset",
         "@gbl//liberror",
         "@static_assertions",
         "@zerocopy",

@@ -25,7 +25,7 @@ use crate::{
 use crate::{
     android_boot::{android_load_verify_fixup, get_boot_slot, load::sub_slice_range, BootBuffer},
     gbl_println,
-    misc::{read_bootloader_message_to, write_bootloader_message},
+    misc::{read_bootloader_message_to, write_bootloader_message, AndroidBootMode},
     ops::{CommandExecType, FastbootEraseAction, RambootOps},
     partition::{check_part_unique, GblDisk, MultiPartitionIo, Partition, PartitionIo, RawName},
     GblOps,
@@ -54,7 +54,6 @@ use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
 use libutils::snprintf;
 use libutils::FormattedBytes;
-use misc::AndroidBootMode;
 use safemath::SafeNum;
 #[cfg(feature = "fuchsia")]
 use zbi::{ZbiContainer, ZbiType};
