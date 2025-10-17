@@ -13,19 +13,3 @@
 # limitations under the License.
 
 """Remaining repositories not yet migrated to bzlmod."""
-
-load("@rules_rust//crate_universe:repositories.bzl", "crate_universe_dependencies")
-
-crate_universe_dependencies()
-
-load("@rules_rust//tools/rust_analyzer:deps.bzl", "rust_analyzer_dependencies")
-
-rust_analyzer_dependencies()
-
-load("@gbl//toolchain:gbl_workspace_util.bzl", "GBL_RUST_VERSION")
-load("@rules_rust//rust:repositories.bzl", "rust_analyzer_toolchain_repository")
-
-register_toolchains(rust_analyzer_toolchain_repository(
-    name = "rust_analyzer_toolchain",
-    version = GBL_RUST_VERSION,
-))
