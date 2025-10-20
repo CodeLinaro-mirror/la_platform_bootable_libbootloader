@@ -17,7 +17,6 @@ This file contains rules and logic for setting up GBL workspace dependencies in 
 u-boot-mainline branch.
 """
 
-load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 load("@gbl//toolchain:gbl_new_local_repository.bzl", "gbl_new_local_repository")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "GBL_RUST_VERSION", "gbl_config", "gbl_llvm_prebuilts")
 load("@gbl//toolchain:rust_crate_build_file.bzl", "rust_crate_build_file")
@@ -33,12 +32,6 @@ def define_gbl_workspace(name = None):
     Args:
         name (String): Placeholder for buildifier check.
     """
-
-    maybe(
-        repo_rule = native.local_repository,
-        name = "rules_rust_bindgen",
-        path = "external/bazelbuild-rules_rust/extensions/bindgen",
-    )
 
     native.new_local_repository(
         name = "llvm_linux_x86_64_prebuilts",
