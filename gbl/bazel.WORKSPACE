@@ -14,16 +14,6 @@
 
 """Remaining repositories not yet migrated to bzlmod."""
 
-local_repository(
-    name = "gbl",
-    path = "bootable/libbootloader/gbl",
-)
-
-# buildifier: disable=load-on-top
-load("@gbl//integration/aosp_uefi-gbl-mainline:workspace.bzl", "define_gbl_workspace")
-
-define_gbl_workspace()
-
 load("@rules_rust//crate_universe:repositories.bzl", "crate_universe_dependencies")
 
 crate_universe_dependencies()

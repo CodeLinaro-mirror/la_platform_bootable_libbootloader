@@ -230,7 +230,10 @@ mod test {
                 assert_eq!(GET_TIMESTAMP_COUNTER.with(|c| *c.borrow()), 2);
 
                 let out_str = trace.borrow().console_out_trace.as_single_string();
-                assert_eq!(out_str, "libefi/src/profiling.rs:no_op_profile: 1000ms\r\n");
+                assert_eq!(
+                    out_str,
+                    "external/gbl+/libefi/src/profiling.rs:no_op_profile: 1000ms\r\n"
+                );
             });
         });
     }

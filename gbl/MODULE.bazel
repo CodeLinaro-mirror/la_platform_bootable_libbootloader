@@ -1,6 +1,91 @@
-###############################################################################
-# Bazel now uses Bzlmod by default to manage external dependencies.
-# Please consider migrating your external dependencies from WORKSPACE to MODULE.bazel.
-#
-# For more details, please check https://github.com/bazelbuild/bazel/issues/18958
-###############################################################################
+"""GBL."""
+
+module(name = "gbl")
+
+bazel_dep(
+    name = "bazel_skylib",
+)
+bazel_dep(
+    name = "googletest",
+)
+bazel_dep(
+    name = "platforms",
+)
+bazel_dep(
+    name = "rules_cc",
+)
+bazel_dep(
+    name = "rules_license",
+)
+bazel_dep(
+    name = "rules_pkg",
+)
+bazel_dep(
+    name = "rules_python",
+)
+bazel_dep(
+    name = "rules_shell",
+)
+bazel_dep(
+    name = "rules_rust",
+)
+bazel_dep(
+    name = "rules_rust_bindgen",
+)
+
+gbl_repositories_ext = use_extension(
+    "//integration/aosp_uefi-gbl-mainline:workspace.bzl",
+    "gbl_repositories_ext",
+)
+use_repo(gbl_repositories_ext, "llvm_linux_x86_64_prebuilts")
+use_repo(gbl_repositories_ext, "linux_x86_64_sysroot")
+use_repo(gbl_repositories_ext, "rust_prebuilts")
+use_repo(gbl_repositories_ext, "bindgen")
+use_repo(gbl_repositories_ext, "elfutils")
+use_repo(gbl_repositories_ext, "mkbootimg")
+use_repo(gbl_repositories_ext, "libfdt_c")
+use_repo(gbl_repositories_ext, "libufdt_c")
+use_repo(gbl_repositories_ext, "libdttable_c")
+use_repo(gbl_repositories_ext, "arm_trusted_firmware")
+use_repo(gbl_repositories_ext, "avb")
+use_repo(gbl_repositories_ext, "uuid")
+use_repo(gbl_repositories_ext, "spin")
+use_repo(gbl_repositories_ext, "static_assertions")
+use_repo(gbl_repositories_ext, "managed")
+use_repo(gbl_repositories_ext, "itertools")
+use_repo(gbl_repositories_ext, "itertools_noalloc")
+use_repo(gbl_repositories_ext, "either")
+use_repo(gbl_repositories_ext, "either_noalloc")
+use_repo(gbl_repositories_ext, "smoltcp")
+use_repo(gbl_repositories_ext, "arrayvec")
+use_repo(gbl_repositories_ext, "downcast")
+use_repo(gbl_repositories_ext, "fragile")
+use_repo(gbl_repositories_ext, "lazy_static")
+use_repo(gbl_repositories_ext, "mockall")
+use_repo(gbl_repositories_ext, "mockall_derive")
+use_repo(gbl_repositories_ext, "predicates")
+use_repo(gbl_repositories_ext, "predicates_core")
+use_repo(gbl_repositories_ext, "predicates_tree")
+use_repo(gbl_repositories_ext, "termcolor")
+use_repo(gbl_repositories_ext, "termtree")
+use_repo(gbl_repositories_ext, "zune_inflate")
+use_repo(gbl_repositories_ext, "lz4_flex")
+use_repo(gbl_repositories_ext, "zbi")
+use_repo(gbl_repositories_ext, "zerocopy")
+use_repo(gbl_repositories_ext, "zerocopy_derive")
+use_repo(gbl_repositories_ext, "zeroize")
+use_repo(gbl_repositories_ext, "bitflags")
+use_repo(gbl_repositories_ext, "flagset")
+use_repo(gbl_repositories_ext, "byteorder")
+use_repo(gbl_repositories_ext, "cfg_if")
+use_repo(gbl_repositories_ext, "crc32fast")
+use_repo(gbl_repositories_ext, "hex")
+use_repo(gbl_repositories_ext, "quote")
+use_repo(gbl_repositories_ext, "unicode_ident")
+use_repo(gbl_repositories_ext, "syn")
+use_repo(gbl_repositories_ext, "proc_macro2")
+use_repo(gbl_repositories_ext, "boringssl")
+use_repo(gbl_repositories_ext, "open_dice")
+use_repo(gbl_repositories_ext, "bytes")
+use_repo(gbl_repositories_ext, "gbl_config")
+use_repo(gbl_repositories_ext, "gbl_llvm_prebuilts")

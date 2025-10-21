@@ -178,7 +178,7 @@ mod tests {
     /// # Arguments
     /// * `path`: file path relative to libgbl's `testdata/` directory.
     pub(crate) fn testdata(path: &str) -> Vec<u8> {
-        let full_path = Path::new("external/gbl/libgbl/testdata").join(path);
+        let full_path = Path::new("external/gbl+/libgbl/testdata").join(path);
         fs::read(full_path).unwrap()
     }
 
