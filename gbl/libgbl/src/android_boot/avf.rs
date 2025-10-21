@@ -14,11 +14,16 @@
 
 //! Android virtualization framework support for GBL
 
-use crate::{android_boot::load::split, constants::PAGE_SIZE, gbl_println, GblOps, KiB};
-use avb::{SlotVerifyData, VbmetaVerifyError};
-use avb_bindgen::{
-    avb_sha512_final, avb_sha512_init, avb_sha512_update, AvbSHA512Ctx, AVB_SHA512_DIGEST_SIZE,
+use crate::{
+    android_boot::{
+        hasher::{Hasher, Sha256, Sha512},
+        load::split,
+    },
+    constants::PAGE_SIZE,
+    gbl_avb::state::BootStateColor,
+    gbl_println, GblOps, KiB,
 };
+use avb::{SlotVerifyData, VbmetaVerifyError};
 use bootparams::bootconfig::BootConfigBuilder;
 use core::{
     ffi::CStr,
@@ -37,42 +42,6 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 const NUM_PVMFW_CONFIG_ENTRIES: usize = 4;
 
-// TODO: replace this with a dedicated hash crate (b/429168146).
-struct Sha512(AvbSHA512Ctx);
-
-impl Sha512 {
-    const DIGEST_SIZE: usize = AVB_SHA512_DIGEST_SIZE as usize;
-
-    fn new() -> Sha512 {
-        let mut ctx = AvbSHA512Ctx::default();
-        // Safety: We are passing a non-null, aligned pointer to a valid, stack-allocated instance.
-        // The pointer is valid for the duration of the C call.
-        unsafe { avb_sha512_init(&mut ctx as *mut AvbSHA512Ctx) };
-        Self(ctx)
-    }
-
-    fn update(&mut self, data: &[u8]) {
-        // Safety: The first argument is a non-null, aligned pointer to `self.0`, which is a valid
-        // `AvbSHA512Ctx` guaranteed to be initialized by the `new()` constructor. `data.as_ptr()`
-        // points to a valid buffer (a byte slice), which is guaranteed to be readable for
-        // `data.len()` bytes.
-        unsafe { avb_sha512_update(&mut self.0 as *mut AvbSHA512Ctx, data.as_ptr(), data.len()) };
-    }
-
-    fn finish(&mut self) -> [u8; Sha512::DIGEST_SIZE] {
-        // Safety: The first argument is a non-null, aligned pointer to `self.0`, which is a valid
-        // `AvbSHA512Ctx` guaranteed to be initialized by the `new()` constructor. The C function
-        // `avb_sha512_final` valid, non-null pointer to an internal buffer containing the final
-        // digest. The C API guarantees this buffer is at least `DIGEST_SIZE` bytes. The pointer's
-        // lifetime is tied to `&mut self`. It is used immediately with `from_raw_parts` to create a
-        // slice and copy the data into an array (via `try_into`).
-        unsafe {
-            let ptr = avb_sha512_final(&mut self.0 as *mut AvbSHA512Ctx);
-            core::slice::from_raw_parts(ptr, Self::DIGEST_SIZE).try_into().unwrap()
-        }
-    }
-}
-
 fn align_up(size: usize, alignment: usize) -> Result<usize> {
     Ok(SafeNum::from(size).round_up(alignment).try_into().map_err(Error::ArithmeticOverflow)?)
 }
@@ -87,11 +56,17 @@ pub(crate) trait AVFVerificationData {
     /// Returns the vendor hashtree digest if it exists.
     fn vendor_hashtree_digest(&self) -> Option<&[u8]>;
 
-    /// Returns the root vbmeta hash.
-    fn vbmeta_digest(&self) -> [u8; HASH_SIZE];
+    /// Returns the Sha256 vbmeta digest
+    fn vbmeta_digest_sha256(&self) -> [u8; Sha256::DIGEST_SIZE];
+
+    /// Returns the Sha512 vbmeta digest
+    fn vbmeta_digest_sha512(&self) -> [u8; Sha512::DIGEST_SIZE];
 
     /// Returns the hash of the vbmeta public key
-    fn public_key_digest(&self) -> core::result::Result<[u8; HASH_SIZE], VbmetaVerifyError>;
+    fn public_key_digest<T: Hasher>(
+        &self,
+        vbmeta: Option<&str>,
+    ) -> core::result::Result<T::Output, VbmetaVerifyError>;
 
     /// Returns vbmeta rollback index
     fn vbmeta_rollback_index(&self) -> core::result::Result<Option<u64>, VbmetaVerifyError>;
@@ -108,16 +83,25 @@ impl AVFVerificationData for SlotVerifyData<'_> {
         self.vbmeta_data().iter().find_map(|data| data.get_property_value(HASHTREE_DIGEST_PROPNAME))
     }
 
-    fn vbmeta_digest(&self) -> [u8; HASH_SIZE] {
+    fn vbmeta_digest_sha256(&self) -> [u8; Sha256::DIGEST_SIZE] {
+        self.calculate_sha256_digest()
+    }
+
+    fn vbmeta_digest_sha512(&self) -> [u8; Sha512::DIGEST_SIZE] {
         self.calculate_sha512_digest()
     }
 
-    fn public_key_digest(&self) -> core::result::Result<[u8; HASH_SIZE], VbmetaVerifyError> {
+    fn public_key_digest<T: Hasher>(
+        &self,
+        vbmeta: Option<&str>,
+    ) -> core::result::Result<T::Output, VbmetaVerifyError> {
         // TODO: a more precise approach identifying vbmetas that cover relevant partitions, and
         // extracting their public keys (b/429168146).
-        let mut hasher = Sha512::new();
+        let mut hasher = T::new();
         self.vbmeta_data().iter().try_for_each(|data| {
-            hasher.update(data.header_verified()?.public_key());
+            if vbmeta.map_or(true, |v| data.partition_name().to_str() == Ok(v)) {
+                hasher.update(data.header_verified()?.public_key());
+            }
             Ok(())
         })?;
         Ok(hasher.finish())
@@ -132,6 +116,75 @@ impl AVFVerificationData for SlotVerifyData<'_> {
         };
         let idx_loc = data.header_verified()?.rollback_index_location() as usize;
         Ok(self.rollback_indexes().get(idx_loc).copied())
+    }
+}
+
+/// A container for relevant boot parameters
+pub(crate) struct BootInfo<'a, T: AVFVerificationData> {
+    unlocked: bool,
+    is_recovery: bool,
+    color: BootStateColor,
+    verify_data: &'a T,
+}
+
+const DEVICE_STATE_PROP: &CStr = c"host.vbmeta.device_state";
+const VBMETA_DIGEST_PROP: &CStr = c"host.vbmeta.digest";
+const VBMETA_PUBKEY_DIGEST_PROP: &CStr = c"host.vbmeta.public_key_digest";
+const VB_STATE_PROP: &CStr = c"host.verifiedbootstate";
+
+impl<'a, T> BootInfo<'a, T>
+where
+    T: AVFVerificationData,
+{
+    /// Create a new `BootInfo` instance.
+    pub(crate) fn new(
+        unlocked: bool,
+        is_recovery: bool,
+        color: BootStateColor,
+        verify_data: &'a T,
+    ) -> Self {
+        Self { unlocked, is_recovery, color, verify_data }
+    }
+
+    fn device_state(&self) -> &[u8] {
+        match self.unlocked {
+            true => b"unlocked\0",
+            false => b"locked\0",
+        }
+    }
+
+    fn vb_state(&self) -> &[u8] {
+        match self.color {
+            BootStateColor::Green => b"green\0",
+            BootStateColor::Yellow => b"yellow\0",
+            BootStateColor::Orange => b"orange\0",
+            BootStateColor::Red => b"red\0",
+        }
+    }
+
+    fn pkey_digest(&self) -> Result<[u8; Sha256::DIGEST_SIZE]> {
+        match self.verify_data.public_key_digest::<Sha256>(Some("vbmeta")) {
+            Ok(h) => Ok(h),
+            _ if self.unlocked => Ok([0u8; Sha256::DIGEST_SIZE]),
+            _ => Err(Error::Other(Some("vbmeta verify error"))),
+        }
+    }
+
+    fn as_avb_dt_props<U>(&self, target_dt: &mut Fdt<U>, node_path: &str) -> Result<()>
+    where
+        U: AsMut<[u8]> + AsRef<[u8]>,
+    {
+        target_dt.ensure_node(node_path)?;
+        target_dt.set_property(node_path, std_props::COMPATIBLE, b"android,firmware\0")?;
+        target_dt.set_property(node_path, DEVICE_STATE_PROP, self.device_state())?;
+        target_dt.set_property(node_path, VBMETA_PUBKEY_DIGEST_PROP, &self.pkey_digest()?)?;
+        target_dt.set_property(
+            node_path,
+            VBMETA_DIGEST_PROP,
+            &self.verify_data.vbmeta_digest_sha256(),
+        )?;
+        target_dt.set_property(node_path, VB_STATE_PROP, self.vb_state())?;
+        Ok(())
     }
 }
 
@@ -166,13 +219,11 @@ impl AVFVerificationData for SlotVerifyData<'_> {
 /// * `Err(BadBufferSize)` - if pvmfw binary cannot be extracted or the size data is invalid
 /// * `Err(BufferTooSmall)` - of the pvmfw binary and config data doesn't fit into the target buffer
 /// * `Err(ArithmeticOverflow)` - on overflow when calculating image buffer size
-pub fn build_pvmfw_data_region<'a, 'b>(
+pub fn build_pvmfw_data_region<'a, 'b, T: AVFVerificationData>(
     ops: &mut impl GblOps<'a, 'b>,
     output_buffer: &mut [u8],
     pvmfw_binary: &[u8],
-    verify_data: &impl AVFVerificationData,
-    unlocked: bool,
-    is_recovery: bool,
+    boot_info: &BootInfo<T>,
 ) -> Result<usize> {
     // Split the pvmfw region into binary and configuration buffers
     let pvmfw_bin_size = pvmfw_binary.len();
@@ -181,7 +232,7 @@ pub fn build_pvmfw_data_region<'a, 'b>(
         .ok_or(Error::BufferTooSmall(Some(pvmfw_bin_size)))?;
 
     // Write the pvmfw configuration data to the config region
-    let config_size = write_pvmfw_config(ops, config, verify_data, unlocked, is_recovery, binary)?;
+    let config_size = write_pvmfw_config(ops, config, binary, boot_info)?;
     // Copy the binary to the start of pvmfw region
     binary.copy_from_slice(pvmfw_binary);
     // Size must be aligned to the page size used by the hypervisor
@@ -315,26 +366,18 @@ impl PvmfwConfHeader {
 
 /// Write the pvmfw configuration to the output buffer. Creates the configuration header and appends
 /// the configuration entries.
-fn write_pvmfw_config<'a, 'b>(
+fn write_pvmfw_config<'a, 'b, T: AVFVerificationData>(
     ops: &mut impl GblOps<'a, 'b>,
     config_out: &mut [u8],
-    verify_data: &impl AVFVerificationData,
-    unlocked: bool,
-    is_recovery: bool,
     scratch_buffer: &mut [u8],
+    boot_info: &BootInfo<T>,
 ) -> Result<usize> {
     let (header, entries) = PvmfwConfHeader::init_padded_prefix_mut(config_out)?;
 
     // Write pvmfw config entries
-    let (bcc_len, bcc_padded_len, rest) = pvmfw_build_dice_handover(
-        ops,
-        entries,
-        verify_data,
-        unlocked,
-        is_recovery,
-        scratch_buffer,
-    )?;
-    let (ref_dt_len, ref_dt_padded_len, _) = pvmfw_build_reference_dt(ops, rest, verify_data)?;
+    let (bcc_len, bcc_padded_len, rest) =
+        pvmfw_build_dice_handover(ops, entries, boot_info, scratch_buffer)?;
+    let (ref_dt_len, ref_dt_padded_len, _) = pvmfw_build_reference_dt(ops, rest, boot_info)?;
     let entry_sizes = [(bcc_len, bcc_padded_len), (0, 0), (0, 0), (ref_dt_len, ref_dt_padded_len)];
 
     // Finally, update header config entries
@@ -350,19 +393,21 @@ fn pad_entry_split_rest(buffer: &mut [u8], entry_size: usize) -> Result<(usize, 
 }
 
 const REF_DT_AVF_PATH: &str = "/avf";
+const REF_DT_AVB_PATH: &str = "/firmware/android";
 const HOST_DT_AVF_PATH: &str = "/avf/reference/avf";
 const SK_PUB_KEY_PROP: &CStr = c"secretkeeper_public_key";
 const VENDOR_HASH_PROP: &CStr = c"vendor_hashtree_descriptor_root_digest";
 
 /// Write an FDT (the VM reference DT) to the output buffer and return its size, its padded size,
 /// and the unused portion of the buffer.
-fn pvmfw_build_reference_dt<'a, 'b, 'c>(
+fn pvmfw_build_reference_dt<'a, 'b, 'c, T: AVFVerificationData>(
     ops: &mut impl GblOps<'a, 'b>,
     output_buffer: &'c mut [u8],
-    verify_data: &impl AVFVerificationData,
+    boot_info: &BootInfo<T>,
 ) -> Result<(usize, usize, &'c mut [u8])> {
     let mut ref_dt = Fdt::new_empty(&mut output_buffer[..])?;
-    write_ref_dt_properties(ops, &mut ref_dt, REF_DT_AVF_PATH, verify_data)?;
+    write_ref_dt_properties(ops, &mut ref_dt, REF_DT_AVF_PATH, boot_info.verify_data)?;
+    boot_info.as_avb_dt_props(&mut ref_dt, REF_DT_AVB_PATH)?;
     ref_dt.shrink_to_fit()?;
     let entry_size = ref_dt.size()?;
     let (entry_padded_size, rest) = pad_entry_split_rest(output_buffer, entry_size)?;
@@ -416,7 +461,8 @@ where
     T: AsMut<[u8]> + AsRef<[u8]>,
 {
     pkvm_describe_pvmfw_resvmem(host_dt, pvmfw_buf, pvmfw_bin_len)?;
-    write_ref_dt_properties(ops, host_dt, HOST_DT_AVF_PATH, verify_data)
+    write_ref_dt_properties(ops, host_dt, HOST_DT_AVF_PATH, verify_data)?;
+    Ok(())
 }
 
 /// Add AVF-specific parameters to bootconfig
@@ -455,16 +501,18 @@ fn prepare_dice_inputs(
     is_recovery: bool,
 ) -> Result<DiceInputs> {
     let authority = if unlocked {
-        verify_data.public_key_digest().unwrap_or([0u8; Sha512::DIGEST_SIZE])
+        verify_data.public_key_digest::<Sha512>(None).unwrap_or([0u8; Sha512::DIGEST_SIZE])
     } else {
-        verify_data.public_key_digest().map_err(|_| Error::Other(Some("vbmeta verify error")))?
+        verify_data
+            .public_key_digest::<Sha512>(None)
+            .map_err(|_| Error::Other(Some("vbmeta verify error")))?
     };
     let mode = match (is_recovery, unlocked) {
         (false, false) => DiceMode::kDiceModeNormal,
         (false, true) => DiceMode::kDiceModeDebug,
         (true, _) => DiceMode::kDiceModeMaintenance,
     };
-    let code = verify_data.vbmeta_digest();
+    let code = verify_data.vbmeta_digest_sha512();
     let hidden = [0u8; HIDDEN_SIZE]; // Leave hidden input empty.
     let rollback_idx = verify_data
         .vbmeta_rollback_index()
@@ -476,12 +524,10 @@ fn prepare_dice_inputs(
 }
 
 /// Prepare the DICE handover config entry of pvmfw
-fn pvmfw_build_dice_handover<'a, 'b, 'c>(
+fn pvmfw_build_dice_handover<'a, 'b, 'c, T: AVFVerificationData>(
     ops: &mut impl GblOps<'a, 'b>,
     output_buffer: &'c mut [u8],
-    verify_data: &impl AVFVerificationData,
-    unlocked: bool,
-    is_recovery: bool,
+    boot_info: &BootInfo<T>,
     scratch_buffer: &mut [u8],
 ) -> Result<(usize, usize, &'c mut [u8])> {
     const MAX_CONFIG_SIZE: usize = 64; // Enough for our config descriptor
@@ -497,7 +543,7 @@ fn pvmfw_build_dice_handover<'a, 'b, 'c>(
         return Err(Error::Other(Some("empty vendor handover")));
     }
     let (authority, code, hidden, mode, rollback_idx) =
-        prepare_dice_inputs(verify_data, unlocked, is_recovery)
+        prepare_dice_inputs(boot_info.verify_data, boot_info.unlocked, boot_info.is_recovery)
             .inspect_err(|e| gbl_println!(ops, "Error preparing DICE inputs: {e}"))?;
 
     // Create config
@@ -549,8 +595,8 @@ pub(crate) mod test {
         }
     }
 
-    fn sha512(data: &[u8]) -> [u8; HASH_SIZE] {
-        let mut ctx = Sha512::new();
+    fn digest<T: Hasher>(data: &[u8]) -> T::Output {
+        let mut ctx = T::new();
         ctx.update(data);
         ctx.finish()
     }
@@ -560,12 +606,19 @@ pub(crate) mod test {
             self.vendor_digest.as_ref().map(|t| t.as_ref())
         }
 
-        fn vbmeta_digest(&self) -> [u8; HASH_SIZE] {
-            sha512(&[1, 2, 3, 4, 5])
+        fn vbmeta_digest_sha512(&self) -> [u8; Sha512::DIGEST_SIZE] {
+            digest::<Sha512>(&[1, 2, 3, 4, 5])
         }
 
-        fn public_key_digest(&self) -> core::result::Result<[u8; HASH_SIZE], VbmetaVerifyError> {
-            Ok(sha512(&[5, 4, 3, 2, 1]))
+        fn vbmeta_digest_sha256(&self) -> [u8; Sha256::DIGEST_SIZE] {
+            digest::<Sha256>(&[10, 11, 12, 13, 14, 15])
+        }
+
+        fn public_key_digest<U: Hasher>(
+            &self,
+            _vbmeta: Option<&str>,
+        ) -> core::result::Result<U::Output, VbmetaVerifyError> {
+            Ok(digest::<U>(&[5, 4, 3, 2, 1]))
         }
 
         fn vbmeta_rollback_index(&self) -> core::result::Result<Option<u64>, VbmetaVerifyError> {
@@ -626,6 +679,7 @@ pub(crate) mod test {
         ops.avb_ops.rollbacks.insert(0, Ok(1));
         ops.avf_vendor_dice_handover = Some(&DUMMY_VENDOR_HANDOVER[..]);
         let testdigest = TestVerifyData::new(Some([1, 2, 3, 4, 5]), Some(0));
+        let boot_info = BootInfo::new(false, false, BootStateColor::Green, &testdigest);
 
         const FILL_VALUE: u8 = 0xAB;
         const FILL_COUNT: usize = 0xc00;
@@ -633,9 +687,7 @@ pub(crate) mod test {
             &mut ops,
             &mut out_pvmfw_buf,
             &dummy_pvmfw_binary(FILL_VALUE, FILL_COUNT),
-            &testdigest,
-            false,
-            false,
+            &boot_info,
         )
         .unwrap();
         assert!(used_bytes > PAGE_SIZE);
@@ -685,7 +737,7 @@ pub(crate) mod test {
 
     #[test]
     fn test_write_pvmfw_config() {
-        let mut buf = AlignedBuffer::new(1000, PVMFW_DATA_ALIGNMENT);
+        let mut buf = AlignedBuffer::new(2000, PVMFW_DATA_ALIGNMENT);
         let storage = FakeGblOpsStorage::default();
         let mut ops = FakeGblOps::new(&storage);
         ops.avf_is_supported = true;
@@ -693,14 +745,13 @@ pub(crate) mod test {
         ops.avb_ops.rollbacks.insert(0, Ok(1));
         ops.avf_vendor_dice_handover = Some(&DUMMY_VENDOR_HANDOVER[..]);
         let testdigest = TestVerifyData::new(Some([1, 2, 3, 4, 5]), Some(0));
+        let boot_info = BootInfo::new(false, false, BootStateColor::Green, &testdigest);
         let mut scratch_buffer = [0u8; 256];
 
-        let sz =
-            write_pvmfw_config(&mut ops, &mut buf, &testdigest, false, false, &mut scratch_buffer)
-                .unwrap();
+        let sz = write_pvmfw_config(&mut ops, &mut buf, &mut scratch_buffer, &boot_info).unwrap();
         let header = PvmfwConfHeader::ref_from_prefix(&buf).unwrap().0;
 
-        let exp_refdt_size = 0xd3u32;
+        let exp_refdt_size = 0x203u32;
         let exp_handover_size = 0x249u32;
         let exp_refdt_offset = (PvmfwConfHeader::PADDED_SIZE
             + align_up(exp_handover_size as usize, PvmfwConfEntry::ALIGNMENT).unwrap())
@@ -762,9 +813,51 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn test_refdt_avb_prop_values() {
+        let test_digest = [5u8; 64];
+        let verify_data = TestVerifyData::new(Some(&test_digest), None);
+        let boot_info = BootInfo::new(true, false, BootStateColor::Orange, &verify_data);
+        let base_path = "/";
+
+        let mut refdt_buf = AlignedBuffer::new(1024, 8);
+        let mut refdt = Fdt::new_empty(&mut refdt_buf[..]).unwrap();
+        boot_info.as_avb_dt_props(&mut refdt, base_path).unwrap();
+        assert_eq!(
+            refdt.get_property(base_path, std_props::COMPATIBLE).unwrap(),
+            b"android,firmware\0"
+        );
+        assert_eq!(
+            refdt.get_property(base_path, DEVICE_STATE_PROP).unwrap(),
+            boot_info.device_state()
+        );
+        assert_eq!(refdt.get_property(base_path, VB_STATE_PROP).unwrap(), boot_info.vb_state());
+        assert_eq!(
+            refdt.get_property(base_path, VBMETA_DIGEST_PROP).unwrap(),
+            boot_info.verify_data.vbmeta_digest_sha256(),
+        );
+        assert_eq!(
+            refdt.get_property(base_path, VBMETA_PUBKEY_DIGEST_PROP).unwrap(),
+            boot_info.pkey_digest().unwrap(),
+        );
+    }
+
+    fn ensure_avb_props<T: AsRef<[u8]>>(dt: Fdt<T>, avb_node: &str) {
+        for prop in [
+            std_props::COMPATIBLE,
+            DEVICE_STATE_PROP,
+            VBMETA_DIGEST_PROP,
+            VBMETA_PUBKEY_DIGEST_PROP,
+            VB_STATE_PROP,
+        ] {
+            dt.get_property(avb_node, prop).unwrap();
+        }
+    }
+
+    #[test]
     fn test_write_reference_dt() {
         let test_digest = [5u8; 64];
         let digest = TestVerifyData::new(Some(&test_digest), None);
+        let boot_info = BootInfo::new(false, false, BootStateColor::Green, &digest);
         let sk_key = FakeGblOps::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY;
         let mut ops = FakeGblOps::new(&[][..]);
         ops.avf_is_supported = true;
@@ -772,28 +865,31 @@ pub(crate) mod test {
         let mut refdt_buf = AlignedBuffer::new(1024, 8);
 
         let (ref_dt_size, ref_dt_padded_size, _) =
-            pvmfw_build_reference_dt(&mut ops, &mut refdt_buf, &digest).unwrap();
+            pvmfw_build_reference_dt(&mut ops, &mut refdt_buf, &boot_info).unwrap();
         assert!(ref_dt_padded_size % PvmfwConfEntry::ALIGNMENT == 0);
 
         let refdt = Fdt::new(&refdt_buf[..ref_dt_size]).unwrap();
         assert_eq!(refdt.get_property(REF_DT_AVF_PATH, VENDOR_HASH_PROP).unwrap(), test_digest);
         assert_eq!(refdt.get_property(REF_DT_AVF_PATH, SK_PUB_KEY_PROP).unwrap(), sk_key);
+        ensure_avb_props(refdt, REF_DT_AVB_PATH);
     }
 
     #[test]
     fn test_write_empty_reference_dt() {
         let digest = TestVerifyData::default();
+        let boot_info = BootInfo::new(false, false, BootStateColor::Green, &digest);
         let mut ops = FakeGblOps::new(&[][..]);
         ops.avf_is_supported = false;
 
         let mut refdt_buf = AlignedBuffer::new(1024, 8);
         let (ref_dt_size, ref_dt_padded_size, _) =
-            pvmfw_build_reference_dt(&mut ops, &mut refdt_buf, &digest).unwrap();
+            pvmfw_build_reference_dt(&mut ops, &mut refdt_buf, &boot_info).unwrap();
         assert!(ref_dt_padded_size % PvmfwConfEntry::ALIGNMENT == 0);
 
         let refdt = Fdt::new(&refdt_buf[..ref_dt_size]).unwrap();
         refdt.get_property(REF_DT_AVF_PATH, VENDOR_HASH_PROP).unwrap_err();
         refdt.get_property(REF_DT_AVF_PATH, SK_PUB_KEY_PROP).unwrap_err();
+        ensure_avb_props(refdt, REF_DT_AVB_PATH);
     }
 
     #[test]
@@ -806,9 +902,9 @@ pub(crate) mod test {
         ] {
             let (authority, code, hidden, mode, rollback_idx) =
                 prepare_dice_inputs(&verify_data, unlocked, is_recovery).unwrap();
-            assert_eq!(authority, sha512(&[5, 4, 3, 2, 1]));
+            assert_eq!(authority, digest::<Sha512>(&[5, 4, 3, 2, 1]));
             assert_eq!(hidden, [0u8; HIDDEN_SIZE]);
-            assert_eq!(code, sha512(&[1, 2, 3, 4, 5]));
+            assert_eq!(code, digest::<Sha512>(&[1, 2, 3, 4, 5]));
             assert_eq!(mode, exp_mode);
             assert_eq!(rollback_idx, Some(1));
         }

@@ -49,6 +49,8 @@ use misc::AndroidBootMode;
 mod avf;
 use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region};
 
+mod hasher;
+
 pub mod device_tree;
 use device_tree::{fdt_append_bootargs, fdt_build_bootargs, fdt_propagate_random, PROP_BOOTARGS};
 
@@ -180,7 +182,14 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
 
     let pvmfw = match images.pvmfw.is_empty() {
         true => None,
-        _ => Some(loader.pvmfw_load(ops, images.pvmfw, &verify_data, unlocked, is_recovery)?),
+        _ => Some(loader.pvmfw_load(
+            ops,
+            images.pvmfw,
+            &verify_data,
+            unlocked,
+            is_recovery,
+            status.color,
+        )?),
     };
     loader.ramdisk_load(&images.ramdisks[..])?;
     loader.kernel_load(ops, images.kernel)?;
