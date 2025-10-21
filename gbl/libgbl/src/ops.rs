@@ -1583,8 +1583,16 @@ pub(crate) mod test {
             Ok(())
         }
 
-        fn fastboot_get_lock(&mut self, _: LockType) -> Result<LockState, Error> {
-            unimplemented!()
+        fn fastboot_get_lock(&mut self, lock_type: LockType) -> Result<LockState, Error> {
+            match lock_type {
+                LockType::Device => {
+                    Ok(match self.avb_read_device_status().map(|s| s.is_unlocked).unwrap() {
+                        true => LockState::Unlocked,
+                        _ => LockState::Locked,
+                    })
+                }
+                _ => unimplemented!(),
+            }
         }
 
         fn fastboot_vendor_erase(&mut self, part: &str) -> Result<FastbootEraseAction, Error> {

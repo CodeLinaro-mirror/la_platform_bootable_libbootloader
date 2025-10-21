@@ -20,8 +20,8 @@ use crate::{
         DeviceTreeComponentSource, DeviceTreeComponentType, DeviceTreeComponentsRegistry,
     },
     fastboot::{
-        run_gbl_fastboot, run_gbl_fastboot_stack, BufferPool, GblFastbootResult, GblTcpStream,
-        GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
+        boot_items::BootItemContainer, run_gbl_fastboot, run_gbl_fastboot_stack, BufferPool,
+        GblFastbootResult, GblTcpStream, GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
     },
     gbl_avb::{ArrayMaxParts, ArrayMaxRequestedParts},
     gbl_println,
@@ -36,7 +36,7 @@ use bootparams::{
     commandline::CommandlineBuilder,
     entry::CommandlineParser,
 };
-use core::{array::from_fn, ffi::CStr, fmt::Write, ops::Range};
+use core::{array::from_fn, ffi::CStr, fmt::Write, mem::take, ops::Range};
 use dttable::DtTableImage;
 use fastboot::local_session::LocalSession;
 use fdt::{Fdt, FdtHeader};
@@ -87,6 +87,8 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     boot_buffer: BootBuffer<'a>,
 ) -> Result<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
     let mut loader = BootBufferLoader::new(boot_buffer);
+    // TODO(b/450268123): Handles boot items.
+    let _boot_items = loader.take_boot_items();
 
     let mut partitions: ArrayMaxParts<(Partition, Option<PartitionBuffer<_>>)> =
         ArrayMaxParts::new();
@@ -534,10 +536,10 @@ where
 }
 
 /// Contains various boot buffers
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct BootBuffer<'a> {
-    /// Buffer for loading images without designated buffers.
-    pub general: &'a mut [u8],
+    /// General load buffer internally manages a BootItemContainer.
+    boot_items: core::result::Result<BootItemContainer<'a>, &'a mut [u8]>,
     /// Optional designated kernel load buffer.
     pub kernel: Option<&'a mut [u8]>,
     /// Optional designated ramdisk load buffer.
@@ -548,22 +550,65 @@ pub struct BootBuffer<'a> {
     pub pvmfw_data: Option<&'a mut [u8]>,
 }
 
-impl BootBuffer<'_> {
+impl<'a> BootBuffer<'a> {
+    /// Creates a new instance.
+    pub fn new(
+        buffer: &'a mut [u8],
+        kernel: Option<&'a mut [u8]>,
+        ramdisk: Option<&'a mut [u8]>,
+        fdt: Option<&'a mut [u8]>,
+        pvmfw_data: Option<&'a mut [u8]>,
+    ) -> Self {
+        let can_create = BootItemContainer::new(&mut buffer[..]).is_ok();
+        let boot_items = match can_create {
+            true => Ok(BootItemContainer::new(buffer).unwrap()),
+            _ => Err(buffer),
+        };
+        Self { boot_items, kernel, ramdisk, fdt, pvmfw_data }
+    }
+
     /// Creates an instance that borrows internal fields.
     pub fn as_borrowed(&mut self) -> BootBuffer {
         BootBuffer {
-            general: &mut self.general[..],
+            boot_items: self.boot_items.as_mut().map(|v| v.as_borrowed()).map_err(|v| v as _),
             kernel: self.kernel.as_mut().map(|v| v as _),
             ramdisk: self.ramdisk.as_mut().map(|v| v as _),
             fdt: self.fdt.as_mut().map(|v| v as _),
             pvmfw_data: self.pvmfw_data.as_mut().map(|v| v as _),
         }
     }
+
+    /// Gets unused buffer from general load as scratch.
+    pub fn scratch(&mut self) -> &mut [u8] {
+        match self.boot_items.as_mut() {
+            Ok(v) => v.get_unused(),
+            Err(v) => v as _,
+        }
+    }
+
+    /// Splits out the unused buffer from boot item container in the general load buffer.
+    pub(crate) fn take_scratch(&mut self) -> &'a mut [u8] {
+        match self.boot_items.as_mut() {
+            Ok(v) => v.split_unused(),
+            Err(v) => take(v),
+        }
+    }
+
+    /// Takes the boot item container.
+    pub(crate) fn take_boot_items(&mut self) -> Option<BootItemContainer<'a>> {
+        core::mem::replace(&mut self.boot_items, Err(&mut [][..])).ok()
+    }
 }
 
 impl<'a> From<&'a mut [u8]> for BootBuffer<'a> {
     fn from(general: &'a mut [u8]) -> Self {
-        Self { general, ..Default::default() }
+        Self::new(general, None, None, None, None)
+    }
+}
+
+impl Default for BootBuffer<'_> {
+    fn default() -> Self {
+        (&mut [][..]).into()
     }
 }
 
@@ -587,7 +632,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
     mut boot_buffer: BootBuffer<'c>,
     run_fastboot: impl FnOnce(GblFastbootEntry<'_, G>),
 ) -> Result<(&'c [u8], &'c [u8], &'c [u8], &'c mut [u8])> {
-    let bcb = read_bootloader_message_to(ops, boot_buffer.general).inspect_err(|e| {
+    let bcb = read_bootloader_message_to(ops, boot_buffer.scratch()).inspect_err(|e| {
         gbl_println!(ops, "Failed to read bootloader message from misc partition: {e}")
     })?;
     let boot_mode = bcb
@@ -993,8 +1038,13 @@ androidboot.veritymode.managed=yes
         assert_eq!(designated_fdt.unwrap_or(fdt.as_ptr()), fdt.as_ptr());
         assert_eq!(designated_kernel.unwrap_or(kernel.as_ptr()), kernel.as_ptr());
 
-        // If fdt is in general load buffer, checks it starts at page size aligned address.
-        assert!(designated_fdt.is_some() || fdt.as_ptr().align_offset(PAGE_SIZE) == 0);
+        // If both ramdisk and fdt are in general load buffer, checks it starts at page size
+        // aligned address.
+        assert!(
+            designated_ramdisk.is_some()
+                || designated_fdt.is_some()
+                || fdt.as_ptr().align_offset(PAGE_SIZE) == 0
+        );
 
         let fdt = Fdt::new(fdt).unwrap();
         // "linux,initrd-start/end" are updated.
@@ -1056,9 +1106,12 @@ androidboot.veritymode.managed=yes
             let kernel = ((flag & 1) != 0).then_some(&mut kernel[..]);
             let ramdisk = ((flag & 2) != 0).then_some(&mut ramdisk[..]);
             let fdt = ((flag & 4) != 0).then_some(&mut fdt[..]);
-            let buffers = BootBuffer { general, kernel, ramdisk, fdt, pvmfw_data: None };
+            let mut buffers = BootBuffer::new(general, kernel, ramdisk, fdt, None);
             println!("\nBoot buffer config #{flag}");
-            println!("  general: {:?} bytes", buffers.general.len());
+            println!(
+                "  general: {:?} bytes",
+                buffers.boot_items.as_mut().unwrap().raw_buffer().len()
+            );
             println!("  kernel: {:?} bytes", buffers.kernel.as_ref().map(|v| v.len()));
             println!("  ramdisk: {:?} bytes", buffers.ramdisk.as_ref().map(|v| v.len()));
             println!("  fdt: {:?} bytes", buffers.fdt.as_ref().map(|v| v.len()));
@@ -1959,8 +2012,7 @@ androidboot.veritymode.managed=yes
         let general = &mut AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let pvmfw_data = &mut AlignedBuffer::new(32 * 1024, PVMFW_DATA_ALIGNMENT);
         let expected_addr = pvmfw_data.as_ptr() as usize;
-        let boot_buffer =
-            BootBuffer { general, pvmfw_data: Some(pvmfw_data), ..Default::default() };
+        let boot_buffer = BootBuffer::new(general, None, None, None, Some(pvmfw_data));
         test_android_load_verify_fixup_pvmfw_load(boot_buffer, expected_addr);
         assert!(&pvmfw_data[..0xc00].iter().all(|&b| b == TEST_PVMFW_FILL_VALUE));
     }
@@ -1971,7 +2023,8 @@ androidboot.veritymode.managed=yes
         // Starts with unaligned address. pvmfw should be loaded at offset 1.
         let general = &mut general[PVMFW_DATA_ALIGNMENT - 1..];
         let expected_addr = general[1..].as_ptr() as usize;
-        let boot_buffer = BootBuffer { general, ..Default::default() };
+        let mut boot_buffer = BootBuffer::default();
+        boot_buffer.boot_items = Err(&mut general[..]);
         test_android_load_verify_fixup_pvmfw_load(boot_buffer, expected_addr);
         assert!(&general[1..][..0xc00].iter().all(|&b| b == TEST_PVMFW_FILL_VALUE));
     }
@@ -2250,13 +2303,8 @@ androidboot.veritymode.managed=yes
         let ramdisk_addr = ramdisk.as_ptr();
         let mut fdt = AlignedBuffer::<u8>::new(1 * 1024 * 1024, FDT_ALIGNMENT);
         let fdt_addr = fdt.as_ptr();
-        let buffers = BootBuffer {
-            general,
-            kernel: Some(&mut kernel),
-            ramdisk: Some(&mut ramdisk),
-            fdt: Some(&mut fdt),
-            pvmfw_data: None,
-        };
+        let buffers =
+            BootBuffer::new(general, Some(&mut kernel), Some(&mut ramdisk), Some(&mut fdt), None);
         let listener: SharedTestListener = Default::default();
         let (ramdisk, fdt, kernel, _) = android_main(&mut ops, buffers, |fb| {
             let data = read_test_data(format!("boot_v2_a.img"));

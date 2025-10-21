@@ -77,6 +77,9 @@ use pin_fut_container::{PinFutContainerTyped, PinFutSlice};
 // Re-exports dependency types
 pub use fastboot::{TcpStream, Transport};
 
+pub(crate) mod boot_items;
+use boot_items::{BootItem, BootItemContainer};
+
 /// Reserved name for indicating flashing GPT.
 const FLASH_GPT_PART: &str = "gpt";
 
@@ -171,9 +174,9 @@ pub enum LoadedImageInfo {
     #[cfg(feature = "fuchsia")]
     Fuchsia {
         /// Offset and length of ZBI items in `GblFastboot::load_buffer`.
-        zbi_items: Range<usize>,
+        zbi_items: Range<*const u8>,
         /// Offset and length of kernel in `GblFastboot::load_buffer`.
-        kernel: Range<usize>,
+        kernel: Range<*const u8>,
         /// Selected slot,
         slot: SlotIndex,
     },
@@ -193,7 +196,7 @@ impl GblFastbootResult {
     ///  `Self::loaded_image_info` if it is a `Some(LoadedImageInfo::Android)`.
     pub(crate) fn split_loaded_android<'a>(
         &self,
-        boot_buffer: BootBuffer<'a>,
+        mut boot_buffer: BootBuffer<'a>,
     ) -> Option<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
         let Some(LoadedImageInfo::Android { ramdisk, fdt, kernel }) = &self.loaded_image_info
         else {
@@ -204,14 +207,16 @@ impl GblFastbootResult {
         let [ramdisk_sz, fdt_sz, kernel_sz] = [&ramdisk, &fdt, &kernel].map(|v| ptr_range_len(v));
 
         // Partitions the general load buffer.
-        let general = &boot_buffer.general.as_ptr_range();
+        let general_buf = boot_buffer.take_scratch();
+        let general = &general_buf.as_ptr_range();
         let ramdisk = sub_slice_range(general, ramdisk).unwrap_or(0..0);
         let fdt = sub_slice_range(general, fdt).unwrap_or(ramdisk.end..ramdisk.end);
         let kernel = sub_slice_range(general, kernel).unwrap_or(fdt.end..fdt.end);
         assert!(fdt.start >= ramdisk.end && kernel.start >= fdt.end);
-        let (rem, unused) = boot_buffer.general.split_at_mut(kernel.end);
+        let (rem, unused) = general_buf.split_at_mut(kernel.end);
         let (rem, general_kernel) = rem.split_at_mut(kernel.start);
-        let (general_ramdisk, general_fdt) = rem.split_at_mut(fdt.start);
+        let (rem, general_fdt) = rem.split_at_mut(fdt.start);
+        let (_, general_ramdisk) = rem.split_at_mut(ramdisk.start);
 
         // Choosess between designated or partitioned general buffer.
         let ramdisk = &mut boot_buffer.ramdisk.unwrap_or(general_ramdisk)[..ramdisk_sz];
@@ -232,6 +237,8 @@ impl GblFastbootResult {
         else {
             return None;
         };
+        let zbi_items = sub_slice_range(&load.as_ptr_range(), zbi_items).unwrap();
+        let kernel = sub_slice_range(&load.as_ptr_range(), kernel).unwrap();
         let (zbi_items_buf, rem) = load[zbi_items.start..].split_at_mut(zbi_items.len());
         let (kernel_buf, _) = rem[kernel.start - zbi_items.end..].split_at_mut(kernel.len());
         Some((zbi_items_buf, kernel_buf))
@@ -653,7 +660,7 @@ where
             }
             _ => {
                 // Update the bootloader message (BCB) in the `misc` partition.
-                let bcb = read_bootloader_message_to(self.gbl_ops, self.boot_buffer.general)?;
+                let bcb = read_bootloader_message_to(self.gbl_ops, self.boot_buffer.scratch())?;
                 bcb.update_boot_command(mode);
                 write_bootloader_message(self.gbl_ops, bcb)?;
             }
@@ -766,8 +773,7 @@ where
     /// Helper for "fastboot boot" Fuchsia image.
     #[cfg(feature = "fuchsia")]
     async fn boot_fuchsia(&mut self, img: &[u8], mut resp: impl InfoSender) -> CommandResult<()> {
-        let load_buffer = &mut self.boot_buffer.general[..];
-        let load_buffer_addr = load_buffer.as_ptr() as usize;
+        let load_buffer = self.boot_buffer.scratch();
         // Format is ZBI + Vbmeta.
         let (zbi, vbmeta) = zbi_split_unused_buffer_ref(get_kernel(img)?)?;
         let mut ramboot_ops = RambootOps {
@@ -784,8 +790,8 @@ where
         let LoadedVerifiedZircon { zbi_items, kernel, slot } =
             zircon_load_verify_abr_with_buffer(&mut ramboot_ops, load_buffer)?;
         self.result.loaded_image_info = Some(LoadedImageInfo::Fuchsia {
-            zbi_items: to_range(zbi_items.as_ptr() as usize - load_buffer_addr, zbi_items.len()),
-            kernel: to_range(kernel.as_ptr() as usize - load_buffer_addr, kernel.len()),
+            zbi_items: zbi_items.as_ptr_range(),
+            kernel: kernel.as_ptr_range(),
             slot,
         });
         resp.send_formatted_info(|f| {
@@ -816,6 +822,20 @@ where
             }
         }
         Ok(())
+    }
+
+    /// Helper for checking and getting an `BootItemContainer` from general load buffer.
+    fn boot_item_container(&mut self) -> CommandResult<BootItemContainer> {
+        self.boot_buffer.as_borrowed().take_boot_items().ok_or("Not enough general buffer".into())
+    }
+
+    /// Helper for checking whether device is unlocked.
+    fn check_unlocked(&mut self) -> CommandResult<()> {
+        match self.gbl_ops.fastboot_get_lock(LockType::Device) {
+            Err(e) => Err(format_args!("Fail to get unlock status {e}").into()),
+            Ok(LockState::Locked) => Err("Device is not unlocked".into()),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -1041,6 +1061,16 @@ where
                 Ok(())
             }
             "gbl-partition-info" => self.oem_dump_partition_info(responder).await,
+            "gbl-add-cmdline" => {
+                self.check_unlocked()?;
+                let arg = next_arg(&mut args).ok_or("Missing cmdline arg")?;
+                Ok(self.boot_item_container()?.append_item(BootItem::Cmdline, arg.as_bytes())?)
+            }
+            "gbl-add-bootconfig" => {
+                self.check_unlocked()?;
+                let arg = next_arg(&mut args).ok_or("Missing bootconfig arg")?;
+                Ok(self.boot_item_container()?.append_item(BootItem::Bootconfig, arg.as_bytes())?)
+            }
             #[cfg(feature = "gbl_dev")]
             "stack-smash-demo" => {
                 smash::stack_smash_demo(self.gbl_ops);
@@ -1130,12 +1160,6 @@ mod smash {
         let base_stack = get_sp();
         smash(ops, base_stack);
     }
-}
-
-/// Helper to convert a offset and length to a range.
-#[cfg(feature = "fuchsia")]
-fn to_range(off: usize, len: usize) -> Range<usize> {
-    off..off.checked_add(len).unwrap()
 }
 
 /// `GblUsbTransport` defines transport interfaces for running GBL fastboot over USB.
@@ -4297,5 +4321,95 @@ pub(crate) mod test {
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         );
+    }
+
+    #[test]
+    fn test_gbl_oem_add_cmdline_bootconfig() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"oem gbl-add-cmdline");
+        listener.add_usb_input(b"oem gbl-add-bootconfig");
+        listener.add_usb_input(b"oem gbl-add-cmdline arg0=val0");
+        listener.add_usb_input(b"oem gbl-add-bootconfig arg1=val2");
+        listener.add_usb_input(b"oem gbl-add-cmdline arg2=val2");
+        listener.add_usb_input(b"oem gbl-add-bootconfig arg3=val3");
+        listener.add_usb_input(b"continue");
+        let mut general = vec![0u8; 1024];
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            (&mut general[..]).into(),
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"FAILMissing cmdline arg",
+                b"FAILMissing bootconfig arg",
+                b"OKAY",
+                b"OKAY",
+                b"OKAY",
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        let container = BootItemContainer::from(&mut general[..], false).unwrap();
+        assert_eq!(
+            container.iter().collect::<Vec<_>>(),
+            vec![
+                (BootItem::Cmdline, b"arg0=val0" as _),
+                (BootItem::Bootconfig, b"arg1=val2" as _),
+                (BootItem::Cmdline, b"arg2=val2" as _),
+                (BootItem::Bootconfig, b"arg3=val3" as _),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_gbl_oem_add_cmdline_bootconfig_fail_whiled_locked() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = false;
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+        listener.add_usb_input(b"oem gbl-add-cmdline arg0=val0");
+        listener.add_usb_input(b"oem gbl-add-bootconfig arg1=val2");
+        listener.add_usb_input(b"continue");
+        let mut general = vec![0u8; 1024];
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            (&mut general[..]).into(),
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"FAILDevice is not unlocked",
+                b"FAILDevice is not unlocked",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+
+        let container = BootItemContainer::from(&mut general[..], false).unwrap();
+        assert_eq!(container.iter().next(), None);
     }
 }
