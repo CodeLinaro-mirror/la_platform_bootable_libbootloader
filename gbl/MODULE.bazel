@@ -70,9 +70,9 @@ gbl_new_local_repository(
     build_file_content = """
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
-name = "elf_type_header",
-hdrs = ["libelf/elf.h"],
-visibility = ["//visibility:public"],
+    name = "elf_type_header",
+    hdrs = ["libelf/elf.h"],
+    visibility = ["//visibility:public"],
 )
 """,
     path = "external/elfutils",
@@ -84,10 +84,10 @@ gbl_new_local_repository(
 load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files(glob(["**/*"]))
 cc_library(
-name = "bootimg_header",
-hdrs = ["include/bootimg/bootimg.h"],
-includes = ["include"],
-visibility = ["//visibility:public"],
+    name = "bootimg_header",
+    hdrs = ["include/bootimg/bootimg.h"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
 )
 """,
     path = "tools/mkbootimg",
