@@ -250,6 +250,79 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
     }
 }
 
+/// Android fake verified boot flow.
+///
+/// Used only by the DEV GBL to boot the device even if a critical AVB error is encountered,
+/// by using a custom precompiled vbmeta image to work around on-device issues.
+#[cfg(feature = "gbl_dev")]
+pub fn avb_fake_verify_slot<'a, 'b, 'c: 'd, 'd>(
+    ops: &mut impl GblOps<'a, 'b>,
+    slot: Slot,
+    partitions: &'d mut PartitionsToVerify<'c>,
+) -> Result<(SlotVerifyData<'d>, VerificationStatus, bool)> {
+    use crate::android_boot::slotted_part;
+    use crate::gbl_avb::ops::custom_vbmeta::CustomVbmetaAvbOps;
+
+    let slot_index = SlotIndex::try_from(slot.suffix.as_char())
+        .inspect_err(|_| gbl_println!(ops, "AVB: Invalid slot: {}", slot.suffix.as_char()))
+        .map_err(|_| Error::InvalidInput)?;
+
+    let PartitionsToVerify { partitions, preloaded } = partitions;
+
+    let mut names: ArrayMaxParts<&'c CStr> = ArrayMaxParts::new();
+    for partition in partitions.iter() {
+        // `libavb` fails with IO if any partition is missed when verification is disabled,
+        // so filter out missed partitions.
+        if ops.partition_size(&slotted_part(partition.name(), slot)?)?.is_some() {
+            names.push(partition.name_cstr());
+        }
+    }
+
+    let mut avb_ops = GblAvbOps::new(ops, Some(slot_index), preloaded, false);
+    let status = avb_ops.avb_read_device_status()?;
+
+    // Uses pre-compiled fake vbmeta image with disabled verification, so rely on libavb to
+    // load the partitions only.
+    let custom_vbmeta = include_bytes!("../../testdata/android/vbmeta_disabled.img");
+    // Custom vbmeta partition has `0` rollback index value.
+    let custom_vbmeta_rollbacks = [(0, 0)];
+    let mut custom_avb_ops = CustomVbmetaAvbOps {
+        ops: &mut avb_ops,
+        vbmeta: custom_vbmeta,
+        rollback_indexes: &custom_vbmeta_rollbacks,
+    };
+    match slot_verify(
+        &mut custom_avb_ops,
+        &names,
+        Some(slot_index.into()),
+        SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_ALLOW_VERIFICATION_ERROR,
+        HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_RESTART,
+    ) {
+        // Fatal error. Cannot boot.
+        Err(ref e) if e.verification_data().is_none() => {
+            gbl_println!(
+                avb_ops.gbl_ops,
+                "Fake AVB verification failed with {e}. Color: {}. Cannot continue boot.",
+                BootStateColor::Red,
+            );
+            Err(e.without_verify_data().into())
+        }
+        r => {
+            let color = BootStateColor::Orange;
+            gbl_println!(
+                avb_ops.gbl_ops,
+                "Fake AVB verification done. Color: {}. Continue current boot attempt.",
+                color,
+            );
+            Ok((
+                into_verify_data(r).unwrap(),
+                VerificationStatus { color: color, is_eio: false },
+                status.is_unlocked,
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

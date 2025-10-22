@@ -656,6 +656,10 @@ devices and missing required partitions on locked devices. A corresponding
 notification [must][boot_flow_red] be shown to inform the user that no valid OS
 was detected. Boot cannot proceed.
 
+Note: The dev GBL will attempt to boot using unverified images on an unlocked
+device, even after a fatal verification failure and `COLOR_RED` has been
+reported to the firmware.
+
 ##### GBL_EFI_AVB_BOOT_COLOR_ORANGE
 
 Flag indicating that the device is unlocked (regardless of the verification

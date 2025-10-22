@@ -152,7 +152,28 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         }
     }
 
-    let (verify_data, status, unlocked) = avb_verify_slot(ops, slot, &mut partitions_to_verify)?;
+    #[allow(unused_mut)]
+    let mut res = avb_verify_slot(ops, slot, &mut partitions_to_verify);
+    #[cfg(feature = "gbl_dev")]
+    {
+        use crate::android_boot::vboot::avb_fake_verify_slot;
+
+        // AVB is failed, try to use fake avb flow since we're in dev flow. Fallback
+        // locking state to unlocked since inside dev GBL flow.
+        if res.is_err() && ops.avb_read_device_status().map(|s| s.is_unlocked).unwrap_or(true) {
+            gbl_println!(
+                ops,
+                "AVB is failed with: {}. Dev flavor of GBL, so tyring fake AVB flow.",
+                res.as_ref().err().unwrap()
+            );
+
+            // Needs to drop explicitly so that `partitions_to_verify` can be used.
+            drop(res);
+            res = avb_fake_verify_slot(ops, slot, &mut partitions_to_verify);
+        }
+    }
+    let (verify_data, status, unlocked) = res?;
+
     let images = android_load_verified(ops, slot, unlocked, is_recovery, &verify_data)?;
 
     let pvmfw = match images.pvmfw.is_empty() {
@@ -860,6 +881,10 @@ pub(crate) mod tests {
             self
         }
 
+        pub(crate) fn build_no_avb_string(&self) -> String {
+            format!("androidboot.verifiedbootstate={}\n{}", self.color, self.extra)
+        }
+
         pub(crate) fn build_string(self) -> String {
             let device_state = match self.unlocked {
                 true => "unlocked",
@@ -882,16 +907,18 @@ androidboot.vbmeta.size={}
 androidboot.vbmeta.digest={}
 androidboot.veritymode=enforcing
 androidboot.veritymode.managed=yes
-{}androidboot.verifiedbootstate={}
-{}",
+{}{}",
                 self.public_key_digest,
                 device_state,
                 self.vbmeta_size,
                 self.digest,
                 boot_digests.as_str(),
-                self.color,
-                self.extra
+                self.build_no_avb_string(),
             )
+        }
+
+        pub(crate) fn build_no_avb(self) -> Vec<u8> {
+            make_bootconfig(self.build_no_avb_string())
         }
 
         pub(crate) fn build(self) -> Vec<u8> {
@@ -924,21 +951,14 @@ androidboot.veritymode.managed=yes
     /// * `fixup_config`: The expected fixup config by GblOps.
     fn make_expected_bootconfig(
         partitions: &[(String, String)],
-        vbmeta_file: &str,
+        vbmeta_file: Option<&str>,
         unlocked: bool,
         color: BootStateColor,
         slot: char,
         vendor_config: &str,
         fixup_config: &str,
     ) -> Vec<u8> {
-        let vbmeta_file = Path::new(vbmeta_file);
-        let vbmeta_digest = vbmeta_file.with_extension("digest.txt");
-        let vbmeta_digest = vbmeta_digest.to_str().unwrap();
         let mut builder = AvbResultBootconfigBuilder::new()
-            .vbmeta_size(read_test_data(vbmeta_file.to_str().unwrap()).len())
-            .digest(read_test_data_as_str(vbmeta_digest))
-            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
-            .unlocked(unlocked)
             .color(color)
             .extra("androidboot.force_normal_boot=1\n")
             .extra(format!("androidboot.slot_suffix=_{slot}\n"))
@@ -946,15 +966,33 @@ androidboot.veritymode.managed=yes
             .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
             .extra(vendor_config)
             .extra(fixup_config);
-        for (part, _) in partitions {
-            let slotless = part.strip_suffix(&format!("_{slot}")).unwrap_or(part).to_string();
-            let digest = vbmeta_file.with_extension(format!("{slotless}.digest.txt"));
-            let digest = digest.to_str().unwrap();
-            if Path::new(format!("{TEST_DATA_PATH}/{}", digest).as_str()).exists() {
-                builder.partition_digests.insert(slotless, read_test_data_as_str(digest));
+
+        match vbmeta_file {
+            Some(vbmeta_file) => {
+                let vbmeta_file = Path::new(vbmeta_file);
+                let vbmeta_digest = vbmeta_file.with_extension("digest.txt");
+                let vbmeta_digest = vbmeta_digest.to_str().unwrap();
+
+                builder = builder
+                    .vbmeta_size(read_test_data(vbmeta_file.to_str().unwrap()).len())
+                    .digest(read_test_data_as_str(vbmeta_digest))
+                    .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+                    .unlocked(unlocked);
+
+                for (part, _) in partitions {
+                    let slotless =
+                        part.strip_suffix(&format!("_{slot}")).unwrap_or(part).to_string();
+                    let digest = vbmeta_file.with_extension(format!("{slotless}.digest.txt"));
+                    let digest = digest.to_str().unwrap();
+                    if Path::new(format!("{TEST_DATA_PATH}/{}", digest).as_str()).exists() {
+                        builder.partition_digests.insert(slotless, read_test_data_as_str(digest));
+                    }
+                }
+
+                builder.build()
             }
+            None => builder.build_no_avb(),
         }
-        builder.build()
     }
 
     /// Converts bootconfig to bootargs
@@ -1144,10 +1182,13 @@ androidboot.veritymode.managed=yes
         expected_fdt_property: &[(&str, &CStr, Option<&[u8]>)],
         bootconfig_supported: bool,
     ) {
-        let mut partitions = partitions.to_vec();
-        partitions.push((format!("vbmeta_{slot_name}"), vbmeta.into()));
-        partitions.push((format!("fw_{slot_name}"), format!("fw_{slot_name}.img")));
-        let test_common = |unlock, color, rollback_idx| {
+        let test_common = |unlock, color, rollback_idx, vbmeta: Option<&str>| {
+            let mut partitions = partitions.to_vec();
+            if let Some(vbmeta) = vbmeta {
+                partitions.push((format!("vbmeta_{slot_name}"), vbmeta.into()));
+            }
+            partitions.push((format!("fw_{slot_name}"), format!("fw_{slot_name}.img")));
+
             let expected_bootconfig = make_expected_bootconfig(
                 &partitions,
                 vbmeta,
@@ -1176,16 +1217,25 @@ androidboot.veritymode.managed=yes
                 expected_fdt_property,
             );
         };
+
+        // All the following variants should succeed for the same setup.
+
         // AVB verification passes in locked mode.
         println!("\n---sub test: AVB passes, locked mode---\n");
-        test_common(false, BootStateColor::Green, 0);
+        test_common(false, BootStateColor::Green, 0, Some(vbmeta));
         // AVB verification passes in unlocked mode.
         println!("\n---sub test: AVB passes, unlocked mode---\n");
-        test_common(true, BootStateColor::Orange, 0);
+        test_common(true, BootStateColor::Orange, 0, Some(vbmeta));
         println!("\n---sub test: AVB failed, unlocked mode---\n");
         // Causes rollback protection failure. Tests that in unlocked mode, images will be loaded
         // as usual.
-        test_common(true, BootStateColor::Orange, 3);
+        test_common(true, BootStateColor::Orange, 3, Some(vbmeta));
+
+        // No valid vbmeta partition when unlocked and dev flow.
+        if cfg!(feature = "gbl_dev") {
+            println!("\n---sub test: No-AVB, unlocked mode, dev flow---\n");
+            test_common(true, BootStateColor::Orange, 0, None);
+        }
     }
 
     const EXPECTED_V2_CMDLINE: &str = "existing_arg_1=existing_val_1 existing_arg_2=existing_val_2 cmd_key_1=cmd_val_1,cmd_key_2=cmd_val_2";
@@ -1723,7 +1773,7 @@ androidboot.veritymode.managed=yes
             &expected_v3_v4_ramdisk('a'),
             &make_expected_bootconfig(
                 &parts,
-                &vbmeta,
+                Some(&vbmeta),
                 false,
                 BootStateColor::Green,
                 'a',
@@ -1878,7 +1928,7 @@ androidboot.veritymode.managed=yes
                 ("vendor_boot_a".into(), "vendor_boot_v4_a.img".into()),
                 ("init_boot_a".into(), "init_boot_a.img".into()),
             ],
-            "vbmeta_v4_v4_init_boot_a.img",
+            Some("vbmeta_v4_v4_init_boot_a.img"),
             false,
             BootStateColor::Green,
             'a',
