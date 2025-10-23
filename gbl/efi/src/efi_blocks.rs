@@ -26,7 +26,7 @@ use efi::{
 };
 use efi_types::{defs::EFI_TPL_APPLICATION, protocol::block_io::BlockIo as _, tpl::TplLocked};
 use gbl_async::block_on;
-use gbl_storage::{gpt_buffer_size, BlockInfo, BlockIo, Disk, Gpt};
+use gbl_storage::{gpt_buffer_size, BlockInfo, BlockIo, Disk, Gpt, GPT_MAX_NUM_ENTRIES};
 use liberror::Error;
 use libgbl::partition::GblDisk;
 use libprofile_macros::profile;
@@ -106,8 +106,6 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
     }
 }
 
-const MAX_GPT_ENTRIES: usize = 128;
-
 /// The [GblDisk] type in the GBL EFI context.
 pub type EfiGblDisk<'a> = GblDisk<Disk<EfiBlockDeviceIo<'a>, Vec<u8>>, Gpt<Vec<u8>>>;
 
@@ -117,7 +115,8 @@ pub fn find_block_devices(efi_entry: &EfiEntry) -> Result<Vec<EfiGblDisk<'_>>, E
     let bs = efi_entry.system_table().boot_services();
     let block_dev_handles = bs.locate_handle_buffer_by_protocol::<BlockIoProtocol>()?;
     let mut gbl_disks = vec![];
-    let gpt_buffer_size = gpt_buffer_size(MAX_GPT_ENTRIES)?;
+    // TODO(b/452455989) Buffer size and capacity can be configurable using vendor path.
+    let gpt_buffer_size = gpt_buffer_size(GPT_MAX_NUM_ENTRIES)?;
     for (idx, handle) in block_dev_handles.handles().iter().enumerate() {
         let block_io = bs.open_protocol::<BlockIoProtocol>(*handle).unwrap();
         // SAFETY: this code always executes at `EFI_TPL_APPLICATION`.

@@ -36,7 +36,9 @@ import shutil
 import sys
 import subprocess
 import tempfile
+import math
 
+DEFAULT_ENTRIES_COUNT = 128
 GPT_BLOCK_SIZE = 512
 
 # Some GPT libraries may expect a valid GUID here, these are just pre-generated
@@ -78,6 +80,12 @@ def parse_args():
         action="append",
         help="specifies a partition. Format should be"
         "--partition=<part name>,<size>,<file name>",
+    )
+    parser.add_argument(
+        "--entries_count",
+        type=int,
+        default=DEFAULT_ENTRIES_COUNT,
+        help="Number of entries in partition table. i.e. 128, 256",
     )
     return parser.parse_args()
 
@@ -128,7 +136,7 @@ def main() -> int:
         disk_size = parse_size_str(args.disk_size)
         temp_disk.write_bytes(disk_size * b"\x00")
 
-        part_start = 34 * GPT_BLOCK_SIZE  # MBR + GPT header + entries
+        part_start = (1 + 1 + math.ceil(args.entries_count*128/GPT_BLOCK_SIZE)) * GPT_BLOCK_SIZE  # MBR + GPT header + entries
         partition_info = []
         sgdisk_command = [
             "sgdisk",
@@ -140,23 +148,27 @@ def main() -> int:
             DISK_GUID,
         ]
 
-        for i, part in enumerate(args.partition, start=1):
-            name, size, file = part.split(",")
-            if not size:
-                raise ValueError("Must provide a size")
-            size = parse_size_str(size)
+        if args.entries_count != DEFAULT_ENTRIES_COUNT:
+            sgdisk_command += ["--resize-table", "{}".format(args.entries_count)]
 
-            sgdisk_command += [
-                "--new",
-                f"{i}:{part_start // GPT_BLOCK_SIZE}:{(part_start + size) // GPT_BLOCK_SIZE - 1}",
-                "--partition-guid",
-                f"{i}:{PARTITION_GUIDS[i]}",
-                "--change-name",
-                f"{i}:{name}",
-            ]
+        if args.partition:
+            for i, part in enumerate(args.partition, start=1):
+                name, size, file = part.split(",")
+                if not size:
+                    raise ValueError("Must provide a size")
+                size = parse_size_str(size)
 
-            partition_info.append((name, part_start, size, file))
-            part_start += size
+                sgdisk_command += [
+                    "--new",
+                    f"{i}:{part_start // GPT_BLOCK_SIZE}:{(part_start + size) // GPT_BLOCK_SIZE - 1}",
+                    "--partition-guid",
+                    f"{i}:{PARTITION_GUIDS[i]}",
+                    "--change-name",
+                    f"{i}:{name}",
+                ]
+
+                partition_info.append((name, part_start, size, file))
+                part_start += size
 
         res = subprocess.run(sgdisk_command, check=True, text=True)
 
