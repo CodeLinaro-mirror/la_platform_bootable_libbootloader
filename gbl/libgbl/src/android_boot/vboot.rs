@@ -273,7 +273,7 @@ pub fn avb_fake_verify_slot<'a, 'b, 'c: 'd, 'd>(
     for partition in partitions.iter() {
         // `libavb` fails with IO if any partition is missed when verification is disabled,
         // so filter out missed partitions.
-        if ops.partition_size(&slotted_part(partition.name(), slot)?)?.is_some() {
+        if ops.partition_size(&slotted_part(partition.name(), slot))?.is_some() {
             names.push(partition.name_cstr());
         }
     }

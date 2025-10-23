@@ -144,7 +144,7 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
                 // fails, so this size check should be removed. For now, it's kept to allow reusing
                 // the same vbmeta in unit tests without providing all partitions.
                 if !partition.optional()
-                    || ops.partition_size(&slotted_part(partition.name(), slot)?)?.is_some()
+                    || ops.partition_size(&slotted_part(partition.name(), slot))?.is_some()
                 {
                     partitions_to_verify.try_push(partition)?
                 }

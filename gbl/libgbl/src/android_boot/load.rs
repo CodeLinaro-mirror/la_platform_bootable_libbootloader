@@ -33,13 +33,10 @@ use safemath::SafeNum;
 use zerocopy::{IntoBytes, Ref};
 
 /// Returns a slotted partition name.
-pub(crate) fn slotted_part(
-    part: &str,
-    slot: Slot,
-) -> Result<ArrayString<RAW_PARTITION_NAME_LEN>, Error> {
+pub(crate) fn slotted_part(part: &str, slot: Slot) -> ArrayString<RAW_PARTITION_NAME_LEN> {
     let mut res = ArrayString::new_const();
     write!(res, "{part}_{}", slot.suffix.as_char()).unwrap();
-    Ok(res)
+    res
 }
 
 // Helper for constructing a range that ends at a page aligned boundary. Specifically, it returns
@@ -295,7 +292,7 @@ fn get_verified_partition<'a, 'b, 'c>(
     optional: bool,
     verify_data: &'c SlotVerifyData,
 ) -> Result<&'c [u8], Error> {
-    let slotted = slotted_part(part.to_str().unwrap(), slot).unwrap();
+    let slotted = slotted_part(part.to_str().unwrap(), slot);
     let part_res = verify_data.partition_data().iter().find(|v| v.partition_name() == part);
     match part_res {
         None if optional => {
@@ -853,7 +850,7 @@ mod test {
 
     #[test]
     fn test_slotted_part() {
-        assert_eq!(slotted_part("boot", slot('a')).as_deref(), Ok("boot_a"));
-        assert_eq!(slotted_part("boot", slot('b')).as_deref(), Ok("boot_b"));
+        assert_eq!(slotted_part("boot", slot('a')).as_ref(), "boot_a");
+        assert_eq!(slotted_part("boot", slot('b')).as_ref(), "boot_b");
     }
 }
