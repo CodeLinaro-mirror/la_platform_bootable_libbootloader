@@ -18,6 +18,7 @@
 //! supported/unsupported features at the moment.
 
 #![feature(never_type)]
+#![feature(let_chains)]
 #![cfg_attr(not(test), no_std)]
 
 // For the `vec!` macro

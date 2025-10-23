@@ -305,6 +305,58 @@ impl<'a, 'b> Ops<'a, 'b> {
         let res = libprotocol_test::test_all_optional_protocols(self.efi_entry);
         send_impl("optional protocol integration test", sender, res)
     }
+
+    /// Check for a local implementation of a custom
+    /// fastboot command and, if found, run it.
+    fn handle_command_exec_locally<'arg, Sender: InfoSender + OkaySender + FailSender>(
+        &self,
+        args: impl Iterator<Item = &'arg CStr>,
+        sender: Sender,
+    ) -> Result<CommandExecType> {
+        // Note: can't simplify the type for the command function or lift it out
+        //       due to limitations in the type checker as of 2025-10-02.
+        let exec_funcs: &[(
+            &'static str,
+            fn(&Self, Sender, fn(&'static str, Sender, Result<()>) -> Result<()>) -> Result<()>,
+        )] = &[
+            // These tests depend heavily on libefi and libefi_types, and we don't
+            // want to add those dependencies to libgbl, so move the invocation here
+            // instead of libgbl/src/ops.rs
+            #[cfg(all(not(test), feature = "gbl_dev"))]
+            ("oem gbl-integration-test-required", Self::run_integration_test_required),
+            #[cfg(all(not(test), feature = "gbl_dev"))]
+            ("oem gbl-integration-test-optional", Self::run_integration_test_optional),
+        ];
+
+        fn send_func<Sender: InfoSender + OkaySender + FailSender>(
+            msg: &str,
+            message_sender: Sender,
+            res: Result<()>,
+        ) -> Result<()> {
+            if res.is_ok() {
+                block_on(message_sender.send_okay(msg))
+            } else {
+                block_on(message_sender.send_fail(msg))
+            }
+        }
+
+        // Maybe use args later.
+        let mut args = args.peekable();
+        let key = args.peek().and_then(|a| a.to_str().ok());
+
+        if let Some(key) = key
+            && let Some(exec_cmd) =
+                exec_funcs.iter().find_map(|(k, v)| if *k == key { Some(v) } else { None })
+        {
+            // Note: we search 'exec_funcs' if the return of
+            //       handle_command_exec_via_protocol
+            //       is DefaultImpl but return CustomImpl here. This is to prevent
+            //       our caller from trying another default impl lookup.
+            exec_cmd(self, sender, send_func).map(|_| CommandExecType::CustomImpl)
+        } else {
+            Ok(CommandExecType::DefaultImpl)
+        }
+    }
 }
 
 impl Write for Ops<'_, '_> {
@@ -331,6 +383,37 @@ fn command_exec_message_sender(
             block_on(sender.take().ok_or(Error::ProtocolError)?.send_fail(msg))
         }
         _ => Err(Error::InvalidInput),
+    }
+}
+
+/// Helper function to run GblFastbootProtocol.command_exec
+fn handle_command_exec_via_protocol<'arg, Sender: InfoSender + OkaySender + FailSender>(
+    entry: &EfiEntry,
+    args: impl Iterator<Item = &'arg CStr> + Clone,
+    download: &mut [u8],
+    download_used: usize,
+    sender: &mut Option<Sender>,
+) -> Result<CommandExecType> {
+    match entry.system_table().boot_services().find_first_and_open::<GblFastbootProtocol>() {
+        Ok(v) => {
+            match v.command_exec(args, download, download_used, |msg_type, msg| {
+                command_exec_message_sender(msg_type, msg, sender)
+            }) {
+                Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED) => {
+                    Ok(CommandExecType::Prohibited)
+                }
+                Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL) | Err(Error::NotFound) => {
+                    Ok(CommandExecType::DefaultImpl)
+                }
+                Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL) => {
+                    Ok(CommandExecType::CustomImpl)
+                }
+                Ok(_) => Err(Error::InvalidState),
+                Err(e) => Err(e),
+            }
+        }
+        Err(Error::NotFound) => Ok(Default::default()),
+        Err(e) => Err(e),
     }
 }
 
@@ -916,67 +999,22 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         download_used: usize,
         sender: Sender,
     ) -> Result<CommandExecType> {
-        // Note: can't simplify the type for the command function or lift it out
-        //       due to limitations in the type checker as of 2025-10-02.
-        let exec_funcs: &[(
-            &'static str,
-            fn(&Self, Sender, fn(&'static str, Sender, Result<()>) -> Result<()>) -> Result<()>,
-        )] = &[
-            // These tests depend heavily on libefi and libefi_types, and we don't
-            // want to add those dependencies to libgbl, so move the invocation here
-            // instead of libgbl/src/ops.rs
-            #[cfg(all(not(test), feature = "gbl_dev"))]
-            ("gbl-integration-test-required", Self::run_integration_test_required),
-            #[cfg(all(not(test), feature = "gbl_dev"))]
-            ("gbl-integration-test-optional", Self::run_integration_test_optional),
-        ];
+        let sender = &mut Some(sender);
+        let mut res = handle_command_exec_via_protocol(
+            self.efi_entry,
+            args.clone(),
+            download,
+            download_used,
+            sender,
+        );
 
-        fn send_func<Sender: InfoSender + OkaySender + FailSender>(
-            msg: &str,
-            message_sender: Sender,
-            res: Result<()>,
-        ) -> Result<()> {
-            if res.is_ok() {
-                block_on(message_sender.send_okay(msg))
-            } else {
-                block_on(message_sender.send_fail(msg))
-            }
-        }
-
-        let mut args = args.peekable();
-        let key = args.peek().map_or("", |a| a.to_str().unwrap_or(""));
-        if let Some(exec_cmd) =
-            exec_funcs.iter().find_map(|(k, v)| if *k == key { Some(v) } else { None })
+        if matches!(res, Ok(CommandExecType::DefaultImpl) | Err(Error::NotFound))
+            && let Some(sender) = sender.take()
         {
-            exec_cmd(self, sender, send_func).map(|_| CommandExecType::DefaultImpl)
-        } else {
-            match self
-                .efi_entry
-                .system_table()
-                .boot_services()
-                .find_first_and_open::<GblFastbootProtocol>()
-            {
-                Ok(v) => {
-                    let sender = &mut Some(sender);
-                    match v.command_exec(args, download, download_used, |msg_type, msg| {
-                        command_exec_message_sender(msg_type, msg, sender)
-                    }) {
-                        Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED) => {
-                            Ok(CommandExecType::Prohibited)
-                        }
-                        Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL)
-                        | Err(Error::NotFound) => Ok(CommandExecType::DefaultImpl),
-                        Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL) => {
-                            Ok(CommandExecType::CustomImpl)
-                        }
-                        Ok(_) => Err(Error::InvalidState),
-                        Err(e) => Err(e),
-                    }
-                }
-                Err(Error::NotFound) => Ok(Default::default()),
-                Err(e) => Err(e),
-            }
+            res = self.handle_command_exec_locally(args, sender);
         }
+
+        res
     }
 
     fn get_slot_info(&mut self, slot: u8) -> Result<Slot> {
