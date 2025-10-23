@@ -624,6 +624,10 @@ androidboot.config_2=val_2
     gen_android_test_vbmeta([], out_dir / f"vbmeta_noop.img")
     # Generates a vbmeta image that disables verification.
     # (`AVB_VBMETA_IMAGE_FLAGS_VERIFICATION_DISABLED` is set).
+    #
+    # Note: Generated `vbmeta_disabled.img` is also used for fake vbmeta boot flow
+    # on dev GBL. Revisit `avb_fake_verify_slot` in ligbl/src/android_boot/vboot.rs
+    # for more details.
     gen_disabled_vbmeta(out_dir / f"vbmeta_disabled.img")
 
 

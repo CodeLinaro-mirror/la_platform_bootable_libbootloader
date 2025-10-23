@@ -33,6 +33,7 @@ use core::{
     ffi::CStr,
     fmt::Write,
     mem::take,
+    ops::Range,
 };
 use liberror::Error;
 use safemath::SafeNum;
@@ -300,6 +301,28 @@ fn map_read_err(err: Error) -> IoError {
     }
 }
 
+/// Helper to calculate partition read range based on requested `read_offset` (including negatives)
+/// and provided `max_read_size` limitation.
+fn calculate_partition_read_range(
+    partition_size: SafeNum,
+    read_offset: i64,
+    max_read_size: usize,
+) -> IoResult<Range<usize>> {
+    let read_offset = match read_offset < 0 {
+        true => partition_size - read_offset.abs(),
+        _ => SafeNum::from(read_offset),
+    }
+    .try_into()
+    .or(Err(IoError::RangeOutsidePartition))?;
+
+    let read_size = min(
+        max_read_size,
+        (partition_size - read_offset).try_into().or(Err(IoError::RangeOutsidePartition))?,
+    );
+
+    Ok(read_offset..read_offset + read_size)
+}
+
 /// # Lifetimes
 /// * `'a`: preloaded data lifetime
 /// * `'b`: [GblOps] partition lifetime
@@ -311,19 +334,20 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, 'c,
         buffer: &mut [u8],
     ) -> IoResult<usize> {
         let part_str = cstr_to_str(partition, IoError::NoSuchPartition)?;
-        let partition_size = SafeNum::from(self.partition_size(part_str)?);
-        let read_off = match offset < 0 {
-            true => partition_size - offset.abs(),
-            _ => SafeNum::from(offset),
-        };
-        let read_sz = partition_size - read_off;
-        let read_off = read_off.try_into().or(Err(IoError::RangeOutsidePartition))?;
-        let read_sz =
-            min(buffer.len(), read_sz.try_into().or(Err(IoError::RangeOutsidePartition))?);
+        let partition_size = self.partition_size(part_str)?;
+        let read_range =
+            calculate_partition_read_range(partition_size.into(), offset, buffer.len())?;
+        let read_size = read_range.len();
+
         self.gbl_ops
-            .read_from_partition_sync(part_str, read_off, &mut buffer[..read_sz])
+            .read_from_partition_sync(
+                part_str,
+                read_range.start.try_into().unwrap(),
+                &mut buffer[..read_size],
+            )
             .map_err(map_read_err)?;
-        Ok(read_sz)
+
+        Ok(read_size)
     }
 
     fn get_preloaded_partition(
@@ -522,6 +546,143 @@ impl<'a, 'b, T: GblOps<'a, 'b>> CertOps for GblAvbOps<'_, '_, '_, T> {
     fn get_random(&mut self, _: &mut [u8]) -> IoResult<()> {
         // Not needed yet; eventually we will plumb this through [GblOps].
         unimplemented!()
+    }
+}
+
+/// Custom vbmeta flow support.
+#[cfg(feature = "gbl_dev")]
+pub(crate) mod custom_vbmeta {
+    use super::*;
+
+    /// To be used as `AvbOps` wrapper to allow running verification on top of custom
+    /// RAM-provided `vbmeta` partition.
+    pub struct CustomVbmetaAvbOps<'a, T> {
+        /// Original AVB ops.
+        pub ops: &'a mut T,
+        /// Custom vbmeta data to boot with.
+        pub vbmeta: &'a [u8],
+        /// Override rollback indexes for custom vbmeta.
+        pub rollback_indexes: &'a [(usize, u64)],
+    }
+
+    const VBMETA: &'static str = "vbmeta";
+
+    /// Inherits everything from `AvbOps` but override a few to support run verification
+    /// on top of custom RAM-provided `vbmeta` partition.
+    impl<'a, T: AvbOps<'a>> AvbOps<'a> for CustomVbmetaAvbOps<'_, T> {
+        fn get_unique_guid_for_partition(&mut self, partition: &CStr) -> IoResult<Uuid> {
+            let (partition_name, _) =
+                split_slotted(partition.to_str().unwrap()).map_err(|_| IoError::Io)?;
+
+            match partition_name == VBMETA {
+                true => Ok(Uuid::nil()),
+                false => self.ops.get_unique_guid_for_partition(partition),
+            }
+        }
+
+        fn get_size_of_partition(&mut self, partition: &CStr) -> IoResult<u64> {
+            let (partition_name, _) =
+                split_slotted(partition.to_str().unwrap()).map_err(|_| IoError::Io)?;
+
+            match partition_name == VBMETA {
+                true => Ok(self.vbmeta.len().try_into().unwrap()),
+                false => self.ops.get_size_of_partition(partition),
+            }
+        }
+
+        fn read_from_partition(
+            &mut self,
+            partition: &CStr,
+            offset: i64,
+            buffer: &mut [u8],
+        ) -> IoResult<usize> {
+            let (partition_name, _) =
+                split_slotted(partition.to_str().unwrap()).map_err(|_| IoError::Io)?;
+
+            match partition_name == VBMETA {
+                true => {
+                    let read_range = calculate_partition_read_range(
+                        self.vbmeta.len().into(),
+                        offset,
+                        buffer.len(),
+                    )?;
+                    let read_size = read_range.len();
+
+                    let vbmeta =
+                        self.vbmeta.get(read_range).ok_or(IoError::RangeOutsidePartition)?;
+                    buffer
+                        .get_mut(..read_size)
+                        .ok_or(IoError::RangeOutsidePartition)?
+                        .copy_from_slice(vbmeta);
+
+                    Ok(read_size)
+                }
+                false => self.ops.read_from_partition(partition, offset, buffer),
+            }
+        }
+
+        fn read_rollback_index(&mut self, rollback_index_location: usize) -> IoResult<u64> {
+            match self.rollback_indexes.iter().find(|(v, _)| *v == rollback_index_location) {
+                Some((_, v)) => Ok(*v),
+                _ => Err(IoError::NoSuchValue),
+            }
+        }
+
+        fn validate_vbmeta_public_key(
+            &mut self,
+            _public_key: &[u8],
+            _public_key_metadata: Option<&[u8]>,
+        ) -> IoResult<bool> {
+            // Always treats public key as invalid during custom vbmeta flow.
+            Ok(false)
+        }
+
+        fn get_preloaded_partition(
+            &mut self,
+            partition: &CStr,
+            num_bytes: usize,
+        ) -> IoResult<&'a [u8]> {
+            self.ops.get_preloaded_partition(partition, num_bytes)
+        }
+
+        fn cert_ops(&mut self) -> Option<&mut dyn CertOps> {
+            None
+        }
+
+        // Unexpected to be called during custom vbmeta flow.
+
+        fn write_rollback_index(
+            &mut self,
+            _rollback_index_location: usize,
+            _index: u64,
+        ) -> IoResult<()> {
+            unreachable!();
+        }
+
+        fn read_is_device_unlocked(&mut self) -> IoResult<bool> {
+            unreachable!();
+        }
+
+        fn read_persistent_value(&mut self, _name: &CStr, _value: &mut [u8]) -> IoResult<usize> {
+            unreachable!();
+        }
+
+        fn write_persistent_value(&mut self, _name: &CStr, _value: &[u8]) -> IoResult<()> {
+            unreachable!();
+        }
+
+        fn erase_persistent_value(&mut self, _name: &CStr) -> IoResult<()> {
+            unreachable!();
+        }
+
+        fn validate_public_key_for_partition(
+            &mut self,
+            _partition: &CStr,
+            _public_key: &[u8],
+            _public_key_metadata: Option<&[u8]>,
+        ) -> IoResult<PublicKeyForPartitionInfo> {
+            unreachable!();
+        }
     }
 }
 

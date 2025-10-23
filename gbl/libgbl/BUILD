@@ -46,6 +46,11 @@ rust_library(
         "@gbl//toolchain:prod": [":libgbl_prod_files"],
     }),
     aliases = {"@itertools_noalloc": "itertools_noalloc"},
+    # Used by fake avb flow on dev GBL.
+    compile_data = select({
+        "@gbl//toolchain:dev": ["@gbl//libgbl/testdata:android/vbmeta_disabled.img"],
+        "@gbl//toolchain:prod": [],
+    }),
     edition = "2021",
     proc_macro_deps = ["@gbl//libprofile:libprofile_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
