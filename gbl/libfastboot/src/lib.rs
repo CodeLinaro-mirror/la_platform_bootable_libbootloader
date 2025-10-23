@@ -522,8 +522,8 @@ pub trait FastbootImplementation {
     ///
     /// # Args
     ///
-    /// * `message`: string to be printed.
-    fn log_line(&mut self, message: &str);
+    /// * `message`: A displayable object to be printed.
+    fn log_line(&mut self, message: impl Display);
 
     // TODO(b/322540167): Add methods for other commands.
 }
@@ -1165,10 +1165,13 @@ pub async fn process_next_command(
         v => v,
     };
     // Checks utf8 encoding first. This is required by `cmd_to_c_string_args`.
-    if let Err(_) = from_utf8(&packet[..cmd_size]) {
-        transport.send_packet(fastboot_fail!(packet, "Invalid Command")).await?;
-        return Ok(false);
-    };
+    match from_utf8(&packet[..cmd_size]) {
+        Ok(v) => fb_impl.log_line(format_args!("Fastboot Command: {v}")),
+        _ => {
+            transport.send_packet(fastboot_fail!(packet, "Invalid Command")).await?;
+            return Ok(false);
+        }
+    }
     let (cmd_c_args, cmd_len) = cmd_to_c_string_args(&mut packet[..]);
     match command_exec(cmd_c_args, transport, fb_impl).await {
         Ok(CommandExecType::DefaultImpl) => (),
@@ -1435,7 +1438,7 @@ mod test {
             self.command_exec_res.take().unwrap_or(Ok(Default::default()))
         }
 
-        fn log_line(&mut self, message: &str) {
+        fn log_line(&mut self, message: impl Display) {
             self.log_lines.push(message.to_string());
         }
     }
