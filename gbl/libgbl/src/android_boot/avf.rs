@@ -35,7 +35,6 @@ use safemath::SafeNum;
 use static_assertions::const_assert;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
-pub const DEFAULT_PVMFW_PART_NAME_CSTR: &CStr = c"pvmfw";
 const NUM_PVMFW_CONFIG_ENTRIES: usize = 4;
 
 // TODO: replace this with a dedicated hash crate (b/429168146).

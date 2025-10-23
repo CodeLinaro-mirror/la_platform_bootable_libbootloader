@@ -14,8 +14,8 @@
 
 use super::{cstr_bytes_to_str, BootBuffer};
 use crate::{
-    android_boot::{avf::DEFAULT_PVMFW_PART_NAME_CSTR, build_pvmfw_data_region},
-    constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
+    android_boot::build_pvmfw_data_region,
+    constants::{Partition, FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
     decompress::decompress_kernel,
     fastboot::boot_items::BootItemContainer,
     gbl_println,
@@ -26,7 +26,7 @@ use crate::{
 use arrayvec::ArrayString;
 use avb::SlotVerifyData;
 use bootimg::{defs::*, BootImage, VendorImageHeader};
-use core::{ffi::CStr, fmt::Write, mem::take, ops::Range};
+use core::{fmt::Write, mem::take, ops::Range};
 use liberror::Error;
 use libutils::{aligned_offset, aligned_subslice};
 use safemath::SafeNum;
@@ -286,14 +286,15 @@ impl LoadedImages<'_> {
 /// Helper for getting a successfully verified partition from `SlotVerifyData`
 fn get_verified_partition<'a, 'b, 'c>(
     ops: &mut impl GblOps<'a, 'b>,
-    part: &CStr,
+    part: Partition,
     slot: Slot,
     unlocked: bool,
     optional: bool,
     verify_data: &'c SlotVerifyData,
 ) -> Result<&'c [u8], Error> {
-    let slotted = slotted_part(part.to_str().unwrap(), slot);
-    let part_res = verify_data.partition_data().iter().find(|v| v.partition_name() == part);
+    let slotted = slotted_part(part.name(), slot);
+    let part_res =
+        verify_data.partition_data().iter().find(|v| v.partition_name() == part.name_cstr());
     match part_res {
         None if optional => {
             gbl_println!(ops, "{slotted:?} isn't loaded by avb. Image is optional. Skips.");
@@ -353,13 +354,14 @@ pub(super) fn android_load_verified<'a, 'b, 'c>(
     verify_data: &'c SlotVerifyData,
 ) -> Result<LoadedImages<'c>, Error> {
     let mut images = LoadedImages::default();
-    images.dtb_part = get_verified_partition(ops, c"dtb", slot, unlocked, true, verify_data)?;
-    images.dtbo = get_verified_partition(ops, c"dtbo", slot, unlocked, true, verify_data)?;
+    images.dtb_part =
+        get_verified_partition(ops, Partition::Dtb, slot, unlocked, true, verify_data)?;
+    images.dtbo = get_verified_partition(ops, Partition::Dtbo, slot, unlocked, true, verify_data)?;
     if ops.avf_is_supported()? {
-        let pvmfw = DEFAULT_PVMFW_PART_NAME_CSTR;
-        images.pvmfw = get_verified_partition(ops, pvmfw, slot, unlocked, true, verify_data)?;
+        images.pvmfw =
+            get_verified_partition(ops, Partition::Pvmfw, slot, unlocked, true, verify_data)?;
     }
-    let boot = get_verified_partition(ops, c"boot", slot, unlocked, false, verify_data)?;
+    let boot = get_verified_partition(ops, Partition::Boot, slot, unlocked, false, verify_data)?;
     images.boot_hdr = boot;
     match log_and_parse_bootimg(ops, boot)? {
         BootImage::V3(_) | BootImage::V4(_) => load_v3_and_v4_verified(
@@ -484,7 +486,7 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
 
     // Loads vendor_boot partition, including ramdisk, dtb, commandline etc.
     let vendor_boot =
-        get_verified_partition(ops, c"vendor_boot", slot, unlocked, false, verify_data)?;
+        get_verified_partition(ops, Partition::VendorBoot, slot, unlocked, false, verify_data)?;
     images.vendor_boot = &vendor_boot[..];
     let vendor_boot_info = VendorBootImageInfo::new(vendor_boot)?;
     images.vendor_cmdline = VendorBootImageInfo::cmdline(vendor_boot)?;
@@ -494,8 +496,14 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     parse_vendor_ramdisks(&vendor_boot, &vendor_boot_info, is_recovery, &mut images.ramdisks)?;
 
     // Finds and loads vendor_kernel_boot partition if provided.
-    let vendor_kernel_boot =
-        get_verified_partition(ops, c"vendor_kernel_boot", slot, unlocked, true, verify_data)?;
+    let vendor_kernel_boot = get_verified_partition(
+        ops,
+        Partition::VendorKernelBoot,
+        slot,
+        unlocked,
+        true,
+        verify_data,
+    )?;
     if vendor_kernel_boot.len() > 0 {
         let info = VendorBootImageInfo::new(vendor_kernel_boot)?;
         // DTB should be provided by vendor_kerenl_boot if it exists.
@@ -506,8 +514,14 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     // Loads generic ramdisk, which may come from either boot or init_boot.
     let generic_ramdisk = match boot_info.ramdisk_range.is_empty() {
         true => {
-            images.init_boot =
-                get_verified_partition(ops, c"init_boot", slot, unlocked, false, verify_data)?;
+            images.init_boot = get_verified_partition(
+                ops,
+                Partition::InitBoot,
+                slot,
+                unlocked,
+                false,
+                verify_data,
+            )?;
             images.init_boot
         }
         false => boot,
