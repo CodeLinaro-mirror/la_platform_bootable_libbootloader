@@ -224,6 +224,21 @@ this, it is recommended that when `Mode` is `SINGLE_PACKET`, implementation
 should only queue single USB packet request, and when `Mode` is `FIXED_LENGTH`,
 the USB request size should be no more than the remaining data size.
 
+When using the GBL EFI application, in the event of disconnection/reconnection
+(i.e. unplug/plug of USB, host fastboot application abort), the safest option
+is to reboot the device to start from a clean state. If that is not desired,
+driver can perform the following to recover within the same session:
+
+1. Returns EFI_DEVICE_ERROR at least once following disconnection. GBL will
+abort current command and wait for the next command.
+2. Handle the reconnection transparently within this API, so that GBL can
+continue to read data from the transport.
+
+Note: If disconnection/reconnection occurs during data phase (i.e. fastboot
+fetch), there may be left over data on the USB bus that will be picked up by
+future fastboot commands. This can lead to wrong result. It is recommended for
+the host to drain/reset USB bus before issuing new command.
+
 ### Related Definitions
 
 ```c
@@ -289,6 +304,11 @@ internal copy of the portion of data actually queued.
 The function does not need to be blocking and can return immediately once the
 data is queued for transfer. If implementation does not have available resource
 to serve the request, i.e. queue is full, `EFI_NOT_READY` should be returned.
+
+If using the GBL EFI application, See
+[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Receive()`](#gbl_efi_fastboot_transport_protocolreceive)
+for recommended handling of disconnection/reconnection events if full device
+reset is not desired.
 
 ### Status Codes Returned
 

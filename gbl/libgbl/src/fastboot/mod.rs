@@ -36,7 +36,7 @@ use core::{
     array::from_fn,
     cmp::min,
     ffi::CStr,
-    fmt::Write,
+    fmt::{Display, Write},
     future::Future,
     marker::PhantomData,
     mem::take,
@@ -1118,7 +1118,7 @@ where
         Ok(res)
     }
 
-    fn log_line(&mut self, message: &str) {
+    fn log_line(&mut self, message: impl Display) {
         gbl_println!(self.gbl_ops, "{}", message);
     }
 }
@@ -2349,9 +2349,11 @@ pub(crate) mod test {
 
     /// Used for a test implementation of [GblUsbTransport] and [GblTcpStream].
     #[derive(Default)]
-    struct TestListener {
-        usb_in_queue: VecDeque<Vec<u8>>,
+    struct TestListener<'a> {
+        usb_in_queue: VecDeque<Result<Vec<u8>, Error>>,
         usb_out_queue: VecDeque<Vec<u8>>,
+        // Optional closure for injecting send errors.
+        usb_out_err: Option<&'a mut dyn FnMut(&[u8]) -> Result<(), Error>>,
 
         tcp_in_queue: VecDeque<u8>,
         tcp_out_queue: VecDeque<u8>,
@@ -2359,17 +2361,22 @@ pub(crate) mod test {
 
     /// A shared [TestListener].
     #[derive(Default)]
-    pub(crate) struct SharedTestListener(Mutex<TestListener>);
+    pub(crate) struct SharedTestListener<'a>(Mutex<TestListener<'a>>);
 
-    impl SharedTestListener {
+    impl<'a> SharedTestListener<'a> {
         /// Locks the listener
-        fn lock(&self) -> MutexGuard<TestListener> {
+        fn lock(&self) -> MutexGuard<TestListener<'a>> {
             self.0.try_lock().unwrap()
         }
 
         /// Adds packet to USB input
         pub(crate) fn add_usb_input(&self, packet: &[u8]) {
-            self.lock().usb_in_queue.push_back(packet.into());
+            self.lock().usb_in_queue.push_back(Ok(packet.into()));
+        }
+
+        /// Adds packet to USB input
+        pub(crate) fn add_usb_err(&self, err: Error) {
+            self.lock().usb_in_queue.push_back(Err(err));
         }
 
         /// Adds bytes to input stream.
@@ -2419,26 +2426,28 @@ pub(crate) mod test {
         }
     }
 
-    impl Transport for &SharedTestListener {
+    impl Transport for &SharedTestListener<'_> {
         async fn receive_packet(&mut self, out: &mut [u8]) -> Result<usize, Error> {
             match self.lock().usb_in_queue.pop_front() {
-                Some(v) => Ok((&v[..]).read(out).unwrap()),
+                Some(Ok(v)) => Ok((&v[..]).read(out).unwrap()),
+                Some(Err(e)) => Err(e),
                 _ => Err(Error::Other(Some("No more data"))),
             }
         }
 
         async fn send_packet(&mut self, packet: &[u8]) -> Result<(), Error> {
+            self.lock().usb_out_err.as_mut().map(|f| f(packet)).unwrap_or(Ok(()))?;
             Ok(self.lock().usb_out_queue.push_back(packet.into()))
         }
     }
 
-    impl GblUsbTransport for &SharedTestListener {
+    impl GblUsbTransport for &SharedTestListener<'_> {
         fn has_packet(&mut self) -> bool {
             !self.lock().usb_in_queue.is_empty()
         }
     }
 
-    impl TcpStream for &SharedTestListener {
+    impl TcpStream for &SharedTestListener<'_> {
         async fn read_exact(&mut self, out: &mut [u8]) -> Result<(), Error> {
             match self.lock().tcp_in_queue.read(out).unwrap() == out.len() {
                 true => Ok(()),
@@ -2451,7 +2460,7 @@ pub(crate) mod test {
         }
     }
 
-    impl GblTcpStream for &SharedTestListener {
+    impl GblTcpStream for &SharedTestListener<'_> {
         fn accept_new(&mut self) -> bool {
             !self.lock().tcp_in_queue.is_empty()
         }
@@ -4411,5 +4420,65 @@ pub(crate) mod test {
 
         let container = BootItemContainer::from(&mut general[..], false).unwrap();
         assert_eq!(container.iter().next(), None);
+    }
+
+    #[test]
+    fn test_gbl_fastboot_disconnection() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"raw", [0u8; KiB!(2)]);
+        let buffers = vec![vec![0u8; KiB!(2)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let mut usb_out_err = |v: &[u8]| -> Result<(), Error> {
+            // The response is from "getvar:partition-size:raw"
+            (v == b"OKAY0x800").then_some(Err(Error::Disconnected)).unwrap_or(Ok(()))?;
+            // Data uploaded by '"fetch:raw:0:0x800"
+            (v == &vec![0x55u8; KiB!(2)]).then_some(Err(Error::Disconnected)).unwrap_or(Ok(()))?;
+            Ok(())
+        };
+        let listener: SharedTestListener = Default::default();
+        listener.lock().usb_out_err = Some(&mut usb_out_err);
+        let (usb, tcp) = (&listener, &listener);
+
+        // Download interrupted
+        listener.add_usb_input(format!("download:{:#x}", KiB!(2)).as_bytes());
+        listener.add_usb_input(&[0x55u8; KiB!(1)]);
+        listener.add_usb_err(Error::Disconnected);
+        // Previous donwload failure shouldn't affect future commands or download.
+        listener.add_usb_input(format!("download:{:#x}", KiB!(2)).as_bytes());
+        listener.add_usb_input(&[0x55u8; KiB!(2)]);
+        listener.add_usb_input(b"flash:raw");
+        // Transport send error.
+        listener.add_usb_input(b"getvar:partition-size:raw");
+        // Transpor send error during data upload.
+        listener.add_usb_input(b"fetch:raw:0:0x800");
+        // Previous send error shouldn't affect future commands.
+        listener.add_usb_input(b"continue");
+        let mut general = vec![0u8; 1024];
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            (&mut general[..]).into(),
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"DATA00000800",
+                b"DATA00000800",
+                b"OKAY",
+                b"OKAY",
+                b"INFOUploading 2048 bytes...",
+                b"DATA00000800",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
+        // Verifies flashed image on raw.
+        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0x55u8; KiB!(2)]);
     }
 }
