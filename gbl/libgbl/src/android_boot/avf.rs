@@ -174,15 +174,16 @@ pub fn build_pvmfw_data_region<'a, 'b>(
     unlocked: bool,
     is_recovery: bool,
 ) -> Result<usize> {
-    // Copy the binary to the start of pvmfw region
+    // Split the pvmfw region into binary and configuration buffers
     let pvmfw_bin_size = pvmfw_binary.len();
     let (binary, config) = output_buffer
         .split_at_mut_checked(pvmfw_bin_size)
         .ok_or(Error::BufferTooSmall(Some(pvmfw_bin_size)))?;
-    binary.copy_from_slice(pvmfw_binary);
 
-    // Append the pvmfw configuration data and update host dt
-    let config_size = write_pvmfw_config(ops, config, verify_data, unlocked, is_recovery)?;
+    // Write the pvmfw configuration data to the config region
+    let config_size = write_pvmfw_config(ops, config, verify_data, unlocked, is_recovery, binary)?;
+    // Copy the binary to the start of pvmfw region
+    binary.copy_from_slice(pvmfw_binary);
     // Size must be aligned to the page size used by the hypervisor
     let total_size = align_up(
         (SafeNum::from(pvmfw_bin_size) + config_size)
@@ -320,12 +321,19 @@ fn write_pvmfw_config<'a, 'b>(
     verify_data: &impl AVFVerificationData,
     unlocked: bool,
     is_recovery: bool,
+    scratch_buffer: &mut [u8],
 ) -> Result<usize> {
     let (header, entries) = PvmfwConfHeader::init_padded_prefix_mut(config_out)?;
 
     // Write pvmfw config entries
-    let (bcc_len, bcc_padded_len, rest) =
-        pvmfw_build_dice_handover(ops, entries, verify_data, unlocked, is_recovery)?;
+    let (bcc_len, bcc_padded_len, rest) = pvmfw_build_dice_handover(
+        ops,
+        entries,
+        verify_data,
+        unlocked,
+        is_recovery,
+        scratch_buffer,
+    )?;
     let (ref_dt_len, ref_dt_padded_len, _) = pvmfw_build_reference_dt(ops, rest, verify_data)?;
     let entry_sizes = [(bcc_len, bcc_padded_len), (0, 0), (0, 0), (ref_dt_len, ref_dt_padded_len)];
 
@@ -474,13 +482,17 @@ fn pvmfw_build_dice_handover<'a, 'b, 'c>(
     verify_data: &impl AVFVerificationData,
     unlocked: bool,
     is_recovery: bool,
+    scratch_buffer: &mut [u8],
 ) -> Result<(usize, usize, &'c mut [u8])> {
     const MAX_CONFIG_SIZE: usize = 64; // Enough for our config descriptor
-    const VENDOR_HANDOVER_SIZE: usize = KiB!(1); // Enough for vendor DICE handover
+    let (conf_desc_buffer, vendor_handover_buffer) = scratch_buffer
+        .split_at_mut_checked(MAX_CONFIG_SIZE)
+        .ok_or(Error::BufferTooSmall(Some(MAX_CONFIG_SIZE)))?;
 
     // Get vendor handover
-    let mut vendor_handover_buffer = [0u8; VENDOR_HANDOVER_SIZE];
-    let vendor_handover = ops.avf_read_vendor_dice_handover(&mut vendor_handover_buffer)?;
+    let vendor_handover = ops
+        .avf_read_vendor_dice_handover(vendor_handover_buffer)
+        .inspect_err(|e| gbl_println!(ops, "read vendor handover error: {e}"))?;
     if vendor_handover.is_empty() {
         return Err(Error::Other(Some("empty vendor handover")));
     }
@@ -497,8 +509,7 @@ fn pvmfw_build_dice_handover<'a, 'b, 'c>(
         ..Default::default()
     };
 
-    let mut conf_desc_buffer = [0u8; MAX_CONFIG_SIZE];
-    let conf_size = dice_android_format_config_descriptor(&config_values, &mut conf_desc_buffer)
+    let conf_size = dice_android_format_config_descriptor(&config_values, conf_desc_buffer)
         .map_err(Error::DiceError)?;
     let config_desc = Config::Descriptor(&conf_desc_buffer[..conf_size]);
 
@@ -682,8 +693,11 @@ pub(crate) mod test {
         ops.avb_ops.rollbacks.insert(0, Ok(1));
         ops.avf_vendor_dice_handover = Some(&DUMMY_VENDOR_HANDOVER[..]);
         let testdigest = TestVerifyData::new(Some([1, 2, 3, 4, 5]), Some(0));
+        let mut scratch_buffer = [0u8; 256];
 
-        let sz = write_pvmfw_config(&mut ops, &mut buf, &testdigest, false, false).unwrap();
+        let sz =
+            write_pvmfw_config(&mut ops, &mut buf, &testdigest, false, false, &mut scratch_buffer)
+                .unwrap();
         let header = PvmfwConfHeader::ref_from_prefix(&buf).unwrap().0;
 
         let exp_refdt_size = 0xd3u32;
