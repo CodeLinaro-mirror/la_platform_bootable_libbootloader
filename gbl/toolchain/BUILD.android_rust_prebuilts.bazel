@@ -48,7 +48,10 @@ rust_stdlib_filegroup(
 rust_library(
     name = "liballoc",
     srcs = glob(["lib/rustlib/src/rust/library/alloc/src/**/*.rs"]),
-    compile_data = glob(["lib/rustlib/src/rust/library/alloc/src/**/*.md"]),
+    compile_data = glob(
+        ["lib/rustlib/src/rust/library/alloc/src/**/*.md"],
+        allow_empty = True,
+    ),
     crate_name = "alloc",
     edition = "2021",
     deps = [
@@ -60,7 +63,10 @@ rust_library(
 rust_library(
     name = "libcompiler_builtins",
     srcs = glob(["lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins/src/**/*.rs"]),
-    compile_data = glob(["lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins/src/**/*.md"]),
+    compile_data = glob(
+        ["lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins/src/**/*.md"],
+        allow_empty = True,
+    ),
     crate_features = [
         "compiler-builtins",
         "core",
@@ -80,12 +86,15 @@ rust_library(
         "lib/rustlib/src/rust/library/stdarch/crates/core_arch/src/**/*.rs",
         "lib/rustlib/src/rust/library/portable-simd/crates/core_simd/src/**/*.rs",
     ]),
-    compile_data = glob([
-        "lib/rustlib/src/rust/library/core/src/**/*.md",
-        "lib/rustlib/src/rust/library/core/primitive_docs/*.md",
-        "lib/rustlib/src/rust/library/stdarch/crates/core_arch/src/**/*.md",
-        "lib/rustlib/src/rust/library/portable-simd/crates/core_simd/src/**/*.md",
-    ]),
+    compile_data = glob(
+        [
+            "lib/rustlib/src/rust/library/core/src/**/*.md",
+            "lib/rustlib/src/rust/library/core/primitive_docs/*.md",
+            "lib/rustlib/src/rust/library/stdarch/crates/core_arch/src/**/*.md",
+            "lib/rustlib/src/rust/library/portable-simd/crates/core_simd/src/**/*.md",
+        ],
+        allow_empty = True,
+    ),
     crate_features = ["stdsimd"],
     crate_name = "core",
     edition = "2021",
