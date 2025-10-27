@@ -20,7 +20,7 @@ u-boot-mainline branch.
 load("@gbl//toolchain:gbl_new_local_repository.bzl", "gbl_new_local_repository")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "GBL_RUST_VERSION")
 
-_CLANG_VERSION = "r547379"
+_CLANG_VERSION = "r574158"
 
 def define_gbl_workspace(name = None):
     """Set up worksapce dependencies for GBL

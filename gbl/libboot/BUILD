@@ -57,7 +57,7 @@ rust_bindgen(
 use zerocopy::{Immutable, IntoBytes, FromBytes};""",
     ],
     cc_lib = ":bindgen_cc_lib",
-    header = "@linux_x86_64_sysroot//:sysroot/usr/include/x86_64-linux-gnu/asm/bootparam.h",
+    header = "@linux_x86_64_sysroot//:include/asm/bootparam.h",
 )
 
 rust_library(

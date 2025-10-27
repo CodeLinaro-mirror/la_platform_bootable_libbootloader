@@ -109,9 +109,10 @@ cc_library(
         "crypto",
         "include",
     ],
-    deps = [
-        "@gbl//libc:headers",
-    ],
+    deps = select({
+        "@gbl//toolchain:gbl_rust_host_x86_64": [],
+        "//conditions:default": ["@gbl//libc:headers"],
+    }),
 )
 
 link_static_cc_library(

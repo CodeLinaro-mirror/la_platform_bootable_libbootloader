@@ -15,8 +15,10 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "bool_setting")
 load(
     "@gbl_llvm_prebuilts//:info.bzl",
+    "GBL_CPP_CONFIG_INC",
     "GBL_EFI_SYSROOT",
     "LINUX_SYSROOT_INCLUDES",
+    "LINUX_X86_MUSL_CPP_CONFIG",
     "LLVM_PREBUILTS_CPP_INCLUDE",
     "LLVM_PREBUILTS_C_INCLUDE",
     "gbl_llvm_tool_path",
@@ -257,6 +259,10 @@ cc_flags_common = [
     "-femit-dwarf-unwind=always",
     # Enable optimization otherwise software AVB hash will be too slow.
     "-O3",
+    # The llvm version we use errors out for every goto statement that bypasses variable
+    # initialization. The problematic sources are all C. There's an upstream fix that disables
+    # this warning for non-C++ sources. (https://github.com/llvm/llvm-project/pull/138507)
+    "-Wno-microsoft-goto",
 ]
 
 # Linux host LLVM toolchain.
@@ -264,7 +270,7 @@ cc_flags_common = [
 gbl_clang_cc_toolchain(
     name = "x86_64-unknown-linux-gnu",
     # Host LLVM toolchain has additional C++ stdlib.
-    builtin_includes = builtin_includes_common + LINUX_SYSROOT_INCLUDES,
+    builtin_includes = [LINUX_X86_MUSL_CPP_CONFIG] + builtin_includes_common + [LINUX_SYSROOT_INCLUDES],
     cc_flags = cc_flags_common + [
         "-D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE",
     ],
@@ -310,7 +316,7 @@ uefi_ld_flags_common = [
     "--as-needed",
 ]
 
-builtin_includes_uefi_common = builtin_includes_common + [GBL_EFI_SYSROOT]
+builtin_includes_uefi_common = [GBL_CPP_CONFIG_INC] + builtin_includes_common + [GBL_EFI_SYSROOT]
 
 x86_64_uefi_cc_flags = cc_flags_uefi_common + [
     # Adding this prevents the compiler from generating mmx, sse instructions such as
