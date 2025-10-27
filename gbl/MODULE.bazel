@@ -40,6 +40,8 @@ gbl_repositories_ext = use_extension(
 use_repo(gbl_repositories_ext, "llvm_linux_x86_64_prebuilts")
 use_repo(gbl_repositories_ext, "rust_prebuilts")
 
+local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
+
 gbl_new_local_repository = use_repo_rule("//toolchain:gbl_new_local_repository.bzl", "gbl_new_local_repository")
 
 gbl_rust_crate_repository = use_repo_rule("//toolchain:gbl_new_local_repository.bzl", "gbl_rust_crate_repository")
@@ -313,11 +315,8 @@ gbl_rust_crate_repository(
     ],
 )
 
-gbl_new_local_repository(
+local_repository(
     name = "zbi",
-    # TODO: b/413506174 - clean up ref to outer module
-    # buildifier: disable=canonical-repository
-    build_file = "@@//prebuilts/fuchsia_sdk:BUILD.zbi.bazel",
     path = "prebuilts/fuchsia_sdk/",
 )
 
