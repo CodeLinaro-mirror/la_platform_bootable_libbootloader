@@ -46,8 +46,9 @@ use core::{
 };
 use fastboot::{
     local_session::LocalSession, next_arg, next_arg_u64, process_next_command, run_tcp_session,
-    CommandError, CommandResult, FailSender, FastbootImplementation, InfoSender, LockState,
-    LockType, OkaySender, RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
+    CommandError, CommandResult, DownloadBuilder, Downloader, FailSender, FastbootImplementation,
+    InfoSender, LockState, LockType, OkaySender, RebootMode, UploadBuilder, Uploader,
+    VarInfoSender, MAX_COMMAND_SIZE,
 };
 use gbl_async::{join, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
@@ -844,6 +845,13 @@ where
             _ => Ok(()),
         }
     }
+
+    async fn get_download_buffer(&mut self) -> &mut [u8] {
+        if self.current_download_buffer.is_none() {
+            self.current_download_buffer = Some(self.buffer_pool.allocate_async().await);
+        }
+        self.current_download_buffer.as_mut().unwrap()
+    }
 }
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
@@ -865,27 +873,11 @@ where
         out: &mut [u8],
         _: impl InfoSender,
     ) -> CommandResult<usize> {
-        Ok(self.get_var_internal(var, args, out)?.len())
+        Ok(self.get_var_internal(var, args, out).await?.len())
     }
 
     async fn get_var_all(&mut self, mut resp: impl VarInfoSender) -> CommandResult<()> {
         self.get_var_all_internal(&mut resp).await
-    }
-
-    async fn get_download_buffer(&mut self) -> &mut [u8] {
-        if self.current_download_buffer.is_none() {
-            self.current_download_buffer = Some(self.buffer_pool.allocate_async().await);
-        }
-        self.current_download_buffer.as_mut().unwrap()
-    }
-
-    async fn download_complete(
-        &mut self,
-        download_size: usize,
-        _: impl InfoSender,
-    ) -> CommandResult<()> {
-        self.current_download_size = download_size;
-        Ok(())
     }
 
     async fn flash(&mut self, part: &str, mut responder: impl InfoSender) -> CommandResult<()> {
@@ -938,6 +930,34 @@ where
         let mut task = Task::new(TaskWorkload::Erase(part_io, self.take_download().unwrap().0));
         task.set_context(|f| write!(f, "erase:{part}"));
         Ok(self.schedule_task(task, &mut responder).await?)
+    }
+
+    async fn download(
+        &mut self,
+        responder: impl DownloadBuilder + InfoSender,
+    ) -> CommandResult<()> {
+        self.get_download_buffer().await;
+        let buf = &mut self.current_download_buffer.as_mut().unwrap()[..];
+        let total = responder.total();
+        if total > buf.len() {
+            return Err(
+                format_args!("Buffer too small {:#x}. Needs {:#x}", buf.len(), total).into()
+            );
+        }
+
+        let mut downloader = responder.initiate_download().await?;
+        let (mut recv, mut checkpoint) = Default::default();
+        while recv < total {
+            recv += downloader.download(&mut buf[recv..]).await?;
+            // log progress per 25%.
+            let curr = recv * 4 / total;
+            if curr >= checkpoint && total > 128 * 1024 * 1024 {
+                gbl_println!(self.gbl_ops, "\tDownloaded {}+%, {recv}/{total}", 25 * curr);
+                checkpoint = curr + 1;
+            }
+        }
+        self.current_download_size = total;
+        Ok(())
     }
 
     async fn upload(
@@ -1410,8 +1430,7 @@ pub(crate) mod test {
 
     /// A helper to set the download content.
     fn set_download(gbl_fb: &mut impl FastbootImplementation, data: &[u8]) {
-        block_on(gbl_fb.get_download_buffer())[..data.len()].clone_from_slice(data);
-        block_on(gbl_fb.download_complete(data.len(), &TestResponder::default())).unwrap();
+        block_on(gbl_fb.set_download(data)).unwrap()
     }
 
     impl<'a> PinFutContainer<'a> for Vec<Pin<Box<dyn Future<Output = ()> + 'a>>> {
@@ -1530,6 +1549,7 @@ pub(crate) mod test {
         assert_eq!(
             logger.0,
             [
+                "max-download-size: 0x20000",
                 "version-bootloader: 1.0",
                 "slot-count: 0",
                 "max-fetch-size: 0x7fffffff",
@@ -1602,6 +1622,7 @@ pub(crate) mod test {
         assert_eq!(
             logger.0,
             [
+                "max-download-size: 0x20000",
                 "version-bootloader: 1.0",
                 "max-fetch-size: 0x7fffffff",
                 "gbl-default-block: None",
@@ -2653,6 +2674,37 @@ pub(crate) mod test {
 
         // Verifies flashed image on raw_1.
         assert_eq!(storage[1].partition_io(None).unwrap().dev().io().storage, [0xaau8; KiB!(8)]);
+    }
+
+    #[test]
+    fn test_run_gbl_fastboot_download_oversize() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let listener: SharedTestListener = Default::default();
+        let (usb, tcp) = (&listener, &listener);
+
+        listener.add_usb_input(b"download:0x401");
+        listener.add_usb_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            Some(&mut TestLocalSession::default()),
+            Some(usb),
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.usb_out_queue(),
+            make_expected_usb_out(&[
+                b"FAILBuffer too small 0x400. Needs 0x401",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_usb_out_queue()
+        );
     }
 
     #[test]

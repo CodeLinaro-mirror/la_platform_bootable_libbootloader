@@ -13,8 +13,7 @@
 // limitations under the License.
 
 use crate::{
-    fastboot::PinFutContainerTyped,
-    fastboot::{BufferPool, GblFastboot},
+    fastboot::{BufferPool, GblFastboot, PinFutContainerTyped},
     gbl_println, GblOps,
 };
 use core::{ffi::CStr, future::Future, ops::DerefMut, str::from_utf8};
@@ -22,6 +21,8 @@ use fastboot::{next_arg, next_arg_u64, CommandResult, VarInfoSender};
 use gbl_async::{block_on, select, yield_now};
 use gbl_storage::BlockIo;
 use libutils::snprintf;
+
+const MAX_DOWNLOAD_SIZE: &'static str = "max-download-size";
 
 const VERSION_BOOTLOADER: &'static str = "version-bootloader";
 const VERSION_BOOTLOADER_VAL: &'static str = "1.0";
@@ -51,7 +52,7 @@ pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     PARTITION_TYPE,
     BLOCK_DEVICE,
     DEFAULT_BLOCK,
-    fastboot::MAX_DOWNLOAD_SIZE_NAME,
+    MAX_DOWNLOAD_SIZE,
 ];
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
@@ -67,7 +68,7 @@ where
     F: Future<Output = ()> + 'c,
 {
     /// Entry point for "fastboot getvar <variable>..."
-    pub(crate) fn get_var_internal<'s, 't>(
+    pub(crate) async fn get_var_internal<'s, 't>(
         &mut self,
         name: &CStr,
         args: impl Iterator<Item = &'t CStr> + Clone,
@@ -78,6 +79,7 @@ where
         args_str.clone().find(|v| v.is_err()).unwrap_or(Ok(""))?;
         let args_str = args_str.map(|v| v.unwrap());
         Ok(match name.to_str()? {
+            MAX_DOWNLOAD_SIZE => snprintf!(out, "{:#x}", self.max_download_size().await),
             VERSION_BOOTLOADER => snprintf!(out, "{}", VERSION_BOOTLOADER_VAL),
             SLOT_COUNT => self.get_var_slot_count(out)?,
             MAX_FETCH_SIZE => snprintf!(out, "{}", MAX_FETCH_SIZE_VAL),
@@ -98,6 +100,8 @@ where
         send: &mut impl VarInfoSender,
     ) -> CommandResult<()> {
         let mut buf = [0u8; 32];
+        let dl_sz = snprintf!(buf, "{:#x}", self.max_download_size().await);
+        send.send_var_info(MAX_DOWNLOAD_SIZE, [], dl_sz).await?;
         send.send_var_info(VERSION_BOOTLOADER, [], VERSION_BOOTLOADER_VAL).await?;
         match self.get_var_slot_count(&mut buf) {
             Ok(v) => send.send_var_info(SLOT_COUNT, [], v).await?,
@@ -140,6 +144,11 @@ where
                 }));
             }
         })?)
+    }
+
+    /// Gets the max-download-size variable.
+    pub(crate) async fn max_download_size(&mut self) -> usize {
+        self.get_download_buffer().await.len()
     }
 
     /// Parses and finds the size of the given partition.
