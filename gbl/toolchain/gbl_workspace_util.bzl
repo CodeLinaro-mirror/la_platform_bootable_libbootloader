@@ -50,7 +50,15 @@ def _gbl_llvm_prebuilts_impl(repo_ctx):
     # Get the bin directory so that we can access other LLVM tools by path.
     gbl_llvm_bin_dir = _abs_path(repo_ctx, "llvm-linux-x86/bin")
 
+    # We use MUSL C sysroot for host. Use the corresponding musl C++ config when building C++.
+    x86_musl_config_inc = Label("@llvm_linux_x86_64_prebuilts//:include/x86_64-unknown-linux-musl/c++/v1")
+    x86_musl_config_inc = _abs_path(repo_ctx, repo_ctx.path(x86_musl_config_inc))
+
+    # For GBL UEFI target we use our own minimal sysroot implementation. Thus we use our custom C++
+    # config.
     gbl_sysroot = _abs_path(repo_ctx, repo_ctx.path(Label("@gbl//libc:include")))
+    gbl_cpp_config_inc = Label("@gbl//libc:include/cpp_config_site")
+    gbl_cpp_config_inc = _abs_path(repo_ctx, repo_ctx.path(gbl_cpp_config_inc))
 
     # Create a info.bzl file in the assembled repo to export header/library/tool paths.
     info_bzl_content = """
@@ -64,21 +72,21 @@ def gbl_llvm_tool_path(tool_name):
     info_bzl_content += """
 LLVM_PREBUILTS_C_INCLUDE = "{}"
 LLVM_PREBUILTS_CPP_INCLUDE = "{}"
+LINUX_X86_MUSL_CPP_CONFIG = "{}"
 GBL_EFI_SYSROOT = "{}"
+GBL_CPP_CONFIG_INC = "{}"
 """.format(
         "{}/include".format(llvm_resource_dir),
         _abs_path(repo_ctx, "llvm-linux-x86/include/c++/v1"),
+        x86_musl_config_inc,
         gbl_sysroot,
+        gbl_cpp_config_inc,
     )
 
     # Linux sysroot headers
-    sysroot_includes = [
-        _abs_path(repo_ctx, "linux_glibc/sysroot/usr/include"),
-        _abs_path(repo_ctx, "linux_glibc/sysroot/usr/include/x86_64-linux-gnu"),
-    ]
     info_bzl_content += """
-LINUX_SYSROOT_INCLUDES = [{}]
-""".format(",".join(["\"{}\"".format(inc) for inc in sysroot_includes]))
+LINUX_SYSROOT_INCLUDES = \"{}\"
+""".format(_abs_path(repo_ctx, "linux_glibc/include"))
 
     repo_ctx.file("info.bzl", info_bzl_content)
 

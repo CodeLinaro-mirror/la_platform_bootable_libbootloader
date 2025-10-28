@@ -51,7 +51,7 @@ use liberror::{Error, Result};
 #[cfg(feature = "fuchsia")]
 use zbi::ZbiContainer;
 
-pub use x86_bootparam_defs::{boot_params, e820entry, setup_header};
+pub use x86_bootparam_defs::{boot_e820_entry as e820entry, boot_params, setup_header};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Ref};
 
 // Sector size is fixed to 512
@@ -153,7 +153,7 @@ impl BootParams {
 
     /// Gets e820 map entries.
     pub fn e820_map(&mut self) -> &mut [e820entry] {
-        &mut self.0.e820_map[..]
+        &mut self.0.e820_table[..]
     }
 }
 
