@@ -46,7 +46,7 @@ def _gbl_new_local_repository_impl(repo_ctx):
 gbl_new_local_repository = repository_rule(
     doc = """Assemble a new local repository with a custom top-level BUILD file
 
-    Unlike "new_local_repository" from "@bazel//tools/build_defs/repo:local.bzl", this ignores
+    Unlike "new_local_repository" from "@bazel_tools//tools/build_defs/repo:local.bzl", this ignores
     existing BUILD files in path.
 """,
     implementation = _gbl_new_local_repository_impl,
