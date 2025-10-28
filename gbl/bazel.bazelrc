@@ -65,4 +65,3 @@ common:android_ci --noshow_progress
 test:android_ci --config=ants
 
 common --incompatible_autoload_externally=-@rules_python,-@rules_java,-@com_google_protobuf,-@protobuf,-@rules_shell,-@rules_android
-common --noincompatible_disallow_empty_glob
