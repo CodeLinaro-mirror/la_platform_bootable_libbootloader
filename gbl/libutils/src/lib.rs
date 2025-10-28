@@ -66,17 +66,21 @@ where
 
 /// A helper data structure for writing formatted string to fixed size bytes array.
 #[derive(Debug)]
-pub struct FormattedBytes<T>(T, usize);
+pub struct FormattedBytes<T> {
+    buffer: T,
+    len: usize,
+    total_attempted: Option<usize>,
+}
 
 impl<T: AsMut<[u8]> + AsRef<[u8]>> FormattedBytes<T> {
     /// Create an instance.
     pub fn new(buf: T) -> Self {
-        Self(buf, 0)
+        Self { buffer: buf, len: 0, total_attempted: Some(0) }
     }
 
     /// Get the size of content.
     pub fn size(&self) -> usize {
-        self.1
+        self.len
     }
 
     /// Appends the given `bytes` to the contents.
@@ -85,29 +89,43 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> FormattedBytes<T> {
     ///
     /// Returns the resulting contents.
     pub fn append(&mut self, bytes: &[u8]) -> &mut [u8] {
-        let buf = &mut self.0.as_mut()[self.1..];
+        let buf = &mut self.buffer.as_mut()[self.len..];
         // Only write as much as the size of the bytes buffer. Additional write is silently
         // ignored.
         let to_write = min(buf.len(), bytes.len());
         buf[..to_write].clone_from_slice(&bytes[..to_write]);
-        self.1 += to_write;
-        &mut self.0.as_mut()[..self.1]
+        self.len += to_write;
+        self.total_attempted = self.total_attempted.and_then(|v| v.checked_add(bytes.len()));
+        &mut self.buffer.as_mut()[..self.len]
     }
 
     /// Converts to string.
     pub fn to_str(&self) -> &str {
-        from_utf8(&self.0.as_ref()[..self.1]).unwrap_or("")
+        from_utf8(&self.buffer.as_ref()[..self.len]).unwrap_or("")
     }
 
     /// Gets the buffer
     pub fn buffer(&mut self) -> &mut [u8] {
-        self.0.as_mut()
+        self.buffer.as_mut()
     }
 
     /// Treats the buffer containing a CStr and updates string length.
     pub fn update_as_c_str(&mut self) -> Result<()> {
-        self.1 = CStr::from_bytes_until_nul(self.0.as_ref())?.count_bytes();
+        self.len = CStr::from_bytes_until_nul(self.buffer.as_ref())?.count_bytes();
         Ok(())
+    }
+
+    /// Returns the total number bytes attempted to be written.
+    pub fn total_attempted(&self) -> Option<usize> {
+        self.total_attempted
+    }
+
+    /// Checks whether overflow has occurred.
+    pub fn check_overflow(&self) -> Result<()> {
+        match self.total_attempted() {
+            Some(v) if v <= self.size() => Ok(()),
+            v => Err(Error::BufferTooSmall(v)),
+        }
     }
 }
 

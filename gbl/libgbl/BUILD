@@ -59,6 +59,7 @@ rust_library(
         "@arrayvec",
         "@avb",
         "@avb//:avb_bindgen",
+        "@base64",
         "@bitflags",
         "@bytes",
         "@crc32fast",

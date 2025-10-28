@@ -20,8 +20,9 @@ use crate::{
         DeviceTreeComponentSource, DeviceTreeComponentType, DeviceTreeComponentsRegistry,
     },
     fastboot::{
-        boot_items::BootItemContainer, run_gbl_fastboot, run_gbl_fastboot_stack, BufferPool,
-        GblFastbootResult, GblTcpStream, GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
+        boot_items::{BootItem, BootItemContainer},
+        run_gbl_fastboot, run_gbl_fastboot_stack, BufferPool, GblFastbootResult, GblTcpStream,
+        GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
     },
     gbl_avb::{ArrayMaxParts, ArrayMaxRequestedParts},
     gbl_println,
@@ -87,8 +88,6 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     boot_buffer: BootBuffer<'a>,
 ) -> Result<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
     let mut loader = BootBufferLoader::new(boot_buffer);
-    // TODO(b/450268123): Handles boot items.
-    let _boot_items = loader.take_boot_items();
 
     let mut partitions: ArrayMaxParts<(Partition, Option<PartitionBuffer<_>>)> =
         ArrayMaxParts::new();
@@ -173,6 +172,10 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         }
     }
     let (verify_data, status, unlocked) = res?;
+    // Boot items are added from fastboot. It shall only be used when device is unlocked because it
+    // effectively modifies boot images. The lock/unlock state should be the same one used by
+    // libavb.
+    let boot_items = unlocked.then_some(loader.take_boot_items());
 
     let images = android_load_verified(ops, slot, unlocked, is_recovery, &verify_data)?;
 
@@ -307,6 +310,9 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     // Updates the FDT commandline.
     // Reserves 1024 bytes for separators and fixup
     fdt_append_bootarg(ops, &mut fdt, [images.boot_cmdline, images.vendor_cmdline], 1024)?;
+    if let Some(ref v) = boot_items {
+        fdt_append_bootarg(ops, &mut fdt, v.utf8_items(BootItem::Cmdline), 0)?;
+    }
 
     match pvmfw {
         Some((ref v, s)) => avf_fixup_host_dt(ops, &mut fdt, v, s, &verify_data)?,
@@ -337,7 +343,15 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     loader.set_fdt_range(fdt_ptr_range);
 
     // Backend bootconfig fixup.
-    let bootconfig_sz = fixup_bootconfig(ops, loader.expand_bootconfig_buffer()?, bootconfig_sz)?;
+    let mut builder = fixup_bootconfig(ops, loader.expand_bootconfig_buffer()?, bootconfig_sz)?;
+    if let Some(ref v) = boot_items {
+        for val in v.utf8_items(BootItem::Bootconfig) {
+            write!(builder, "{}{}", val, val.ends_with("\n").then_some("").unwrap_or("\n"))
+                .map_err(Error::from)?;
+        }
+    }
+
+    let bootconfig_sz = builder.config_bytes().len();
     loader.set_bootconfig_size(bootconfig_sz);
     let ramdisk_len = ramdisk_len + bootconfig_sz;
 
@@ -443,13 +457,13 @@ fn fixup_bootconfig<'a, 'b, 'c>(
     ops: &mut impl GblOps<'b, 'c>,
     buf: &'a mut [u8],
     curr_bootconfig_sz: usize,
-) -> Result<usize> {
+) -> Result<BootConfigBuilder<'a>> {
     let mut builder = BootConfigBuilder::from_prefix_unchecked(buf, curr_bootconfig_sz)?;
     // Adds platform-specific bootconfig.
     builder.add_with(|bytes, out| {
         Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
     })?;
-    Ok(builder.config_bytes().len())
+    Ok(builder)
 }
 
 /// Gets the target slot to boot.
@@ -499,6 +513,8 @@ where
     ///   specific channels i.e. UX.
     /// * `usb`: An implementation of `GblUsbTransport` that represents USB channel.
     /// * `tcp`: An implementation of `GblTcpStream` that represents TCP channel.
+    ///
+    /// Returns the user-defined GblOps on completion.
     pub async fn run<'b: 'c, 'c>(
         self,
         buffer_pool: &'b Shared<impl BufferPool>,
@@ -506,12 +522,14 @@ where
         local: Option<impl LocalSession>,
         usb: Option<impl GblUsbTransport>,
         tcp: Option<impl GblTcpStream>,
-    ) where
+    ) -> &'d mut G
+    where
         'a: 'c,
         'd: 'c,
     {
         *self.result =
             run_gbl_fastboot(self.ops, buffer_pool, tasks, local, usb, tcp, self.boot_buffer).await;
+        self.ops
     }
 
     /// Runs fastboot with N pre-allocated async worker tasks.
@@ -529,13 +547,15 @@ where
     /// into consideration usage pattern for determining N. If platform only has one physical disk
     /// or does not expect disks to be parallelizable, a common choice is N=2 which allows
     /// downloading and flashing to be performed in parallel.
+    ///
+    /// Returns the user-defined GblOps on completion.
     pub fn run_n<const N: usize>(
         self,
         download: &mut [u8],
         local: Option<impl LocalSession>,
         usb: Option<impl GblUsbTransport>,
         tcp: Option<impl GblTcpStream>,
-    ) {
+    ) -> &'d mut G {
         if N < 1 {
             return self.run_n::<1>(download, local, usb, tcp);
         }
@@ -553,6 +573,12 @@ where
             tcp,
             self.boot_buffer,
         ));
+        self.ops
+    }
+
+    /// Returns the user defined GblOps
+    pub fn ops(&mut self) -> &mut G {
+        self.ops
     }
 }
 
@@ -560,7 +586,7 @@ where
 #[derive(Debug)]
 pub struct BootBuffer<'a> {
     /// General load buffer internally manages a BootItemContainer.
-    boot_items: core::result::Result<BootItemContainer<'a>, &'a mut [u8]>,
+    boot_items: BootItemContainer<'a>,
     /// Optional designated kernel load buffer.
     pub kernel: Option<&'a mut [u8]>,
     /// Optional designated ramdisk load buffer.
@@ -580,18 +606,14 @@ impl<'a> BootBuffer<'a> {
         fdt: Option<&'a mut [u8]>,
         pvmfw_data: Option<&'a mut [u8]>,
     ) -> Self {
-        let can_create = BootItemContainer::new(&mut buffer[..]).is_ok();
-        let boot_items = match can_create {
-            true => Ok(BootItemContainer::new(buffer).unwrap()),
-            _ => Err(buffer),
-        };
+        let boot_items = BootItemContainer::new(buffer);
         Self { boot_items, kernel, ramdisk, fdt, pvmfw_data }
     }
 
     /// Creates an instance that borrows internal fields.
     pub fn as_borrowed(&mut self) -> BootBuffer {
         BootBuffer {
-            boot_items: self.boot_items.as_mut().map(|v| v.as_borrowed()).map_err(|v| v as _),
+            boot_items: self.boot_items.as_borrowed(),
             kernel: self.kernel.as_mut().map(|v| v as _),
             ramdisk: self.ramdisk.as_mut().map(|v| v as _),
             fdt: self.fdt.as_mut().map(|v| v as _),
@@ -601,23 +623,17 @@ impl<'a> BootBuffer<'a> {
 
     /// Gets unused buffer from general load as scratch.
     pub fn scratch(&mut self) -> &mut [u8] {
-        match self.boot_items.as_mut() {
-            Ok(v) => v.get_unused(),
-            Err(v) => v as _,
-        }
-    }
-
-    /// Splits out the unused buffer from boot item container in the general load buffer.
-    pub(crate) fn take_scratch(&mut self) -> &'a mut [u8] {
-        match self.boot_items.as_mut() {
-            Ok(v) => v.split_unused(),
-            Err(v) => take(v),
-        }
+        self.boot_items.get_unused()
     }
 
     /// Takes the boot item container.
-    pub(crate) fn take_boot_items(&mut self) -> Option<BootItemContainer<'a>> {
-        core::mem::replace(&mut self.boot_items, Err(&mut [][..])).ok()
+    pub(crate) fn boot_items(&mut self) -> &mut BootItemContainer<'a> {
+        &mut self.boot_items
+    }
+
+    /// Takes the boot item container.
+    pub(crate) fn take_boot_items(&mut self) -> BootItemContainer<'a> {
+        take(&mut self.boot_items)
     }
 }
 
@@ -1146,10 +1162,7 @@ androidboot.veritymode.managed=yes
             let fdt = ((flag & 4) != 0).then_some(&mut fdt[..]);
             let mut buffers = BootBuffer::new(general, kernel, ramdisk, fdt, None);
             println!("\nBoot buffer config #{flag}");
-            println!(
-                "  general: {:?} bytes",
-                buffers.boot_items.as_mut().unwrap().raw_buffer().len()
-            );
+            println!("  general: {:?} bytes", buffers.boot_items.raw_buffer().len());
             println!("  kernel: {:?} bytes", buffers.kernel.as_ref().map(|v| v.len()));
             println!("  ramdisk: {:?} bytes", buffers.ramdisk.as_ref().map(|v| v.len()));
             println!("  fdt: {:?} bytes", buffers.fdt.as_ref().map(|v| v.len()));
@@ -2027,7 +2040,7 @@ androidboot.veritymode.managed=yes
         // Rollback required by `vbmeta_disabled.img`.
         ops.avb_ops.rollbacks = HashMap::from([(0, Ok(0))]);
         ops.avf_is_supported = true;
-        ops.avb_ops.unlock_state = Ok(true);
+        ops.avb_device_status.is_unlocked = true;
         ops.avf_vendor_dice_handover = Some(&DUMMY_VENDOR_HANDOVER[..]);
         let (ramdisk, fdt, _, _) =
             android_load_verify_fixup(&mut ops, slot('a'), false, boot_buffer).unwrap();
@@ -2073,8 +2086,7 @@ androidboot.veritymode.managed=yes
         // Starts with unaligned address. pvmfw should be loaded at offset 1.
         let general = &mut general[PVMFW_DATA_ALIGNMENT - 1..];
         let expected_addr = general[1..].as_ptr() as usize;
-        let mut boot_buffer = BootBuffer::default();
-        boot_buffer.boot_items = Err(&mut general[..]);
+        let boot_buffer = BootBuffer::new(&mut general[..], None, None, None, None);
         test_android_load_verify_fixup_pvmfw_load(boot_buffer, expected_addr);
         assert!(&general[1..][..0xc00].iter().all(|&b| b == TEST_PVMFW_FILL_VALUE));
     }
@@ -2087,7 +2099,7 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel)
@@ -2102,7 +2114,7 @@ androidboot.veritymode.managed=yes
 
         let mut ops = default_test_gbl_ops(&storage);
         ops.write_to_partition_sync("misc", 0, &mut b"boot-recovery".to_vec()).unwrap();
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
 
@@ -2136,7 +2148,7 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel)
@@ -2152,7 +2164,7 @@ androidboot.veritymode.managed=yes
         let mut ops = default_test_gbl_ops(&storage);
         ops.current_slot = Some(Ok(slot('b')));
 
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         checks_loaded_v2_slot_b_normal_mode(ramdisk, kernel)
@@ -2167,7 +2179,7 @@ androidboot.veritymode.managed=yes
 
         let mut ops = default_test_gbl_ops(&storage);
         ops.current_slot = Some(Err(Error::Unsupported));
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |_| {}).unwrap();
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel)
@@ -2176,7 +2188,7 @@ androidboot.veritymode.managed=yes
     /// Helper for testing that fastboot mode is triggered.
     fn test_fastboot_is_triggered<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) {
         let listener: SharedTestListener = Default::default();
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(ops, load_buffer, |fb| {
             listener.add_usb_input(b"getvar:max-fetch-size");
@@ -2186,7 +2198,7 @@ androidboot.veritymode.managed=yes
                 Some(&mut TestLocalSession::default()),
                 Some(&listener),
                 Some(&listener),
-            )
+            );
         })
         .unwrap();
 
@@ -2251,9 +2263,9 @@ androidboot.veritymode.managed=yes
         ops.write_to_partition_sync("misc", 0, &mut b"boot-recovery".to_vec()).unwrap();
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
         let listener: SharedTestListener = Default::default();
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
 
-        let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer.as_mut().into(), |fb| {
+        let (ramdisk, _, kernel, _) = android_main(&mut ops, (&mut load_buffer[..]).into(), |fb| {
             listener.add_usb_input(b"getvar:max-fetch-size");
             listener.add_usb_input(b"continue");
             fb.run_n::<2>(
@@ -2261,7 +2273,7 @@ androidboot.veritymode.managed=yes
                 Some(&mut TestLocalSession::default()),
                 Some(&listener),
                 Some(&listener),
-            )
+            );
         })
         .unwrap();
 
@@ -2285,10 +2297,10 @@ androidboot.veritymode.managed=yes
         let mut ops = default_test_gbl_ops(&storage);
         ops.write_to_partition_sync("misc", 0, &mut b"bootonce-bootloader".to_vec()).unwrap();
         ops.one_shot_boot_mode = Some(OneShotBootMode::Recovery);
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
 
         let (ramdisk, _, kernel, _) =
-            android_main(&mut ops, load_buffer.as_mut().into(), |_| {}).unwrap();
+            android_main(&mut ops, (&mut load_buffer[..]).into(), |_| {}).unwrap();
 
         let bcb = read_bootloader_message(&mut ops).unwrap();
         assert_eq!(bcb.boot_mode(), Ok(AndroidBootMode::Normal));
@@ -2305,7 +2317,7 @@ androidboot.veritymode.managed=yes
         ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
             let data = read_test_data(format!("boot_v2_a.img"));
@@ -2318,7 +2330,7 @@ androidboot.veritymode.managed=yes
                 Some(&mut TestLocalSession::default()),
                 Some(&listener),
                 Some(&listener),
-            )
+            );
         })
         .unwrap();
 
@@ -2367,7 +2379,7 @@ androidboot.veritymode.managed=yes
                 Some(&mut TestLocalSession::default()),
                 Some(&listener),
                 Some(&listener),
-            )
+            );
         })
         .unwrap();
 
@@ -2397,7 +2409,7 @@ androidboot.veritymode.managed=yes
         ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         assert_eq!(
             android_main(&mut ops, load_buffer, |fb| {
@@ -2408,7 +2420,7 @@ androidboot.veritymode.managed=yes
                     Some(&mut TestLocalSession::default()),
                     Some(&listener),
                     Some(&listener),
-                )
+                );
             })
             .unwrap_err(),
             Error::Aborted.into()
@@ -2451,7 +2463,7 @@ androidboot.veritymode.managed=yes
         ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
             listener.add_usb_input(b"continue");
@@ -2460,7 +2472,7 @@ androidboot.veritymode.managed=yes
                 Some(&mut TestLocalSession::default()),
                 Some(&listener),
                 Some(&listener),
-            )
+            );
         })
         .unwrap();
 
@@ -2512,7 +2524,7 @@ androidboot.veritymode.managed=yes
         ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
-        let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
             let data = read_test_data(format!("boot_v2_a.img"));
@@ -2525,7 +2537,7 @@ androidboot.veritymode.managed=yes
                 Some(&mut TestLocalSession::default()),
                 Some(&listener),
                 Some(&listener),
-            )
+            );
         })
         .unwrap();
 
@@ -2552,5 +2564,105 @@ androidboot.veritymode.managed=yes
                 (false, read_test_data("boot_v2_a.img")),
             ]
         );
+    }
+
+    #[test]
+    fn test_android_main_fastboot_boot_items() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
+        ops.avb_device_status.is_unlocked = true;
+        let listener: SharedTestListener = Default::default();
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
+        let load_buffer = (&mut load_buffer[..]).into();
+        let (ramdisk, fdt, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
+            listener.add_usb_input(b"oem gbl-add-cmdline gbl-fb-cmd-1=1");
+            listener.add_usb_input(b"oem gbl-add-cmdline gbl-fb-cmd-2=1");
+            listener.add_usb_input(b"oem gbl-add-bootconfig gbl-fb-config-1=1");
+            listener.add_usb_input(b"oem gbl-add-bootconfig gbl-fb-config-2=1");
+            let download_data = b"some test data";
+            listener.add_usb_input(format!("download:{:#x}", download_data.len()).as_bytes());
+            listener.add_usb_input(download_data);
+            listener.add_usb_input(b"oem gbl-add-staged-data test");
+            listener.add_usb_input(b"continue");
+            fb.run_n::<2>(
+                &mut vec![0u8; 256 * 1024],
+                Some(&mut TestLocalSession::default()),
+                Some(&listener),
+                Some(&listener),
+            );
+        })
+        .unwrap();
+
+        let expected_bootconfig = AvbResultBootconfigBuilder::new()
+            .vbmeta_size(read_test_data("vbmeta_v2_a.img").len())
+            .digest(read_test_data_as_str("vbmeta_v2_a.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("vbmeta_v2_a.boot.digest.txt"))
+            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .unlocked(true)
+            .color(BootStateColor::Orange)
+            .extra("androidboot.force_normal_boot=1\n")
+            .extra(format!("androidboot.slot_suffix=_a\n"))
+            .extra("androidboot.gbl.version=0\n")
+            .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
+            .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
+            .extra("gbl-fb-config-1=1\n")
+            .extra("gbl-fb-config-2=1\n")
+            .extra("gbl.blob.test=c29tZSB0ZXN0IGRhdGE=\n")
+            .build();
+        check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
+        assert_eq!(kernel, read_test_data("kernel_a.img"));
+
+        let fdt = Fdt::new(fdt).unwrap();
+        from_utf8(fdt.get_property("/chosen", c"bootargs").unwrap())
+            .unwrap()
+            .find("gbl-fb-cmd-1=1 gbl-fb-cmd-2=1")
+            .unwrap();
+    }
+
+    #[test]
+    fn test_android_main_fastboot_boot_items_ignored_when_locked() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
+        ops.avb_device_status.is_unlocked = true;
+        let listener: SharedTestListener = Default::default();
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
+        let load_buffer = (&mut load_buffer[..]).into();
+        let (ramdisk, fdt, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
+            listener.add_usb_input(b"oem gbl-add-cmdline gbl-fb-cmd-1=1");
+            listener.add_usb_input(b"oem gbl-add-cmdline gbl-fb-cmd-2=1");
+            listener.add_usb_input(b"oem gbl-add-bootconfig gbl-fb-config-1=1");
+            listener.add_usb_input(b"oem gbl-add-bootconfig gbl-fb-config-2=1");
+            let download_data = b"some test data";
+            listener.add_usb_input(format!("download:{:#x}", download_data.len()).as_bytes());
+            listener.add_usb_input(download_data);
+            listener.add_usb_input(b"oem gbl-add-staged-data test");
+            listener.add_usb_input(b"continue");
+            let ops = fb.run_n::<2>(
+                &mut vec![0u8; 256 * 1024],
+                Some(&mut TestLocalSession::default()),
+                Some(&listener),
+                Some(&listener),
+            );
+            // Simulate device re-lock from external channel.
+            ops.avb_device_status.is_unlocked = false;
+        })
+        .unwrap();
+
+        checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+        let fdt = Fdt::new(fdt).unwrap();
+        assert!(from_utf8(fdt.get_property("/chosen", c"bootargs").unwrap())
+            .unwrap()
+            .find("gbl-fb-cmd-1=1 gbl-fb-cmd-2=1")
+            .is_none());
     }
 }
