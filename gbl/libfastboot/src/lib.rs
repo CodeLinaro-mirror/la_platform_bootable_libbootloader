@@ -69,6 +69,7 @@
 #![allow(async_fn_in_trait)]
 
 use core::{
+    cmp::min,
     ffi::CStr,
     fmt::{Debug, Display, Formatter, Write},
     str::{from_utf8, Split},
@@ -99,14 +100,28 @@ pub const MAX_RESPONSE_SIZE: usize = 256;
 /// * TCP
 /// * UDP
 pub trait Transport {
-    /// Fetches the next fastboot packet into `out`.
+    /// Reads the next data packet. Reads up to the next packet or provided buffer.
+    ///
+    /// # Returns
+    ///
+    /// * On success, returns `(actual received size, remaining size of the current packet)`
+    /// * Returns `Error::BufferTooSmall()` if partial receive is not supported and 'out' is
+    ///   too small for one packet.
+    async fn receive(&mut self, out: &mut [u8]) -> Result<(usize, usize)>;
+
+    /// Fetches the entire next fastboot packet into `out`.
     ///
     /// Returns the actual size of the packet on success.
-    ///
-    /// TODO(b/322540167): In the future, we may want to support using `[MaybeUninit<u8>]` as the
-    /// download buffer to avoid expensive initialization at the beginning. This would require an
-    /// interface where the implementation provides the buffer for us to copy instead of us.
-    async fn receive_packet(&mut self, out: &mut [u8]) -> Result<usize>;
+    async fn receive_packet(&mut self, mut out: &mut [u8]) -> Result<usize> {
+        let (recv, rem) = self.receive(out).await?;
+        out = out.split_at_mut_checked(recv).ok_or(Error::Other(Some("Invalid recv size")))?.1;
+        out = out.get_mut(..rem).ok_or(Error::BufferTooSmall(recv.checked_add(rem)))?;
+        while !out.is_empty() {
+            let (sz, _) = self.receive(out).await?;
+            out = out.split_at_mut_checked(sz).ok_or(Error::Other(Some("Invalid recv size")))?.1;
+        }
+        Ok(recv + rem)
+    }
 
     /// Sends a fastboot packet.
     ///
@@ -148,15 +163,29 @@ fn is_protected_command<'a>(mut args: impl Iterator<Item = &'a CStr> + Clone) ->
 /// implements this trait instead of `Transport`, and uses the API `Fastboot::run_tcp_session()`
 /// to perform fastboot over TCP. It internally handles handshake and wire message parsing.
 pub trait TcpStream {
+    /// Read data from the TCP connection.
+    ///
+    /// On success, returns the actual amount read.
+    async fn read(&mut self, out: &mut [u8]) -> Result<usize>;
+
     /// Reads to `out` for exactly `out.len()` number bytes from the TCP connection.
-    async fn read_exact(&mut self, out: &mut [u8]) -> Result<()>;
+    async fn read_exact(&mut self, mut out: &mut [u8]) -> Result<()> {
+        while !out.is_empty() {
+            let sz = self.read(out).await?;
+            out = out.split_at_mut(sz).1;
+        }
+        Ok(())
+    }
 
     /// Sends exactly `data.len()` number bytes from `data` to the TCP connection.
     async fn write_exact(&mut self, data: &[u8]) -> Result<()>;
 }
 
 /// Implements [Transport] on a [TcpStream].
-pub struct TcpTransport<'a, T: TcpStream>(&'a mut T);
+pub struct TcpTransport<'a, T: TcpStream> {
+    tcp: &'a mut T,
+    remaining_packet: usize,
+}
 
 impl<'a, T: TcpStream> TcpTransport<'a, T> {
     /// Creates an instance from a newly connected TcpStream and performs handshake.
@@ -165,29 +194,28 @@ impl<'a, T: TcpStream> TcpTransport<'a, T> {
         block_on(tcp_stream.write_exact(TCP_HANDSHAKE_MESSAGE))?;
         block_on(tcp_stream.read_exact(&mut handshake[..]))?;
         match handshake == *TCP_HANDSHAKE_MESSAGE {
-            true => Ok(Self(tcp_stream)),
+            true => Ok(Self { tcp: tcp_stream, remaining_packet: 0 }),
             _ => Err(Error::InvalidHandshake),
         }
     }
 }
 
 impl<'a, T: TcpStream> Transport for TcpTransport<'a, T> {
-    async fn receive_packet(&mut self, out: &mut [u8]) -> Result<usize> {
-        let mut length_prefix = [0u8; 8];
-        self.0.read_exact(&mut length_prefix[..]).await?;
-        let packet_size: usize = u64::from_be_bytes(length_prefix).try_into()?;
-        match out.len() < packet_size {
-            true => Err(Error::InvalidInput),
-            _ => {
-                self.0.read_exact(&mut out[..packet_size]).await?;
-                Ok(packet_size)
-            }
+    async fn receive(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
+        if self.remaining_packet == 0 {
+            let mut length_prefix = [0u8; 8];
+            self.tcp.read_exact(&mut length_prefix[..]).await?;
+            self.remaining_packet = u64::from_be_bytes(length_prefix).try_into()?;
         }
+        let to_read = min(self.remaining_packet, out.len());
+        let sz = self.tcp.read(&mut out[..to_read]).await?;
+        self.remaining_packet -= sz;
+        Ok((sz, self.remaining_packet))
     }
 
     async fn send_packet(&mut self, packet: &[u8]) -> Result<()> {
-        self.0.write_exact(&mut u64::try_from(packet.len())?.to_be_bytes()[..]).await?;
-        self.0.write_exact(packet).await
+        self.tcp.write_exact(&mut u64::try_from(packet.len())?.to_be_bytes()[..]).await?;
+        self.tcp.write_exact(packet).await
     }
 }
 
@@ -1273,8 +1301,8 @@ pub fn next_arg_u64<'a, T: Iterator<Item = &'a str>>(args: &mut T) -> CommandRes
 #[cfg(test)]
 mod test {
     use super::*;
-    use core::cmp::min;
     use std::collections::{BTreeMap, VecDeque};
+    use std::io::Read;
 
     enum OemResponse {
         Okay(String),
@@ -1444,7 +1472,7 @@ mod test {
     }
 
     struct TestTransport {
-        in_queue: VecDeque<Vec<u8>>,
+        in_queue: VecDeque<VecDeque<u8>>,
         out_queue: VecDeque<Vec<u8>>,
     }
 
@@ -1454,18 +1482,17 @@ mod test {
         }
 
         fn add_input(&mut self, packet: &[u8]) {
-            self.in_queue.push_back(packet.into());
+            self.in_queue.push_back(packet.to_vec().into());
         }
     }
 
     impl Transport for TestTransport {
-        async fn receive_packet(&mut self, out: &mut [u8]) -> Result<usize> {
-            match self.in_queue.pop_front() {
+        async fn receive(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
+            match self.in_queue.front_mut() {
                 Some(v) => {
-                    let size = min(out.len(), v.len());
-                    out[..size].clone_from_slice(&v[..size]);
-                    // Returns the input length so that we can test bogus download size.
-                    Ok(v.len())
+                    let (sz, rem) = v.read(out).map(|s| (s, v.len())).unwrap();
+                    (rem == 0).then(|| self.in_queue.pop_front());
+                    Ok((sz, rem))
                 }
                 _ => Err(Error::Other(Some("No more data"))),
             }
@@ -1497,11 +1524,11 @@ mod test {
     }
 
     impl TcpStream for TestTcpStream {
-        async fn read_exact(&mut self, out: &mut [u8]) -> Result<()> {
-            for ele in out {
-                *ele = self.in_queue.pop_front().ok_or(Error::OperationProhibited)?;
+        async fn read(&mut self, out: &mut [u8]) -> Result<usize> {
+            match self.in_queue.read(out).unwrap() {
+                0 => Err(Error::OperationProhibited),
+                v => Ok(v),
             }
-            Ok(())
         }
 
         async fn write_exact(&mut self, data: &[u8]) -> Result<()> {
@@ -1698,16 +1725,9 @@ mod test {
         let mut transport = TestTransport::new();
         transport.add_input(format!("download:{:#x}", download_content.len() - 1).as_bytes());
         transport.add_input(&download_content[..]);
-        // State should be reset to command state.
-        transport.add_input(b"getvar:max-download-size");
-        let _ = block_on(run(&mut transport, &mut fastboot_impl));
         assert_eq!(
-            transport.out_queue,
-            VecDeque::<Vec<u8>>::from([
-                b"DATA000003ff".into(),
-                b"FAILMore data received then expected".into(),
-                b"OKAY0x400".into(),
-            ])
+            block_on(run(&mut transport, &mut fastboot_impl)),
+            Err(Error::BufferTooSmall(Some(1024))),
         );
     }
 
@@ -2007,14 +2027,15 @@ mod test {
     }
 
     #[test]
-    fn test_fastboot_tcp_packet_size_exceeds_maximum() {
+    fn test_fastboot_tcp_packet_size_exceeds_buffer() {
         let mut fastboot_impl: FastbootTest = Default::default();
         let mut tcp_stream: TestTcpStream = Default::default();
         tcp_stream.add_input(TCP_HANDSHAKE_MESSAGE);
         tcp_stream.add_input(&(MAX_COMMAND_SIZE + 1).to_be_bytes());
+        tcp_stream.add_input(&vec![0u8; MAX_COMMAND_SIZE + 1]);
         assert_eq!(
             block_on(run_tcp_session(&mut tcp_stream, &mut fastboot_impl)).unwrap_err(),
-            Error::InvalidInput
+            Error::BufferTooSmall(Some(4097))
         );
     }
 

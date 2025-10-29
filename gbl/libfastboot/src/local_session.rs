@@ -26,8 +26,8 @@ pub trait LocalSession {
 }
 
 impl<T: LocalSession> Transport for T {
-    async fn receive_packet(&mut self, out: &mut [u8]) -> Result<usize> {
-        self.update(out).await
+    async fn receive(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
+        Ok((self.update(out).await?, 0))
     }
 
     async fn send_packet(&mut self, buf: &[u8]) -> Result<()> {

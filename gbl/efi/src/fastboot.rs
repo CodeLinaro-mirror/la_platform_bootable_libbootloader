@@ -72,9 +72,8 @@ mod network_fastboot {
     }
 
     impl TcpStream for EfiFastbootTcpTransport<'_, '_, '_> {
-        /// Reads to `out` for exactly `out.len()` number bytes from the TCP connection.
-        async fn read_exact(&mut self, out: &mut [u8]) -> Result<()> {
-            self.socket.receive_exact(out, DEFAULT_TIMEOUT).await
+        async fn read(&mut self, out: &mut [u8]) -> Result<usize> {
+            self.socket.receive(out, DEFAULT_TIMEOUT).await
         }
 
         /// Sends exactly `data.len()` number bytes from `data` to the TCP connection.
@@ -151,7 +150,7 @@ mod network_fastboot {
     pub(super) struct NoOpTcp {}
 
     impl TcpStream for NoOpTcp {
-        async fn read_exact(&mut self, _out: &mut [u8]) -> Result<()> {
+        async fn read(&mut self, _out: &mut [u8]) -> Result<usize> {
             unimplemented!();
         }
 
@@ -211,7 +210,7 @@ impl<'a> UsbTransport<'a> {
 }
 
 impl Transport for UsbTransport<'_> {
-    async fn receive_packet(&mut self, out: &mut [u8]) -> Result<usize> {
+    async fn receive(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
         let len = match &mut self.prefetched {
             (pkt, len) if *len > 0 => {
                 let out = out.get_mut(..*len).ok_or(Error::BufferTooSmall(Some(*len)))?;
@@ -232,7 +231,9 @@ impl Transport for UsbTransport<'_> {
         // threshold. This is to prevent the async code from holding up the CPU for too long
         // in case IO speed is high and the executor uses cooperative scheduling.
         self.io_yield_counter.increment(len.try_into().unwrap()).await;
-        Ok(len)
+        // Notes: For `ReceiveMode::FixedLength` mode, any amount of data can be considered as a
+        // packet. We rely on the backend to handle partial physical packet.
+        Ok((len, 0))
     }
 
     /// Sends data over the USB channel.

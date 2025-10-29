@@ -388,34 +388,35 @@ impl<'a, 'b> EfiTcpSocket<'a, 'b> {
         self.io_yield_counter = YieldCounter::new(threshold)
     }
 
-    /// Receives exactly `out.len()` number of bytes to `out`.
-    pub async fn receive_exact(&mut self, out: &mut [u8], timeout: Duration) -> Result<()> {
+    /// Receives any non-zero amount of data.
+    ///
+    /// Returns Ok(0) if `out` is empty;
+    pub async fn receive(&mut self, out: &mut [u8], timeout: Duration) -> Result<usize> {
         let timer = Timeout::new(self.efi_entry, timeout)?;
         let mut curr = &mut out[..];
         while !curr.is_empty() {
             self.poll();
-            let mut has_progress = false;
 
+            let mut recv_size = 0;
             if self.is_closed() {
                 return Err(Error::Disconnected);
             } else if timer.check()? {
                 return Err(Error::Timeout);
             } else if self.get_socket().can_recv() {
-                let recv_size = self.get_socket().recv_slice(curr).map_err(recv_to_unified)?;
+                recv_size = self.get_socket().recv_slice(curr).map_err(recv_to_unified)?;
                 curr = curr.get_mut(recv_size..).ok_or(Error::BadIndex(recv_size))?;
-                has_progress = recv_size > 0;
                 // Forces a yield to the executor if the data received/sent reaches a certain
                 // threshold. This is to prevent the async code from holding up the CPU for too long
                 // in case IO speed is high and the executor uses cooperative scheduling.
                 self.io_yield_counter.increment(recv_size.try_into().unwrap()).await;
             }
 
-            match has_progress {
-                true => timer.reset(timeout)?,
+            match recv_size > 0 {
+                true => return Ok(recv_size),
                 _ => yield_now().await,
             }
         }
-        Ok(())
+        Ok(out.len())
     }
 
     /// Sends exactly `data.len()` number of bytes from `data`.
