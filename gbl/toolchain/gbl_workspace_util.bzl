@@ -109,6 +109,9 @@ LINUX_SYSROOT_INCLUDES = \"{}\"
 
     # Add a BUILD file to make it a package
     repo_ctx.file("BUILD", """
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
 package(
     default_visibility = ["//visibility:public"],
 )
