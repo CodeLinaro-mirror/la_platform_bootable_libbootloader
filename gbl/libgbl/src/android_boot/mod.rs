@@ -611,7 +611,7 @@ impl<'a> BootBuffer<'a> {
     }
 
     /// Creates an instance that borrows internal fields.
-    pub fn as_borrowed(&mut self) -> BootBuffer {
+    pub fn as_borrowed(&mut self) -> BootBuffer<'_> {
         BootBuffer {
             boot_items: self.boot_items.as_borrowed(),
             kernel: self.kernel.as_mut().map(|v| v as _),
@@ -1999,7 +1999,7 @@ androidboot.veritymode.managed=yes
     }
 
     /// Helper for getting default FakeGblOps for tests.
-    pub(crate) fn default_test_gbl_ops(storage: &FakeGblOpsStorage) -> FakeGblOps {
+    pub(crate) fn default_test_gbl_ops(storage: &FakeGblOpsStorage) -> FakeGblOps<'_, 'static> {
         let mut ops = FakeGblOps::new(&storage);
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));

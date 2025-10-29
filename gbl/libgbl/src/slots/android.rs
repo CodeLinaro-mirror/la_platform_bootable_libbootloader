@@ -288,7 +288,7 @@ impl super::private::SlotGet for SlotBlock<BootloaderControl> {
 }
 
 impl Manager for SlotBlock<BootloaderControl> {
-    fn slots_iter(&self) -> SlotIterator {
+    fn slots_iter(&self) -> SlotIterator<'_> {
         SlotIterator::new(self)
     }
 

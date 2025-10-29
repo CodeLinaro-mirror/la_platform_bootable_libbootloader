@@ -118,6 +118,8 @@ rust_library(
         "unreachable_patterns",
         "-A",
         "unused_variables",
+        "-A",
+        "mismatched_lifetime_syntaxes",
     ],
     # TCP in the bootloader can be a significant attack vector, only allow
     # it for dev boards.

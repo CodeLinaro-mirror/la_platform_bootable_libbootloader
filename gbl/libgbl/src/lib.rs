@@ -27,10 +27,7 @@
 
 #![feature(never_type)]
 #![cfg_attr(not(any(test, android_dylib)), no_std)]
-// TODO: b/312610985 - return warning for unused partitions
 #![allow(async_fn_in_trait)]
-// Needed for MaybeUninit::fill() experimental API
-#![feature(maybe_uninit_fill)]
 extern crate avb;
 extern crate core;
 extern crate gbl_storage;

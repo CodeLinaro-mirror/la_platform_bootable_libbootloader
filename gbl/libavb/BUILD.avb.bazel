@@ -213,7 +213,6 @@ rust_bindgen(
         "--bitfield-enum=Avb.*Flags",
         "--default-enum-style=rust",
         "--newtype-global-enum=AvbSHACtxTag",
-        "--with-derive-partialeq",
         "--with-derive-default",
         "--with-derive-custom=Avb.*Descriptor=FromBytes,Immutable,KnownLayout",
         "--with-derive-custom=AvbVBMetaImageHeader=FromBytes,Immutable,KnownLayout",
@@ -269,6 +268,7 @@ rust_library(
     srcs = glob(["rust/src/**/*.rs"]),
     crate_features = ["uuid"],
     edition = "2021",
+    rustc_flags = ["--allow=mismatched_lifetime_syntaxes"],
     deps = [
         ":avb_bindgen",
         ":libavb_c_staticlib",

@@ -64,7 +64,7 @@ unsafe fn slice_assume_init_ref<T>(slice: &[MaybeUninit<T>]) -> &[T] {
 
 impl ImageBuffer<'_> {
     /// Create new ImageBuffer from buffer and used_bytes
-    pub fn new(image_type: ImageType, buffer: &mut [MaybeUninit<u8>]) -> Result<ImageBuffer> {
+    pub fn new(image_type: ImageType, buffer: &mut [MaybeUninit<u8>]) -> Result<ImageBuffer<'_>> {
         if buffer.as_ptr().align_offset(image_type.alignment()) != 0 {
             return Err(Error::InvalidAlignment);
         }
@@ -179,7 +179,7 @@ mod test {
             Self { image_type, buf: AlignedBuffer::new_with_data(data, image_type.alignment()) }
         }
 
-        pub fn get(&mut self) -> ImageBuffer {
+        pub fn get(&mut self) -> ImageBuffer<'_> {
             ImageBuffer::new(self.image_type, Self::slice_assume_not_init_mut(&mut self.buf))
                 .unwrap()
         }

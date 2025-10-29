@@ -663,7 +663,7 @@ rust_toolchain(
                     "disable-redzone": true,
                     "dll-tls-export": false,
                     "emit-debug-gdb-scripts": false,
-                    "entry-abi": "X86_64Win64",
+                    "entry-abi": "win64",
                     "entry-name": "efi_main",
                     "exe-suffix": ".efi",
                     "features": "-mmx,-sse,+soft-float",

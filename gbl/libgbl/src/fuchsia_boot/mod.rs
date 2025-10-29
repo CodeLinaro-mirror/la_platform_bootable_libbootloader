@@ -175,7 +175,7 @@ fn zircon_load_verify<'a, 'd>(
     let init_len = zbi_items_img.tail().len();
     // TODO(b/379787423): it is possible to optimize this initialisation by treating
     // `zbi_items_img` same as kernel image (&[MaybeUninit]).
-    MaybeUninit::fill(zbi_items_img.tail(), 0);
+    zbi_items_img.tail().fill(MaybeUninit::zeroed());
 
     // SAFETY: buffer was fully filled with 0 which is valid init value for u8
     unsafe {
@@ -466,7 +466,7 @@ pub(crate) mod test {
             )
         }
 
-        pub fn get(&mut self) -> HashMap<ImageType, LinkedList<ImageBuffer>> {
+        pub fn get(&mut self) -> HashMap<ImageType, LinkedList<ImageBuffer<'_>>> {
             self.0
                 .iter_mut()
                 .map(|(key, val_vec)| {

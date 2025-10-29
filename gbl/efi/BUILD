@@ -45,6 +45,7 @@ rust_library(
         "@gbl//toolchain:prod": [":libgbl_efi_prod_files"],
     }),
     crate_name = "gbl_efi",
+    edition = "2024",
     proc_macro_deps = ["@gbl//libprofile:libprofile_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [

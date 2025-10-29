@@ -49,10 +49,6 @@
 //! ```
 
 #![cfg_attr(not(test), no_std)]
-// This feature is stable in 1.89.0, but several dependent crates raise linter
-// warnings when upgrading the toolchain. Just enable this feature for now and remove
-// when toolchain is upreved to 1.89.0.
-#![feature(non_null_from_ref)]
 #![feature(never_type)]
 
 extern crate alloc;
@@ -144,12 +140,12 @@ impl EfiEntry {
     /// Gets an instance of `SystemTable`.
     ///
     /// Panics if the pointer is NULL.
-    pub fn system_table(&self) -> SystemTable {
+    pub fn system_table(&self) -> SystemTable<'_> {
         self.system_table_checked().unwrap()
     }
 
     /// Gets an instance of `SystemTable` if pointer is valid.
-    pub fn system_table_checked(&self) -> Result<SystemTable> {
+    pub fn system_table_checked(&self) -> Result<SystemTable<'_>> {
         // SAFETY: Pointers to UEFI data strucutres.
         Ok(SystemTable {
             efi_entry: self,
@@ -226,7 +222,7 @@ pub unsafe fn initialize(
 ///
 /// Existing heap allocated memories will maintain their states. All system memory including them
 /// will be under onwership of the subsequent OS or OS loader code.
-pub fn exit_boot_services(entry: EfiEntry, mmap_buffer: &mut [u8]) -> Result<EfiMemoryMap> {
+pub fn exit_boot_services(entry: EfiEntry, mmap_buffer: &mut [u8]) -> Result<EfiMemoryMap<'_>> {
     let aligned = aligned_subslice(mmap_buffer, core::mem::align_of::<EfiMemoryDescriptor>())
         .inspect_err(|e| report_error_and_reset(&entry, e, GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR))?;
 
@@ -1211,8 +1207,9 @@ pub unsafe fn report_error_and_reset_with_global_entry<P: core::fmt::Display>(
     // Safety:
     // * It is the caller's responsibility to guarantee that the global EfiEntry has
     //   been initialized and is live and valid.
-    let _ =
-        unsafe { with_global_efi_entry(|entry| report_error_and_reset(entry, panic_info, tag)) };
+    let _ = unsafe {
+        with_global_efi_entry::<_, ()>(|entry| report_error_and_reset(entry, panic_info, tag))
+    };
     loop {}
 }
 

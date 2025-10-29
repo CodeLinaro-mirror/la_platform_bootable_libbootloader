@@ -60,7 +60,7 @@ pub fn get_device_path<'a>(
 }
 
 /// Helper function to get the loaded image path.
-pub fn loaded_image_path(entry: &EfiEntry) -> Result<DevicePathText> {
+pub fn loaded_image_path(entry: &EfiEntry) -> Result<DevicePathText<'_>> {
     get_device_path(
         entry,
         entry
@@ -248,8 +248,8 @@ impl VendorReservedMemory {
     /// Gets the buffer
     fn get(&mut self) -> &mut [u8] {
         match self {
-            Self::Legacy(ref mut v) => v,
-            Self::Buffer(ref mut v) => v,
+            Self::Legacy(v) => v,
+            Self::Buffer(v) => v,
         }
     }
 }

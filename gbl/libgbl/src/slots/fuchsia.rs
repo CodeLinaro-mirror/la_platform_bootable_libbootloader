@@ -186,7 +186,7 @@ impl Manager for SlotBlock<AbrData> {
             .map_or(BootTarget::Recovery(RecoveryTarget::Dedicated), BootTarget::NormalBoot))
     }
 
-    fn slots_iter(&self) -> SlotIterator {
+    fn slots_iter(&self) -> SlotIterator<'_> {
         SlotIterator::new(self)
     }
 

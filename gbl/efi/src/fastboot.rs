@@ -261,7 +261,7 @@ impl Drop for UsbTransport<'_> {
 }
 
 /// Initializes the Fastboot USB interface and returns a `UsbTransport`.
-fn init_usb(efi_entry: &EfiEntry) -> Result<UsbTransport> {
+fn init_usb(efi_entry: &EfiEntry) -> Result<UsbTransport<'_>> {
     let protocol = efi_entry
         .system_table()
         .boot_services()

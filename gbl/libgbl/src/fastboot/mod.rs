@@ -2378,7 +2378,7 @@ pub(crate) mod test {
 
     impl<'a> SharedTestListener<'a> {
         /// Locks the listener
-        fn lock(&self) -> MutexGuard<TestListener<'a>> {
+        fn lock(&self) -> MutexGuard<'_, TestListener<'a>> {
             self.0.try_lock().unwrap()
         }
 

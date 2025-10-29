@@ -647,7 +647,7 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
     /// Returns an iterator to GPT partition entries.
     ///
     /// If the object does not contain a valid GPT, the method returns Error.
-    pub fn partition_iter(&self) -> Result<PartitionIterator> {
+    pub fn partition_iter(&self) -> Result<PartitionIterator<'_>> {
         let block_size = self.check_valid()?;
         let load = LoadBufferRef::from(&self.buffer[..]);
         let entries_count = load.primary_header.entries_count;

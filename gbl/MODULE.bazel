@@ -140,6 +140,8 @@ gbl_rust_crate_repository(
     rustc_flags = [
         "-A",
         "unused_imports",
+        "-A",
+        "mismatched_lifetime_syntaxes",
     ],
 )
 
@@ -157,6 +159,8 @@ gbl_rust_crate_repository(
         "unused_macros",
         "-A",
         "redundant_semicolons",
+        "-A",
+        "mismatched_lifetime_syntaxes",
     ],
 )
 
@@ -216,6 +220,8 @@ gbl_rust_crate_repository(
     rustc_flags = [
         "-A",
         "dead_code",
+        "-A",
+        "mismatched_lifetime_syntaxes",
     ],
 )
 

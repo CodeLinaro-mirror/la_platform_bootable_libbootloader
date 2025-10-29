@@ -111,7 +111,7 @@ impl<'a> BootItemContainer<'a> {
     }
 
     /// Creates an instance that borrows internal fields.
-    pub(crate) fn as_borrowed(&mut self) -> BootItemContainer {
+    pub(crate) fn as_borrowed(&mut self) -> BootItemContainer<'_> {
         BootItemContainer(self.0)
     }
 
@@ -154,7 +154,7 @@ impl<'a> BootItemContainer<'a> {
     }
 
     /// Returns an iterator to all items.
-    pub(crate) fn iter(&self) -> BootItemContainerIter {
+    pub(crate) fn iter(&self) -> BootItemContainerIter<'_> {
         match parse_checked(&self.0[..]) {
             Ok((header, payload)) => BootItemContainerIter(&payload[..header.total_size]),
             Err(_) => BootItemContainerIter(&[][..]),

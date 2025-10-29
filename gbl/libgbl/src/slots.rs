@@ -328,7 +328,7 @@ pub struct BootToken(pub(crate) ());
 /// representation of slot metadata.
 pub trait Manager: private::SlotGet {
     /// Returns an iterator over all regular slots on the system.
-    fn slots_iter(&self) -> SlotIterator;
+    fn slots_iter(&self) -> SlotIterator<'_>;
 
     /// Returns the current active slot,
     /// or Recovery if the system will try to boot to recovery.
