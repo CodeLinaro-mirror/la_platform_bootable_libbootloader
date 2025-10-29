@@ -2363,7 +2363,7 @@ pub(crate) mod test {
     /// Used for a test implementation of [GblUsbTransport] and [GblTcpStream].
     #[derive(Default)]
     struct TestListener<'a> {
-        usb_in_queue: VecDeque<Result<Vec<u8>, Error>>,
+        usb_in_queue: VecDeque<Result<VecDeque<u8>, Error>>,
         usb_out_queue: VecDeque<Vec<u8>>,
         // Optional closure for injecting send errors.
         usb_out_err: Option<&'a mut dyn FnMut(&[u8]) -> Result<(), Error>>,
@@ -2384,7 +2384,7 @@ pub(crate) mod test {
 
         /// Adds packet to USB input
         pub(crate) fn add_usb_input(&self, packet: &[u8]) {
-            self.lock().usb_in_queue.push_back(Ok(packet.into()));
+            self.lock().usb_in_queue.push_back(Ok(packet.to_vec().into()));
         }
 
         /// Adds packet to USB input
@@ -2440,9 +2440,13 @@ pub(crate) mod test {
     }
 
     impl Transport for &SharedTestListener<'_> {
-        async fn receive_packet(&mut self, out: &mut [u8]) -> Result<usize, Error> {
+        async fn receive(&mut self, out: &mut [u8]) -> Result<(usize, usize), Error> {
             match self.lock().usb_in_queue.pop_front() {
-                Some(Ok(v)) => Ok((&v[..]).read(out).unwrap()),
+                Some(Ok(mut v)) => {
+                    let (sz, rem) = v.read(out).map(|s| (s, v.len())).unwrap();
+                    (rem > 0).then(|| Some(self.lock().usb_in_queue.push_front(Ok(v))));
+                    Ok((sz, rem))
+                }
                 Some(Err(e)) => Err(e),
                 _ => Err(Error::Other(Some("No more data"))),
             }
@@ -2461,10 +2465,10 @@ pub(crate) mod test {
     }
 
     impl TcpStream for &SharedTestListener<'_> {
-        async fn read_exact(&mut self, out: &mut [u8]) -> Result<(), Error> {
-            match self.lock().tcp_in_queue.read(out).unwrap() == out.len() {
-                true => Ok(()),
-                _ => Err(Error::Other(Some("No more data"))),
+        async fn read(&mut self, out: &mut [u8]) -> Result<usize, Error> {
+            match self.lock().tcp_in_queue.read(out).unwrap() {
+                0 => Err(Error::Other(Some("No more data"))),
+                v => Ok(v),
             }
         }
 
