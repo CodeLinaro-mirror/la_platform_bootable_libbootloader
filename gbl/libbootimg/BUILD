@@ -32,9 +32,14 @@ genrule(
 
 cc_library(
     name = "bootimg_cc_header",
-    srcs = [":bindgen_noop_cc"],
-    hdrs = ["bootimg_bindgen.h"],
-    deps = ["@mkbootimg//:bootimg_header"],
+    srcs = [
+        ":bindgen_noop_cc",
+    ],
+    hdrs = [
+        "bootimg_bindgen.h",
+        "mkbootimg/include/bootimg/bootimg.h",
+    ],
+    includes = ["mkbootimg/include"],
 )
 
 # The following genernates rust binding for C definitions in `bootimg.h`. It uses the same
@@ -84,7 +89,7 @@ use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout};""",
 genrule(
     name = "bootimg_sources_gen",
     srcs = [
-        "@mkbootimg//:rust/bootimg.rs",
+        "mkbootimg/rust/bootimg.rs",
         ":bootimg_defs_bindgen",
     ],
     outs = [
@@ -100,7 +105,7 @@ genrule(
 )
 
 rust_library(
-    # The naming is expected by "@mkbootimg//:rust/bootimg.rs".
+    # The naming is expected by "mkbootimg/rust/bootimg.rs".
     name = "bootimg_bindgen",
     srcs = ["src/defs.rs"],
     crate_root = "src/defs.rs",
