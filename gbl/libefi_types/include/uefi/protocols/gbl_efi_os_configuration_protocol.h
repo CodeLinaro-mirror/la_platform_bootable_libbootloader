@@ -29,7 +29,7 @@
 #ifndef __GBL_OS_CONFIGURATION_PROTOCOL_H__
 #define __GBL_OS_CONFIGURATION_PROTOCOL_H__
 
-#include "types.h"
+#include <uefi/types.h>
 
 EFI_ENUM(GblEfiDeviceTreeType, uint32_t,
          // HLOS device tree.

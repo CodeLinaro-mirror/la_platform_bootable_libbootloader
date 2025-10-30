@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,24 +23,33 @@
  * terms apply by default.
  */
 
-#ifndef __SIMPLE_TEXT_INPUT_PROTOCOL_H__
-#define __SIMPLE_TEXT_INPUT_PROTOCOL_H__
+#ifndef __LOADED_IMAGE_PROTOCOL_H__
+#define __LOADED_IMAGE_PROTOCOL_H__
 
-#include "types.h"
+#include <uefi/gbl_protocol_utils.h>
+#include <uefi/system_table.h>
+#include <uefi/types.h>
 
-typedef struct EfiInputKey {
-  uint16_t scan_code;
-  uint16_t unicode_char;
-} EfiInputKey;
+#include "device_path_protocol.h"
 
-typedef struct EfiSimpleTextInputProtocol {
-  EfiStatus (*reset)(struct EfiSimpleTextInputProtocol* self,
-                     bool extendend_verification);
+static const uint32_t EFI_LOADED_IMAGE_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(1, 0);
 
-  EfiStatus (*read_key_stroke)(struct EfiSimpleTextInputProtocol* self,
-                               EfiInputKey* key);
+typedef struct {
+  uint32_t revision;
+  EfiHandle parent_handle;
+  EfiSystemTable* system_table;
+  EfiHandle device_handle;
+  EfiDevicePathToTextProtocol* file_path;
+  void* reserved;
+  uint32_t load_options_size;
+  void* load_options;
+  void* image_base;
+  uint64_t image_size;
+  EfiMemoryType image_code_type;
+  EfiMemoryType image_data_type;
 
-  EfiEvent wait_for_key;
-} EfiSimpleTextInputProtocol;
+  EfiStatus (*unload)(EfiHandle img);
+} EfiLoadedImageProtocol;
 
-#endif  // __SIMPLE_TEXT_INPUT_PROTOCOL_H__
+#endif

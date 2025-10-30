@@ -17,7 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "efi.h"
+#include <uefi/efi.h>
 
 /*
  * When adding stack protector calls to functions, LLVM doesn't treat the

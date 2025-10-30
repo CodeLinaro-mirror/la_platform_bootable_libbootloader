@@ -26,7 +26,7 @@
 #ifndef __DEVICE_PATH_PROTOCOL_H__
 #define __DEVICE_PATH_PROTOCOL_H__
 
-#include "types.h"
+#include <uefi/types.h>
 
 typedef struct EfiDevicePathProtocol {
   uint8_t type;

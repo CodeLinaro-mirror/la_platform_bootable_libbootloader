@@ -26,8 +26,8 @@
 #ifndef __BLOCK_IO_PROTOCOL_H__
 #define __BLOCK_IO_PROTOCOL_H__
 
-#include "gbl_protocol_utils.h"
-#include "types.h"
+#include <uefi/gbl_protocol_utils.h>
+#include <uefi/types.h>
 
 typedef struct EfiBlockIoMedia EfiBlockIoMedia;
 typedef struct EfiBlockIoProtocol EfiBlockIoProtocol;

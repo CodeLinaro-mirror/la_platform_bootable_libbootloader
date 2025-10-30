@@ -28,7 +28,7 @@
 
 #include <stddef.h>
 
-#include "types.h"
+#include <uefi/types.h>
 
 static const uint64_t GBL_EFI_IMAGE_LOADING_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 1);

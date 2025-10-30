@@ -23,20 +23,18 @@
  * terms apply by default.
  */
 
-#ifndef __RANDOM_NUMBER_GENERATOR_PROTOCOL__
-#define __RANDOM_NUMBER_GENERATOR_PROTOCOL__
+#ifndef __SERVICE_BINDING_PROTOCOL_H__
+#define __SERVICE_BINDING_PROTOCOL_H__
 
-#include "types.h"
+#include <uefi/types.h>
 
-typedef EfiGuid EfiRngAlgorithm;
-typedef struct EfiRngProtocol EfiRngProtocol;
+typedef struct EfiServiceBindingProtocol EfiServiceBindingProtocol;
 
-struct EfiRngProtocol {
-  EfiStatus (*get_info)(EfiRngProtocol *self, size_t *rng_algorithm_list_size,
-                        EfiRngAlgorithm *rng_algorithm_list);
-  EfiStatus (*get_rng)(EfiRngProtocol *self,
-                       const EfiRngAlgorithm *rng_algorithm,
-                       size_t rng_value_length, uint8_t *rng_value);
+struct EfiServiceBindingProtocol {
+  EfiStatus (*create_child)(EfiServiceBindingProtocol* self,
+                            EfiHandle* child_handle);
+  EfiStatus (*destroy_child)(EfiServiceBindingProtocol* self,
+                             EfiHandle child_handle);
 };
 
-#endif  // __RANDOM_NUMBER_GENERATOR_PROTOCOL__
+#endif  // __SERVICE_BINDING_PROTOCOL_H__

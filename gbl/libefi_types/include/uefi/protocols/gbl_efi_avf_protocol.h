@@ -29,7 +29,7 @@
 #ifndef __GBL_AVF_PROTOCOL_H__
 #define __GBL_AVF_PROTOCOL_H__
 
-#include "types.h"
+#include <uefi/types.h>
 
 static const uint64_t GBL_EFI_AVF_PROTOCOL_REVISION =
     GBL_PROTOCOL_REVISION(0, 1);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,18 +23,19 @@
  * terms apply by default.
  */
 
-#ifndef __GBL_EFI_COMMON_H__
-#define __GBL_EFI_COMMON_H__
+#ifndef __TIMESTAMP_PROTOCOL_H__
+#define __TIMESTAMP_PROTOCOL_H__
 
-#include <types.h>
+#include <uefi/types.h>
 
-#define GBL_EFI_VENDOR_GUID                                     \
-  EfiGuid {                                                     \
-    .data1=0x5a6d92f3,                                          \
-      .data2=0xa2d0,                                            \
-      .data3=0x4083,                                            \
-      .data4=[0x91, 0xa1, 0xa5, 0x0f, 0x6c, 0x3d, 0x98, 0x30]   \
-  }
-#define GBL_EFI_OS_BOOT_TARGET_VARNAME "gbl_os_boot_fuchsia"
+typedef struct {
+  uint64_t frequency;
+  uint64_t end_value;
+} EfiTimestampProperties;
 
-#endif  /* __GBL_EFI_COMMON_H__ */
+struct EfiTimestampProtocol {
+  uint64_t (*get_timestamp)(void);
+  EfiStatus (*get_properties)(EfiTimestampProperties*);
+};
+
+#endif  //__TIMESTAMP_PROTOCOL_H__

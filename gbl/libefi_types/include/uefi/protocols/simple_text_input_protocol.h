@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,18 +23,24 @@
  * terms apply by default.
  */
 
-#ifndef __SERVICE_BINDING_PROTOCOL_H__
-#define __SERVICE_BINDING_PROTOCOL_H__
+#ifndef __SIMPLE_TEXT_INPUT_PROTOCOL_H__
+#define __SIMPLE_TEXT_INPUT_PROTOCOL_H__
 
-#include "types.h"
+#include <uefi/types.h>
 
-typedef struct EfiServiceBindingProtocol EfiServiceBindingProtocol;
+typedef struct EfiInputKey {
+  uint16_t scan_code;
+  uint16_t unicode_char;
+} EfiInputKey;
 
-struct EfiServiceBindingProtocol {
-  EfiStatus (*create_child)(EfiServiceBindingProtocol* self,
-                            EfiHandle* child_handle);
-  EfiStatus (*destroy_child)(EfiServiceBindingProtocol* self,
-                             EfiHandle child_handle);
-};
+typedef struct EfiSimpleTextInputProtocol {
+  EfiStatus (*reset)(struct EfiSimpleTextInputProtocol* self,
+                     bool extendend_verification);
 
-#endif  // __SERVICE_BINDING_PROTOCOL_H__
+  EfiStatus (*read_key_stroke)(struct EfiSimpleTextInputProtocol* self,
+                               EfiInputKey* key);
+
+  EfiEvent wait_for_key;
+} EfiSimpleTextInputProtocol;
+
+#endif  // __SIMPLE_TEXT_INPUT_PROTOCOL_H__

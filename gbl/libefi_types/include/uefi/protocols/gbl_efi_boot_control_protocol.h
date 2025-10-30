@@ -28,8 +28,8 @@
 
 #include <stdint.h>
 
-#include "system_table.h"
-#include "types.h"
+#include <uefi/system_table.h>
+#include <uefi/types.h>
 
 EFI_ENUM(GblEfiUnbootableReason, uint8_t,
          GBL_EFI_UNBOOTABLE_REASON_UNKNOWN_REASON,

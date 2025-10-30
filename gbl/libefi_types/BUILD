@@ -35,8 +35,8 @@ genrule(
 cc_library(
     name = "efi_c_headers",
     srcs = [":bindgen_noop_cc"],
-    hdrs = glob(["defs/**/*.h"]),
-    includes = ["defs"],
+    hdrs = glob(["include/**/*.h"]),
+    includes = ["include"],
 )
 
 # TODO(b/443135241): Use --new-type-alias for bitmask typedef consts, e.g GblEfiAvbBootColor
@@ -87,7 +87,7 @@ use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout, Unaligned};""",
         "-x",
         "c++",
     ],
-    header = "defs/efi.h",
+    header = "include/uefi/efi.h",
 )
 
 # Copy the generated source to "src/defs.rs" in the output assembly, so that libefi can include it
@@ -130,6 +130,6 @@ rust_doc_test(
 # Refer to top-level README.md "Licesing" section.
 spdx_license_test(
     name = "gbl_protocols_license_test",
-    srcs = glob(["defs/**/*.h"]),
+    srcs = glob(["include/**/*.h"]),
     expected_spdx_identifier = "Apache-2.0 OR BSD-2-Clause-Patent",
 )
