@@ -40,7 +40,7 @@ typedef struct {
   EfiHandle parent_handle;
   EfiSystemTable* system_table;
   EfiHandle device_handle;
-  EfiDevicePathToTextProtocol* file_path;
+  EfiDevicePathProtocol* file_path;
   void* reserved;
   uint32_t load_options_size;
   void* load_options;
