@@ -61,14 +61,15 @@ pub fn get_device_path<'a>(
 
 /// Helper function to get the loaded image path.
 pub fn loaded_image_path(entry: &EfiEntry) -> Result<DevicePathText<'_>> {
-    get_device_path(
-        entry,
-        entry
-            .system_table()
-            .boot_services()
-            .open_protocol::<LoadedImageProtocol>(entry.image_handle())?
-            .device_handle(),
-    )
+    let bs = entry.system_table().boot_services();
+    let path_to_text = bs.find_first_and_open::<DevicePathToTextProtocol>()?;
+    let loaded_image = bs.open_protocol::<LoadedImageProtocol>(entry.image_handle())?;
+    if let Ok(file_path) = loaded_image.file_path() {
+        path_to_text.convert_device_path_to_text(&file_path, false, false)
+    } else {
+        let device_path = bs.open_protocol::<DevicePathProtocol>(loaded_image.device_handle())?;
+        path_to_text.convert_device_path_to_text(&device_path, false, false)
+    }
 }
 
 /// Helper function to get the loaded image base address.

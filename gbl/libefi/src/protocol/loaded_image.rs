@@ -16,10 +16,12 @@
 
 use crate::DeviceHandle;
 use crate::{
-    protocol::{Protocol, ProtocolInfo, Requirement},
+    protocol::{device_path::DevicePathProtocol, Protocol, ProtocolInfo, Requirement},
     versioned_protocol,
 };
+use core::ptr::{null_mut, NonNull};
 use efi_types::{EfiGuid, EfiLoadedImageProtocol, EFI_LOADED_IMAGE_PROTOCOL_REVISION};
+use liberror::{Error, Result};
 
 /// EFI_LOADED_IMAGE_PROTOCOL
 pub struct LoadedImageProtocol;
@@ -39,6 +41,19 @@ impl<'a> Protocol<'a, LoadedImageProtocol> {
     /// Wraps `EFI_LOADED_IMAGE_PROTOCOL.DeviceHandle`.
     pub fn device_handle(&self) -> DeviceHandle {
         DeviceHandle(self.interface().device_handle)
+    }
+
+    /// Wraps `EFI_LOADED_IMAGE_PROTOCOL.FilePath`.
+    pub fn file_path(&self) -> Result<Protocol<'_, DevicePathProtocol>> {
+        // SAFETY: `EFI_LOADED_IMAGE_PROTOCOL.FilePath` (if non-null) points to a
+        // `EFI_DEVICE_PATH_PROTOCOL` which outlives the `EFI_LOADED_IMAGE_PROTOCOL` itself.
+        Ok(unsafe {
+            Protocol::new(
+                DeviceHandle::new(null_mut()),
+                NonNull::new(self.interface().file_path).ok_or(Error::NotFound)?,
+                self.efi_entry,
+            )
+        })
     }
 
     /// Returns the `EFI_LOADED_IMAGE_PROTOCOL.image_base` field.
