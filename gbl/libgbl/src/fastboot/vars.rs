@@ -21,6 +21,7 @@ use core::{ffi::CStr, future::Future, ops::DerefMut, str::from_utf8};
 use fastboot::{next_arg, next_arg_u64, CommandResult, VarInfoSender};
 use gbl_async::{block_on, select, yield_now};
 use gbl_storage::BlockIo;
+use liberror::Error;
 use libutils::snprintf;
 
 const VERSION_BOOTLOADER: &'static str = "version-bootloader";
@@ -79,7 +80,7 @@ where
         let args_str = args_str.map(|v| v.unwrap());
         Ok(match name.to_str()? {
             VERSION_BOOTLOADER => snprintf!(out, "{}", VERSION_BOOTLOADER_VAL),
-            SLOT_COUNT => self.get_var_slot_count(out)?,
+            SLOT_COUNT => self.get_var_slot_count(out)?.unwrap(),
             MAX_FETCH_SIZE => snprintf!(out, "{}", MAX_FETCH_SIZE_VAL),
             PARTITION_SIZE => self.get_var_partition_size(args_str, out)?,
             PARTITION_TYPE => self.get_var_partition_type(args_str, out)?,
@@ -99,13 +100,8 @@ where
     ) -> CommandResult<()> {
         let mut buf = [0u8; 32];
         send.send_var_info(VERSION_BOOTLOADER, [], VERSION_BOOTLOADER_VAL).await?;
-        match self.get_var_slot_count(&mut buf) {
-            Ok(v) => send.send_var_info(SLOT_COUNT, [], v).await?,
-            Err(e) => {
-                gbl_println!(self.gbl_ops, "Failed to get {SLOT_COUNT}: {e:?}.");
-                #[cfg(not(feature = "gbl_dev"))]
-                return Err(e.into());
-            }
+        if let Some(v) = self.get_var_slot_count(&mut buf)? {
+            send.send_var_info(SLOT_COUNT, [], v).await?;
         }
         send.send_var_info(MAX_FETCH_SIZE, [], MAX_FETCH_SIZE_VAL).await?;
         self.get_all_block_device(send).await?;
@@ -281,7 +277,24 @@ where
     }
 
     /// "fastboot getvar slot-count"
-    fn get_var_slot_count<'s>(&mut self, out: &'s mut [u8]) -> CommandResult<&'s str> {
-        Ok(snprintf!(out, "{}", self.gbl_ops.get_slot_count()?))
+    fn get_var_slot_count<'s>(&mut self, out: &'s mut [u8]) -> CommandResult<Option<&'s str>> {
+        match self.gbl_ops.get_slot_count() {
+            Ok(slot_count) => Ok(Some(snprintf!(out, "{}", slot_count))),
+            Err(Error::Unsupported | Error::NotFound) => {
+                // TODO(b/442975038): Make this an error in production, allow fallback only for
+                // #[cfg(feature = "gbl_dev")]
+                gbl_println!(
+                    self.gbl_ops,
+                    "Slotting is not supported, so failed to get {SLOT_COUNT}. This will \
+                    not be allowed by prod GBL soon."
+                );
+
+                Ok(None)
+            }
+            Err(e) => {
+                gbl_println!(self.gbl_ops, "Failed to get {SLOT_COUNT}: {e:?}.");
+                return Err(e.into());
+            }
+        }
     }
 }
