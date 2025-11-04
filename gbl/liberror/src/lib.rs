@@ -214,8 +214,6 @@ pub enum Error {
     NoResponse,
     /// The requested element (e.g. device, partition, or value) was not found.
     NotFound,
-    /// The default implementation for a trait method has not been overridden.
-    NotImplemented,
     /// The polled device or future is not ready.
     NotReady,
     /// The protocol has not been started.

@@ -665,7 +665,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             // print a warning to keep vendors aware.
             //
             // https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/docs/updatable_vm.md
-            Err(Error::NotImplemented) => {
+            Err(Error::Unsupported) => {
                 efi_println!(
                     self.efi_entry,
                     "Warning: secret keeper public key isn't provided. PVM may not work properly.",
@@ -724,7 +724,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         {
             Ok(protocol) => match protocol.fixup_bootconfig(bootconfig, fixup_buffer) {
                 Ok(fixup_size) => Ok(Some(&fixup_buffer[..fixup_size])),
-                Err(Error::NotImplemented) => Ok(None),
+                Err(Error::Unsupported) => Ok(None),
                 Err(e) => Err(e),
             },
             // Protocol is optional.
@@ -816,7 +816,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
                 let metadata_slice = metadata.unwrap_or(&[]);
                 match protocol.select_fit_configuration(fit, metadata_slice) {
                     Ok(selected_config) => Ok(Some(selected_config)),
-                    Err(Error::NotImplemented) => Ok(None),
+                    Err(Error::Unsupported) => Ok(None),
                     Err(e) => Err(e),
                 }
             }
@@ -1797,7 +1797,7 @@ mod test {
         assert_eq!(
             test_read_secretkeeper_public_key(
                 &mut [],
-                ProtocolCallStatus::ProtocolCallError(Error::NotImplemented)
+                ProtocolCallStatus::ProtocolCallError(Error::Unsupported)
             ),
             Ok(None),
         );
@@ -1945,7 +1945,7 @@ mod test {
                 // Protocol is provided.
                 None,
                 // Implementation isn't provided.
-                Some(Error::NotImplemented),
+                Some(Error::Unsupported),
             ),
             // Treated as no fixup is provided.
             Ok(None),
