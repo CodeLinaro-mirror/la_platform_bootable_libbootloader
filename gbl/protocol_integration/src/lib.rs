@@ -504,6 +504,11 @@ fn test_device_path(entry: &EfiEntry) -> Result<()> {
         res = Err(e);
     }
 
+    if let Err(e) = protocol.file_path() {
+        efi_println!(entry, "Could not get file_path");
+        res = Err(e);
+    }
+
     let Ok(dev_path_to_text) = boot_services.find_first_and_open::<DevicePathToTextProtocol>()
     else {
         efi_println!(

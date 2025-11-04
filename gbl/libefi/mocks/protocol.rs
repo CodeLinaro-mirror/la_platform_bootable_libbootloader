@@ -84,6 +84,9 @@ pub mod loaded_image {
             /// Returns a real [efi::DeviceHandle], which is data-only so isn't mocked.
             pub fn device_handle(&self) -> DeviceHandle;
 
+            /// Returns a [DevicePathProtocol] for the loaded image file.
+            pub fn file_path(&self) -> Result<device_path::DevicePathProtocol>;
+
             /// Returns the image base address.
             pub fn image_base(&self) -> usize;
         }
