@@ -310,7 +310,7 @@ pub mod gbl_efi_avb {
                     Ok(names.len())
                 }
                 Some(Err(e)) => Err(*e),
-                None => Err(Error::NotImplemented),
+                None => Err(Error::Unsupported),
             }
         }
 

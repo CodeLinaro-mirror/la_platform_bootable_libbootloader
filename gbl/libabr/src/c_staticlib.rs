@@ -173,7 +173,7 @@ impl Ops for AbrOpsSafe<'_> {
                 _ => Ok(out[..ABR_DATA_SIZE].clone_from_slice(&data.serialize())),
             }
         } else {
-            Err(Error::NotImplemented)
+            Err(Error::Unsupported)
         }
     }
 
@@ -213,7 +213,7 @@ impl Ops for AbrOpsSafe<'_> {
                 _ => Ok(()),
             }
         } else {
-            Err(Error::NotImplemented)
+            Err(Error::Unsupported)
         }
     }
 

@@ -1408,7 +1408,7 @@ pub(crate) mod test {
             buffer: &'c mut [u8],
         ) -> Result<&'c [u8], Error> {
             if !self.avf_is_supported {
-                return Err(Error::NotImplemented);
+                return Err(Error::Unsupported);
             }
             let data =
                 self.avf_vendor_dice_handover.unwrap_or(Self::GBL_TEST_AVF_VENDOR_DICE_HANDOVER);
@@ -1422,7 +1422,7 @@ pub(crate) mod test {
             buffer: &'c mut [u8],
         ) -> Result<Option<&'c [u8]>, Error> {
             if !self.avf_is_supported {
-                return Err(Error::NotImplemented);
+                return Err(Error::Unsupported);
             }
 
             let (out, _) = buffer.split_at_mut(Self::GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY.len());
