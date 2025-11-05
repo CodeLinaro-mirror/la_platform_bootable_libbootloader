@@ -65,8 +65,8 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
     pub fn start(&self) -> Result<()> {
         // SAFETY:
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()` and `max_packet_size` are input/output parameters, outlive the call and
-        // will not be retained.
+        // `self.interface_ptr()` is an input/output parameter, outlives the call, and will not be
+        // retained.
         unsafe { efi_call!(self.interface().start, self.interface_ptr()) }
     }
 
@@ -127,13 +127,13 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.description()`
-    pub fn description(&self) -> &'static str {
+    pub fn description(&self) -> Result<&str> {
         let s = self.interface().description;
         // SAFETY: By UEFI spec, `f` returns a static NULL terminated ASCII string.
-        unsafe { core::ffi::CStr::from_ptr(s as _).to_str().unwrap() }
+        unsafe { core::ffi::CStr::from_ptr(s as _).to_str().map_err(Error::from) }
     }
 
-    /// Receives the next packet from the USB.
+    /// Receives the next packet from the transport.
     pub async fn receive_packet(&self, out: &mut [u8], mode: ReceiveMode) -> Result<usize> {
         loop {
             match self.receive(out, mode) {
@@ -144,7 +144,7 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
         }
     }
 
-    /// Sends `data` over the USB
+    /// Sends `data` over the transport
     ///
     /// # Args
     ///

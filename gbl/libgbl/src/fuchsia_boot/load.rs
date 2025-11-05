@@ -177,7 +177,7 @@ pub fn zircon_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 mod test {
     use super::*;
     use crate::{
-        fastboot::test::{make_expected_usb_out, SharedTestListener, TestLocalSession},
+        fastboot::test::{make_expected_transport_out, SharedTestListener},
         fuchsia_boot::test::{
             append_cmd_line, append_zbi_file, create_gbl_ops, create_storage, normalize_zbi,
             read_test_data, TEST_CERT_PIK_VERSION, TEST_CERT_PSK_VERSION,
@@ -506,16 +506,11 @@ mod test {
     ) -> GblResult<LoadedVerifiedZircon<'a>> {
         set_one_shot_bootloader(&mut GblAbrOps(ops), true).unwrap();
         zircon_main(ops, &mut load_buffer[..], |fb| {
-            listener.add_usb_input(format!("download:{:#x}", bootimg.len()).as_bytes());
-            listener.add_usb_input(&bootimg);
-            listener.add_usb_input(b"boot");
-            listener.add_usb_input(b"continue");
-            fb.run_n::<2>(
-                &mut vec![0u8; 256 * 1024],
-                Some(&mut TestLocalSession::default()),
-                Some(listener),
-                Some(listener),
-            );
+            listener.add_transport_input(format!("download:{:#x}", bootimg.len()).as_bytes());
+            listener.add_transport_input(&bootimg);
+            listener.add_transport_input(b"boot");
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [listener], Some(listener));
         })
     }
 
@@ -537,15 +532,15 @@ mod test {
         check_rollback_not_updated(&mut ops);
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
                 b"DATA00003000",
                 b"OKAY",
                 format!("INFOBoot image as Fuchsia slot {}", char::from(slot)).as_bytes(),
                 b"OKAY",
             ]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
     }
 
@@ -578,16 +573,16 @@ mod test {
         check_fixedup(SlotIndex::A, zbi_items, kernel);
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
                 b"DATA00003000",
                 b"OKAY",
                 b"FAILAvbSlotVerifyError(Verification(None))",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
     }
 
@@ -606,16 +601,16 @@ mod test {
         );
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
                 b"DATA00003000",
                 b"OKAY",
                 b"FAILAvbSlotVerifyError(RollbackIndex(None))",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
     }
 
@@ -638,15 +633,15 @@ mod test {
         assert_zbi_eq!(kernel, &expected_kernel);
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
                 b"DATA00003000",
                 b"OKAY",
                 b"INFOBoot image as Fuchsia slot a",
                 b"OKAY",
             ]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
     }
 
@@ -671,15 +666,15 @@ mod test {
         assert_zbi_eq!(kernel, &expected_kernel);
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
                 b"DATA00003000",
                 b"OKAY",
                 b"INFOBoot image as Fuchsia slot a",
                 b"OKAY",
             ]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
     }
 }

@@ -98,8 +98,6 @@ pub use allocation::EfiAllocator;
 
 /// C wrappers for EFI based hashing.
 pub mod efi_hash_c;
-/// Local fastboot/bootmenu support.
-pub mod local_session;
 /// EFI backed implementations for profiling framework.
 pub mod profiling;
 /// Idiomatic wrappers around EFI protocols.

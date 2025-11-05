@@ -191,3 +191,101 @@ $ fastboot boot zircon_fastboot.img
 
 Note: In unlocked mode, it's possible to omit the vbmeta image. Verification
 will fail as expected, but boot will proceed since it is unlocked.
+
+## GBL Fastboot UI
+
+This section describes how to create a UI interface that can be used to execute
+fastboot commands. The implementation must be based on the
+[`GblFastbootTransportProtocol`](./gbl_efi_fastboot_transport_protocol.md).
+
+### GblFastbootTransportProtocol for UI
+
+A fastboot UI can be implemented as a separate `GblFastbootTransportProtocol`.
+This allows GBL to discover and use the UI as a fastboot transport, just like
+USB or other custom channels.
+
+GBL loops over all discovered transports. Each transport would get `receive()`
+call and `send()` if necessary after packet processing.
+E.g. of very simplified logic on GBL side:
+```c++
+loop {
+    for_each(transport in discovered_transports) {
+        transport.receive(transport, buffer);
+        process_received_packet(buffer);
+        transport.send(reply);
+    }
+}
+```
+
+#### Protocol Interface Structure
+
+The `[GBL Custom Protocol Revisions](gbl_efi_fastboot_transport_protocol.md) is
+defined as follows:
+
+```c
+typedef struct _GblEfiFastbootTransportProtocol {
+  UINT64                                       Revision;
+  CONST CHAR8                                  *Description;
+  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_START   Start;
+  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_STOP    Stop;
+  GBL_EFI_FASTBOOT_TRANSPORT_RECEIVE           Receive;
+  GBL_EFI_FASTBOOT_TRANSPORT_SEND              Send;
+  GBL_EFI_FASTBOOT_TRANSPORT_FLUSH             Flush;
+} GblEfiFastbootTransportProtocol;
+```
+
+#### UI Implementation Details
+
+##### **Start**
+
+The `Start` function should be used to initialize the UI. This includes setting
+up the screen, drawing the initial UI elements, and starting a timer for polling
+for user input.
+
+##### **Stop**
+
+The `Stop` function should be used to de-initialize the UI. This includes
+clearing the screen and stopping the timer.
+
+##### **Receive**
+
+The `Receive` function is called by GBL to get a fastboot command from the UI.
+When called with `Mode` as `SINGLE_PACKET`, the UI should check if a fastboot
+command is available (e.g., from a button press). If a command is available, it
+should be copied to the `Buffer` and the function should return `EFI_SUCCESS`.
+If no command is available, the function should return `EFI_SUCCESS` and 0
+buffer size.
+
+**Important:** The `Receive` function should not be used for polling. The UI
+driver should have a separate timer-based main loop that does UI updates and key
+press polling. This is because GBL cannot guarantee regular `Receive` calls. For
+example, fastboot could be processing a long command like `flash` and GBL would
+not be polling other protocols for input while `flash` is in process. So
+`Receive` should only be used to send fastboot commands.
+
+##### **Send**
+
+The `Send` function is called by GBL to send a message to the UI. This can be
+used to display the status of a command (e.g., "OKAY", "FAIL") if needed.
+
+##### **Flush**
+
+The `Flush` function is called by GBL to wait for all pending `Send` operations
+to complete. The UI should wait until all messages have been displayed.
+
+#### Example UI Flow
+
+1.  GBL calls `Start` to initialize the UI.
+2.  The UI driver starts a timer and begins polling for user input in its own
+    main loop.
+3.  The user presses a button to execute a fastboot command (e.g., "getvar:all")
+4.  The UI driver stores the command in a buffer.
+5.  GBL calls `Receive`.
+6.  The UI driver copies the command to the buffer provided by GBL and returns
+    `EFI_SUCCESS`.
+7.  GBL executes the command.
+8.  GBL calls `Send` to display the result of the command(s).
+    In this case multiple "INFO" with final "OKAY".
+9.  Depending on desired behaviour the UI driver may display the message on
+    the screen. (may be defered to main loop)
+10. GBL calls `Stop` to de-initialize the UI.

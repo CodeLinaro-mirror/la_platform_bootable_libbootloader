@@ -403,17 +403,9 @@ fn test_gbl_fastboot(entry: &EfiEntry) -> Result<()> {
     };
 
     // Anything that modifies persistent state is not something we really want to run.
-    if let Err(e) = field_check!(
-        protocol,
-        get_staged,
-        set_lock,
-        get_lock,
-        vendor_erase,
-        command_exec,
-        start_local_session,
-        update_local_session,
-        close_local_session
-    ) {
+    if let Err(e) =
+        field_check!(protocol, get_staged, set_lock, get_lock, vendor_erase, command_exec,)
+    {
         res = Err(e);
     }
 

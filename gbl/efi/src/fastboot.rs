@@ -19,10 +19,10 @@
 
 use crate::utils::FastbootBuffer;
 use alloc::{boxed::Box, vec::Vec};
+use arrayvec::ArrayVec;
 use core::{future::Future, mem::take, pin::Pin, time::Duration};
 use efi::{
     efi_println,
-    local_session::LocalFastbootSession,
     protocol::{
         gbl_efi_fastboot_transport::{GblFastbootTransportProtocol, ReceiveMode},
         Protocol,
@@ -33,11 +33,12 @@ use fastboot::{Transport, MAX_COMMAND_SIZE};
 use gbl_async::{poll, YieldCounter};
 use liberror::{Error, Result};
 use libgbl::{
-    fastboot::{GblTcpStream, GblUsbTransport, PinFutContainer, TcpStream},
+    fastboot::{GblGenericTransport, GblTcpStream, PinFutContainer, TcpStream},
     {android_boot::GblFastbootEntry, GblOps},
 };
 
 const FASTBOOT_WATCHDOG_TIMER_CODE: WatchdogTimerCode = WatchdogTimerCode::new(0x10000);
+const FASTBOOT_TRANSPORTS_MAX: usize = 8;
 
 // Network fastboot is only allowed on dev boards.
 #[cfg(feature = "gbl_dev")]
@@ -168,9 +169,9 @@ mod network_fastboot {
 
 use network_fastboot::*;
 
-/// `UsbTransport` implements the `fastboot::Transport` trait using USB interfaces from
-/// GBL_EFI_FASTBOOT_USB_PROTOCOL.
-struct UsbTransport<'a> {
+/// `EfiFastbootTransport` implements the `fastboot::Transport` trait using
+/// EFI_GBL_FASTBOOT_TRANSPORT_PROTOCOL. Adding packed prefetching and yielding
+struct EfiFastbootTransport<'a> {
     protocol: Protocol<'a, GblFastbootTransportProtocol>,
     io_yield_counter: YieldCounter,
     // Buffer for prefetching an incoming packet in `wait_for_packet()`.
@@ -179,7 +180,7 @@ struct UsbTransport<'a> {
     prefetched: (Vec<u8>, usize),
 }
 
-impl<'a> UsbTransport<'a> {
+impl<'a> EfiFastbootTransport<'a> {
     fn new(protocol: Protocol<'a, GblFastbootTransportProtocol>) -> Self {
         Self {
             protocol,
@@ -188,7 +189,7 @@ impl<'a> UsbTransport<'a> {
         }
     }
 
-    /// Polls and cache the next USB packet.
+    /// Polls and cache the next packet.
     ///
     /// Returns Ok(true) if there is a new packet. Ok(false) if there is no incoming packet. Err()
     /// otherwise.
@@ -209,12 +210,12 @@ impl<'a> UsbTransport<'a> {
     }
 }
 
-impl Transport for UsbTransport<'_> {
+impl Transport for EfiFastbootTransport<'_> {
     async fn receive(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
         let len = match &mut self.prefetched {
             (pkt, len) if *len > 0 => {
                 let out = out.get_mut(..*len).ok_or(Error::BufferTooSmall(Some(*len)))?;
-                let src = pkt.get(..*len).ok_or(Error::Other(Some("Invalid USB read size")))?;
+                let src = pkt.get(..*len).ok_or(Error::Other(Some("Invalid read size")))?;
                 out.clone_from_slice(src);
                 take(len)
             }
@@ -236,13 +237,13 @@ impl Transport for UsbTransport<'_> {
         Ok((len, 0))
     }
 
-    /// Sends data over the USB channel.
+    /// Sends data over the transport channel.
     async fn send_packet(&mut self, packet: &[u8]) -> Result<()> {
         self.protocol.send_all(packet).await
     }
 }
 
-impl GblUsbTransport for UsbTransport<'_> {
+impl GblGenericTransport for EfiFastbootTransport<'_> {
     fn has_packet(&mut self) -> bool {
         let efi_entry = self.protocol.efi_entry();
         self.poll_next_packet()
@@ -251,28 +252,13 @@ impl GblUsbTransport for UsbTransport<'_> {
     }
 }
 
-impl Drop for UsbTransport<'_> {
+impl Drop for EfiFastbootTransport<'_> {
     fn drop(&mut self) {
         let entry = self.protocol.efi_entry();
         let _ = self
             .protocol
             .stop()
             .inspect_err(|e| efi_println!(entry, "Fail to stop transport: {e}"));
-    }
-}
-
-/// Initializes the Fastboot USB interface and returns a `UsbTransport`.
-fn init_usb(efi_entry: &EfiEntry) -> Result<UsbTransport<'_>> {
-    let protocol = efi_entry
-        .system_table()
-        .boot_services()
-        .find_first_and_open::<GblFastbootTransportProtocol>()?;
-    match protocol.stop() {
-        Err(e) if e != Error::NotStarted => Err(e),
-        _ => {
-            protocol.start()?;
-            Ok(UsbTransport::new(protocol))
-        }
     }
 }
 
@@ -304,15 +290,46 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
     let mut buffer = FastbootBuffer::new(entry).unwrap();
     let buffer = buffer.get();
 
-    let local = LocalFastbootSession::start(entry, Duration::from_millis(1))
-        .inspect(|_| efi_println!(entry, "Starting local bootmenu."))
-        .inspect_err(|e| efi_println!(entry, "Failed to start local bootmenu: {:?}", e))
-        .ok();
+    let boot_services = entry.system_table().boot_services();
+    let handle_buffer =
+        boot_services.locate_handle_buffer_by_protocol::<GblFastbootTransportProtocol>();
 
-    let usb = init_usb(entry)
-        .inspect(|v| efi_println!(entry, "Started Fastboot Channel: {}.", v.protocol.description()))
-        .inspect_err(|e| efi_println!(entry, "Failed to start Fastboot over USB. {:?}.", e))
-        .ok();
+    match handle_buffer {
+        Ok(ref h) => efi_println!(
+            entry,
+            "Fastboot Transport Protocols count: {}.",
+            h.handles().iter().count()
+        ),
+        Err(e) => efi_println!(entry, "Locate Fastboot Transport Protocols: {e}."),
+    }
+
+    let mut transport_protocols = handle_buffer
+        .as_ref()
+        .into_iter()
+        .flat_map(|i| i.handles().iter())
+        .filter_map(|handle| {
+            let protocol = boot_services
+                .open_protocol::<GblFastbootTransportProtocol>(*handle)
+                .inspect_err(|e| efi_println!(entry, "Failed to open Fastboot Transport. {e}."))
+                .inspect(|p| {
+                    efi_println!(entry, "Opened Fastboot Transport. {:?}.", p.description())
+                })
+                .ok()?;
+
+            match protocol.stop() {
+                Err(e) if e != Error::NotStarted => Err(e),
+                _ => (|| {
+                    protocol.start()?;
+                    Ok(EfiFastbootTransport::new(protocol))
+                })(),
+            }
+            .inspect(|p| {
+                efi_println!(entry, "Started Fastboot Channel: {:?}.", p.protocol.description())
+            })
+            .inspect_err(|e| efi_println!(entry, "Failed to start Fastboot Channel. {e}."))
+            .ok()
+        })
+        .collect::<ArrayVec<_, FASTBOOT_TRANSPORTS_MAX>>();
 
     #[cfg(not(feature = "gbl_dev"))]
     let tcp: Option<NoOpTcp> = None;
@@ -339,7 +356,7 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
     #[cfg(feature = "gbl_dev")]
     let tcp = tcp.as_mut().map(|v| EfiFastbootTcpTransport::new(v));
 
-    if local.is_some() || usb.is_some() || tcp.is_some() {
+    if !transport_protocols.is_empty() || tcp.is_some() {
         let _ = entry
             .system_table()
             .boot_services()
@@ -353,6 +370,6 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
     const GBL_FB_N: usize = 2;
     let mut bufs = Vec::from_iter(buffer.chunks_exact_mut(buffer.len() / GBL_FB_N));
     let bufs = &(&mut bufs[..]).into();
-    let mut fut = Box::pin(fb.run(bufs, VecPinFut::default(), local, usb, tcp));
+    let mut fut = Box::pin(fb.run(bufs, VecPinFut::default(), &mut transport_protocols, tcp));
     while poll(&mut fut).is_none() {}
 }

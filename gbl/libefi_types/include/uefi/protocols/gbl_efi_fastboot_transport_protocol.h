@@ -24,10 +24,10 @@
  */
 
 // This is a custom protocol introduced by GBL.
-// See gbl/docs/GBL_EFI_FASTBOOT_USB_PROTOCOL.md for details.
+// See gbl/docs/GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.md for details.
 
-#ifndef __GBL_EFI_FASTBOOT_USB_H__
-#define __GBL_EFI_FASTBOOT_USB_H__
+#ifndef __GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_H__
+#define __GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_H__
 
 #include <uefi/types.h>
 
@@ -50,4 +50,4 @@ typedef struct GblEfiFastbootTransportProtocol {
   EfiStatus (*flush)(struct GblEfiFastbootTransportProtocol* self);
 } GblEfiFastbootTransportProtocol;
 
-#endif  //__GBL_EFI_FASTBOOT_USB_H__
+#endif  //__GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_H__

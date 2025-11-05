@@ -43,7 +43,7 @@
 #include "protocols/gbl_efi_boot_memory_protocol.h"
 #include "protocols/gbl_efi_debug_protocol.h"
 #include "protocols/gbl_efi_fastboot_protocol.h"
-#include "protocols/gbl_efi_fastboot_transport.h"
+#include "protocols/gbl_efi_fastboot_transport_protocol.h"
 #include "protocols/gbl_efi_image_loading_protocol.h"
 #include "protocols/gbl_efi_os_configuration_protocol.h"
 #include "protocols/hash2_protocol.h"

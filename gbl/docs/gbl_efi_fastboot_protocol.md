@@ -31,7 +31,7 @@ requires cooperation with vendor firmware, OEM commands,
 ### Revision Number
 
 ```c
-#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 3)
+#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 4)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -51,9 +51,6 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   GBL_EFI_FASTBOOT_GET_LOCK                     GetLock;
   GBL_EFI_FASTBOOT_VENDOR_ERASE                 VendorErase;
   GBL_EFI_FASTBOOT_COMMAND_EXEC                 CommandExec;
-  GBL_EFI_FASTBOOT_START_LOCAL_SESSION          StartLocalSession;
-  GBL_EFI_FASTBOOT_UPDATE_LOCAL_SESSION         UpdateLocalSession;
-  GBL_EFI_FASTBOOT_CLOSE_LOCAL_SESSION          CloseLocalSession;
 } GBL_EFI_FASTBOOT_PROTOCOL;
 ```
 
@@ -107,25 +104,6 @@ See [`GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`](#gbl_efi_fastboot_protocolvendor
 
 Allows custom overriding of fastboot commands.
 See [`GBL_EFI_FASTBOOT_PROTOCOL.CommandExec()`](#gbl_efi_fastboot_protocolcommandexec).
-
-**StartLocalSession**
-
-Starts a local fastboot session driven by UI, usually outputting to a screen
-and navigated using buttons.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.StartLocalSession()`](#gbl_efi_fastboot_protocolstartlocalsession).
-
-**UpdateLocalSession**
-
-Updates the local fastboot session UI as part of a polling loop.
-The local fastboot UI should update the screen, accept button input,
-and return fastboot commands for GBL to handle.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.UpdateLocalSession()`](#gbl_efi_fastboot_protocolupdatelocalsession).
-
-**CloseLocalSession**
-
-Terminates the local session and conducts any necessary cleanup.
-GBL will call this method before any reboot, boot, or continue command from any fastboot session.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.CloseLocalSession()`](#gbl_efi_fastboot_protocolcloselocalsession).
 
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.GetVar()`
@@ -703,164 +681,3 @@ example, for Fastboot over USB, it is the native packet size. Implementation
 should consider the transport setup it provides when passing the string.
 Oversized message may be truncated by the caller when sent to the host.
 
-## `GBL_EFI_FASTBOOT_PROTOCOL.StartLocalSession()`
-
-### Summary
-
-Starts a local fastboot session UI.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI * GBL_EFI_START_LOCAL_SESSION)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-    OUT VOID**                    Ctx);
-```
-
-### Parameters
-
-*Self*
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
-instance.
-
-*Ctx*
-
-Pointer to saved Context for the local session.
-
-### Description
-
-Devices with screens and input buttons may wish to provide a local bootloader menu during Fastboot to allow user control without requiring an attached controller.
-Starts the local boot menu or indicates that the local boot menu is not supported or is not necessary.
-
-### Status Codes Returned
-| Return Code             | Semantics                                                       |
-|:------------------------|:----------------------------------------------------------------|
-| `EFI_SUCCESS`           | The call completed successfully and the context saved to *Ctx*. |
-| `EFI_INVALID_PARAMETER` | One of *Self* or *Ctx* is `NULL`.                               |
-| `EFI_UNSUPPORTED`       | The device does not support a local boot menu.                  |
-
-## `GBL_EFI_FASTBOOT_PROTOCOL.UpdateLocalSession()`
-
-### Summary
-
-Polls the local session to update the display, check for input, and generate fastboot
-commands based on input.
-
-### Prototype
-
-```c
-EFI_STATUS (EFIAPI * GBL_EFI_UPDATE_LOCAL_SESSION)(
-     IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-     IN VOID* Ctx,
-     OUT UINT8* Buf,
-     IN OUT UINTN* BufSize,
-);
-```
-
-### Parameters
-
-*Self*
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
-instance.
-
-*Ctx*
-
-A pointer to the local session context provided by a call to `StartLocalSession()`.
-
-*Buf*
-
-A pointer to the data buffer to store the value of a fastboot command GBL should
-evaluate encoded as a UTF-8 string.
-
-*BufSize*
-
-On entry, the size in bytes of *Buf*.
-On exit, the size in bytes of the UTF-8 encoded string describing the fastboot command
-stored in *Buf* excluding any Null-terminator.
-May be `0` on exit if no command is requested.
-
-### Description
-
-This method drives the local session and updates its context.
-
-Once the local session has started, GBL **SHOULD** wait no more than 1 millisecond
-before calling `UpdateLocalSession` or `CloseLocalSession`. GBL **SHOULD** poll
-`UpdateLocalSession` with a period of no less than 1 millisecond before calling
-`CloseLocalSession`.
-
-The 1 millisecond delay is a best effort attempt.
-The delay may be larger, and there may be jitter.
-
-Warning: the local boot menu may run concurrently with network or USB fastboot sessions.
-Calls to `UpdateLocalSession` **MUST NOT** do any of the following:
-* initiate calls to blocking I/O
-* mutate global state without acquiring a relevant mutex
-* modify persistent state, i.e. block storage or persistent registers
-* reboot or power off the device
-
-Between polls, GBL may do any of the following:
-* conduct non-blocking I/O
-* handle fastboot commands sent via USB or the network
-* run oem custom functions
-* call UEFI boot service methods
-
-The local session can request that GBL take certain actions, e.g. reboot the device
-or erase partitions, by formulating fastboot commands in the return buffer.
-
-Logic in `UpdateLocalSession` **SHOULD** refrain from heavy computation or any other
-operation that may take more than ~100μs.
-
-### Status Codes Returned
-
-| Return Code           | Semantics                                                                                                                                              |
-|:----------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| EFI_SUCCESS           | The call completed successfully.                                                                                                                       |
-| EFI_INVALID_PARAMETER | One of *Self*, *Ctx*, *Buf*, or *BufSize* is `NULL`.                                                                                                   |
-| EFI_BUFFER_TOO_SMALL  | The provided buffer is to small to store the output fastboot command. The value of *BufSize* is modified to contain the minimum necessary buffer size. |
-| EFI_UNSUPPORTED       | The caller failed to call `StartLocalSession` before calling `UpdateLocalSession`.                                                                     |
-| EFI_DEVICE_ERROR      | Catch-all hardware error.                                                                                                                              |
-## `GBL_EFI_FASTBOOT_PROTOCOL.CloseLocalSession()`
-
-### Summary
-
-Terminates the local session and conducts any necessary cleanup.
-
-### Prototype
-
-```c
-EFI_STATUS (EFIAPI * GBL_EFI_CLOSE_LOCAL_SESSION)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-    IN VOID* Ctx,
-);
-```
-
-### Parameters
-
-*Self*
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
-instance.
-
-*Ctx*
-
-A pointer to the local session context provided by a call to `StartLocalSession()`.
-
-### Description
-
-Terminates the local fastboot session and conducts necessary cleanup, including
-freeing allocated memory, blanking the display, and so forth.
-GBL will call this method before any `reboot`, `boot`, or `continue` command from any
-fastboot session.
-
-### Status Codes Returned
-
-| Return Code           | Semantics                                                                         |
-|:----------------------|:----------------------------------------------------------------------------------|
-| EFI_SUCCESS           | The call completed successfully.                                                  |
-| EFI_INVALID_PARAMETER | One of *Self* or *Ctx* is `NULL`.                                                 |
-| EFI_UNSUPPORTED       | The caller failed to call `StartLocalSession` before calling `CloseLocalSession`. |
-| EFI_DEVICE_ERROR      | Catch-all hardware error.                                                         |

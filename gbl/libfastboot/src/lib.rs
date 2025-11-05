@@ -78,9 +78,6 @@ use gbl_async::block_on;
 use liberror::{Error, Result};
 use libutils::FormattedBytes;
 
-/// Local session module
-pub mod local_session;
-
 /// Maximum packet size that can be accepted from the host.
 ///
 /// The transport layer may have its own size limits that reduce the packet size further.
@@ -95,10 +92,9 @@ pub const MAX_RESPONSE_SIZE: usize = 256;
 
 /// Trait to provide the transport layer for a fastboot implementation.
 ///
-/// Fastboot supports these transports:
-/// * USB
-/// * TCP
-/// * UDP
+/// Fastboot supports transports:
+/// * Any GblFastbootTransport implementation: provided by UEFI drivers
+/// * TCP: provided by GBL for dev build only.
 pub trait Transport {
     /// Reads the next data packet. Reads up to the next packet or provided buffer.
     ///

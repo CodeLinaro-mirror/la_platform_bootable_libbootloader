@@ -21,8 +21,8 @@ use crate::{
     },
     fastboot::{
         boot_items::{BootItem, BootItemContainer},
-        run_gbl_fastboot, run_gbl_fastboot_stack, BufferPool, GblFastbootResult, GblTcpStream,
-        GblUsbTransport, LoadedImageInfo, PinFutContainer, Shared,
+        run_gbl_fastboot, run_gbl_fastboot_stack, BufferPool, GblFastbootResult,
+        GblGenericTransport, GblTcpStream, LoadedImageInfo, PinFutContainer, Shared,
     },
     gbl_avb::{ArrayMaxParts, ArrayMaxRequestedParts},
     gbl_println,
@@ -38,7 +38,6 @@ use bootparams::{
 };
 use core::{array::from_fn, ffi::CStr, fmt::Write, mem::take, ops::Range};
 use dttable::DtTableImage;
-use fastboot::local_session::LocalSession;
 use fdt::{Fdt, FdtHeader};
 use gbl_async::block_on;
 use libbuild_number::BUILD_NUMBER;
@@ -472,8 +471,7 @@ impl<'a, 'd, 'e, G> GblFastbootEntry<'d, G>
 where
     G: GblOps<'a, 'e>,
 {
-    /// Runs GBL fastboot with the given buffer pool, tasks container, and usb/tcp/local transport
-    /// channels.
+    /// Runs GBL fastboot with the given buffer pool, tasks container, and transports/tcp channels.
     ///
     /// # Args
     ///
@@ -481,9 +479,8 @@ where
     ///    download buffers.
     /// * `tasks`: An implementation of `PinFutContainer` used as task container for GBL fastboot to
     ///   schedule dynamically spawned async tasks.
-    /// * `local`: An implementation of `LocalSession` which exchanges fastboot packet from platform
+    /// * `transports`: Implementation of `GblGenericTransport` which exchanges fastboot packet from platform
     ///   specific channels i.e. UX.
-    /// * `usb`: An implementation of `GblUsbTransport` that represents USB channel.
     /// * `tcp`: An implementation of `GblTcpStream` that represents TCP channel.
     ///
     /// Returns the user-defined GblOps on completion.
@@ -491,8 +488,7 @@ where
         self,
         buffer_pool: &'b Shared<impl BufferPool>,
         tasks: impl PinFutContainer<'c> + 'c,
-        local: Option<impl LocalSession>,
-        usb: Option<impl GblUsbTransport>,
+        transports: &mut [impl GblGenericTransport],
         tcp: Option<impl GblTcpStream>,
     ) -> &'d mut G
     where
@@ -500,7 +496,7 @@ where
         'd: 'c,
     {
         *self.result =
-            run_gbl_fastboot(self.ops, buffer_pool, tasks, local, usb, tcp, self.boot_buffer).await;
+            run_gbl_fastboot(self.ops, buffer_pool, tasks, transports, tcp, self.boot_buffer).await;
         self.ops
     }
 
@@ -524,12 +520,11 @@ where
     pub fn run_n<const N: usize>(
         self,
         download: &mut [u8],
-        local: Option<impl LocalSession>,
-        usb: Option<impl GblUsbTransport>,
+        transports: &mut [impl GblGenericTransport],
         tcp: Option<impl GblTcpStream>,
     ) -> &'d mut G {
         if N < 1 {
-            return self.run_n::<1>(download, local, usb, tcp);
+            return self.run_n::<1>(download, transports, tcp);
         }
         // Splits into N download buffers.
         let mut arr: [_; N] = from_fn(|_| Default::default());
@@ -540,8 +535,7 @@ where
         *self.result = block_on(run_gbl_fastboot_stack::<N>(
             self.ops,
             bufs,
-            local,
-            usb,
+            transports,
             tcp,
             self.boot_buffer,
         ));
@@ -709,7 +703,7 @@ pub(crate) mod tests {
             KASLR_SEED_PROP, KASLR_SEED_SIZE_BYTES, RNG_SEED_PROP, RNG_SEED_SIZE_BYTES,
         },
         constants::{KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
-        fastboot::test::{make_expected_usb_out, SharedTestListener, TestLocalSession},
+        fastboot::test::{make_expected_transport_out, SharedTestListener},
         gbl_avb::{
             state::{BootStateColor, KeyValidationStatus},
             AvbPartition, AvbProperty,
@@ -2186,22 +2180,17 @@ androidboot.veritymode.managed=yes
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(ops, load_buffer, |fb| {
-            listener.add_usb_input(b"getvar:max-fetch-size");
-            listener.add_usb_input(b"continue");
-            fb.run_n::<2>(
-                &mut vec![0u8; 256 * 1024],
-                Some(&mut TestLocalSession::default()),
-                Some(&listener),
-                Some(&listener),
-            );
+            listener.add_transport_input(b"getvar:max-fetch-size");
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         })
         .unwrap();
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[b"OKAY0x7fffffff", b"INFOSyncing storage...", b"OKAY",]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[b"OKAY0x7fffffff", b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
 
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
@@ -2261,22 +2250,17 @@ androidboot.veritymode.managed=yes
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
 
         let (ramdisk, _, kernel, _) = android_main(&mut ops, (&mut load_buffer[..]).into(), |fb| {
-            listener.add_usb_input(b"getvar:max-fetch-size");
-            listener.add_usb_input(b"continue");
-            fb.run_n::<2>(
-                &mut vec![0u8; 256 * 1024],
-                Some(&mut TestLocalSession::default()),
-                Some(&listener),
-                Some(&listener),
-            );
+            listener.add_transport_input(b"getvar:max-fetch-size");
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         })
         .unwrap();
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[b"OKAY0x7fffffff", b"INFOSyncing storage...", b"OKAY",]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[b"OKAY0x7fffffff", b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
         let bcb = read_bootloader_message(&mut ops).unwrap();
         assert_eq!(bcb.boot_mode(), Ok(AndroidBootMode::Recovery));
@@ -2315,29 +2299,24 @@ androidboot.veritymode.managed=yes
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
             let data = read_test_data(format!("boot_v2_a.img"));
-            listener.add_usb_input(format!("download:{:#x}", data.len()).as_bytes());
-            listener.add_usb_input(&data);
-            listener.add_usb_input(b"boot");
-            listener.add_usb_input(b"continue");
-            fb.run_n::<2>(
-                &mut vec![0u8; 256 * 1024],
-                Some(&mut TestLocalSession::default()),
-                Some(&listener),
-                Some(&listener),
-            );
+            listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
+            listener.add_transport_input(&data);
+            listener.add_transport_input(b"boot");
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         })
         .unwrap();
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
                 b"DATA00004000",
                 b"OKAY",
                 b"INFOBoot image as Android slot a",
                 b"OKAY",
             ]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
 
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
@@ -2363,29 +2342,24 @@ androidboot.veritymode.managed=yes
         let listener: SharedTestListener = Default::default();
         let (ramdisk, fdt, kernel, _) = android_main(&mut ops, buffers, |fb| {
             let data = read_test_data(format!("boot_v2_a.img"));
-            listener.add_usb_input(format!("download:{:#x}", data.len()).as_bytes());
-            listener.add_usb_input(&data);
-            listener.add_usb_input(b"boot");
-            listener.add_usb_input(b"continue");
-            fb.run_n::<2>(
-                &mut vec![0u8; 256 * 1024],
-                Some(&mut TestLocalSession::default()),
-                Some(&listener),
-                Some(&listener),
-            );
+            listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
+            listener.add_transport_input(&data);
+            listener.add_transport_input(b"boot");
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         })
         .unwrap();
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
                 b"DATA00004000",
                 b"OKAY",
                 b"INFOBoot image as Android slot a",
                 b"OKAY",
             ]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
         assert_eq!(kernel.as_ptr(), kernel_addr);
@@ -2405,24 +2379,19 @@ androidboot.veritymode.managed=yes
         let load_buffer = (&mut load_buffer[..]).into();
         assert_eq!(
             android_main(&mut ops, load_buffer, |fb| {
-                listener.add_usb_input(b"set_active:b");
-                listener.add_usb_input(b"continue");
-                fb.run_n::<2>(
-                    &mut vec![0u8; 256 * 1024],
-                    Some(&mut TestLocalSession::default()),
-                    Some(&listener),
-                    Some(&listener),
-                );
+                listener.add_transport_input(b"set_active:b");
+                listener.add_transport_input(b"continue");
+                fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
             })
             .unwrap_err(),
             Error::Aborted.into()
         );
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[b"OKAY", b"INFOSyncing storage...", b"OKAY",]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[b"OKAY", b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
     }
 
@@ -2457,21 +2426,16 @@ androidboot.veritymode.managed=yes
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
-            listener.add_usb_input(b"continue");
-            fb.run_n::<2>(
-                &mut vec![0u8; 256 * 1024],
-                Some(&mut TestLocalSession::default()),
-                Some(&listener),
-                Some(&listener),
-            );
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         })
         .unwrap();
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[b"INFOSyncing storage...", b"OKAY",]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[b"INFOSyncing storage...", b"OKAY",]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
 
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
@@ -2518,29 +2482,24 @@ androidboot.veritymode.managed=yes
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
             let data = read_test_data(format!("boot_v2_a.img"));
-            listener.add_usb_input(format!("download:{:#x}", data.len()).as_bytes());
-            listener.add_usb_input(&data);
-            listener.add_usb_input(b"boot");
-            listener.add_usb_input(b"continue");
-            fb.run_n::<2>(
-                &mut vec![0u8; 256 * 1024],
-                Some(&mut TestLocalSession::default()),
-                Some(&listener),
-                Some(&listener),
-            );
+            listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
+            listener.add_transport_input(&data);
+            listener.add_transport_input(b"boot");
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         })
         .unwrap();
 
         assert_eq!(
-            listener.usb_out_queue(),
-            make_expected_usb_out(&[
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
                 b"DATA00004000",
                 b"OKAY",
                 b"INFOBoot image as Android slot a",
                 b"OKAY",
             ]),
-            "\nActual USB output:\n{}",
-            listener.dump_usb_out_queue()
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
 
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
@@ -2570,21 +2529,16 @@ androidboot.veritymode.managed=yes
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, fdt, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
-            listener.add_usb_input(b"oem gbl-add-cmdline gbl-fb-cmd-1=1");
-            listener.add_usb_input(b"oem gbl-add-cmdline gbl-fb-cmd-2=1");
-            listener.add_usb_input(b"oem gbl-add-bootconfig gbl-fb-config-1=1");
-            listener.add_usb_input(b"oem gbl-add-bootconfig gbl-fb-config-2=1");
+            listener.add_transport_input(b"oem gbl-add-cmdline gbl-fb-cmd-1=1");
+            listener.add_transport_input(b"oem gbl-add-cmdline gbl-fb-cmd-2=1");
+            listener.add_transport_input(b"oem gbl-add-bootconfig gbl-fb-config-1=1");
+            listener.add_transport_input(b"oem gbl-add-bootconfig gbl-fb-config-2=1");
             let download_data = b"some test data";
-            listener.add_usb_input(format!("download:{:#x}", download_data.len()).as_bytes());
-            listener.add_usb_input(download_data);
-            listener.add_usb_input(b"oem gbl-add-staged-data test");
-            listener.add_usb_input(b"continue");
-            fb.run_n::<2>(
-                &mut vec![0u8; 256 * 1024],
-                Some(&mut TestLocalSession::default()),
-                Some(&listener),
-                Some(&listener),
-            );
+            listener.add_transport_input(format!("download:{:#x}", download_data.len()).as_bytes());
+            listener.add_transport_input(download_data);
+            listener.add_transport_input(b"oem gbl-add-staged-data test");
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         })
         .unwrap();
 
@@ -2628,21 +2582,16 @@ androidboot.veritymode.managed=yes
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, fdt, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
-            listener.add_usb_input(b"oem gbl-add-cmdline gbl-fb-cmd-1=1");
-            listener.add_usb_input(b"oem gbl-add-cmdline gbl-fb-cmd-2=1");
-            listener.add_usb_input(b"oem gbl-add-bootconfig gbl-fb-config-1=1");
-            listener.add_usb_input(b"oem gbl-add-bootconfig gbl-fb-config-2=1");
+            listener.add_transport_input(b"oem gbl-add-cmdline gbl-fb-cmd-1=1");
+            listener.add_transport_input(b"oem gbl-add-cmdline gbl-fb-cmd-2=1");
+            listener.add_transport_input(b"oem gbl-add-bootconfig gbl-fb-config-1=1");
+            listener.add_transport_input(b"oem gbl-add-bootconfig gbl-fb-config-2=1");
             let download_data = b"some test data";
-            listener.add_usb_input(format!("download:{:#x}", download_data.len()).as_bytes());
-            listener.add_usb_input(download_data);
-            listener.add_usb_input(b"oem gbl-add-staged-data test");
-            listener.add_usb_input(b"continue");
-            let ops = fb.run_n::<2>(
-                &mut vec![0u8; 256 * 1024],
-                Some(&mut TestLocalSession::default()),
-                Some(&listener),
-                Some(&listener),
-            );
+            listener.add_transport_input(format!("download:{:#x}", download_data.len()).as_bytes());
+            listener.add_transport_input(download_data);
+            listener.add_transport_input(b"oem gbl-add-staged-data test");
+            listener.add_transport_input(b"continue");
+            let ops = fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
             // Simulate device re-lock from external channel.
             ops.avb_device_status.is_unlocked = false;
         })

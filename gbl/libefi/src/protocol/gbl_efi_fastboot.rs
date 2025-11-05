@@ -21,7 +21,7 @@ use crate::{
 };
 use core::{
     ffi::{c_char, c_void, CStr},
-    ptr::{null, null_mut},
+    ptr::null,
     slice::from_raw_parts,
     str::from_utf8,
 };
@@ -51,9 +51,6 @@ impl ProtocolInfo for GblFastbootProtocol {
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }
-
-/// Wrapper type for context parameter used in a fastboot local session.
-pub struct LocalSessionContext(*mut c_void);
 
 impl Protocol<'_, GblFastbootProtocol> {
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_var`
@@ -250,42 +247,6 @@ impl Protocol<'_, GblFastbootProtocol> {
             )?;
         }
         Ok(out_impl)
-    }
-
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.start_local_session()`
-    pub fn start_local_session(&self) -> Result<LocalSessionContext> {
-        let mut ctx = null_mut();
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // No parameters are retained, all parameters outlive the call, and no pointers are Null.
-        unsafe { efi_call!(self.interface().start_local_session, self.interface_ptr(), &mut ctx)? };
-        Ok(LocalSessionContext(ctx))
-    }
-
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.update_local_session()`
-    pub fn update_local_session(&self, ctx: &LocalSessionContext, out: &mut [u8]) -> Result<usize> {
-        let mut bufsize = out.len();
-
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // No parameters are retained, all parameters outlive the call, and no pointers are Null.
-        unsafe {
-            efi_call!(
-                @bufsize bufsize,
-                self.interface().update_local_session,
-                self.interface_ptr(),
-                ctx.0, out.as_mut_ptr(),
-                &mut bufsize)?
-        };
-        Ok(bufsize)
-    }
-
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.close_local_session()`
-    pub fn close_local_session(&self, ctx: &LocalSessionContext) -> Result<()> {
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // No parameters are retained, all parameters outlive the call, and no pointers are Null.
-        unsafe { efi_call!(self.interface().close_local_session, self.interface_ptr(), ctx.0) }
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.vendor_erase()`.
