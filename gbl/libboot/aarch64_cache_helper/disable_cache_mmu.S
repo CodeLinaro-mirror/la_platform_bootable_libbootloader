@@ -26,6 +26,8 @@
  * ---------------------------------------------------------------
  */
 disable_cache_mmu_and_jump:
+    // BTI landing pad. Just in case we reach here via indirect branch.
+    bti jc
     // Query current EL
     mrs     x5, CurrentEL
     cmp     x5, #(1 << 3)
