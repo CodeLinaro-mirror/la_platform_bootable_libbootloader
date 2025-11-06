@@ -166,14 +166,17 @@ the functions may be no-ops.
 ### RandomNumberGeneratorProtocol
 
 * [`EFI_RNG_PROTOCOL`](https://uefi.org/specs/UEFI/2.11/37_Secure_Technologies.html#random-number-generator-protocol)
-* required: enables dynamic stack canary values
+* required: enables dynamic stack canary values and configures KASLR and
+  bootloader entropy
 
-On entry, GBL uses the RandomNumberGeneratorProtocol to set a new random value for
-the global stack canary.
+GBL uses the RandomNumberGeneratorProtocol to set a new random value for the
+global stack canary, and to propagate the `kaslr-seed` and `rng-seed` FDT
+properties to initialize HLOS entropy.
 
-For development builds, the RNG protocol is technically optional: if the protocol
-is absent a random but static value will be used instead to initialize the global
-stack canary value.
+For development builds, the RNG protocol is technically optional: if the
+protocol is absent a random but static value will be used instead to initialize
+the global stack canary value. The `kaslr-seed` and `rng-seed` FDT properties
+will not be propagated.
 
 ## Community Protocols
 
@@ -213,6 +216,7 @@ boards will need to implement them.
 
 All GBL custom protocols have an unsigned 64 bit revision as their first field.
 The semantics of the field are explained by the following macros:
+
 ```c
 #define GBL_PROTOCOL_MAJOR_REV(x) (((x) >> 16 ) & 0xFFFF)
 #define GBL_PROTOCOL_MINOR_REV(x) ((x) & 0xFFFF)

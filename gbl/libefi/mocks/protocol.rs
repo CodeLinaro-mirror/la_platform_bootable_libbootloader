@@ -139,6 +139,33 @@ pub mod simple_text_output {
     impl !Send for MockSimpleTextOutputProtocol {}
 }
 
+/// Mock RNG protocol
+pub mod random_number_generator {
+    use super::*;
+
+    /// Requested random number generator algorithm.
+    ///
+    /// Re-definition of: libefi/src/protocol/random_number_generator.rs
+    pub enum RngAlgorithm {
+        /// No specific algorithm is required. Up to implementation to decide.
+        Default,
+        /// Entropy directly from the source, without it going through some deterministic
+        /// random bit generator.
+        Raw,
+    }
+
+    mock! {
+        /// Mock [efi::RandomNumberGeneratorProtocol]
+        pub RandomNumberGeneratorProtocol {
+            /// Returns `buffer.len()` of random data.
+            pub fn get_rng_bytes(&self, algorithm: RngAlgorithm, buffer: &[u8]) -> Result<()>;
+        }
+    }
+
+    /// Map to the libefi name so code under test can just use one name.
+    pub type RandomNumberGeneratorProtocol = MockRandomNumberGeneratorProtocol;
+}
+
 /// Mock timestamp protocol
 pub mod timestamp {
     use super::*;

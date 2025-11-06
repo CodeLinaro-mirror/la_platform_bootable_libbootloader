@@ -48,6 +48,7 @@ pub mod gbl_avb;
 pub mod misc;
 pub mod ops;
 pub mod partition;
+pub mod random;
 
 #[cfg(feature = "fuchsia")]
 pub mod fuchsia_boot;

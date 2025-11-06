@@ -84,6 +84,15 @@ pub enum FastbootEraseAction {
     EraseAsPhysicalPartition,
 }
 
+/// Requested random number generator algorithm.
+pub enum RngAlgorithm {
+    /// No specific algorithm is required. Up to implementation to decide.
+    Default,
+    /// Entropy directly from the source, without it going through some deterministic
+    /// random bit generator.
+    Raw,
+}
+
 // https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
 // should we use traits for this? or optional/box FnMut?
 //
@@ -173,6 +182,18 @@ pub trait GblOps<'a, 'd> {
             Err(e) => Err(e),
         }
     }
+
+    /// Fills `buffer` with generated random data. The entire buffer must be populated,
+    /// otherwise an appropriate error is returned.
+    ///
+    /// # Returns
+    ///
+    /// `Err(Error::Unsupported)` if the requested algorithm is not supported.
+    /// `Err(Error::NotReady)` if there is not enough random data available at the moment.
+    /// `Err(Error::NotFound)` if RNG driver isn't available.
+    /// `Err(_)` if any other error, treated as unrecoverable RNG failure.
+    /// `Ok(())` if the buffer was successfully filled with random data.
+    fn get_random_bytes(&self, algorithm: RngAlgorithm, buffer: &mut [u8]) -> Result<(), Error>;
 
     /// Returns which OS to load, or `None` to try to auto-detect based on disk layout & contents.
     fn expected_os(&mut self) -> Result<Option<Os>, Error>;
@@ -649,6 +670,10 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         self.ops.expected_os()
     }
 
+    fn get_random_bytes(&self, algorithm: RngAlgorithm, buffer: &mut [u8]) -> Result<(), Error> {
+        self.ops.get_random_bytes(algorithm, buffer)
+    }
+
     #[cfg(feature = "fuchsia")]
     fn zircon_add_device_zbi_items(
         &mut self,
@@ -933,8 +958,12 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 pub(crate) mod test {
     use super::*;
     use crate::{
-        android_boot::BOOTARGS_PROP, constants::Partition, device_tree::DeviceTreeComponentType,
-        error::IntegrationError, partition::GblDisk, slots::Bootability,
+        android_boot::{device_tree::RNG_SEED_SIZE_BYTES, BOOTARGS_PROP},
+        constants::Partition,
+        device_tree::DeviceTreeComponentType,
+        error::IntegrationError,
+        partition::GblDisk,
+        slots::Bootability,
     };
     use avb::{CertOps, Ops};
     use avb_test::TestOps as AvbTestOps;
@@ -1047,6 +1076,9 @@ pub(crate) mod test {
 
         /// For return by `Self::expected_os()`
         pub os: Option<Os>,
+
+        /// For return by `Self::get_random_bytes()`
+        pub get_random_bytes_error: Option<Error>,
 
         /// For return by `Self::avb_read_partitions_to_verify`
         pub avb_partitions_to_verify: Option<AvbIoResult<Vec<String>>>,
@@ -1172,6 +1204,7 @@ pub(crate) mod test {
         pub const GBL_TEST_VAR_UNSPLIT_VAL: &'static str = "gbl-test-var-val-unsplit";
         pub const GBL_TEST_BOOTCONFIG: &'static str = "arg1=val1\x0aarg2=val2\x0a";
         pub const GBL_TEST_FDT_FIXUP: &'static [u8] = &[1];
+        pub const GBL_TEST_RANDOM_DATA: &'static [u8] = &[b'7'; RNG_SEED_SIZE_BYTES];
         /// TODO(b/391191885): Generate real dice handover or use prebuilt
         pub const GBL_TEST_AVF_VENDOR_DICE_HANDOVER: &'static [u8] = b"fake_handover_always_fail";
         pub const GBL_TEST_AVF_SECRET_KEEPER_PUBLIC_KEY: &'static [u8] =
@@ -1268,6 +1301,19 @@ pub(crate) mod test {
 
         fn expected_os(&mut self) -> Result<Option<Os>, Error> {
             Ok(self.os)
+        }
+
+        fn get_random_bytes(
+            &self,
+            _algorithm: RngAlgorithm,
+            buffer: &mut [u8],
+        ) -> Result<(), Error> {
+            if let Some(get_random_bytes_error) = self.get_random_bytes_error {
+                return Err(get_random_bytes_error);
+            }
+            assert!(buffer.len() <= Self::GBL_TEST_RANDOM_DATA.len());
+            buffer.copy_from_slice(&Self::GBL_TEST_RANDOM_DATA[..buffer.len()]);
+            Ok(())
         }
 
         #[cfg(feature = "fuchsia")]

@@ -47,6 +47,7 @@ use efi::{
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
         loaded_image::LoadedImageProtocol,
         random_number_generator::RandomNumberGeneratorProtocol,
+        random_number_generator::RngAlgorithm,
         simple_text_input::SimpleTextInputProtocol,
         simple_text_output::SimpleTextOutputProtocol,
         timestamp::TimestampProtocol,
@@ -56,7 +57,10 @@ use efi::{
 };
 use efi_types::GblEfiAvbPartition;
 use liberror::{Error, Result};
-use libgbl::android_boot::STANDARD_PARTITIONS;
+use libgbl::{
+    android_boot::{device_tree::RNG_SEED_SIZE_BYTES, STANDARD_PARTITIONS},
+    random::should_fallback_to_default_rng,
+};
 use libutils::base_type_name;
 
 /// Pull in the sysdeps required by libavb so the linker can find them.
@@ -167,17 +171,32 @@ fn test_random_number_generator(entry: &EfiEntry) -> Result<()> {
         .system_table()
         .boot_services()
         .find_first_and_open::<RandomNumberGeneratorProtocol>()?;
-    let x = protocol.get_rng::<u64>()?;
-    let y = protocol.get_rng::<u64>()?;
+
+    efi_println!(entry, "Checking getting 8 bytes of RNG");
+    let x = protocol.get_rng::<u64>(RngAlgorithm::Default)?;
+    let y = protocol.get_rng::<u64>(RngAlgorithm::Default)?;
 
     if x == y {
         efi_println!(
             entry,
             "Two random u64s are equal with value {x}. This is probably an implementation bug"
         );
-        Err(Error::Other(Some("Unlikely RNG collision")))
-    } else {
-        Ok(())
+        return Err(Error::Other(Some("Unlikely RNG collision")));
+    }
+
+    efi_println!(entry, "Checking getting {RNG_SEED_SIZE_BYTES} bytes of raw RNG.");
+    let mut rng_bytes = [0u8; RNG_SEED_SIZE_BYTES];
+    match protocol.get_rng_bytes(RngAlgorithm::Raw, &mut rng_bytes) {
+        Ok(_) => Ok(()),
+        Err(e) if should_fallback_to_default_rng(e) => {
+            efi_println!(
+                entry,
+                "Warning: Obtaining {RNG_SEED_SIZE_BYTES} bytes of raw random data has failed: {e}. \
+                Checking getting {RNG_SEED_SIZE_BYTES} of default RNG."
+            );
+            protocol.get_rng_bytes(RngAlgorithm::Default, &mut rng_bytes)
+        }
+        Err(e) => Err(e),
     }
 }
 

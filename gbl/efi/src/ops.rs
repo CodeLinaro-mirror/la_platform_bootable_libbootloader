@@ -35,6 +35,7 @@ use efi::{
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
+        random_number_generator::{RandomNumberGeneratorProtocol, RngAlgorithm as EfiRngAlgorithm},
         Protocol, Versioned,
     },
     EfiEntry,
@@ -71,7 +72,7 @@ use libgbl::{
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
         ImageBuffer, InfoSender, LockState, LockType, OkaySender, OneShotBootMode, Partition,
-        PartitionBuffer, Slot, SHA256_DIGEST_SIZE,
+        PartitionBuffer, RngAlgorithm as GblRngAlgorithm, Slot, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
@@ -443,6 +444,14 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
 
     fn expected_os(&mut self) -> Result<Option<Os>> {
         Ok(self.os)
+    }
+
+    fn get_random_bytes(&self, algorithm: GblRngAlgorithm, buffer: &mut [u8]) -> Result<()> {
+        self.efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<RandomNumberGeneratorProtocol>()
+            .and_then(|p| p.get_rng_bytes(gbl_to_efi_rng_algorithm(algorithm), buffer))
     }
 
     #[cfg(feature = "fuchsia")]
@@ -1153,6 +1162,13 @@ fn gbl_verification_status_to_efi_color_flags(status: VerificationStatus) -> u64
     };
 
     base_color | eio_flag
+}
+
+fn gbl_to_efi_rng_algorithm(algorithm: GblRngAlgorithm) -> EfiRngAlgorithm {
+    match algorithm {
+        GblRngAlgorithm::Default => EfiRngAlgorithm::Default,
+        GblRngAlgorithm::Raw => EfiRngAlgorithm::Raw,
+    }
 }
 
 fn efi_error_to_avb_error(error: Error) -> AvbIoError {

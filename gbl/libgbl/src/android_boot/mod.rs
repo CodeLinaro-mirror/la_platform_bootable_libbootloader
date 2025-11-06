@@ -50,6 +50,9 @@ use misc::AndroidBootMode;
 mod avf;
 use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region};
 
+pub mod device_tree;
+use device_tree::propagate_random_into_dt;
+
 pub mod vboot;
 pub use vboot::{avb_verify_slot, PartitionsToVerify};
 
@@ -318,6 +321,8 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
         Some((ref v, s)) => avf_fixup_host_dt(ops, &mut fdt, v, s, &verify_data)?,
         _ => {}
     }
+
+    propagate_random_into_dt(ops, &mut fdt)?;
 
     // Notifies platform to process loaded partitions before final bootconfig and FDT fixup, so
     // that backend can add fixup items that depend on certain partition data.
@@ -731,6 +736,7 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 pub(crate) mod tests {
     use super::*;
     use crate::{
+        android_boot::device_tree::{KASLR_SEED_SIZE_BYTES, RNG_SEED_SIZE_BYTES},
         constants::{KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
         fastboot::test::{make_expected_usb_out, SharedTestListener, TestLocalSession},
         gbl_avb::{
@@ -745,6 +751,7 @@ pub(crate) mod tests {
     };
     use avf::test::{dummy_pvmfw_partition, DUMMY_VENDOR_HANDOVER};
     use bootparams::bootconfig::{BootConfigBuilder, BOOTCONFIG_TRAILER_SIZE};
+    use cfg_if::cfg_if;
     use fdt::std_props;
     use libbuild_number::BUILD_NUMBER;
     use libtestutils::AlignedBuffer;
@@ -1115,6 +1122,16 @@ androidboot.veritymode.managed=yes
         assert_eq!(
             CStr::from_bytes_until_nul(fdt.get_property("/chosen", c"bootargs").unwrap()).unwrap(),
             CString::new(expected_bootargs).unwrap().as_c_str(),
+        );
+
+        assert_eq!(
+            fdt.get_property("/chosen", c"rng-seed"),
+            Ok(&FakeGblOps::GBL_TEST_RANDOM_DATA[..RNG_SEED_SIZE_BYTES])
+        );
+
+        assert_eq!(
+            fdt.get_property("/chosen", c"kaslr-seed"),
+            Ok(&FakeGblOps::GBL_TEST_RANDOM_DATA[..KASLR_SEED_SIZE_BYTES])
         );
 
         // Fixup is applied.
@@ -2664,5 +2681,27 @@ androidboot.veritymode.managed=yes
             .unwrap()
             .find("gbl-fb-cmd-1=1 gbl-fb-cmd-2=1")
             .is_none());
+    }
+
+    #[test]
+    fn test_android_main_with_no_rng() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.get_random_bytes_error = Some(Error::NotFound);
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
+        let load_buffer = (&mut load_buffer[..]).into();
+        let r = android_main(&mut ops, load_buffer, |_| {});
+
+        cfg_if! {
+            if #[cfg(feature = "gbl_dev")] {
+                assert!(r.is_ok());
+            } else {
+                assert_eq!(r, Err(Error::NotFound.into()));
+            }
+        }
     }
 }

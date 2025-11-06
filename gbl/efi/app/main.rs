@@ -27,7 +27,8 @@ mod riscv64;
 use cfg_if::cfg_if;
 use core::panic::PanicInfo;
 use efi::{
-    efi_println, initialize, protocol::random_number_generator::RandomNumberGeneratorProtocol,
+    efi_println, initialize,
+    protocol::random_number_generator::{RandomNumberGeneratorProtocol, RngAlgorithm},
     report_error_and_reset_with_global_entry, EfiAllocator, EfiEntry,
 };
 use efi_types::{EfiHandle, EfiSystemTable, GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR};
@@ -58,7 +59,7 @@ fn generate_canary(entry: &EfiEntry) -> usize {
         .system_table()
         .boot_services()
         .find_first_and_open::<RandomNumberGeneratorProtocol>()
-        .and_then(|rng_proto| rng_proto.get_rng());
+        .and_then(|rng_proto| rng_proto.get_rng(RngAlgorithm::Default));
 
     cfg_if! {
         if #[cfg(feature = "gbl_dev")] {
@@ -79,7 +80,7 @@ fn generate_canary(entry: &EfiEntry) -> usize {
         } else {
             // It's better to crash on failure than to ignore the error.
             canary
-                .inspect_err(|e| efi_println!(entry, "SECURITY WARNING: Failed to generate stack canary: {:?}", e))
+                .inspect_err(|e| efi_println!(entry, "SECURITY ERROR: Failed to generate stack canary: {:?}", e))
                 .unwrap()
         }
     }

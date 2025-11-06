@@ -16,10 +16,10 @@
 
 use crate::efi_call;
 use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo};
-use core::mem::MaybeUninit;
+use core::default::Default;
 use efi_types::{EfiGuid, EfiRngProtocol};
 use liberror::Result;
-use zerocopy::FromBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
 impl MaybeVersioned for EfiRngProtocol {}
 
@@ -33,39 +33,61 @@ impl ProtocolInfo for RandomNumberGeneratorProtocol {
         EfiGuid::new(0x3152bca5, 0xeade, 0x433d, [0x86, 0x2e, 0xc0, 0x1c, 0xdc, 0x29, 0x1f, 0x44]);
 }
 
+/// Requested random number generator algorithm.
+pub enum RngAlgorithm {
+    /// No specific algorithm is required. Up to FW to decide.
+    Default,
+    /// Entropy directly from the source, without it going through some deterministic
+    /// random bit generator.
+    Raw,
+}
+
+/// Raw entropy GUID:
+/// https://uefi.org/specs/UEFI/2.10/37_Secure_Technologies.html#efi-rng-algorithm-definitions
+const RAW_ALGORITHM_GUID: EfiGuid =
+    EfiGuid::new(0xe43176d7, 0xb6e8, 0x4827, [0xb7, 0x84, 0x7f, 0xfd, 0xc4, 0xb6, 0x85, 0x61]);
+
 impl Protocol<'_, RandomNumberGeneratorProtocol> {
     /// `get_info` is deliberately not provided. See b/413744208 for details.
 
-    /// Wrapper of `EFI_RANDOM_NUMBER_GENERATOR_PROTOCOL.get_rng()`
-    ///
-    /// Note: the `get_rng` protocol method takes an optional `rng_algorithm` arg.
-    ///       Algorithm selection is deliberately not supported for simplicity,
-    ///       but support is tracked by b/413744208.
-    pub fn get_rng<T: FromBytes>(&self) -> Result<T> {
-        let mut raw = MaybeUninit::<T>::uninit();
-
+    /// Wrapper of `EFI_RANDOM_NUMBER_GENERATOR_PROTOCOL.get_rng()` which fills a
+    /// byte slice.
+    pub fn get_rng_bytes(
+        &self,
+        algorithm: RngAlgorithm,
+        mut buffer: impl AsMut<[u8]>,
+    ) -> Result<()> {
         // SAFETY:
         // * `self.interface_ptr()` points to a valid object
         //   established by `Protocol::new()`.
         // * `self.interface_ptr()` is an input parameter and will not be retained.
         //   It outlives the call.
         // * `rng_algorithm` is optional. Null is a valid value.
-        // * `raw` is a non-null output parameter.
-        //   It is not retained, outlives the call, and points to size_of::<T>() bytes
-        //   that will be written to.
+        // * `buffer.as_mut().as_mut_ptr()` is a non-null writable buffer.
+        //   It is not retained, outlives the call, and points to `buffer.as_mut().len()`
+        //   bytes that will be written to.
         unsafe {
             efi_call!(
                 self.interface().get_rng,
                 self.interface_ptr(),
-                core::ptr::null(),
-                core::mem::size_of_val(&raw),
-                raw.as_mut_ptr() as *mut u8,
+                match algorithm {
+                    RngAlgorithm::Default => core::ptr::null(),
+                    RngAlgorithm::Raw => &RAW_ALGORITHM_GUID as _,
+                },
+                buffer.as_mut().len(),
+                buffer.as_mut().as_mut_ptr(),
             )?;
         }
+        Ok(())
+    }
 
-        // SAFETY:
-        // * The EFI call succeeded, so some byte pattern was written to `raw`.
-        // * Because T: FromBytes, any byte pattern is a valid `T`.
-        Ok(unsafe { raw.assume_init() })
+    /// Wrapper of `EFI_RANDOM_NUMBER_GENERATOR_PROTOCOL.get_rng()`
+    pub fn get_rng<T: FromBytes + IntoBytes + Default>(
+        &self,
+        algorithm: RngAlgorithm,
+    ) -> Result<T> {
+        let mut value = T::default();
+        self.get_rng_bytes(algorithm, value.as_bytes_mut())?;
+        Ok(value)
     }
 }

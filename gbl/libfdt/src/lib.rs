@@ -20,13 +20,14 @@ extern crate alloc;
 extern crate libc;
 
 use arrayvec::ArrayVec;
-use core::ffi::{c_int, CStr};
+use core::ffi::{c_int, c_void, CStr};
 use core::mem::size_of;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 use liberror::{Error, Result};
 use libfdt_bindgen::{
-    fdt_add_subnode_namelen, fdt_create_empty_tree, fdt_del_node, fdt_get_property, fdt_header,
-    fdt_move, fdt_setprop, fdt_setprop_placeholder, fdt_strerror, fdt_subnode_offset_namelen,
+    fdt_add_subnode_namelen, fdt_create_empty_tree, fdt_del_node, fdt_delprop, fdt_get_property,
+    fdt_header, fdt_move, fdt_setprop, fdt_setprop_placeholder, fdt_strerror,
+    fdt_subnode_offset_namelen,
 };
 use libufdt_bindgen::ufdt_apply_multioverlay;
 use safemath::SafeNum;
@@ -384,7 +385,7 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
         self.find_or_add_node(path).map(|_| ())
     }
 
-    /// Delete node by `path``. Fail if node doesn't exist.
+    /// Delete node by `path`. Fail if node doesn't exist.
     pub fn delete_node(&mut self, path: &str) -> Result<()> {
         let node = self.find_node(path)?;
         // SAFETY:
@@ -434,6 +435,24 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
         assert!(!out_ptr.is_null());
         // SAFETY: Buffer returned by API from libfdt_c.
         Ok(unsafe { from_raw_parts_mut(out_ptr, len) })
+    }
+
+    /// Delete property by `path` and `name`. Fail if property doesn't exist.
+    pub fn delete_property(&mut self, path: &str, name: &CStr) -> Result<()> {
+        let node = self.find_node(path)?;
+        // SAFETY:
+        // * `self.0` is guaranteed to be a proper fdt header reference.
+        // * `node` is offset of the node to delete within `self.0` fdt buffer.
+        // * `name` is guaranteed to be a valid null-terminated string.
+        map_result(unsafe {
+            fdt_delprop(
+                self.0.as_mut().as_mut_ptr() as *mut c_void,
+                node,
+                name.to_bytes_with_nul().as_ptr() as *const _,
+            )
+        })?;
+
+        Ok(())
     }
 
     /// Wrapper/equivalent of ufdt_apply_multioverlay.
@@ -652,7 +671,7 @@ mod test {
     }
 
     #[test]
-    fn test_delete_nost_existed_node_is_failed() {
+    fn test_delete_not_existed_node_is_failed() {
         let init = include_bytes!("../test/data/base.dtb").to_vec();
         let mut fdt_buf = vec![0u8; init.len()];
         let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
@@ -660,6 +679,42 @@ mod test {
         assert!(
             fdt.delete_node("/non-existent").is_err(),
             "expected failed to delete non existent node"
+        );
+    }
+
+    #[test]
+    fn test_delete_property() {
+        let init = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut fdt_buf = vec![0u8; init.len()];
+        let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        assert_eq!(
+            CStr::from_bytes_with_nul(
+                fdt.get_property("/dev-2/dev-2.2/dev-2.2.1", c"property-1").unwrap()
+            )
+            .unwrap()
+            .to_str()
+            .unwrap(),
+            "dev-2.2.1-property-1"
+        );
+
+        fdt.delete_property("/dev-2/dev-2.2/dev-2.2.1", c"property-1").unwrap();
+
+        assert!(
+            fdt.get_property("/dev-2/dev-2.2/dev-2.2.1", c"property-1").is_err(),
+            "expected failed to get deleted property"
+        )
+    }
+
+    #[test]
+    fn test_delete_not_existed_property_is_failed() {
+        let init = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut fdt_buf = vec![0u8; init.len()];
+        let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        assert!(
+            fdt.delete_property("/non-existent", c"not-existent").is_err(),
+            "expected failed to delete non existent property"
         );
     }
 
