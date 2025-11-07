@@ -958,7 +958,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 pub(crate) mod test {
     use super::*;
     use crate::{
-        android_boot::{device_tree::RNG_SEED_SIZE_BYTES, BOOTARGS_PROP},
+        android_boot::device_tree::{PROP_BOOTARGS, RNG_SEED_SIZE_BYTES},
         constants::Partition,
         device_tree::DeviceTreeComponentType,
         error::IntegrationError,
@@ -1530,11 +1530,11 @@ pub(crate) mod test {
             let mut fdt = Fdt::new_mut(fdt).unwrap();
 
             // Update kernel command line with fixup value.
-            let cmd_prop_len = fdt.get_property("chosen", BOOTARGS_PROP)?.len();
+            let cmd_prop_len = fdt.get_property("chosen", PROP_BOOTARGS)?.len();
 
             // GBL guaranties kernel command line has some extra space reserved to append.
             let cmd_prop_buffer =
-                fdt.set_property_placeholder("chosen", BOOTARGS_PROP, cmd_prop_len)?;
+                fdt.set_property_placeholder("chosen", PROP_BOOTARGS, cmd_prop_len)?;
             let mut commandline = CommandlineBuilder::new_from_prefix(cmd_prop_buffer)?;
             commandline.add("fixup")?;
 

@@ -34,7 +34,6 @@ use crate::{
 use avb::IoError;
 use bootparams::{
     bootconfig::{extract_bootconfig, BootConfigBuilder},
-    commandline::CommandlineBuilder,
     entry::CommandlineParser,
 };
 use core::{array::from_fn, ffi::CStr, fmt::Write, mem::take, ops::Range};
@@ -51,7 +50,7 @@ mod avf;
 use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region};
 
 pub mod device_tree;
-use device_tree::propagate_random_into_dt;
+use device_tree::{fdt_append_bootargs, fdt_build_bootargs, fdt_propagate_random, PROP_BOOTARGS};
 
 pub mod vboot;
 pub use vboot::{avb_verify_slot, PartitionsToVerify};
@@ -60,9 +59,6 @@ pub(crate) mod load;
 #[cfg(feature = "fuchsia")]
 pub(crate) use load::get_kernel;
 use load::{android_load_verified, slotted_part, BootBufferLoader};
-
-/// Device tree bootargs property to store kernel command line.
-pub const BOOTARGS_PROP: &CStr = c"bootargs";
 
 /// A helper to convert a bytes slice containing a null-terminated string to `str`
 fn cstr_bytes_to_str(data: &[u8]) -> core::result::Result<&str, Error> {
@@ -305,24 +301,21 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     gbl_println!(ops, "Applying {} overlays", overlays.len());
     fdt.multioverlay_apply(overlays)?;
     gbl_println!(ops, "Overlays applied");
+
+    // Builds the FDT commandline. Reserves 1024 bytes for separators and fixup.
+    fdt_build_bootargs(ops, &mut fdt, &images, overlays, boot_items.as_ref(), 1024)?;
+
     // `DeviceTreeComponentsRegistry` internally uses ArrayVec which causes it to have a default
     // life time equal to the scope it lives in. This is unnecessarily strict and prevents us from
     // accessing `load` buffer.
     drop(components);
-
-    // Updates the FDT commandline.
-    // Reserves 1024 bytes for separators and fixup
-    fdt_append_bootarg(ops, &mut fdt, [images.boot_cmdline, images.vendor_cmdline], 1024)?;
-    if let Some(ref v) = boot_items {
-        fdt_append_bootarg(ops, &mut fdt, v.utf8_items(BootItem::Cmdline), 0)?;
-    }
 
     match pvmfw {
         Some((ref v, s)) => avf_fixup_host_dt(ops, &mut fdt, v, s, &verify_data)?,
         _ => {}
     }
 
-    propagate_random_into_dt(ops, &mut fdt)?;
+    fdt_propagate_random(ops, &mut fdt)?;
 
     // Notifies platform to process loaded partitions before final bootconfig and FDT fixup, so
     // that backend can add fixup items that depend on certain partition data.
@@ -381,41 +374,6 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
     Ok((final_ramdisk, final_fdt, final_kernel, unused))
 }
 
-/// Helper for appending one or more commandline strings to FDT chosen/bootarg
-///
-/// # Args
-///
-/// * `ops`: An implementation of GblOps.
-/// * `fdt`: Target FDT to append to.
-/// * `cmds`: Commandline strings to add.
-/// * `extra_reserved`: Additional empty space to add.
-fn fdt_append_bootarg<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'b, 'c>,
-    fdt: &mut Fdt<&mut [u8]>,
-    cmds: impl IntoIterator<Item = &'a str> + Clone,
-    extra_reserved: usize,
-) -> Result<()> {
-    let curr = fdt.get_property("chosen", BOOTARGS_PROP).map(|v| v.len()).unwrap_or(0);
-    let cmds_len = cmds.clone().into_iter().map(|v| v.len() + 1).sum::<usize>();
-    let total = curr + cmds_len + 1 + extra_reserved;
-    let buffer = fdt.set_property_placeholder("chosen", BOOTARGS_PROP, total)?;
-    let mut builder = CommandlineBuilder::new_from_prefix(&mut buffer[..])?;
-    for v in cmds {
-        // The commandline to be added may be from bootconfig which allows ":=". Emit a warning
-        // just in case.
-        if v.find(":=").is_some() {
-            gbl_println!(ops, "{v},  \":=\" assignment may not be supported");
-        }
-        builder.add(v)?;
-    }
-
-    // It has been observed that some OS call `from_utf8` on the entire bootarg buffer to decode,
-    // which will pick up everything after the null terminator. Thus zeroize the remaining to
-    // prevent OS from trying to think they are valid data.
-    builder.zeroize_remains();
-    Ok(())
-}
-
 /// Sets `linux,initrd-start/end` and optionally appending bootconfig as bootarg in FDT.
 ///
 /// # Args
@@ -439,11 +397,11 @@ fn finalize_dt<'b, 'c>(
     gbl_println!(ops, "linux,initrd-start: {:#x}", ramdisk_addr);
     gbl_println!(ops, "linux,initrd-end: {:#x}", ramdisk_end);
     if append_bootconfig {
-        fdt_append_bootarg(ops, &mut fdt, extract_bootconfig(ramdisk)?.split('\n'), 0)?;
+        fdt_append_bootargs(ops, &mut fdt, extract_bootconfig(ramdisk)?.split('\n'), 0)?;
     }
     // Print the final commandline. If the bootargs were changed by the firmware during fdt fixup,
     // then the firmware must ensure the bootargs end with '\0'.
-    let final_command_line = CStr::from_bytes_until_nul(fdt.get_property("chosen", BOOTARGS_PROP)?)
+    let final_command_line = CStr::from_bytes_until_nul(fdt.get_property("chosen", PROP_BOOTARGS)?)
         .map_err(Error::from)?;
     gbl_println!(ops, "final cmdline: \"{}\"", final_command_line.to_str().unwrap());
 
@@ -736,7 +694,9 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 pub(crate) mod tests {
     use super::*;
     use crate::{
-        android_boot::device_tree::{KASLR_SEED_SIZE_BYTES, RNG_SEED_SIZE_BYTES},
+        android_boot::device_tree::{
+            KASLR_SEED_PROP, KASLR_SEED_SIZE_BYTES, RNG_SEED_PROP, RNG_SEED_SIZE_BYTES,
+        },
         constants::{KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
         fastboot::test::{make_expected_usb_out, SharedTestListener, TestLocalSession},
         gbl_avb::{
@@ -1125,12 +1085,12 @@ androidboot.veritymode.managed=yes
         );
 
         assert_eq!(
-            fdt.get_property("/chosen", c"rng-seed"),
+            fdt.get_property("/chosen", RNG_SEED_PROP),
             Ok(&FakeGblOps::GBL_TEST_RANDOM_DATA[..RNG_SEED_SIZE_BYTES])
         );
 
         assert_eq!(
-            fdt.get_property("/chosen", c"kaslr-seed"),
+            fdt.get_property("/chosen", KASLR_SEED_PROP),
             Ok(&FakeGblOps::GBL_TEST_RANDOM_DATA[..KASLR_SEED_SIZE_BYTES])
         );
 
@@ -1214,6 +1174,7 @@ androidboot.veritymode.managed=yes
     ) {
         let test_common = |unlock, color, rollback_idx, vbmeta: Option<&str>| {
             let mut partitions = partitions.to_vec();
+            let has_dtbo = partitions.iter().any(|p| p.0 == format!("dtbo_{slot_name}"));
             if let Some(vbmeta) = vbmeta {
                 partitions.push((format!("vbmeta_{slot_name}"), vbmeta.into()));
             }
@@ -1228,11 +1189,18 @@ androidboot.veritymode.managed=yes
                 expected_vendor_bootconfig,
                 FakeGblOps::GBL_TEST_BOOTCONFIG,
             );
-            let expected_bootargs = format!("{expected_bootargs} fixup");
-            let expected_bootargs = match bootconfig_supported {
-                true => expected_bootargs.to_string(),
-                _ => format!("{expected_bootargs} {}", bootconfig_to_bootarg(&expected_bootconfig)),
-            };
+            let mut expected_bootargs = String::from(expected_bootargs);
+            // Appended via dtbo/bootargs_ext.
+            if has_dtbo {
+                expected_bootargs.push_str(" overlay_bootargs_ext");
+            }
+            // Appended via fixup.
+            expected_bootargs.push_str(" fixup");
+            // Converted items if bootconfig isn't supported.
+            if !bootconfig_supported {
+                write!(expected_bootargs, " {}", &bootconfig_to_bootarg(&expected_bootconfig))
+                    .unwrap();
+            }
 
             test_android_load_verify_fixup(
                 slot(slot_name),
