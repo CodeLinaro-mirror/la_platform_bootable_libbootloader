@@ -85,7 +85,7 @@ pub fn efi_android_boot(
     {
         use fdt::Fdt;
         use liberror::Error;
-        use libgbl::android_boot::BOOTARGS_PROP;
+        use libgbl::android_boot::device_tree::PROP_BOOTARGS;
 
         let fdt = Fdt::new(&fdt[..])?;
         let efi_mmap = finalize_uefi(entry, entry_point, kernel, ramdisk, fdt.as_ref(), remains)?;
@@ -94,7 +94,7 @@ pub fn efi_android_boot(
             boot::x86::boot_linux_bzimage(
                 kernel,
                 ramdisk,
-                fdt.get_property("chosen", BOOTARGS_PROP).unwrap(),
+                fdt.get_property("chosen", PROP_BOOTARGS).unwrap(),
                 |e820_entries| {
                     // Convert EFI memory type to e820 memory type.
                     if efi_mmap.len() > e820_entries.len() {

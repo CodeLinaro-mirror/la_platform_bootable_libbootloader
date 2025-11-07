@@ -35,7 +35,8 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Ref};
 
 /// Fdt header structure size.
 pub const FDT_HEADER_SIZE: usize = size_of::<FdtHeader>();
-const MAXIMUM_OVERLAYS_TO_APPLY: usize = 16;
+/// Maximum number of overlays that can be applied by GBL.
+pub const MAXIMUM_OVERLAYS_TO_APPLY: usize = 16;
 const MAXIMUM_OVERLAYS_ERROR_MSG: &str = "At most 16 overlays are supported to apply at a time";
 
 /// Standard FDT property names
