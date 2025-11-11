@@ -6,38 +6,54 @@ can be loaded directly from the firmware.
 
 ## Get source tree and build
 
+### Prerequisites
+
 The GBL build currently only supports Linux x86_64 host machines.
 
-To successfully get and build the tree your machine must have the following dependencies installed:
+Your machine must have the following dependencies installed:
 
-```
-# repo to work with android repositories (https://source.android.com/docs/setup/reference/repo)
-# bazel-bootstrap to build (https://bazel.build/)
+* `repo` to work with android repositories
+  (https://source.android.com/docs/setup/reference/repo)
+* `bazel-bootstrap` to build (https://bazel.build/)
+
+On Google Linux machines these tools can be installed via:
+
+```shell
 sudo apt install repo bazel-bootstrap
 ```
 
-The GBL project are intended to be built from the
-[Android UEFI Manifest](https://android.googlesource.com/kernel/manifest/+/refs/heads/uefi-gbl-mainline/default.xml)
-checkout:
+### Download the source
 
-```
+Use `repo` to download the source using the Android
+[uefi-gbl-mainline manifest](https://android.googlesource.com/kernel/manifest/+/refs/heads/uefi-gbl-mainline/default.xml):
+
+```shell
+# You can choose a different directory name if you prefer.
+mkdir gbl
+cd gbl
+
 repo init -u https://android.googlesource.com/kernel/manifest -b uefi-gbl-mainline
 repo sync -j16
 ```
 
-To build the EFI application:
+### Build the UEFI applications
 
+Run this command from the repo root directory (`gbl` in the example above):
+
+```shell
+./tools/bazel run //bootable/libbootloader:gbl_efi_dist
 ```
-./tools/bazel run //bootable/libbootloader:gbl_efi_dist --extra_toolchains=@gbl//toolchain:all
-```
 
-The above builds the EFI application for all of `x86_64`, `aarch64`,
-and `riscv64` platforms.
+This command builds all variations of the EFI application (dev + prod for each
+of `x86_64`, `aarch64`, and `riscv64` architectures). The application binaries
+will be placed in `out/gbl_efi/`.
 
-To run the set of unit tests:
+### Run host-side unittests
 
-```
-./tools/bazel test @gbl//tests --extra_toolchains=@gbl//toolchain:all
+Run this command from the repo root directory (`gbl` in the example above):
+
+```shell
+./tools/bazel test @gbl//tests
 ```
 
 ## IDE Setup
