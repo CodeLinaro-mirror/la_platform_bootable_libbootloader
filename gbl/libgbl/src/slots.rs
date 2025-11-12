@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Containing types and traits for querying and modifying slotted boot behavior.
+
 /// Export the default implementation
 pub mod fuchsia;
 

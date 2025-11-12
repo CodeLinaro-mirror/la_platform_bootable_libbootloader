@@ -27,7 +27,7 @@ use crate::{
         write_unique_partition, GblDisk,
     },
 };
-pub use crate::{constants::Partition, image_buffer::ImageBuffer};
+pub use crate::{constants::Partition, image_buffer::ImageBuffer, slots::BootToken};
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, Ops as AbrOps, SlotIndex};
 use bytes::buf::UninitSlice;
 use core::{ffi::CStr, fmt::Write, num::NonZeroUsize, ops::DerefMut, result::Result};
@@ -690,7 +690,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
     fn load_slot_interface<'c>(
         &'c mut self,
         _fnmut: &'c mut dyn FnMut(&mut [u8]) -> Result<(), Error>,
-        _boot_token: crate::BootToken,
+        _boot_token: BootToken,
     ) -> GblResult<slots::Cursor<'c>> {
         self.ops.load_slot_interface(_fnmut, _boot_token)
     }
