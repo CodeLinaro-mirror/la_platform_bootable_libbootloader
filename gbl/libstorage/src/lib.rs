@@ -32,9 +32,9 @@ use safemath::SafeNum;
 // Selective export of submodule types.
 mod gpt;
 pub use gpt::{
-    gpt_buffer_size, new_gpt_max, new_gpt_n, Gpt, GptBuilder, GptEntry, GptHeader, GptLoadBufferN,
-    GptMax, GptN, GptSyncResult, Partition, PartitionIterator, GPT_GUID_LEN, GPT_MAGIC,
-    GPT_MAX_NUM_ENTRIES, GPT_MIN_NUM_ENTRIES, GPT_NAME_LEN_U16,
+    gpt_buffer_size, new_gpt_max, new_gpt_n, Gpt, GptBuilder, GptEntry, GptGuid, GptHeader,
+    GptLoadBufferN, GptMax, GptN, GptSyncResult, Partition, PartitionIterator, GPT_GUID_LEN,
+    GPT_MAGIC, GPT_MAX_NUM_ENTRIES, GPT_MIN_NUM_ENTRIES, GPT_NAME_LEN_U16,
 };
 
 mod algorithm;

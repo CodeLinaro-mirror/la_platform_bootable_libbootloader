@@ -40,6 +40,45 @@ pub const GPT_GUID_LEN: usize = 16;
 pub const GPT_NAME_LEN_U16: usize = 36;
 const GPT_NAME_LEN_U8: usize = 2 * GPT_GUID_LEN;
 
+/// GptGuid wrapper.
+#[repr(transparent)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Immutable, FromBytes, IntoBytes, KnownLayout,
+)]
+pub struct GptGuid(pub [u8; GPT_GUID_LEN]);
+
+impl core::fmt::Display for GptGuid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let guid = self.0;
+        write!(
+            f,
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}\
+            {:02x}{:02x}{:02x}{:02x}",
+            // Data1 (LE)
+            guid[3],
+            guid[2],
+            guid[1],
+            guid[0],
+            // Data2 (LE)
+            guid[5],
+            guid[4],
+            // Data3 (LE)
+            guid[7],
+            guid[6],
+            // Data4 (BE)
+            guid[8],
+            guid[9],
+            // Data5 (BE)
+            guid[10],
+            guid[11],
+            guid[12],
+            guid[13],
+            guid[14],
+            guid[15]
+        )
+    }
+}
+
 /// The top-level GPT header.
 #[repr(C, packed)]
 #[derive(
@@ -65,7 +104,7 @@ pub struct GptHeader {
     /// Last usable block for partition contents (inclusive).
     pub last: u64,
     /// Disk GUID.
-    pub guid: [u8; GPT_GUID_LEN],
+    pub guid: GptGuid,
     /// Starting block for the partition entries array.
     pub entries: u64,
     /// Number of partition entries.
@@ -256,9 +295,9 @@ fn check_entries(header: &GptHeader, entries: &[u8]) -> Result<()> {
                 part_range: (first, last),
                 usable_range: (header.first, header.last),
             }));
-        } else if ele.part_type == [0u8; GPT_GUID_LEN] {
+        } else if ele.part_type.0 == [0u8; GPT_GUID_LEN] {
             return Err(Error::GptError(GptError::ZeroPartitionTypeGUID { idx }));
-        } else if ele.guid == [0u8; GPT_GUID_LEN] {
+        } else if ele.guid.0 == [0u8; GPT_GUID_LEN] {
             return Err(Error::GptError(GptError::ZeroPartitionUniqueGUID { idx }));
         }
     }
@@ -293,9 +332,9 @@ fn check_entries(header: &GptHeader, entries: &[u8]) -> Result<()> {
 #[derive(Copy, Clone, Debug, PartialEq, Immutable, FromBytes, IntoBytes, KnownLayout)]
 pub struct GptEntry {
     /// Partition type GUID.
-    pub part_type: [u8; GPT_GUID_LEN],
+    pub part_type: GptGuid,
     /// Unique partition GUID.
-    pub guid: [u8; GPT_GUID_LEN],
+    pub guid: GptGuid,
     /// First block.
     pub first: u64,
     /// Last block (inclusive).
@@ -1126,8 +1165,8 @@ where
         entries[idx..].rotate_right(1);
         let entry = &mut entries[idx];
         assert!(entry.is_null());
-        entry.part_type = part_type;
-        entry.guid = unique_guid;
+        entry.part_type = GptGuid(part_type);
+        entry.guid = GptGuid(unique_guid);
         entry.flags = flags;
         entry.first = prev_end;
         entry.last = prev_end + blocks - 1;
@@ -1646,7 +1685,7 @@ pub(crate) mod test {
     #[test]
     fn test_sync_gpt_zero_partition_type_guid() {
         fn modify(hdr: &mut GptHeader, mut entries: Ref<&mut [u8], [GptEntry]>) {
-            entries[1].part_type = [0u8; GPT_GUID_LEN];
+            entries[1].part_type = GptGuid([0u8; GPT_GUID_LEN]);
             hdr.update_entries_crc(entries.as_bytes());
         }
         let err = Error::GptError(GptError::ZeroPartitionTypeGUID { idx: 2 });
@@ -1658,7 +1697,7 @@ pub(crate) mod test {
     #[test]
     fn test_sync_gpt_zero_partition_unique_guid() {
         fn modify(hdr: &mut GptHeader, mut entries: Ref<&mut [u8], [GptEntry]>) {
-            entries[1].guid = [0u8; GPT_GUID_LEN];
+            entries[1].guid = GptGuid([0u8; GPT_GUID_LEN]);
             hdr.update_entries_crc(entries.as_bytes());
         }
         let err = Error::GptError(GptError::ZeroPartitionUniqueGUID { idx: 2 });

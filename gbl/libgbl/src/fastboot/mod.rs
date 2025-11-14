@@ -1499,8 +1499,26 @@ pub(crate) mod test {
         check_var(&mut gbl_fb, "partition-size", "raw_0", "0x1000");
         check_var(&mut gbl_fb, "partition-size", "raw_1", "0x2000");
 
+        check_var(&mut gbl_fb, "partition-guid", "boot_a", "42aaac2e-37e3-43ba-9930-42dfa96e6334");
+        check_var(&mut gbl_fb, "partition-guid", "boot_b", "bdadfeca-879c-43e9-8f0d-8ef7da29b5e7");
+
         let resp: TestResponder = Default::default();
         let mut out = vec![0u8; MAX_RESPONSE_SIZE];
+        // GUID cannot be reported for raw partition.
+        assert!(block_on(gbl_fb.get_var_as_str(
+            c"partition-guid",
+            [c"raw_1"].into_iter(),
+            &resp,
+            &mut out[..],
+        ))
+        .is_err());
+        assert!(block_on(gbl_fb.get_var_as_str(
+            c"partition-guid",
+            [c"non-existent"].into_iter(),
+            &resp,
+            &mut out[..],
+        ))
+        .is_err());
         assert!(block_on(gbl_fb.get_var_as_str(
             c"partition",
             [c"non-existent"].into_iter(),
@@ -1574,16 +1592,22 @@ pub(crate) mod test {
                 "gbl-default-block: None",
                 "partition-size:boot_a: 0x2000",
                 "partition-type:boot_a: raw",
+                "partition-guid:boot_a: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
                 "partition-size:boot_b: 0x3000",
                 "partition-type:boot_b: raw",
+                "partition-guid:boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
                 "partition-size:vendor_boot_a/1: 0x1000",
                 "partition-type:vendor_boot_a/1: raw",
+                "partition-guid:vendor_boot_a/1: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
                 "partition-size:vendor_boot_b/1: 0x1800",
                 "partition-type:vendor_boot_b/1: raw",
+                "partition-guid:vendor_boot_b/1: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
                 "partition-size:vendor_boot_a/2: 0x1000",
                 "partition-type:vendor_boot_a/2: raw",
+                "partition-guid:vendor_boot_a/2: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
                 "partition-size:vendor_boot_b/2: 0x1800",
                 "partition-type:vendor_boot_b/2: raw",
+                "partition-guid:vendor_boot_b/2: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
                 "partition-size:raw_0: 0x1000",
                 "partition-type:raw_0: raw",
                 "partition-size:raw_1/4: 0x2000",
@@ -2943,8 +2967,10 @@ pub(crate) mod test {
                 b"INFOgbl-default-block: None",
                 b"INFOpartition-size:vendor_boot_a: 0x1000",
                 b"INFOpartition-type:vendor_boot_a: raw",
+                b"INFOpartition-guid:vendor_boot_a: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
                 b"INFOpartition-size:vendor_boot_b: 0x1800",
                 b"INFOpartition-type:vendor_boot_b: raw",
+                b"INFOpartition-guid:vendor_boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
                 format!("INFO{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -2975,12 +3001,16 @@ pub(crate) mod test {
                 b"INFOgbl-default-block: None",
                 b"INFOpartition-size:boot_a: 0x2000",
                 b"INFOpartition-type:boot_a: raw",
+                b"INFOpartition-guid:boot_a: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
                 b"INFOpartition-size:boot_b: 0x3000",
                 b"INFOpartition-type:boot_b: raw",
+                b"INFOpartition-guid:boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
                 b"INFOpartition-size:vendor_boot_a: 0x1000",
                 b"INFOpartition-type:vendor_boot_a: raw",
+                b"INFOpartition-guid:vendor_boot_a: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
                 b"INFOpartition-size:vendor_boot_b: 0x1800",
                 b"INFOpartition-type:vendor_boot_b: raw",
+                b"INFOpartition-guid:vendor_boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
                 format!("INFO{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)

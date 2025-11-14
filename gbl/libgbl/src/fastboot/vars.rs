@@ -14,7 +14,9 @@
 
 use crate::{
     fastboot::{BufferPool, GblFastboot, PinFutContainerTyped},
-    gbl_println, GblOps,
+    gbl_println,
+    partition::Partition,
+    GblOps,
 };
 use core::{ffi::CStr, future::Future, ops::DerefMut, str::from_utf8};
 use fastboot::{next_arg, next_arg_u64, CommandResult, VarInfoSender};
@@ -37,6 +39,7 @@ const MAX_FETCH_SIZE_VAL: &'static str = "0x7fffffff";
 
 const PARTITION_SIZE: &'static str = "partition-size";
 const PARTITION_TYPE: &'static str = "partition-type";
+const PARTITION_GUID: &'static str = "partition-guid";
 
 const BLOCK_DEVICE: &'static str = "block-device";
 const TOTAL_BLOCKS: &'static str = "total-blocks";
@@ -51,6 +54,7 @@ pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     MAX_FETCH_SIZE,
     PARTITION_SIZE,
     PARTITION_TYPE,
+    PARTITION_GUID,
     BLOCK_DEVICE,
     DEFAULT_BLOCK,
     MAX_DOWNLOAD_SIZE,
@@ -86,6 +90,7 @@ where
             MAX_FETCH_SIZE => snprintf!(out, "{}", MAX_FETCH_SIZE_VAL),
             PARTITION_SIZE => self.get_var_partition_size(args_str, out)?,
             PARTITION_TYPE => self.get_var_partition_type(args_str, out)?,
+            PARTITION_GUID => self.get_var_partition_guid(args_str, out)?,
             BLOCK_DEVICE => self.get_var_block_device(args_str, out)?,
             DEFAULT_BLOCK => self.get_var_default_block(out)?,
             _ => {
@@ -196,6 +201,24 @@ where
         Ok(snprintf!(out, "raw"))
     }
 
+    /// "fastboot getvar partition-guid"
+    fn get_var_partition_guid<'s, 't>(
+        &mut self,
+        mut args: impl Iterator<Item = &'t str> + Clone,
+        out: &'s mut [u8],
+    ) -> CommandResult<&'s str> {
+        let (part, blk_id, _, _) =
+            self.parse_partition_arg(args.next().ok_or("Missing partition")?)?;
+        let (_, ptn) = self.find_partition(part, blk_id)?;
+
+        match ptn {
+            Partition::Gpt(gpt_partition) => {
+                Ok(snprintf!(out, "{}", gpt_partition.gpt_entry().guid))
+            }
+            _ => Err("Not a GPT partition".into()),
+        }
+    }
+
     /// Gets all "partition-size/partition-type"
     async fn get_all_partition_size_type(
         &mut self,
@@ -204,7 +227,8 @@ where
         // Though any sub range of a GPT partition or raw block counts as a partition in GBL
         // Fastboot, for "getvar all" we only enumerate whole range GPT partitions.
         let disks = self.disks;
-        let mut size_str = [0u8; 32];
+        // Allocates 36 bytes to fit partition GUID.
+        let mut size_str = [0u8; 36];
         for (idx, blk) in disks.iter().enumerate() {
             for ptn_idx in 0..blk.num_partitions().unwrap_or(0) {
                 let ptn = blk.get_partition_by_idx(ptn_idx)?;
@@ -222,6 +246,12 @@ where
                     .await?;
                 // Image type is not supported yet.
                 responder.send_var_info(PARTITION_TYPE, [part], snprintf!(size_str, "raw")).await?;
+                if let Partition::Gpt(gpt_partition) = ptn {
+                    let guid = gpt_partition.gpt_entry().guid;
+                    responder
+                        .send_var_info(PARTITION_GUID, [part], snprintf!(size_str, "{}", guid))
+                        .await?;
+                }
             }
         }
         Ok(())
