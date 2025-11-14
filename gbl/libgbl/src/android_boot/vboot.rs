@@ -57,8 +57,8 @@ impl<'a> PartitionsToVerify<'a> {
         buf: &'a mut PartitionBuffer<impl DerefMut<Target = [u8]>>,
     ) -> Result<()> {
         let buf = match buf {
-            PartitionBuffer::Preloaded(ref v) => PreloadBufferState::Loaded(&v[..]),
-            PartitionBuffer::Designated(ref mut v) => PreloadBufferState::ToLoad(&mut v[..]),
+            PartitionBuffer::Preloaded(v) => PreloadBufferState::Loaded(&v[..]),
+            PartitionBuffer::Designated(v) => PreloadBufferState::ToLoad(&mut v[..]),
         };
         let err = Err(Error::TooManyPartitions(MAX_PARTITIONS_TO_VERIFY));
         self.partitions.try_push(partition).or(err)?;

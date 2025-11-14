@@ -286,7 +286,7 @@ where
     pub async fn sync_gpt(&self) -> Result<Option<GptSyncResult>, Error> {
         match self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?.deref_mut() {
             PartitionTable::Raw(_, _) => Ok(None),
-            PartitionTable::Gpt(ref mut gpt) => {
+            PartitionTable::Gpt(gpt) => {
                 let mut blk = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
                 // Don't repair GPT silently.
                 // TODO(b/441574159): Provides a mechanism for platform to configure whether GPT
@@ -312,7 +312,7 @@ where
     pub async fn update_gpt(&self, mbr_primary: &mut [u8], resize: bool) -> Result<(), Error> {
         match self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?.deref_mut() {
             PartitionTable::Raw(_, _) => Err(Error::Unsupported),
-            PartitionTable::Gpt(ref mut gpt) => {
+            PartitionTable::Gpt(gpt) => {
                 let mut blk = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
                 blk.update_gpt(mbr_primary, resize, gpt).await
             }
@@ -328,7 +328,7 @@ where
     pub async fn erase_gpt(&self) -> Result<(), Error> {
         match self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?.deref_mut() {
             PartitionTable::Raw(_, _) => Err(Error::Unsupported),
-            PartitionTable::Gpt(ref mut gpt) => {
+            PartitionTable::Gpt(gpt) => {
                 let mut disk = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
                 disk.erase_gpt(gpt).await
             }

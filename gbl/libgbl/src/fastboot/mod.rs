@@ -35,6 +35,7 @@ pub use abr::{mark_slot_active, set_one_shot_bootloader, set_one_shot_recovery, 
 use arrayvec::ArrayVec;
 use core::{
     array::from_fn,
+    cell::RefCell,
     cmp::min,
     ffi::CStr,
     fmt::{Display, Write},
@@ -292,6 +293,7 @@ where
     current_download_buffer: Option<ScopedBuffer<'b, P>>,
     current_download_size: usize,
     enable_async_task: bool,
+    expected_download_crc: Option<u32>,
     default_block: Option<usize>,
     boot_buffer: BootBuffer<'b>,
     result: GblFastbootResult,
@@ -350,6 +352,7 @@ where
             current_download_buffer: None,
             current_download_size: 0,
             enable_async_task: false,
+            expected_download_crc: None,
             default_block: None,
             boot_buffer,
             result: Default::default(),
@@ -359,7 +362,9 @@ where
     }
 
     /// Returns the shared task container.
-    fn tasks(&self) -> &'d Shared<impl PinFutContainerTyped<'c, F>> {
+    // Rust edition 2024 by default catpures all lifetimes, which is unnecessarily strict. Thus use
+    // explicit `use` capture. Rust requires all type parameters be added in use.
+    fn tasks(&self) -> &'d Shared<impl PinFutContainerTyped<'c, F> + use<'c, G, B, S, T, P, C, F>> {
         self.tasks
     }
 
@@ -948,16 +953,55 @@ where
         }
 
         let mut downloader = responder.initiate_download().await?;
-        let (mut recv, mut checkpoint) = Default::default();
-        while recv < total {
-            recv += downloader.download(&mut buf[recv..]).await?;
-            // log progress per 25%.
-            let curr = recv * 4 / total;
-            if curr >= checkpoint && total > 128 * 1024 * 1024 {
-                gbl_println!(self.gbl_ops, "\tDownloaded {}+%, {recv}/{total}", 25 * curr);
-                checkpoint = curr + 1;
+        let channel = DataChannel::default();
+
+        // CRC computation task.
+        let crc = async {
+            let Some(crc) = self.expected_download_crc.take() else {
+                return Ok(());
+            };
+            let mut hasher = crc32fast::Hasher::new();
+            while let Some(v) = channel.read().await? {
+                // GBL's native TCP stack requires active CPU cycles to process incoming frames.
+                // Hashing too much data causes ACK delay and increases retransmission rate which
+                // significantly impacts download speed. Thus we yield after processing a moderate
+                // amount. 4K is chosen empirically.
+                //
+                // Other media such as USB where hardware is capable of delivering final data is
+                // not affected and as effective as without.
+                for v in v.chunks(4 * 1024) {
+                    hasher.update(v);
+                    yield_now().await;
+                }
             }
-        }
+            let actual = hasher.finalize();
+            if actual != crc {
+                return Err(format_args!(
+                    "CRC check failed. expect: {crc:#x}, actual: {actual:#x}"
+                )
+                .into());
+            }
+            Ok::<(), CommandError>(())
+        };
+
+        // Progress logging task.
+        let log = async {
+            if total >= 128 * 1024 * 1024 {
+                return Ok(());
+            }
+            let recv = || channel.remaining().map(|v| total - v);
+            for i in 0..5 {
+                while recv()? * 4 / total < i {
+                    yield_now().await;
+                }
+                gbl_println!(self.gbl_ops, "\tDownloaded {}+%, {}/{total}", 25 * i, recv()?);
+            }
+            Ok::<(), Error>(())
+        };
+
+        let ((dl, crc), _) = join(join(download(&mut downloader, buf, &channel), crc), log).await;
+        dl?;
+        crc?;
         self.current_download_size = total;
         Ok(())
     }
@@ -1067,6 +1111,17 @@ where
             }
             "gbl-disable-async-task" => {
                 self.enable_async_task = false;
+                Ok(())
+            }
+            "gbl-set-download-crc" => {
+                // Longer term, if this feature is useful enough, it can be added to fastboot
+                // upstream, i.e. download:<size>:<crc>
+                let crc = next_arg_u64(&mut args)?.ok_or("Missing CRC32 value")?;
+                self.expected_download_crc = Some(u32::try_from(crc)?);
+                Ok(())
+            }
+            "gbl-unset-download-crc" => {
+                self.expected_download_crc = None;
                 Ok(())
             }
             "gbl-unset-default-block" => {
@@ -1214,7 +1269,96 @@ pub trait GblTcpStream: TcpStream {
     fn accept_new(&mut self) -> bool;
 }
 
-/// Runs GBL fastboot on the given transports' channels.
+#[derive(Default)]
+enum Request<'a> {
+    #[default]
+    Pending,
+    Ready(&'a mut [u8]),
+}
+
+/// Contains state data of a `DataChannel`
+#[derive(Default)]
+struct DataChannelInternal<'a> {
+    // Represents a read request made by `DataChannel::read`.
+    //
+    // `None`: No data read request.
+    // `Some(Request::Pending)`: Request is pending.
+    // `Some(Request::Ready(_))`: Request data is ready.
+    request: Option<Request<'a>>,
+    // Stores the result when download is complete.
+    //
+    // Completed: Some(Ok(<unread data>))
+    // Failed: Some(Err(_))
+    result: Option<Result<&'a mut [u8], Error>>,
+    // Remaining data from the download
+    remaining: usize,
+}
+
+/// `DataChannel` contains shared state and buffer for async code to read and download data in
+/// parallel.
+#[derive(Default)]
+struct DataChannel<'a>(RefCell<DataChannelInternal<'a>>);
+
+impl<'a> DataChannel<'a> {
+    // Waits and reads data from the channel.
+    async fn read(&self) -> Result<Option<&'a mut [u8]>, Error> {
+        loop {
+            if let Some(Request::Ready(v)) = self.0.borrow_mut().request.take() {
+                return Ok(Some(v));
+            }
+            match &mut self.0.borrow_mut().result {
+                Some(Ok(v)) => return Ok((!v.is_empty()).then_some(take(v))),
+                Some(Err(e)) => return Err(*e),
+                _ => {}
+            }
+            self.0.borrow_mut().request = Some(Request::Pending);
+            yield_now().await;
+        }
+    }
+
+    // Returns the remaining size of data from the download.
+    fn remaining(&self) -> Result<usize, Error> {
+        if let Some(Err(e)) = self.0.borrow().result.as_ref() {
+            return Err(*e);
+        }
+        Ok(self.0.borrow().remaining)
+    }
+}
+
+/// Download data to the given buffer until either the buffer is filled or download is complete.
+///
+/// # Args:
+///
+/// * `downloader`: The `Downloader` for receiving download data.
+/// * `buffer`: The target buffer to receive the data.
+/// * `channel`: A `DataChannel` for other async code to read downloaded data in parallel.
+async fn download<'a>(
+    downloader: &mut impl Downloader,
+    buffer: &'a mut [u8],
+    channel: &DataChannel<'a>,
+) -> Result<(), Error> {
+    let res = async {
+        let sz = min(downloader.remaining(), buffer.len());
+        let mut to_download = &mut buffer[..sz];
+        let mut downloaded;
+        let mut curr = 0;
+        channel.0.borrow_mut().remaining = downloader.remaining();
+        while curr < to_download.len() {
+            curr += downloader.download(&mut to_download[curr..]).await?;
+            channel.0.borrow_mut().remaining = downloader.remaining();
+            if matches!(channel.0.borrow_mut().request, Some(Request::Pending)) {
+                (downloaded, to_download) = to_download.split_at_mut(take(&mut curr));
+                channel.0.borrow_mut().request = Some(Request::Ready(downloaded));
+            }
+        }
+        Ok(to_download)
+    }
+    .await;
+    channel.0.borrow_mut().result.insert(res).as_ref().map_err(|e| *e)?;
+    Ok(())
+}
+
+/// Runs GBL fastboot on the given USB/TCP channels.
 ///
 /// # Args:
 ///
@@ -4656,5 +4800,68 @@ pub(crate) mod test {
         ));
 
         assert_eq!(res, GblFastbootResult { loaded_image_info: None, last_set_active_slot: None });
+    }
+
+    #[test]
+    fn test_gbl_fastboot_download_crc_check() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(2)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let listener: SharedTestListener = Default::default();
+        let (generic, tcp) = (&mut [&listener], &listener);
+
+        // By default no crc check
+        listener.add_transport_input(format!("download:{:#x}", KiB!(2)).as_bytes());
+        listener.add_transport_input(&[0x55u8; KiB!(2)]);
+        // Mismatched crc value
+        listener.add_transport_input(b"oem gbl-set-download-crc 0");
+        listener.add_transport_input(format!("download:{:#x}", KiB!(2)).as_bytes());
+        listener.add_transport_input(&[0x55u8; KiB!(2)]);
+        // "oem gbl-set-download-crc" takes effect only once.
+        listener.add_transport_input(format!("download:{:#x}", KiB!(2)).as_bytes());
+        listener.add_transport_input(&[0x55u8; KiB!(2)]);
+        // Correct crc value.
+        listener.add_transport_input(b"oem gbl-set-download-crc b47c63c1");
+        listener.add_transport_input(format!("download:{:#x}", KiB!(2)).as_bytes());
+        listener.add_transport_input(&[0x55u8; KiB!(2)]);
+        // Canceled crc check.
+        listener.add_transport_input(b"oem gbl-set-download-crc 0");
+        listener.add_transport_input(b"oem gbl-unset-download-crc");
+        listener.add_transport_input(format!("download:{:#x}", KiB!(2)).as_bytes());
+        listener.add_transport_input(&[0x55u8; KiB!(2)]);
+        listener.add_transport_input(b"continue");
+
+        let mut general = vec![0u8; 1024];
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            generic,
+            Some(tcp),
+            (&mut general[..]).into(),
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
+                b"DATA00000800",
+                b"OKAY",
+                b"OKAY",
+                b"DATA00000800",
+                b"FAILCRC check failed. expect: 0x0, actual: 0xb47c63c1",
+                b"DATA00000800",
+                b"OKAY",
+                b"OKAY",
+                b"DATA00000800",
+                b"OKAY",
+                b"OKAY",
+                b"OKAY",
+                b"DATA00000800",
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_transport_out_queue()
+        );
     }
 }

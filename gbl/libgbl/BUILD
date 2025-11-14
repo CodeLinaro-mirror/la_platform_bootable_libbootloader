@@ -51,7 +51,7 @@ rust_library(
         "@gbl//toolchain:dev": ["@gbl//libgbl/testdata:android/vbmeta_disabled.img"],
         "@gbl//toolchain:prod": [],
     }),
-    edition = "2021",
+    edition = "2024",
     proc_macro_deps = ["@gbl//libprofile:libprofile_macros"],
     rustc_flags = ANDROID_RUST_LINTS,
     visibility = ["//visibility:public"],
