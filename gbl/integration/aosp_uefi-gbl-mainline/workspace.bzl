@@ -40,7 +40,7 @@ def define_gbl_workspace(name = None):
 
     gbl_new_local_repository(
         name = "rust_prebuilts",
-        path = "prebuilts/rust/linux-x86/{}".format(GBL_RUST_VERSION),
+        path = "prebuilts/rust-toolchain/linux-x86/{}".format(GBL_RUST_VERSION),
         build_file = "@gbl//toolchain:BUILD.android_rust_prebuilts.bazel",
     )
 
