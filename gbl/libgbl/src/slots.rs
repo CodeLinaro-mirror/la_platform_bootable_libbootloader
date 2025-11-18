@@ -31,7 +31,7 @@ use liberror::Error;
 /// Slot tries can only be compared to, assigned to, or assigned from other
 /// tries.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct Tries(usize);
+pub struct Tries(pub usize);
 
 impl From<usize> for Tries {
     fn from(u: usize) -> Self {

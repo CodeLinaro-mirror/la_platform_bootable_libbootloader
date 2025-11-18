@@ -1749,6 +1749,15 @@ pub(crate) mod test {
         }
     }
 
+    /// Helper for creating an unbootable slot object.
+    pub(crate) fn slot_unbootable(suffix: char) -> Slot {
+        Slot {
+            suffix: suffix.try_into().unwrap(),
+            bootability: Bootability::Unbootable(Default::default()),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn calculate_stack_usage() {
         let storage = FakeGblOpsStorage::default();

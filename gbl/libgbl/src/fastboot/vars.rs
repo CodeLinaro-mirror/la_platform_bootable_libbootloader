@@ -16,13 +16,14 @@ use crate::{
     fastboot::{BufferPool, GblFastboot, PinFutContainerTyped},
     gbl_println,
     partition::Partition,
+    slots::{Bootability, Slot},
     GblOps,
 };
 use core::{ffi::CStr, future::Future, ops::DerefMut, str::from_utf8};
 use fastboot::{next_arg, next_arg_u64, CommandResult, VarInfoSender};
 use gbl_async::{block_on, select, yield_now};
 use gbl_storage::BlockIo;
-use liberror::{Error, Result};
+use liberror::Error;
 use libutils::snprintf;
 
 const MAX_DOWNLOAD_SIZE: &'static str = "max-download-size";
@@ -31,6 +32,10 @@ const VERSION_BOOTLOADER: &'static str = "version-bootloader";
 const VERSION_BOOTLOADER_VAL: &'static str = "1.0";
 
 const SLOT_COUNT: &'static str = "slot-count";
+const CURRENT_SLOT: &'static str = "current-slot";
+const SLOT_SUCCESSFUL: &'static str = "slot-successful";
+const SLOT_UNBOOTABLE: &'static str = "slot-unbootable";
+const SLOT_RETRY_COUNT: &'static str = "slot-retry-count";
 
 const MAX_FETCH_SIZE: &'static str = "max-fetch-size";
 // Limited by DATA message which only allows 8 hex digits.
@@ -51,6 +56,10 @@ const DEFAULT_BLOCK: &'static str = "gbl-default-block";
 pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     VERSION_BOOTLOADER,
     SLOT_COUNT,
+    CURRENT_SLOT,
+    SLOT_SUCCESSFUL,
+    SLOT_UNBOOTABLE,
+    SLOT_RETRY_COUNT,
     MAX_FETCH_SIZE,
     PARTITION_SIZE,
     PARTITION_TYPE,
@@ -59,6 +68,28 @@ pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     DEFAULT_BLOCK,
     MAX_DOWNLOAD_SIZE,
 ];
+
+struct FastbootSlotInfo {
+    successful: &'static str,
+    unbootable: &'static str,
+    retry_count: usize,
+}
+
+impl From<Slot> for FastbootSlotInfo {
+    fn from(slot: Slot) -> Self {
+        match slot.bootability {
+            Bootability::Successful => {
+                FastbootSlotInfo { successful: "yes", unbootable: "no", retry_count: 0 }
+            }
+            Bootability::Unbootable(_) => {
+                FastbootSlotInfo { successful: "no", unbootable: "yes", retry_count: 0 }
+            }
+            Bootability::Retriable(t) => {
+                FastbootSlotInfo { successful: "no", unbootable: "no", retry_count: t.0 }
+            }
+        }
+    }
+}
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
 impl<'a: 'c, 'b: 'c, 'c, 'd, 'e, G, B, S, T, P, C, F>
@@ -86,7 +117,17 @@ where
         Ok(match name.to_str()? {
             MAX_DOWNLOAD_SIZE => snprintf!(out, "{:#x}", self.max_download_size().await),
             VERSION_BOOTLOADER => snprintf!(out, "{}", VERSION_BOOTLOADER_VAL),
-            SLOT_COUNT => self.get_var_slot_count(out)?,
+            SLOT_COUNT => snprintf!(out, "{}", self.gbl_ops.get_slot_count()?),
+            CURRENT_SLOT => snprintf!(out, "{}", self.gbl_ops.get_current_slot()?.suffix.as_char()),
+            SLOT_SUCCESSFUL => {
+                snprintf!(out, "{}", self.get_fastboot_slot_info(args_str)?.successful)
+            }
+            SLOT_UNBOOTABLE => {
+                snprintf!(out, "{}", self.get_fastboot_slot_info(args_str)?.unbootable)
+            }
+            SLOT_RETRY_COUNT => {
+                snprintf!(out, "{}", self.get_fastboot_slot_info(args_str)?.retry_count)
+            }
             MAX_FETCH_SIZE => snprintf!(out, "{}", MAX_FETCH_SIZE_VAL),
             PARTITION_SIZE => self.get_var_partition_size(args_str, out)?,
             PARTITION_TYPE => self.get_var_partition_type(args_str, out)?,
@@ -109,8 +150,24 @@ where
         let dl_sz = snprintf!(buf, "{:#x}", self.max_download_size().await);
         send.send_var_info(MAX_DOWNLOAD_SIZE, [], dl_sz).await?;
         send.send_var_info(VERSION_BOOTLOADER, [], VERSION_BOOTLOADER_VAL).await?;
-        match self.get_var_slot_count(&mut buf) {
-            Ok(slot_count) => send.send_var_info(SLOT_COUNT, [], slot_count).await?,
+        match self.gbl_ops.get_slot_count() {
+            Ok(slot_count) => {
+                send.send_var_info(SLOT_COUNT, [], snprintf!(buf, "{slot_count}")).await?;
+
+                let current_slot = self.gbl_ops.get_current_slot()?.suffix.as_char();
+                send.send_var_info(CURRENT_SLOT, [], snprintf!(buf, "{current_slot}")).await?;
+
+                for idx in 0..slot_count {
+                    let slot = self.gbl_ops.get_slot_info(idx)?;
+                    let FastbootSlotInfo { successful, unbootable, retry_count } = slot.into();
+                    let mut suffix_buf = [0u8; 4];
+                    let suffix = snprintf!(suffix_buf, "{}", slot.suffix.as_char());
+                    send.send_var_info(SLOT_SUCCESSFUL, [suffix], successful).await?;
+                    send.send_var_info(SLOT_UNBOOTABLE, [suffix], unbootable).await?;
+                    send.send_var_info(SLOT_RETRY_COUNT, [suffix], snprintf!(buf, "{retry_count}"))
+                        .await?;
+                }
+            }
             Err(Error::Unsupported | Error::NotFound) => {
                 // TODO(b/442975038): Make this an error in production, allow fallback only for
                 // #[cfg(feature = "gbl_dev")]
@@ -325,8 +382,22 @@ where
         })
     }
 
-    /// "fastboot getvar slot-count"
-    fn get_var_slot_count<'s>(&mut self, out: &'s mut [u8]) -> Result<&'s str> {
-        self.gbl_ops.get_slot_count().map(|sc| snprintf!(out, "{}", sc))
+    /// "fastboot getvar slot-successful:<slot-suffix>"
+    /// "fastboot getvar slot-unbootable:<slot-suffix>"
+    /// "fastboot getvar slot-retry-count:<slot-suffix>"
+    fn get_fastboot_slot_info<'t>(
+        &mut self,
+        mut args: impl Iterator<Item = &'t str> + Clone,
+    ) -> CommandResult<FastbootSlotInfo> {
+        let suffix_str = args.next().ok_or("Missing slot suffix")?;
+        if suffix_str.chars().count() != 1 {
+            return Err("Slot suffix must be a single character".into());
+        }
+        let suffix = suffix_str.chars().next().ok_or("Invalid slot")?;
+        let slot = self
+            .slots_iter()?
+            .find(|slot| slot.is_ok() && slot.unwrap().suffix.as_char() == suffix)
+            .ok_or("Invalid slot")??;
+        Ok(slot.into())
     }
 }

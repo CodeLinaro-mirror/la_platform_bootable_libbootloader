@@ -28,6 +28,7 @@ use crate::{
     misc::{read_bootloader_message_to, write_bootloader_message, AndroidBootMode},
     ops::{CommandExecType, FastbootEraseAction, RambootOps},
     partition::{check_part_unique, GblDisk, MultiPartitionIo, Partition, PartitionIo, RawName},
+    slots::Slot,
     GblOps,
 };
 pub use abr::{mark_slot_active, set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
@@ -728,8 +729,13 @@ where
         Ok(())
     }
 
+    /// Iterates all slots in the order of slot index.
+    fn slots_iter(&mut self) -> Result<impl Iterator<Item = Result<Slot, Error>> + '_, Error> {
+        Ok((0..self.gbl_ops.get_slot_count()?).map(|idx| self.gbl_ops.get_slot_info(idx)))
+    }
+
     /// Sets active slot.
-    async fn set_active_slot(&mut self, slot: &str) -> CommandResult<()> {
+    async fn set_active_slot(&mut self, suffix: char) -> CommandResult<()> {
         self.sync_all_blocks().await?;
 
         #[cfg(feature = "fuchsia")]
@@ -737,17 +743,19 @@ where
             // TODO(b/374776896): Prioritizes platform specific `set_active_slot`  if available.
             return Ok(mark_slot_active(
                 &mut GblAbrOps(self.gbl_ops),
-                match slot {
-                    "a" => SlotIndex::A,
-                    "b" => SlotIndex::B,
+                match suffix {
+                    'a' => SlotIndex::A,
+                    'b' => SlotIndex::B,
                     _ => return Err("Invalid slot index for Fuchsia A/B/R".into()),
                 },
             )?);
         }
 
-        // We currently assume that slot indices are mapped to suffix 'a' to 'z' starting from
-        // 0. Revisit if we need to support arbitrary slot suffix to index mapping.
-        Ok(self.gbl_ops.set_active_slot(u8::try_from(slot.chars().next().unwrap())? - b'a')?)
+        let idx = self
+            .slots_iter()?
+            .position(|slot| slot.is_ok() && slot.unwrap().suffix.as_char() == suffix)
+            .ok_or("Invalid slot")?;
+        Ok(self.gbl_ops.set_active_slot(idx as _)?)
     }
 
     /// Helper for "fastboot boot" in Android image.
@@ -1045,7 +1053,7 @@ where
         }
 
         let slot_ch = slot.chars().next().ok_or("Invalid slot")?;
-        self.set_active_slot(slot).await?;
+        self.set_active_slot(slot_ch).await?;
         self.result.last_set_active_slot = Some(slot_ch);
         Ok(())
     }
@@ -1356,7 +1364,10 @@ pub(crate) mod test {
         constants::{KiB, MiB, KERNEL_ALIGNMENT},
         misc::test::read_bootloader_message,
         ops::{
-            test::{into_refmut_bytes, FakeGblOps, FakeGblOpsStorage, SenderMessage},
+            test::{
+                into_refmut_bytes, slot, slot_successful, slot_unbootable, FakeGblOps,
+                FakeGblOpsStorage, SenderMessage,
+            },
             Partition, PartitionBuffer,
         },
         Os,
@@ -1467,6 +1478,33 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn test_get_var_slot_info() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.slot_count = Some(Ok(3));
+        gbl_ops.slot_infos =
+            vec![Ok(slot('a')), Ok(slot_successful('b')), Ok(slot_unbootable('c'))];
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        check_var(&mut gbl_fb, "slot-count", "", "3");
+        check_var(&mut gbl_fb, "current-slot", "", "a");
+        check_var(&mut gbl_fb, "slot-successful", "a", "no");
+        check_var(&mut gbl_fb, "slot-unbootable", "a", "no");
+        check_var(&mut gbl_fb, "slot-retry-count", "a", "7");
+        check_var(&mut gbl_fb, "slot-successful", "b", "yes");
+        check_var(&mut gbl_fb, "slot-unbootable", "b", "no");
+        check_var(&mut gbl_fb, "slot-retry-count", "b", "0");
+        check_var(&mut gbl_fb, "slot-successful", "c", "no");
+        check_var(&mut gbl_fb, "slot-unbootable", "c", "yes");
+        check_var(&mut gbl_fb, "slot-retry-count", "c", "0");
+    }
+
+    #[test]
     fn test_get_var_partition_info() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
         let mut storage = FakeGblOpsStorage::default();
@@ -1569,6 +1607,13 @@ pub(crate) mod test {
                 "max-download-size: 0x20000",
                 "version-bootloader: 1.0",
                 "slot-count: 2",
+                "current-slot: a",
+                "slot-successful:a: no",
+                "slot-unbootable:a: no",
+                "slot-retry-count:a: 7",
+                "slot-successful:b: no",
+                "slot-unbootable:b: no",
+                "slot-retry-count:b: 7",
                 "max-fetch-size: 0x7fffffff",
                 "block-device:0:total-blocks: 0x80",
                 "block-device:0:block-size: 0x200",
@@ -2952,6 +2997,13 @@ pub(crate) mod test {
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
                 b"INFOslot-count: 2",
+                b"INFOcurrent-slot: a",
+                b"INFOslot-successful:a: no",
+                b"INFOslot-unbootable:a: no",
+                b"INFOslot-retry-count:a: 7",
+                b"INFOslot-successful:b: no",
+                b"INFOslot-unbootable:b: no",
+                b"INFOslot-retry-count:b: 7",
                 b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
@@ -2986,6 +3038,13 @@ pub(crate) mod test {
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
                 b"INFOslot-count: 2",
+                b"INFOcurrent-slot: a",
+                b"INFOslot-successful:a: no",
+                b"INFOslot-unbootable:a: no",
+                b"INFOslot-retry-count:a: 7",
+                b"INFOslot-successful:b: no",
+                b"INFOslot-unbootable:b: no",
+                b"INFOslot-retry-count:b: 7",
                 b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
@@ -3427,7 +3486,9 @@ pub(crate) mod test {
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
+        listener.add_usb_input(b"getvar:current-slot");
         listener.add_usb_input(b"set_active:b");
+        listener.add_usb_input(b"getvar:current-slot");
         listener.add_usb_input(b"continue");
         let res = block_on(run_gbl_fastboot_stack::<2>(
             &mut gbl_ops,
@@ -3440,7 +3501,13 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.usb_out_queue(),
-            make_expected_usb_out(&[b"OKAY", b"INFOSyncing storage...", b"OKAY",]),
+            make_expected_usb_out(&[
+                b"OKAYa",
+                b"OKAY",
+                b"OKAYb",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         );
