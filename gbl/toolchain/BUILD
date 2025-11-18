@@ -765,10 +765,7 @@ rust_toolchain(
     default_edition = "2021",
     dylib_ext = ".so",
     exec_triple = "aarch64-unknown-linux-gnu",
-    extra_rustc_flags = [
-        "-Z",
-        "cf-protection=full",
-    ] + rustc_common_flags + msvc_rustc_debug_common,
+    extra_rustc_flags = rustc_common_flags + msvc_rustc_debug_common,
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
     # Need to use our own built sysroot because we are using a custom spec below.
