@@ -116,8 +116,8 @@ use efi_types::{
         EFI_EVENT_TYPE_NOTIFY_SIGNAL, EFI_EVENT_TYPE_NOTIFY_WAIT, EFI_EVENT_TYPE_RUNTIME,
         EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES, EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
         EFI_EVENT_TYPE_TIMER, EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL,
-        EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS,
-        GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR,
+        EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE_COLD,
+        EFI_STATUS_DEVICE_ERROR, EFI_STATUS_SUCCESS, GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR,
     },
     tpl::TplControl,
 };
@@ -1159,7 +1159,7 @@ fn report_error_and_reset<P: core::fmt::Display>(
                 .borrow_mut()
                 .reset_trace
                 .inputs
-                .push_back((EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS))
+                .push_back((EFI_RESET_TYPE_COLD, EFI_STATUS_DEVICE_ERROR))
         })
     }
 
@@ -1180,7 +1180,7 @@ pub fn report_error_and_reset<P: core::fmt::Display>(
         match allocation::internal_efi_entry_and_rt().1 {
             Some(rt) => {
                 let _ = rt
-                    .cold_reset()
+                    .reset_system(EFI_RESET_TYPE_COLD, EFI_STATUS_DEVICE_ERROR, None)
                     .inspect_err(|_| efi_print!(entry, "Failed to reset system. Hanging...\r\n"));
             }
             _ => efi_print!(entry, "Runtime services not supported. Hanging...\r\n"),
@@ -2574,7 +2574,7 @@ mod test {
             efi_call_traces().with(|trace| {
                 assert_eq!(
                     trace.borrow().reset_trace.inputs,
-                    [(EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS)]
+                    [(EFI_RESET_TYPE_COLD, EFI_STATUS_DEVICE_ERROR)]
                 )
             });
         });
