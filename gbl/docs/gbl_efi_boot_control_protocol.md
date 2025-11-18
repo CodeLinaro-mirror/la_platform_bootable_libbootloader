@@ -165,7 +165,8 @@ typedef struct _GBL_EFI_SLOT_INFO {
     // will be interpreted as UNKNOWN_REASON.
     UINT8 UnbootableReason;
     UINT8 Priority;
-    UINT8 Tries;
+    // Number of remaining tries to attempt to boot the slot
+    UINT8 RemainingTries;
     // Value of 1 if slot has successfully booted
     UINT8 Successful;
 } GBL_EFI_SLOT_INFO;
@@ -192,6 +193,8 @@ for the layout and fields of the metadata structure.
 
 Developers and EFI applications may wish to query metadata of arbitrary boot
 slots as part of debugging or logging.
+
+A slot that is not successful and has no tries left is considered unbootable.
 
 ### Status Codes Returned
 
