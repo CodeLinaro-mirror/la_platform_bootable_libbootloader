@@ -1356,7 +1356,7 @@ pub(crate) mod test {
         constants::{KiB, MiB, KERNEL_ALIGNMENT},
         misc::test::read_bootloader_message,
         ops::{
-            test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage, SenderMessage},
+            test::{into_refmut_bytes, FakeGblOps, FakeGblOpsStorage, SenderMessage},
             Partition, PartitionBuffer,
         },
         Os,
@@ -1555,7 +1555,6 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
         storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.slot_count = Some(Ok(0));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -1569,7 +1568,7 @@ pub(crate) mod test {
             [
                 "max-download-size: 0x20000",
                 "version-bootloader: 1.0",
-                "slot-count: 0",
+                "slot-count: 2",
                 "max-fetch-size: 0x7fffffff",
                 "block-device:0:total-blocks: 0x80",
                 "block-device:0:block-size: 0x200",
@@ -1687,7 +1686,6 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.current_slot = Some(Ok(slot('a')));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -1862,7 +1860,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0", [0xaau8; KiB!(4)]);
         storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.current_slot = Some(Ok(slot('b')));
+        gbl_ops.current_slot = Some(Ok(1));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -1913,7 +1911,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0_b", vec![0u8; raw.len()]);
         storage.add_raw_device(c"raw_1_b", vec![0u8; raw.len()]);
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.current_slot = Some(Ok(slot('b')));
+        gbl_ops.current_slot = Some(Ok(1));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -1944,7 +1942,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"boot_ab", [0xaau8; KiB!(4)]);
         storage.add_raw_device(c"boot", [0xaau8; KiB!(4)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.current_slot = Some(Ok(slot('b')));
+        gbl_ops.current_slot = Some(Ok(1));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2212,7 +2210,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0_b", [0xaau8; KiB!(8)]);
         storage.add_raw_device(c"raw_1_b", [0x55u8; KiB!(12)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.current_slot = Some(Ok(slot('b')));
+        gbl_ops.current_slot = Some(Ok(1));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2259,7 +2257,6 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw", raw_a);
         storage.add_raw_device(c"raw", raw_b);
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.current_slot = Some(Ok(slot('a')));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2917,8 +2914,6 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.slot_count = Some(Ok(0));
-        gbl_ops.current_slot = Some(Ok(slot('a')));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -2956,7 +2951,7 @@ pub(crate) mod test {
                 b"FAILNotFound",
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
-                b"INFOslot-count: 0",
+                b"INFOslot-count: 2",
                 b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
@@ -2990,7 +2985,7 @@ pub(crate) mod test {
                 b"OKAY0x3000",
                 b"INFOmax-download-size: 0x20000",
                 b"INFOversion-bootloader: 1.0",
-                b"INFOslot-count: 0",
+                b"INFOslot-count: 2",
                 b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
@@ -3249,7 +3244,6 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.current_slot = Some(Ok(slot('a')));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -3435,7 +3429,7 @@ pub(crate) mod test {
 
         listener.add_usb_input(b"set_active:b");
         listener.add_usb_input(b"continue");
-        block_on(run_gbl_fastboot_stack::<2>(
+        let res = block_on(run_gbl_fastboot_stack::<2>(
             &mut gbl_ops,
             buffers,
             Some(&mut TestLocalSession::default()),
@@ -3450,7 +3444,7 @@ pub(crate) mod test {
             "\nActual USB output:\n{}",
             listener.dump_usb_out_queue()
         );
-        assert_eq!(gbl_ops.last_set_active_slot, Some(1));
+        assert_eq!(res.last_set_active_slot, Some('b'));
     }
 
     #[test]
@@ -3726,6 +3720,7 @@ pub(crate) mod test {
     }
 
     fn test_fastboot_boot_slot(
+        idx: u8,
         suffix: char,
         load_buffer: &mut [u8],
     ) -> (&[u8], &[u8], &[u8], &mut [u8]) {
@@ -3735,7 +3730,7 @@ pub(crate) mod test {
         storage.add_raw_device(&vbmeta, vbmeta_img);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = default_test_gbl_ops(&storage);
-        gbl_ops.current_slot = Some(Ok(slot(suffix)));
+        gbl_ops.current_slot = Some(Ok(idx));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
 
@@ -3772,14 +3767,14 @@ pub(crate) mod test {
     #[test]
     fn test_fastboot_boot_slot_a() {
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let (ramdisk, _, kernel, _) = test_fastboot_boot_slot('a', &mut load_buffer);
+        let (ramdisk, _, kernel, _) = test_fastboot_boot_slot(0, 'a', &mut load_buffer);
         checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
     }
 
     #[test]
     fn test_fastboot_boot_slot_b() {
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
-        let (ramdisk, _, kernel, _) = test_fastboot_boot_slot('b', &mut load_buffer);
+        let (ramdisk, _, kernel, _) = test_fastboot_boot_slot(1, 'b', &mut load_buffer);
         checks_loaded_v2_slot_b_normal_mode(ramdisk, kernel);
     }
 
@@ -3809,7 +3804,6 @@ pub(crate) mod test {
 
         let mut gbl_ops = default_test_gbl_ops(&storage);
         gbl_ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
-        gbl_ops.current_slot = Some(Ok(slot('a')));
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
@@ -4165,7 +4159,6 @@ pub(crate) mod test {
         };
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.vendor_erase_handler = Some(&mut vendor_erase_handler);
-        gbl_ops.current_slot = Some(Ok(slot('a')));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
         // Succeeds due to `vendor_erase_handler` instructing it to skip, even if there is no such
@@ -4401,7 +4394,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_a", [0xaau8; KiB!(4)]);
         storage.add_raw_device(c"raw_b", [0x55u8; KiB!(4)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.current_slot = Some(Ok(slot('b')));
+        gbl_ops.current_slot = Some(Ok(1));
         let listener: SharedTestListener = Default::default();
         let (usb, tcp) = (&listener, &listener);
         listener.add_usb_input(b"getvar:partition-size:boot_ab");

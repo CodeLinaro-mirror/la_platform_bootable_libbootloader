@@ -1113,10 +1113,10 @@ pub(crate) mod test {
         // We wrap it in an `Option` so that if a test exercises code paths that use it but did not
         // set it, it can panic with "unwrap()" which will give a clearer error and location
         // message than a vague error such as `Error::Unimplemented`.
-        pub current_slot: Option<Result<Slot, Error>>,
+        pub current_slot: Option<Result<u8, Error>>,
 
-        /// slot index last set active by `set_active()`.
-        pub last_set_active_slot: Option<u8>,
+        /// For returned by `get_slot_info`.
+        pub slot_infos: Vec<Result<Slot, Error>>,
 
         /// For returned by `get_one_shot_boot_mode`.
         pub one_shot_boot_mode: Option<OneShotBootMode>,
@@ -1215,6 +1215,9 @@ pub(crate) mod test {
         pub fn new(partitions: &'a [TestGblDisk]) -> Self {
             #[cfg_attr(not(feature = "fuchsia"), allow(unused_mut))]
             let mut res = Self {
+                slot_count: Some(Ok(2)),
+                current_slot: Some(Ok(0)),
+                slot_infos: vec![Ok(slot('a')), Ok(slot('b'))],
                 partitions,
                 #[cfg(feature = "fuchsia")]
                 zbi_bootloader_files_buffer: vec![0u8; 32 * 1024],
@@ -1693,16 +1696,20 @@ pub(crate) mod test {
             self.slot_count.unwrap()
         }
 
-        fn get_slot_info(&mut self, _: u8) -> Result<Slot, Error> {
-            unimplemented!()
+        fn get_slot_info(&mut self, idx: u8) -> Result<Slot, Error> {
+            self.slot_infos[idx as usize]
         }
 
         fn get_current_slot(&mut self) -> Result<Slot, Error> {
-            self.current_slot.unwrap()
+            self.get_slot_info(self.current_slot.unwrap()?)
         }
 
         fn set_active_slot(&mut self, slot: u8) -> Result<(), Error> {
-            self.last_set_active_slot = Some(slot);
+            // Set slot metadata to default.
+            let idx = slot as usize;
+            let suffix = self.slot_infos[idx]?.suffix;
+            self.slot_infos[idx] = Ok(Slot { suffix, ..Default::default() });
+            self.current_slot = Some(Ok(slot));
             Ok(())
         }
 

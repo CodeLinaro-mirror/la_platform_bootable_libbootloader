@@ -667,12 +667,15 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
         .unwrap_or(None);
     gbl_println!(ops, "Hardware triggered boot mode override: {one_shot_boot_mode:?}");
 
+    let slot = get_boot_slot(ops)?;
+
     // Checks and enters fastboot.
-    let result = &mut Default::default();
     if matches!(
         (one_shot_boot_mode, boot_mode),
         (Some(OneShotBootMode::Bootloader), _) | (None, AndroidBootMode::BootloaderBootOnce)
     ) {
+        let result = &mut Default::default();
+
         gbl_println!(ops, "Entering fastboot mode...");
         // TODO(b/430068343): Support designated buffers for `fastboot boot`.
         run_fastboot(GblFastbootEntry { ops, boot_buffer: boot_buffer.as_borrowed(), result });
@@ -685,13 +688,12 @@ pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
 
         // Device state or disk content might have changed. Re-sync preloaded partition buffer.
         ops.sync_partition_buffer(true)?;
-    }
 
-    // Checks whether fastboot has set a different active slot. Reboot if it does.
-    let slot = get_boot_slot(ops)?;
-    if matches!(result.last_set_active_slot, Some(s) if s != slot.suffix.as_char()) {
-        gbl_println!(ops, "Active slot changed by \"fastboot set_active\". Reset..");
-        ops.reboot()?;
+        // Checks whether fastboot has set a different active slot. Reboot if it does.
+        if matches!(result.last_set_active_slot, Some(s) if s != slot.suffix.as_char()) {
+            gbl_println!(ops, "Active slot changed by \"fastboot set_active\". Reset..");
+            ops.reboot()?;
+        }
     }
 
     let is_recovery = boot_mode.should_enter_recovery()
@@ -1997,7 +1999,6 @@ androidboot.veritymode.managed=yes
         let mut ops = FakeGblOps::new(&storage);
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
-        ops.current_slot = Some(Ok(slot('a')));
         ops
     }
 
@@ -2156,7 +2157,7 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
-        ops.current_slot = Some(Ok(slot('b')));
+        ops.current_slot = Some(Ok(1));
 
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
@@ -2308,7 +2309,6 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
-        ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
@@ -2350,7 +2350,6 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
-        ops.current_slot = Some(Ok(slot('a')));
 
         let general = &mut AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
         let mut kernel = AlignedBuffer::<u8>::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
@@ -2400,7 +2399,6 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
-        ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
@@ -2454,7 +2452,6 @@ androidboot.veritymode.managed=yes
         ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
         ops.sync_partition_buffer_handler = Some(&mut sync_partition_buffer_handler);
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
-        ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
@@ -2515,7 +2512,6 @@ androidboot.veritymode.managed=yes
         ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
         ops.sync_partition_buffer_handler = Some(&mut sync_partition_buffer_handler);
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
-        ops.current_slot = Some(Ok(slot('a')));
 
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
