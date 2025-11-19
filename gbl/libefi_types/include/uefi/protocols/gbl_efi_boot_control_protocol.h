@@ -49,8 +49,9 @@ typedef struct {
   // will be interpreted as UNKNOWN_REASON.
   GblEfiUnbootableReason unbootable_reason;
   uint8_t priority;
-  uint8_t tries;
-  // Value of 1 if slot has successfully booted.
+  // Number of remaining tries to attempt to boot the slot
+  uint8_t remaining_tries;
+  // Value of 1 if slot has successfully booted
   uint8_t successful;
 } GblEfiSlotInfo;
 
