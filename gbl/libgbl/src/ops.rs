@@ -464,7 +464,7 @@ pub trait GblOps<'a, 'd> {
     /// # Returns
     ///
     /// Ok(LockState::Locked) if locked, Ok(LockState::Unlocked) if unlocked.
-    fn fastboot_get_lock_state(&mut self, lock_type: LockType) -> Result<LockState, Error>;
+    fn fastboot_read_lock_state(&mut self, lock_type: LockType) -> Result<LockState, Error>;
 
     /// Handler for `fastboot flashing lock|unlock` and
     /// `fastboot flashing lock_critical|unlock_critical`.
@@ -938,7 +938,7 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
-    fn fastboot_get_lock_state(&mut self, _: LockType) -> Result<LockState, Error> {
+    fn fastboot_read_lock_state(&mut self, _: LockType) -> Result<LockState, Error> {
         // Ramboot should not need this.
         unreachable!();
     }
@@ -1652,16 +1652,16 @@ pub(crate) mod test {
             Ok(())
         }
 
-        fn fastboot_get_lock_state(&mut self, lock_type: LockType) -> Result<LockState, Error> {
-            match lock_type {
-                LockType::Device => {
-                    Ok(match self.avb_read_device_status().map(|s| s.is_unlocked).unwrap() {
-                        true => LockState::Unlocked,
-                        _ => LockState::Locked,
-                    })
-                }
-                _ => unimplemented!(),
-            }
+        fn fastboot_read_lock_state(&mut self, lock_type: LockType) -> Result<LockState, Error> {
+            let status = self.avb_read_device_status()?;
+
+            let unlocked = match lock_type {
+                LockType::Device => status.is_unlocked,
+                LockType::Critical => status.is_unlocked_critical,
+            };
+
+            let lock_state = if unlocked { LockState::Unlocked } else { LockState::Locked };
+            Ok(lock_state)
         }
 
         fn fastboot_get_unlock_ability(&mut self) -> Result<Unlockability, Error> {

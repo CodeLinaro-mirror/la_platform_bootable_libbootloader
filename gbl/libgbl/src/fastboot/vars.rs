@@ -61,6 +61,9 @@ const BLOCK_DEVICE_STATUS: &'static str = "status";
 
 const DEFAULT_BLOCK: &'static str = "gbl-default-block";
 
+const UNLOCKED: &'static str = "unlocked";
+const UNLOCKED_CRITICAL: &'static str = "unlocked-critical";
+
 pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     VERSION_BOOTLOADER,
     SLOT_COUNT,
@@ -76,9 +79,11 @@ pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     BLOCK_DEVICE,
     DEFAULT_BLOCK,
     MAX_DOWNLOAD_SIZE,
+    UNLOCKED,
+    UNLOCKED_CRITICAL,
 ];
 
-#[derive(Unaligned, FromBytes, IntoBytes)]
+#[derive(FromBytes, IntoBytes, Unaligned)]
 #[repr(packed)]
 struct PartHasSlot(RawName, u8);
 
@@ -197,6 +202,8 @@ where
             PARTITION_GUID => self.get_var_partition_guid(args_str, out)?,
             BLOCK_DEVICE => self.get_var_block_device(args_str, out)?,
             DEFAULT_BLOCK => self.get_var_default_block(out)?,
+            UNLOCKED => self.get_var_unlocked(fastboot::LockType::Device, out)?,
+            UNLOCKED_CRITICAL => self.get_var_unlocked(fastboot::LockType::Critical, out)?,
             _ => {
                 let sz = self.gbl_ops.fastboot_variable(name, args, out)?;
                 from_utf8(out.get(..sz).ok_or("Invalid variable value size")?)?
@@ -255,6 +262,19 @@ where
         self.get_all_block_device(send).await?;
         send.send_var_info(DEFAULT_BLOCK, [], self.get_var_default_block(&mut buf)?).await?;
         self.get_all_partition_size_type(send).await?;
+
+        send.send_var_info(
+            UNLOCKED,
+            [],
+            self.gbl_ops.fastboot_read_lock_state(fastboot::LockType::Device)?.as_unlocked_str(),
+        )
+        .await?;
+        send.send_var_info(
+            UNLOCKED_CRITICAL,
+            [],
+            self.gbl_ops.fastboot_read_lock_state(fastboot::LockType::Critical)?.as_unlocked_str(),
+        )
+        .await?;
 
         // Gets platform specific variables
         let tasks = self.tasks();
@@ -452,6 +472,19 @@ where
             Some(v) => snprintf!(out, "{:#x}", v),
             None => snprintf!(out, "None"),
         })
+    }
+
+    /// "fastboot getvar unlocked" and "fastboot getvar unlocked-critical"
+    fn get_var_unlocked<'s>(
+        &mut self,
+        lock_type: fastboot::LockType,
+        out: &'s mut [u8],
+    ) -> CommandResult<&'s str> {
+        Ok(snprintf!(
+            out,
+            "{}",
+            self.gbl_ops.fastboot_read_lock_state(lock_type)?.as_unlocked_str()
+        ))
     }
 
     /// "fastboot getvar slot-successful:<slot-suffix>"

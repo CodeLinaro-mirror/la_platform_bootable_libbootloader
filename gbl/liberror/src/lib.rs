@@ -410,6 +410,23 @@ impl From<Error> for EfiError {
     }
 }
 
+impl From<avb::IoError> for Error {
+    fn from(value: avb::IoError) -> Self {
+        use avb::IoError;
+
+        match value {
+            IoError::Oom => Self::OutOfResources,
+            IoError::Io => Self::BlockIoError,
+            IoError::NoSuchPartition => Self::NotFound,
+            IoError::RangeOutsidePartition => Self::OutOfRange,
+            IoError::NoSuchValue => Self::InvalidInput,
+            IoError::InvalidValueSize => Self::InvalidInput,
+            IoError::InsufficientSpace(space) => Self::BufferTooSmall(Some(space)),
+            IoError::NotImplemented => Self::Unsupported,
+        }
+    }
+}
+
 /// Maps a EfiStatus to Result<()>.
 pub fn efi_status_to_result(e: EfiStatus) -> Result<()> {
     // Convert to `EfiResult` using libefi_types, then from there into our

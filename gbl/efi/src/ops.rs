@@ -947,7 +947,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
-    fn fastboot_get_lock_state(&mut self, lock_type: LockType) -> Result<LockState> {
+    fn fastboot_read_lock_state(&mut self, lock_type: LockType) -> Result<LockState> {
         // TODO(b/467368252): clean up AVB queries and return type
         self.avb_read_device_status()
             .map(|s| s.lock_state(lock_type))
@@ -1726,7 +1726,7 @@ mod test {
         );
     }
 
-    fn avb_get_lock_state(
+    fn avb_read_lock_state(
         status_flags: GblEfiAvbDeviceStatus,
         lock_type: LockType,
         lock_state: LockState,
@@ -1738,12 +1738,12 @@ mod test {
 
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        assert_eq!(ops.fastboot_get_lock_state(lock_type), Ok(lock_state));
+        assert_eq!(ops.fastboot_read_lock_state(lock_type), Ok(lock_state));
     }
 
     #[test]
-    fn test_avb_get_lock_state_device_unlocked() {
-        avb_get_lock_state(
+    fn test_avb_read_lock_state_device_unlocked() {
+        avb_read_lock_state(
             efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED,
             LockType::Device,
             LockState::Unlocked,
@@ -1751,8 +1751,8 @@ mod test {
     }
 
     #[test]
-    fn test_avb_get_lock_state_device_locked() {
-        avb_get_lock_state(
+    fn test_avb_read_lock_state_device_locked() {
+        avb_read_lock_state(
             !efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED,
             LockType::Device,
             LockState::Locked,
@@ -1760,8 +1760,8 @@ mod test {
     }
 
     #[test]
-    fn test_avb_get_lock_state_critical_unlocked() {
-        avb_get_lock_state(
+    fn test_avb_read_lock_state_critical_unlocked() {
+        avb_read_lock_state(
             efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL,
             LockType::Critical,
             LockState::Unlocked,
@@ -1769,8 +1769,8 @@ mod test {
     }
 
     #[test]
-    fn test_avb_get_lock_state_critical_locked() {
-        avb_get_lock_state(
+    fn test_avb_read_lock_state_critical_locked() {
+        avb_read_lock_state(
             !efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL,
             LockType::Critical,
             LockState::Locked,

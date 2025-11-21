@@ -24,6 +24,7 @@ rust_library(
     rustc_flags = ANDROID_RUST_LINTS,
     visibility = ["//visibility:public"],
     deps = [
+        "@avb",
         "@gbl//libefi_types",
         "@gbl//libopendice",
         "@gbl//libsafemath",

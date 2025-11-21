@@ -292,6 +292,16 @@ pub enum LockState {
     Unlocked,
 }
 
+impl LockState {
+    /// Helper function indicating whether a lock is locked or unlocked.
+    pub const fn as_unlocked_str(&self) -> &'static str {
+        match self {
+            Self::Locked => "no",
+            Self::Unlocked => "yes",
+        }
+    }
+}
+
 /// Specifies whether the device can be unlocked.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Unlockability {

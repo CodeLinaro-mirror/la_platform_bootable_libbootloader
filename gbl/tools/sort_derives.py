@@ -47,6 +47,7 @@ EXPECTED_DERIVES: tuple[str, ...] = (
     "FromZeroes",
     "IntoBytes",
     "KnownLayout",
+    "Unaligned",
 )
 
 

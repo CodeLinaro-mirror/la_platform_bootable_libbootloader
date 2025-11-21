@@ -965,7 +965,6 @@ custom kernel images will fail.
 | `EFI_ACCESS_DENIED`     | The device is not unlockable.                                                               |
 | `EFI_UNSUPPORTED`       | *Type* is `GBL_EF_AVB_LOCK_TYPE_CRITICAL` and the firmware does not define a critical lock. |
 
-
 ## Status codes returned to `libavb`
 
 Some of the methods across this protocol are initiated by the `libavb`. The

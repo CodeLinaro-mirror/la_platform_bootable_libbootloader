@@ -847,7 +847,7 @@ where
 
     /// Helper for checking whether device is unlocked.
     fn check_unlocked(&mut self) -> CommandResult<()> {
-        match self.gbl_ops.fastboot_get_lock_state(LockType::Device) {
+        match self.gbl_ops.fastboot_read_lock_state(LockType::Device) {
             Err(e) => Err(format_args!("Fail to get unlock status {e}").into()),
             Ok(LockState::Locked) => Err("Device is not unlocked".into()),
             _ => Ok(()),
@@ -1511,6 +1511,7 @@ pub(crate) mod test {
             default_test_gbl_ops, read_test_data,
         },
         constants::{KiB, MiB, KERNEL_ALIGNMENT},
+        gbl_avb::AvbDeviceStatus,
         misc::test::read_bootloader_message,
         ops::{
             test::{
@@ -1878,6 +1879,8 @@ pub(crate) mod test {
                 "partition-type:raw_1/4: raw",
                 "partition-size:raw_1/5: 0x2000",
                 "partition-type:raw_1/5: raw",
+                "unlocked: no",
+                "unlocked-critical: no",
                 format!("{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_str(),
                 format!("{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -1914,6 +1917,8 @@ pub(crate) mod test {
                 format!("version-bootloader: {}", expected_version_bootloader()).as_str(),
                 "max-fetch-size: 0x7fffffff",
                 "gbl-default-block: None",
+                "unlocked: no",
+                "unlocked-critical: no",
                 format!("{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_str(),
                 format!("{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -1951,6 +1956,8 @@ pub(crate) mod test {
                 "slot-count: 2",
                 "max-fetch-size: 0x7fffffff",
                 "gbl-default-block: None",
+                "unlocked: no",
+                "unlocked-critical: no",
                 format!("{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_str(),
                 format!("{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -3217,6 +3224,8 @@ pub(crate) mod test {
                 b"INFOpartition-size:vendor_boot_b: 0x1800",
                 b"INFOpartition-type:vendor_boot_b: raw",
                 b"INFOpartition-guid:vendor_boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
+                b"INFOunlocked: no",
+                b"INFOunlocked-critical: no",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
                 format!("INFO{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -3266,6 +3275,8 @@ pub(crate) mod test {
                 b"INFOpartition-size:vendor_boot_b: 0x1800",
                 b"INFOpartition-type:vendor_boot_b: raw",
                 b"INFOpartition-guid:vendor_boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
+                b"INFOunlocked: no",
+                b"INFOunlocked-critical: no",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
                 format!("INFO{}:2: {}:2", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -4667,6 +4678,72 @@ pub(crate) mod test {
             ]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
+        );
+    }
+
+    fn gbl_getvar_unlocked_test_helper(command: &str, status: AvbDeviceStatus, expected_str: &str) {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status_error = None;
+        gbl_ops.avb_device_status = status;
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+        listener.add_transport_input(command.as_bytes());
+        listener.add_transport_input(b"continue");
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
+                expected_str.as_bytes(),
+                b"INFOSyncing storage...",
+                b"OKAY"
+            ]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_gbl_getvar_unlocked_device_unlocked() {
+        gbl_getvar_unlocked_test_helper(
+            "getvar:unlocked",
+            AvbDeviceStatus { is_unlocked: true, ..Default::default() },
+            "OKAYyes",
+        );
+    }
+
+    #[test]
+    fn test_gbl_getvar_unlocked_device_locked() {
+        gbl_getvar_unlocked_test_helper(
+            "getvar:unlocked",
+            AvbDeviceStatus { is_unlocked: false, ..Default::default() },
+            "OKAYno",
+        );
+    }
+
+    #[test]
+    fn test_gbl_getvar_unlocked_critical_unlocked() {
+        gbl_getvar_unlocked_test_helper(
+            "getvar:unlocked-critical",
+            AvbDeviceStatus { is_unlocked_critical: true, ..Default::default() },
+            "OKAYyes",
+        );
+    }
+
+    #[test]
+    fn test_gbl_getvar_unlocked_critical_locked() {
+        gbl_getvar_unlocked_test_helper(
+            "getvar:unlocked-critical",
+            AvbDeviceStatus { is_unlocked_critical: false, ..Default::default() },
+            "OKAYno",
         );
     }
 
