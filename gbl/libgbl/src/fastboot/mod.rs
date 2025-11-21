@@ -49,7 +49,8 @@ use core::{
 use fastboot::{
     next_arg, next_arg_u64, process_next_command, run_tcp_session, CommandError, CommandResult,
     DownloadBuilder, Downloader, FailSender, FastbootImplementation, InfoSender, LockState,
-    LockType, OkaySender, RebootMode, UploadBuilder, Uploader, VarInfoSender, MAX_COMMAND_SIZE,
+    LockType, OkaySender, RebootMode, Unlockability, UploadBuilder, Uploader, VarInfoSender,
+    MAX_COMMAND_SIZE,
 };
 use gbl_async::{join, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
@@ -846,7 +847,7 @@ where
 
     /// Helper for checking whether device is unlocked.
     fn check_unlocked(&mut self) -> CommandResult<()> {
-        match self.gbl_ops.fastboot_get_lock(LockType::Device) {
+        match self.gbl_ops.fastboot_get_lock_state(LockType::Device) {
             Err(e) => Err(format_args!("Fail to get unlock status {e}").into()),
             Ok(LockState::Locked) => Err("Device is not unlocked".into()),
             _ => Ok(()),
@@ -1190,12 +1191,16 @@ where
         self.boot_android(&img[..sz], resp).await
     }
 
-    async fn flashing_set_lock(
+    async fn flashing_write_lock_state(
         &mut self,
         lock_type: LockType,
         lock_state: LockState,
     ) -> CommandResult<()> {
-        Ok(self.gbl_ops.fastboot_set_lock(lock_type, lock_state)?)
+        Ok(self.gbl_ops.avb_write_lock_state(lock_type, lock_state)?)
+    }
+
+    async fn flashing_get_unlock_ability(&mut self) -> CommandResult<Unlockability> {
+        self.gbl_ops.fastboot_get_unlock_ability().map_err(|e| e.into())
     }
 
     async fn command_exec(
@@ -4383,7 +4388,7 @@ pub(crate) mod test {
         );
 
         assert_eq!(
-            gbl_ops.set_lock_traces,
+            gbl_ops.write_lock_state_traces,
             vec![
                 (LockType::Device, LockState::Locked),
                 (LockType::Device, LockState::Unlocked),

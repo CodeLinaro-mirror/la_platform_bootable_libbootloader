@@ -22,8 +22,9 @@ use crate::{
 use core::ffi::CStr;
 use core::ptr::null;
 use efi_types::{
-    EfiGuid, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbPartition,
-    GblEfiAvbProtocol, GblEfiAvbVerificationResult, GBL_EFI_AVB_PROTOCOL_REVISION,
+    EfiGuid, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbLockState,
+    GblEfiAvbLockType, GblEfiAvbPartition, GblEfiAvbProtocol, GblEfiAvbVerificationResult,
+    GBL_EFI_AVB_PROTOCOL_REVISION,
 };
 use liberror::Result;
 
@@ -225,6 +226,24 @@ impl Protocol<'_, GblAvbProtocol> {
                 self.interface().handle_verification_result,
                 self.interface_ptr(),
                 verification_result as *const _
+            )
+        }
+    }
+
+    /// Wraps `GBL_EFI_AVB_PROTOCOL.write_lock_state()`.
+    pub fn write_lock_state(
+        &self,
+        lock_type: GblEfiAvbLockType,
+        lock_state: GblEfiAvbLockState,
+    ) -> Result<()> {
+        // Safety:
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        unsafe {
+            efi_call!(
+                self.interface().write_lock_state,
+                self.interface_ptr(),
+                lock_type,
+                lock_state
             )
         }
     }

@@ -32,15 +32,25 @@
 #include <uefi/types.h>
 
 static const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 3);
+    GBL_PROTOCOL_REVISION(0, 4);
 
 typedef uint64_t GblEfiAvbDeviceStatus;
+
 // Indicates device is unlocked.
 static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED = 0x1
                                                                         << 0;
-// Indecated dm-verity error is occurred.
+
+// Indicates a dm-verity error has occurred.
 static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED =
     0x1 << 1;
+
+// Indicates device is unlocked for critical operations.
+static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL =
+    0x1 << 2;
+
+// Indicates the device bootloader can be unlocked.
+static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE = 0x1
+                                                                          << 3;
 
 // Os boot state color flags.
 //
@@ -62,6 +72,12 @@ EFI_ENUM(GblEfiAvbKeyValidationStatus, uint32_t,
 
 typedef uint64_t GblEfiAvbPartitionFlags;
 static const GblEfiAvbPartitionFlags GBL_EFI_AVB_PARTITION_OPTIONAL = 0x1 << 0;
+
+EFI_ENUM(GblEfiAvbLockType, uint8_t, GBL_EFI_AVB_LOCK_TYPE_DEVICE,
+         GBL_EFI_AVB_LOCK_TYPE_CRITICAL);
+
+EFI_ENUM(GblEfiAvbLockState, uint8_t, GBL_EFI_AVB_LOCK_STATE_UNLOCKED,
+         GBL_EFI_AVB_LOCK_STATE_LOCKED);
 
 typedef struct {
   // On input - `base_name` buffer size
@@ -142,6 +158,9 @@ typedef struct GblEfiAvbProtocol {
       struct GblEfiAvbProtocol* self,
       /* in */ const GblEfiAvbVerificationResult* result);
 
+  EfiStatus (*write_lock_state)(struct GblEfiAvbProtocol* self,
+                                /* in */ GblEfiAvbLockType type,
+                                /* in */ GblEfiAvbLockState state);
 } GblEfiAvbProtocol;
 
 #endif  //__GBL_AVB_PROTOCOL_H__

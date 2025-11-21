@@ -40,7 +40,9 @@ use libutils::aligned_subslice;
 pub use avb::{
     CertPermanentAttributes, IoError as AvbIoError, IoResult as AvbIoResult, SHA256_DIGEST_SIZE,
 };
-pub use fastboot::{CommandExecType, FailSender, InfoSender, LockState, LockType, OkaySender};
+pub use fastboot::{
+    CommandExecType, FailSender, InfoSender, LockState, LockType, OkaySender, Unlockability,
+};
 pub use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
 pub use slots::Slot;
@@ -453,19 +455,6 @@ pub trait GblOps<'a, 'd> {
         cb: impl FnMut(&mut Self, &[&CStr], &CStr),
     ) -> Result<(), Error>;
 
-    /// Handler for `fastboot flashing lock|unlock` and
-    /// `fastboot flashing lock_critical|unlock_critical`.
-    ///
-    /// # Args
-    ///
-    /// * `lock_type`: The type of lock to set.
-    /// * `lock_state`: The target lock state to set.
-    fn fastboot_set_lock(
-        &mut self,
-        lock_type: LockType,
-        lock_state: LockState,
-    ) -> Result<(), Error>;
-
     /// Query the current lock state
     ///
     /// # Args
@@ -475,7 +464,28 @@ pub trait GblOps<'a, 'd> {
     /// # Returns
     ///
     /// Ok(LockState::Locked) if locked, Ok(LockState::Unlocked) if unlocked.
-    fn fastboot_get_lock(&mut self, lock_type: LockType) -> Result<LockState, Error>;
+    fn fastboot_get_lock_state(&mut self, lock_type: LockType) -> Result<LockState, Error>;
+
+    /// Handler for `fastboot flashing lock|unlock` and
+    /// `fastboot flashing lock_critical|unlock_critical`.
+    ///
+    /// # Args
+    ///
+    /// * `lock_type`: The type of lock to set.
+    /// * `lock_state`: The target lock state to set.
+    fn avb_write_lock_state(
+        &mut self,
+        lock_type: LockType,
+        lock_state: LockState,
+    ) -> Result<(), Error>;
+
+    /// Handler for `fastboot flashing get_unlock_ability`.
+    ///
+    /// # Returns
+    ///
+    /// Ok(Unlockability::Unlockable) if device can be unlocked,
+    /// Ok(Unlockability::Secured) if device cannot be unlocked.
+    fn fastboot_get_unlock_ability(&mut self) -> Result<Unlockability, Error>;
 
     /// Reads out data staged by the platform to upload to the host during `fastboot get_staged`.
     ///
@@ -923,12 +933,17 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
         unreachable!();
     }
 
-    fn fastboot_set_lock(&mut self, _: LockType, _: LockState) -> Result<(), Error> {
+    fn avb_write_lock_state(&mut self, _: LockType, _: LockState) -> Result<(), Error> {
         // Ramboot should not need this.
         unreachable!();
     }
 
-    fn fastboot_get_lock(&mut self, _: LockType) -> Result<LockState, Error> {
+    fn fastboot_get_lock_state(&mut self, _: LockType) -> Result<LockState, Error> {
+        // Ramboot should not need this.
+        unreachable!();
+    }
+
+    fn fastboot_get_unlock_ability(&mut self) -> Result<Unlockability, Error> {
         // Ramboot should not need this.
         unreachable!();
     }
@@ -1044,7 +1059,12 @@ pub(crate) mod test {
     /// Default [AvbDeviceStatus] value across the tests
     impl Default for AvbDeviceStatus {
         fn default() -> Self {
-            Self { is_unlocked: false, is_dm_verity_error: false }
+            Self {
+                is_unlocked: false,
+                is_unlocked_critical: false,
+                is_dm_verity_error: false,
+                is_unlockable: false,
+            }
         }
     }
 
@@ -1145,8 +1165,8 @@ pub(crate) mod test {
         pub get_staged_handler:
             Option<&'a mut dyn FnMut(&mut [u8]) -> Result<(usize, usize), Error>>,
 
-        /// Stores the inputs of `fastboot_set_lock()` call.
-        pub set_lock_traces: Vec<(LockType, LockState)>,
+        /// Stores the inputs of `avb_write_lock_state()` call.
+        pub write_lock_state_traces: Vec<(LockType, LockState)>,
 
         /// Handler for `get_partition_buffer`
         pub get_partition_buffer_handler:
@@ -1623,16 +1643,16 @@ pub(crate) mod test {
             (self.get_staged_handler.as_mut().unwrap())(out)
         }
 
-        fn fastboot_set_lock(
+        fn avb_write_lock_state(
             &mut self,
             lock_type: LockType,
             lock_state: LockState,
         ) -> Result<(), Error> {
-            self.set_lock_traces.push((lock_type, lock_state));
+            self.write_lock_state_traces.push((lock_type, lock_state));
             Ok(())
         }
 
-        fn fastboot_get_lock(&mut self, lock_type: LockType) -> Result<LockState, Error> {
+        fn fastboot_get_lock_state(&mut self, lock_type: LockType) -> Result<LockState, Error> {
             match lock_type {
                 LockType::Device => {
                     Ok(match self.avb_read_device_status().map(|s| s.is_unlocked).unwrap() {
@@ -1642,6 +1662,19 @@ pub(crate) mod test {
                 }
                 _ => unimplemented!(),
             }
+        }
+
+        fn fastboot_get_unlock_ability(&mut self) -> Result<Unlockability, Error> {
+            Ok(self
+                .avb_read_device_status()
+                .map(|s| {
+                    if s.is_unlockable {
+                        Unlockability::Allowed
+                    } else {
+                        Unlockability::Prohibited
+                    }
+                })
+                .unwrap())
         }
 
         fn fastboot_vendor_erase(&mut self, part: &str) -> Result<FastbootEraseAction, Error> {

@@ -52,7 +52,7 @@ use efi_types::{
     GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, GBL_EFI_ONE_SHOT_BOOT_MODE_BOOTLOADER,
     GBL_EFI_ONE_SHOT_BOOT_MODE_NONE, GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY, PARTITION_NAME_LEN_U16,
 };
-use fastboot::CommandExecType;
+use fastboot::{CommandExecType, Unlockability};
 use fdt::Fdt;
 use gbl_async::block_on;
 use gbl_storage::{BlockIo, Disk, Gpt};
@@ -947,26 +947,36 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
         }
     }
 
-    fn fastboot_set_lock(&mut self, lock_type: LockType, lock_state: LockState) -> Result<()> {
+    fn fastboot_get_lock_state(&mut self, lock_type: LockType) -> Result<LockState> {
+        // TODO(b/467368252): clean up AVB queries and return type
+        self.avb_read_device_status()
+            .map(|s| s.lock_state(lock_type))
+            .map_err(avb_error_to_efi_error)
+    }
+
+    fn avb_write_lock_state(&mut self, lock_type: LockType, lock_state: LockState) -> Result<()> {
+        let lock_type = match lock_type {
+            LockType::Device => efi_types::GBL_EFI_AVB_LOCK_TYPE_DEVICE,
+            LockType::Critical => efi_types::GBL_EFI_AVB_LOCK_TYPE_CRITICAL,
+        };
+        let lock_state = match lock_state {
+            LockState::Locked => efi_types::GBL_EFI_AVB_LOCK_STATE_LOCKED,
+            LockState::Unlocked => efi_types::GBL_EFI_AVB_LOCK_STATE_UNLOCKED,
+        };
+
         self.efi_entry
             .system_table()
             .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()?
-            .set_lock(
-                matches!(lock_type, LockType::Critical),
-                matches!(lock_state, LockState::Locked),
-            )
+            .find_first_and_open::<GblAvbProtocol>()?
+            .write_lock_state(lock_type, lock_state)
     }
 
-    fn fastboot_get_lock(&mut self, lock_type: LockType) -> Result<LockState> {
-        Ok(self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()?
-            .get_lock(matches!(lock_type, LockType::Critical))?
-            .then_some(LockState::Locked)
-            .unwrap_or(LockState::Unlocked))
+    fn fastboot_get_unlock_ability(&mut self) -> Result<Unlockability> {
+        let unlockable =
+            self.avb_read_device_status().map_err(avb_error_to_efi_error)?.is_unlockable;
+        let unlock_ability =
+            if unlockable { Unlockability::Allowed } else { Unlockability::Prohibited };
+        Ok(unlock_ability)
     }
 
     fn fastboot_get_staged(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
@@ -1134,7 +1144,9 @@ fn gbl_to_efi_avb_property(property: AvbProperty) -> GblEfiAvbProperty {
 fn efi_to_gbl_avb_device_status(mask: GblEfiAvbDeviceStatus) -> AvbDeviceStatus {
     AvbDeviceStatus {
         is_unlocked: mask & efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED != 0,
+        is_unlocked_critical: mask & efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL != 0,
         is_dm_verity_error: mask & efi_types::GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED != 0,
+        is_unlockable: mask & efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE != 0,
     }
 }
 
@@ -1190,6 +1202,19 @@ fn efi_error_to_avb_error(error: Error) -> AvbIoError {
         // EFI_STATUS_UNSUPPORTED
         Error::Unsupported => AvbIoError::NotImplemented,
         _ => AvbIoError::Io,
+    }
+}
+
+fn avb_error_to_efi_error(error: AvbIoError) -> Error {
+    match error {
+        AvbIoError::Oom => Error::OutOfResources,
+        AvbIoError::Io => Error::DeviceError,
+        AvbIoError::NoSuchValue => Error::NotFound,
+        AvbIoError::RangeOutsidePartition => Error::EndOfFile,
+        AvbIoError::InvalidValueSize => Error::InvalidInput,
+        AvbIoError::InsufficientSpace(space) => Error::BufferTooSmall(Some(space)),
+        AvbIoError::NotImplemented => Error::Unsupported,
+        AvbIoError::NoSuchPartition => Error::InvalidInput,
     }
 }
 
@@ -1330,10 +1355,16 @@ mod test {
 
     #[test]
     fn ops_avb_read_device_status_unlocked() {
-        let mask = efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED;
+        let mask = efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED
+            | (efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE);
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
-            Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false })
+            Ok(AvbDeviceStatus {
+                is_unlocked: true,
+                is_unlocked_critical: false,
+                is_dm_verity_error: false,
+                is_unlockable: true
+            })
         );
     }
 
@@ -1342,17 +1373,29 @@ mod test {
         let mask = efi_types::GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED;
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
-            Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: true })
+            Ok(AvbDeviceStatus {
+                is_unlocked: false,
+                is_unlocked_critical: false,
+                is_dm_verity_error: true,
+                is_unlockable: false
+            })
         );
     }
 
     #[test]
     fn ops_avb_read_device_status_unlocked_and_dm_verity_error() {
         let mask = (efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED)
-            | (efi_types::GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED);
+            | (efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL)
+            | (efi_types::GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED)
+            | (efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE);
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(mask)),
-            Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: true })
+            Ok(AvbDeviceStatus {
+                is_unlocked: true,
+                is_unlocked_critical: true,
+                is_dm_verity_error: true,
+                is_unlockable: true
+            })
         );
     }
 
@@ -1360,7 +1403,12 @@ mod test {
     fn ops_avb_read_device_status_empty() {
         assert_eq!(
             test_avb_read_device_status(ProtocolCallStatus::Success(0)),
-            Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false })
+            Ok(AvbDeviceStatus {
+                is_unlocked: false,
+                is_unlocked_critical: false,
+                is_dm_verity_error: false,
+                is_unlockable: false
+            })
         );
     }
 
@@ -1652,6 +1700,81 @@ mod test {
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         assert_eq!(ops.avb_erase_persistent_value(c"test"), Err(AvbIoError::Io));
+    }
+
+    fn avb_get_unlock_ability(status_flags: GblEfiAvbDeviceStatus, unlockability: Unlockability) {
+        let mut mock_efi = MockEfi::new();
+        let mut avb = GblAvbProtocol::default();
+        avb.read_device_status_result = Some(Ok(status_flags));
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.fastboot_get_unlock_ability(), Ok(unlockability));
+    }
+
+    #[test]
+    fn test_avb_get_unlock_ability_secured() {
+        avb_get_unlock_ability(0, Unlockability::Prohibited);
+    }
+
+    #[test]
+    fn test_avb_get_unlock_ability_unlockable() {
+        avb_get_unlock_ability(
+            efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE,
+            Unlockability::Allowed,
+        );
+    }
+
+    fn avb_get_lock_state(
+        status_flags: GblEfiAvbDeviceStatus,
+        lock_type: LockType,
+        lock_state: LockState,
+    ) {
+        let mut mock_efi = MockEfi::new();
+        let mut avb = GblAvbProtocol::default();
+        avb.read_device_status_result = Some(Ok(status_flags));
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.fastboot_get_lock_state(lock_type), Ok(lock_state));
+    }
+
+    #[test]
+    fn test_avb_get_lock_state_device_unlocked() {
+        avb_get_lock_state(
+            efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED,
+            LockType::Device,
+            LockState::Unlocked,
+        );
+    }
+
+    #[test]
+    fn test_avb_get_lock_state_device_locked() {
+        avb_get_lock_state(
+            !efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED,
+            LockType::Device,
+            LockState::Locked,
+        );
+    }
+
+    #[test]
+    fn test_avb_get_lock_state_critical_unlocked() {
+        avb_get_lock_state(
+            efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL,
+            LockType::Critical,
+            LockState::Unlocked,
+        );
+    }
+
+    #[test]
+    fn test_avb_get_lock_state_critical_locked() {
+        avb_get_lock_state(
+            !efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL,
+            LockType::Critical,
+            LockState::Locked,
+        );
     }
 
     #[test]

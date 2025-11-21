@@ -274,7 +274,7 @@ pub enum RebootMode {
     Recovery,
 }
 
-/// Specifies the type of lock for `FastbootImplementation::flashing_set_lock`.
+/// Specifies the type of lock for `FastbootImplementation::flashing_write_lock_state`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum LockType {
     /// Locking or unlocking the device.
@@ -283,13 +283,22 @@ pub enum LockType {
     Critical,
 }
 
-/// Specifies the state of lock for `FastbootImplementation::flashing_set_lock`.
+/// Specifies the state of lock for `FastbootImplementation::flashing_write_lock_state`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum LockState {
     /// locked
     Locked,
     /// Unlocked
     Unlocked,
+}
+
+/// Specifies whether the device can be unlocked.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Unlockability {
+    /// Unlockable
+    Allowed,
+    /// Not unlockable
+    Prohibited,
 }
 
 /// Specifies command implementation to be used
@@ -521,11 +530,23 @@ pub trait FastbootImplementation {
     ///
     /// * `critical`: Whether the operation is for critical partitions.
     /// * `lock`: True to lock, false to unlock.
-    async fn flashing_set_lock(
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if call succeeded, Err on error.
+    async fn flashing_write_lock_state(
         &mut self,
         lock_type: LockType,
         lock_state: LockState,
     ) -> CommandResult<()>;
+
+    /// Handler for `fastboot flashing get_unlock_ability`.
+    ///
+    /// # Returns
+    ///
+    /// Ok(Unlockability),
+    /// Err on error.
+    async fn flashing_get_unlock_ability(&mut self) -> CommandResult<Unlockability>;
 
     /// Checks whether a command is allowed and if to use custom implementation or default.
     ///
@@ -1267,6 +1288,14 @@ async fn command_exec(
     }
 }
 
+async fn lock_helper(
+    fb_impl: &mut impl FastbootImplementation,
+    lock_type: LockType,
+    lock_state: LockState,
+) -> CommandResult<&'static str> {
+    fb_impl.flashing_write_lock_state(lock_type, lock_state).await.map(|_| "")
+}
+
 /// Handler for "fastboot flashing ..."
 async fn flashing(
     cmd: &str,
@@ -1275,17 +1304,19 @@ async fn flashing(
 ) -> Result<()> {
     let mut resp = Responder::new(transport);
     let res = match cmd {
-        "lock" => fb_impl.flashing_set_lock(LockType::Device, LockState::Locked).await,
-        "lock_critical" => fb_impl.flashing_set_lock(LockType::Critical, LockState::Locked).await,
-        "unlock" => fb_impl.flashing_set_lock(LockType::Device, LockState::Unlocked).await,
-        "unlock_critical" => {
-            fb_impl.flashing_set_lock(LockType::Critical, LockState::Unlocked).await
-        }
+        "lock" => lock_helper(fb_impl, LockType::Device, LockState::Locked).await,
+        "lock_critical" => lock_helper(fb_impl, LockType::Critical, LockState::Locked).await,
+        "unlock" => lock_helper(fb_impl, LockType::Device, LockState::Unlocked).await,
+        "unlock_critical" => lock_helper(fb_impl, LockType::Critical, LockState::Unlocked).await,
+        "get_unlock_ability" => fb_impl.flashing_get_unlock_ability().await.map(|u| match u {
+            Unlockability::Allowed => "1",
+            Unlockability::Prohibited => "0",
+        }),
         "" => Err("missing argument".into()),
         _ => Err("Invalid flashing arg".into()),
     };
     match res {
-        Ok(()) => reply_okay!(resp, ""),
+        Ok(s) => reply_okay!(resp, "{}", s),
         Err(e) => reply_fail!(resp, "{}", e.to_str()),
     }
 }
@@ -1318,7 +1349,7 @@ pub async fn process_next_command(
     match command_exec(cmd_c_args, transport, fb_impl).await {
         Ok(CommandExecType::DefaultImpl) => (),
         Ok(CommandExecType::CustomImpl) | Ok(CommandExecType::Prohibited) | Err(_) => {
-            return Ok(false)
+            return Ok(false);
         }
     }
     packet[..cmd_len].iter_mut().filter(|v| **v == 0).for_each(|v| *v = b':');
@@ -1443,7 +1474,8 @@ mod test {
         reboot_mode: Option<RebootMode>,
         active_slot: Option<String>,
         boot_result: Option<CommandResult<()>>,
-        last_set_lock_call: Option<(LockType, LockState)>,
+        unlockability: Option<Unlockability>,
+        last_write_lock_state_call: Option<(LockType, LockState)>,
         command_exec_args: String,
         command_exec_res: Option<CommandResult<CommandExecType>>,
         log_lines: Vec<String>,
@@ -1589,13 +1621,17 @@ mod test {
             res.take().unwrap_or(Ok(()))
         }
 
-        async fn flashing_set_lock(
+        async fn flashing_write_lock_state(
             &mut self,
             lock_type: LockType,
             lock_state: LockState,
         ) -> CommandResult<()> {
-            self.last_set_lock_call = Some((lock_type, lock_state));
+            self.last_write_lock_state_call = Some((lock_type, lock_state));
             Ok(())
+        }
+
+        async fn flashing_get_unlock_ability(&mut self) -> CommandResult<Unlockability> {
+            self.unlockability.ok_or("Cannot get unlockability".into())
         }
 
         async fn command_exec(
@@ -2302,17 +2338,24 @@ mod test {
         transport.add_input(b"flashing lock");
         block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
         assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAY".into()]));
-        assert_eq!(fastboot_impl.last_set_lock_call, Some((LockType::Device, LockState::Locked)));
+        assert_eq!(
+            fastboot_impl.last_write_lock_state_call,
+            Some((LockType::Device, LockState::Locked))
+        );
     }
 
     #[test]
-    fn test_flashing_unlock() {
-        let mut fastboot_impl: FastbootTest = Default::default();
+    fn test_flashing_unlock_unlockable() {
+        let mut fastboot_impl =
+            FastbootTest { unlockability: Some(Unlockability::Allowed), ..Default::default() };
         let mut transport = TestTransport::new();
         transport.add_input(b"flashing unlock");
         block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
         assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAY".into()]));
-        assert_eq!(fastboot_impl.last_set_lock_call, Some((LockType::Device, LockState::Unlocked)));
+        assert_eq!(
+            fastboot_impl.last_write_lock_state_call,
+            Some((LockType::Device, LockState::Unlocked))
+        );
     }
 
     #[test]
@@ -2322,7 +2365,10 @@ mod test {
         transport.add_input(b"flashing lock_critical");
         block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
         assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAY".into()]));
-        assert_eq!(fastboot_impl.last_set_lock_call, Some((LockType::Critical, LockState::Locked)));
+        assert_eq!(
+            fastboot_impl.last_write_lock_state_call,
+            Some((LockType::Critical, LockState::Locked))
+        );
     }
 
     #[test]
@@ -2333,7 +2379,7 @@ mod test {
         block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
         assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"OKAY".into()]));
         assert_eq!(
-            fastboot_impl.last_set_lock_call,
+            fastboot_impl.last_write_lock_state_call,
             Some((LockType::Critical, LockState::Unlocked))
         );
     }
@@ -2347,5 +2393,24 @@ mod test {
         block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
         assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([b"FAILtest".into()]));
         assert_eq!(&fastboot_impl.command_exec_args, "flash test");
+    }
+
+    fn get_unlock_ability_helper(unlockability: Unlockability, expected: &str) {
+        let mut fastboot_impl =
+            FastbootTest { unlockability: Some(unlockability), ..Default::default() };
+        let mut transport = TestTransport::new();
+        transport.add_input(b"flashing get_unlock_ability");
+        block_on(process_next_command(&mut transport, &mut fastboot_impl)).unwrap();
+        assert_eq!(transport.out_queue, VecDeque::<Vec<u8>>::from([expected.as_bytes().into()]));
+    }
+
+    #[test]
+    fn test_get_unlock_ability_allowed() {
+        get_unlock_ability_helper(Unlockability::Allowed, "OKAY1");
+    }
+
+    #[test]
+    fn test_get_unlock_ability_prohibited() {
+        get_unlock_ability_helper(Unlockability::Prohibited, "OKAY0");
     }
 }

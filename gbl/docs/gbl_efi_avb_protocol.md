@@ -1,9 +1,9 @@
 # GBL EFI Android Verified Boot Protocol
 
-|||
-| :--- | :--- |
-| **Status** | Work in progress |
-| **Created** | 2024-11-15 |
+|             |                  |
+|:------------|:-----------------|
+| **Status**  | Work in progress |
+| **Created** | 2024-11-15       |
 
 ## GBL_EFI_AVB_PROTOCOL
 
@@ -34,7 +34,7 @@ devices.
 ### Revision Number
 
 ```c
-#define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 3)
+#define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 4)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -52,6 +52,7 @@ typedef struct _GBL_EFI_AVB_PROTOCOL {
   GBL_EFI_AVB_READ_PERSISTENT_VALUE ReadPersistentValue;
   GBL_EFI_AVB_WRITE_PERSISTENT_VALUE WritePersistentValue;
   GBL_EFI_AVB_HANDLE_VERIFICATION_RESULT HandleVerificationResult;
+  GBL_EFI_AVB_WRITE_LOCK_STATE WriteLockState;
 } GBL_EFI_AVB_PROTOCOL;
 ```
 
@@ -67,44 +68,49 @@ a different GUID must be used.
 
 Retrieves the list of additional partitions to be verified, beyond the standard
 set loaded and verified by GBL.
-[`ReadPartitionsToVerify()`][readpartitionstoverify].
+See [`ReadPartitionsToVerify()`][readpartitionstoverify] for more information.
 
 #### ReadDeviceStatus
 
 Retrieves the current device status, including its lock state and dm-verity
 error indication.
-[`ReadDeviceStatus()`][readdevicestatus].
+See [`ReadDeviceStatus()`][readdevicestatus] for more information.
 
 #### ValidateVbmetaPublicKey
 
 Validates proper public key is used to sign HLOS artifacts.
-[`ValidateVbmetaPublicKey()`](#gbl_efi_avb_protocolvalidatevbmetapublickey).
+See [`ValidateVbmetaPublicKey()`][validatevbmetapublickey] for more information.
 
 #### ReadRollbackIndex
 
 Retrieves the rollback index corresponding to the provided index location.
-[`ReadRollbackIndex()`](#gbl_efi_avb_protocolreadrollbackindex).
+See [`ReadRollbackIndex()`][readrollbackindex] for more information.
 
 #### WriteRollbackIndex
 
 Writes the rollback index corresponding to the provided index location.
-[`WriteRollbackIndex()`][protocolwriterollbackindex].
+See [`WriteRollbackIndex()`][writerollbackindex] for more information.
 
 #### ReadPersistentValue
 
 Retrieves the persistent value for the provided name.
-[`ReadPersistentValue()`](#gbl_efi_avb_protocolreadpersistentvalue).
+See [`ReadPersistentValue()`][readpersistentvalue] for more information.
 
 #### WritePersistentValue
 
 Writes or clears the persistent value for the provided name.
-[`WritePersistentValue()`](#gbl_efi_avb_protocolwritepersistentvalue).
+See [`WritePersistentValue()`][writepersistentvalue] for more information.
 
 #### HandleVerificationResult
 
 Handles the AVB verification result (e.g., updating the Root of Trust, setting
 device state, displaying UI warnings/errors, handling anti-tampering, etc.).
-[`HandleVerificationResult()`][handleverificationresult].
+See [`HandleVerificationResult()`][handleverificationresult] for more information.
+
+#### WriteLockState
+
+Locks or unlocks the device lock or device critical lock.
+See [`WriteLockState()`][writelockstate] for more information.
 
 ## GBL_EFI_AVB_PROTOCOL.ReadPartitionsToVerify()
 
@@ -216,12 +222,12 @@ cannot be verified. GBL will handle this case as follows:
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| `EFI_SUCCESS` | Successfully provided additional partitions to verify |
-| `EFI_UNSUPPORTED` | No extra partitions need to be verified |
+| Return Code            | Semantics                                                                                                                                                          |
+|:-----------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`          | Successfully provided additional partitions to verify                                                                                                              |
+| `EFI_UNSUPPORTED`      | No extra partitions need to be verified                                                                                                                            |
 | `EFI_BUFFER_TOO_SMALL` | Provided list of `Partitions` is too small; `NumPartitions` has been updated with the required amount. GBL will call this method again with extended `Partitions`. |
-| `EFI_BAD_BUFFER_SIZE` | One of provided `Partition.NameLen` values is not sufficient to hold the partition name. GBL will fail to boot. |
+| `EFI_BAD_BUFFER_SIZE`  | One of provided `Partition.NameLen` values is not sufficient to hold the partition name. GBL will fail to boot.                                                    |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadDeviceStatus()
 
@@ -249,6 +255,8 @@ typedef UINT64 GBL_EFI_AVB_DEVICE_STATUS;
 
 STATIC CONST GBL_EFI_AVB_DEVICE_STATUS GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED = 0x1 << 0;
 STATIC CONST GBL_EFI_AVB_DEVICE_STATUS GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED = 0x1 << 1;
+STATIC CONST GBL_EFI_AVB_DEVICE_STATUS GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL = 0x1 << 2;
+STATIC CONST GBL_EFI_AVB_DEVICE_STATUS GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE = 0x1 << 3;
 ```
 
 ##### GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED
@@ -258,6 +266,20 @@ Flag indicating that the device is unlocked.
 ##### GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED
 
 Flag indicating that the device rebooted due to a dm-verity error.
+
+##### GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL
+
+Flag indicating that the device is unlocked for critical operations.
+These operations include flashing raw storage devices and modifying partition tables.
+
+##### GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE
+
+Flag indicating that the device bootloader can be unlocked.
+Corresponds to the ["OEM unlocking"][oem_unlocking] option in the booted OS.
+
+The `UNLOCKABLE` status applies to both the
+[`DEVICE`](#gbl_efi_avb_device_status_unlocked) lock and the
+[`CRITICAL`](#gbl_efi_avb_device_status_unlocked_critical) lock.
 
 ### Parameters
 
@@ -278,23 +300,30 @@ status, covering:
 
 1. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED` - Indicates the device is
    [unlocked][unlocked]. GBL treats unlocked devices as being in the `orange`
-   boot state, skipping certain verification enforcement and allowing boot to
+   boot state, skipping certain verification enforcements and allowing boot to
    proceed with reduced security guarantees.
-1. `GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED` - Indicates the device rebooted
+   See [unlocked_devices][boot_flow_orange].
+2. `GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED` - Indicates the device rebooted
    due to a dm-verity hashtree corruption [error][dmv_error]. In this case, GBL
    passes `AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION` to
    `libavb`. Unless the library detects new OS images, this results in a
    `GBL_EFI_AVB_BOOT_COLOR_RED_EIO` flag, requiring user additional confirmation
    before proceeding in degraded mode.
+3. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL` - Indicates the device is unlocked
+   for critical operations.
+4. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE` - Indicates that the device can be unlocked.
+   If the device is not unlockable, calls to [`WriteLockState()`][writelockstate] with a *State*
+   parameter of value `GBL_EFI_AVB_LOCK_STATE_UNLOCKED` will fail.
+   See [https://source.android.com/docs/core/architecture/bootloader/locking_unlocking].
 
 GBL may call this method multiple times within a single boot session. If the
-method returns an error, GBL rejects to boot.
+method returns an error, GBL rejects the boot attempt.
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| `EFI_SUCCESS` | A device status is successfully returned. |
+| Return Code             | Semantics                                              |
+|:------------------------|:-------------------------------------------------------|
+| `EFI_SUCCESS`           | A device status is successfully returned.              |
 | `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey()
@@ -395,9 +424,9 @@ GBL calls this function once per AVB verification session.
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| `EFI_SUCCESS` | Public key validation was successfully completed. |
+| Return Code             | Semantics                                              |
+|:------------------------|:-------------------------------------------------------|
+| `EFI_SUCCESS`           | Public key validation was successfully completed.      |
 | `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadRollbackIndex()
@@ -448,11 +477,11 @@ locked devices.
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| `EFI_SUCCESS` | The rollback index value is successfully returned. |
-| `EFI_NOT_FOUND` | The requested rollback index isn't supported, so cannot be returned. GBL rejects to boot. |
-| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| Return Code             | Semantics                                                                                 |
+|:------------------------|:------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`           | The rollback index value is successfully returned.                                        |
+| `EFI_NOT_FOUND`         | The requested rollback index isn't supported, so cannot be returned. GBL rejects to boot. |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot.                                    |
 
 ## GBL_EFI_AVB_PROTOCOL.WriteRollbackIndex()
 
@@ -501,11 +530,11 @@ locked devices.
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| `EFI_SUCCESS` | The rollback index value is successfully updated. |
-| `EFI_NOT_FOUND` | The requested rollback index isn't supported, so cannot be updated. GBL rejects to boot. |
-| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| Return Code             | Semantics                                                                                |
+|:------------------------|:-----------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`           | The rollback index value is successfully updated.                                        |
+| `EFI_NOT_FOUND`         | The requested rollback index isn't supported, so cannot be updated. GBL rejects to boot. |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot.                                   |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadPersistentValue()
 
@@ -556,12 +585,12 @@ handle [dm-verity][dmv_error] errors and EIO mode.
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| `EFI_SUCCESS` | The requested persistent value is presented and successfully provided in case `Value` buffer isn't NULL. |
-| `EFI_NOT_FOUND` | The requested persistent value is not yet populated or supported. GBL will try to initialize it using `WritePersistentValue`. |
-| `EFI_BUFFER_TOO_SMALL` | The provided `Value` buffer is too small. GBL rejects to boot. |
-| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| Return Code             | Semantics                                                                                                                     |
+|:------------------------|:------------------------------------------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`           | The requested persistent value is presented and successfully provided in case `Value` buffer isn't NULL.                      |
+| `EFI_NOT_FOUND`         | The requested persistent value is not yet populated or supported. GBL will try to initialize it using `WritePersistentValue`. |
+| `EFI_BUFFER_TOO_SMALL`  | The provided `Value` buffer is too small. GBL rejects to boot.                                                                |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot.                                                                        |
 
 ## GBL_EFI_AVB_PROTOCOL.WritePersistentValue()
 
@@ -612,10 +641,10 @@ updates in order to disable EIO mode.
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| `EFI_SUCCESS` | The value for `Name` is successfully updated. |
-| `EFI_NOT_FOUND` | Updating the value for `Name` isn't supported. GBL rejects to boot. |
+| Return Code             | Semantics                                                                                      |
+|:------------------------|:-----------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`           | The value for `Name` is successfully updated.                                                  |
+| `EFI_NOT_FOUND`         | Updating the value for `Name` isn't supported. GBL rejects to boot.                            |
 | `EFI_INVALID_PARAMETER` | The `ValueSize` is too big or any other unexpected arguments combination. GBL rejects to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.HandleVerificationResult()
@@ -835,35 +864,139 @@ invalid afterward.
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| `EFI_SUCCESS` | Verification result is successfully handled. |
-| `EFI_INVALID_PARAMETER` | Invalid data is provided by the `Result`. GBL rejects to boot. |
-| `EFI_ACCESS_DENIED` | Failed to update root of trust or other secure world issues occurred. GBL rejects to boot. |
+| Return Code             | Semantics                                                                                          |
+|:------------------------|:---------------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`           | Verification result is successfully handled.                                                       |
+| `EFI_INVALID_PARAMETER` | Invalid data is provided by the `Result`. GBL rejects to boot.                                     |
+| `EFI_ACCESS_DENIED`     | Failed to update root of trust or other secure world issues occurred. GBL reject the boot attempt. |
+
+## GBL_EFI_AVB_PROTOCOL.WriteLockState()
+
+### Summary
+
+Locks or unlocks the device lock or critical lock.
+
+### Prototype
+
+```c
+typedef
+EFI_STATUS
+(EFIAPI * GBL_EFI_AVB_WRITE_LOCK_STATE)(
+    IN GBL_EFI_AVB_PROTOCOL *Self,
+    IN GBL_EFI_AVB_LOCK_TYPE Type,
+    IN GBL_EFI_AVB_LOCK_STATE State,
+);
+```
+
+### Related Definitions
+
+#### GBL_EFI_AVB_LOCK_TYPE
+
+```c
+typedef enum {
+    GBL_EFI_AVB_LOCK_TYPE_DEVICE,
+    GBL_EFI_AVB_LOCK_TYPE_CRITICAL,
+};
+typedef uint8_t GBL_EFI_AVB_LOCK_TYPE;
+```
+
+##### GBL_EFI_AVB_LOCK_TYPE_DEVICE
+
+Describes the _Device_ lock. This lock controls access to flashing partitions.
+
+##### GBL_EFI_AVB_LOCK_TYPE_CRITICAL
+
+Describes the _Critical_ lock. This lock controls access to flashing raw block devices
+and modifications to partition tables.
+
+Note: the _Critical_ lock is optional. It is an extra safeguard to prevent users from
+modifying their device such that it cannot be recovered via fastboot.
+If a firmware implementation does not support the _Critical_ lock, calls to
+`WriteLockState()` where `Type` is `GBL_EFI_AVB_LOCK_TYPE_CRITICAL` should return
+`EFI_UNSUPPORTED`.
+
+#### GBL_EFI_AVB_LOCK_STATE
+
+```c
+typedef enum {
+    GBL_EFI_AVB_LOCK_STATE_UNLOCKED,
+    GBL_EFI_AVB_LOCK_STATE_LOCKED,
+};
+typedef uint8_t GBL_EFI_AVB_LOCK_STATE;
+```
+
+##### GBL_EFI_AVB_LOCK_STATE_UNLOCKED
+
+A lock state in which it is permitted to boot unverified OS images.
+
+##### GBL_EFI_AVB_LOCK_STATE_LOCKED
+
+A lock state indicating that system modifications are prohibited.
+
+### Description
+
+The *DEVICE* and *CRITICAL* locks mediate access to system modifcations. The *DEVICE*
+lock must be unlocked in order to boot unverified operating systems.
+
+Changing the state of the *DEVICE* lock MUST be preceded by wiping user data. GBL is
+responsible for guaranteeing this order of operations.
+
+It is the responsibility of the implementation to display a relevant UI dialog and
+obtain user consent before unlocking the device.
+
+The *CRITICAL* lock, if provided by the device firmware, is a user safeguard to
+prevent rendering a device unusable. When this lock is enabled, it prevents
+modifications to raw block devices and partition tables.
+
+Note: Unlocking the *DEVICE* lock changes the boot color to
+[`ORANGE`](#GBL_EFI_AVB_BOOT_COLOR_ORANGE).
+
+Note: The *DEVICE* and *CRITICAL* locks are independent. Locking or unlocking one
+MUST NOT affect the other. The locks do not gate access for each other either: if the
+*CRITICAL* lock is unlocked but the *DEVICE* lock is locked, attempts to flash custom
+custom kernel images will fail.
+
+### Status Codes Returned
+
+| Return Code             | Semantics                                                                                   |
+|:------------------------|:--------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`           | The lock state was successfully set.                                                        |
+| `EFI_INVALID_PARAMETER` | One of *Type* or *State* had an invalid value.                                              |
+| `EFI_ACCESS_DENIED`     | The device is not unlockable.                                                               |
+| `EFI_UNSUPPORTED`       | *Type* is `GBL_EF_AVB_LOCK_TYPE_CRITICAL` and the firmware does not define a critical lock. |
+
 
 ## Status codes returned to `libavb`
 
 Some of the methods across this protocol are initiated by the `libavb`. The
 following UEFI error codes are used to communicate results back to the library:
 
-|                                |                                                                                                                                                          |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`                  | Requested operation was successful `libavb::AvbIOResult::AVB_IO_RESULT_OK`                                                                               |
-| `EFI_OUT_OF_RESOURCES`         | Unable to allocate memory `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_OOM`                                                                                 |
-| `EFI_DEVICE_ERROR`             | Underlying hardware (disk or other subsystem) encountered an I/O error `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                     |
-| `EFI_NOT_FOUND`                | Named persistent value or rollback index does not exist for the corresponding key `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_NO_SUCH_VALUE`               |
-| `EFI_END_OF_FILE`              | Range of bytes requested to be read or written is outside the range of the partition `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_RANGE_OUTSIDE_PARTITION`  |
-| `EFI_INVALID_PARAMETER`        | Named persistent value size is not supported or does not match the expected size `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INVALID_VALUE_SIZE`           |
-| `EFI_BUFFER_TOO_SMALL`         | Buffer is too small for the requested operation `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INSUFFICIENT_SPACE`                                            |
-| `EFI_UNSUPPORTED`              | Operation isn't implemented / supported                                                                                                                  |
-| Others                         | Treated as `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                                                                                 |
+| Return Code             | Semantics                                                                                                                                               |
+|:------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `EFI_SUCCESS`           | Requested operation was successful `libavb::AvbIOResult::AVB_IO_RESULT_OK`                                                                              |
+| `EFI_OUT_OF_RESOURCES`  | Unable to allocate memory `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_OOM`                                                                                |
+| `EFI_DEVICE_ERROR`      | Underlying hardware (disk or other subsystem) encountered an I/O error `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                    |
+| `EFI_NOT_FOUND`         | Named persistent value or rollback index does not exist for the corresponding key `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_NO_SUCH_VALUE`              |
+| `EFI_END_OF_FILE`       | Range of bytes requested to be read or written is outside the range of the partition `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_RANGE_OUTSIDE_PARTITION` |
+| `EFI_INVALID_PARAMETER` | Named persistent value size is not supported or does not match the expected size `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INVALID_VALUE_SIZE`          |
+| `EFI_BUFFER_TOO_SMALL`  | Buffer is too small for the requested operation `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_INSUFFICIENT_SPACE`                                           |
+| `EFI_UNSUPPORTED`       | Operation isn't implemented / supported                                                                                                                 |
+| Others                  | Treated as `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                                                                                |
 
 [readpartitionstoverify]: #gbl_efi_avb_protocolreadpartitionstoverify
 [readdevicestatus]: #gbl_efi_avb_protocolreaddevicestatus
 [handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
 [protocolwriterollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
+[validatevbmetapublickey]: #gbl_efi_avb_protocolvalidatevbmetapublickey
+[readrollbackindex]: #gbl_efi_avb_protocolreadrollbackindex
+[writerollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
+[readpersistentvalue]: #gbl_efi_avb_protocolreadpersistentvalue
+[writepersistentvalue]: #gbl_efi_avb_protocolwritepersistentvalue
+[handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
+[writelockstate]: #gbl_efi_avb_protocolwritelockstate
 [avb]: https://source.android.com/docs/security/features/verifiedboot/avb
 [unlocked]: https://android.googlesource.com/platform/external/avb/+/refs/heads/main/README.md#locked-and-unlocked-mode
+[oem_unlocking]: https://source.android.com/docs/core/architecture/bootloader/locking_unlocking
 [dmv_error]: https://android.googlesource.com/platform/external/avb/+/master/README.md#handling-dm_verity-errors
 [rp]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#rollback-protection
 [update_ri]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes

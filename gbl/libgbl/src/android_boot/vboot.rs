@@ -449,7 +449,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: false,
+                    is_unlocked_critical: false,
+                    is_dm_verity_error: false,
+                    is_unlockable: false
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
@@ -482,7 +487,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: false,
+                    is_unlocked_critical: false,
+                    is_dm_verity_error: false,
+                    is_unlockable: false
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
@@ -515,7 +525,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: false,
+                    is_unlocked_critical: false,
+                    is_dm_verity_error: false,
+                    is_unlockable: false
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
@@ -547,7 +562,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: false,
+                    is_unlocked_critical: false,
+                    is_dm_verity_error: false,
+                    is_unlockable: false
+                }),
                 KeyValidationStatus::ValidCustomKey,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
@@ -585,7 +605,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: false,
+                    is_unlocked_critical: false,
+                    is_dm_verity_error: false,
+                    is_unlockable: false
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
@@ -618,7 +643,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: true,
+                    is_unlocked_critical: true,
+                    is_dm_verity_error: false,
+                    is_unlockable: true
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
@@ -653,7 +683,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: true,
+                    is_unlocked_critical: true,
+                    is_dm_verity_error: false,
+                    is_unlockable: true
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
@@ -684,7 +719,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: true,
+                    is_unlocked_critical: true,
+                    is_dm_verity_error: false,
+                    is_unlockable: false
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
@@ -715,7 +755,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: true,
+                    is_unlocked_critical: true,
+                    is_dm_verity_error: false,
+                    is_unlockable: false
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Err(IoError::NoSuchValue),
@@ -747,7 +792,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: false }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: false,
+                    is_unlocked_critical: false,
+                    is_dm_verity_error: false,
+                    is_unlockable: false
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),
@@ -779,7 +829,12 @@ mod test {
             test_avb_verify_slot(
                 &partitions_data,
                 &mut partitions_to_verify,
-                Ok(AvbDeviceStatus { is_unlocked: false, is_dm_verity_error: true }),
+                Ok(AvbDeviceStatus {
+                    is_unlocked: false,
+                    is_unlocked_critical: false,
+                    is_dm_verity_error: true,
+                    is_unlockable: false
+                }),
                 KeyValidationStatus::Valid,
                 // FW rollback index result.
                 Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY),

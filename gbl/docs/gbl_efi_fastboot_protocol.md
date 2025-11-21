@@ -31,7 +31,7 @@ requires cooperation with vendor firmware, OEM commands,
 ### Revision Number
 
 ```c
-#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 4)
+#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 5)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -47,8 +47,6 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   GBL_EFI_FASTBOOT_GET_VAR                      GetVar;
   GBL_EFI_FASTBOOT_GET_VAR_ALL                  GetVarAll;
   GBL_EFI_FASTBOOT_GET_STAGED                   GetStaged;
-  GBL_EFI_FASTBOOT_SET_LOCK                     SetLock;
-  GBL_EFI_FASTBOOT_GET_LOCK                     GetLock;
   GBL_EFI_FASTBOOT_VENDOR_ERASE                 VendorErase;
   GBL_EFI_FASTBOOT_COMMAND_EXEC                 CommandExec;
 } GBL_EFI_FASTBOOT_PROTOCOL;
@@ -83,16 +81,6 @@ See [`GBL_EFI_FASTBOOT_PROTOCOL.GetVarAll()`](#gbl_efi_fastboot_protocolgetvaral
 Read OEM provided payload for uploading to fastboot host by command
 `fastboot get_staged`. See
 [`GBL_EFI_FASTBOOT_PROTOCOL.GetStaged()`](#gbl_efi_fastboot_protocolgetstaged).
-
-**SetLock**
-
-Locks or unlocks device or critical partitions.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.SetLock()`](#gbl_efi_fastboot_protocolsetlock).
-
-**GetLock**
-
-Queries lock status of device or critical partitions.
-See [`GBL_EFI_FASTBOOT_PROTOCOL.GetLock()`](#gbl_efi_fastboot_protocolGetLock).
 
 **VendorErase**
 
@@ -327,98 +315,6 @@ payload and then retrieve the payload via `fastboot get_staged` from the host.
 | `EFI_INVALID_PARAMETER` | Any of *Out*, *OutLen*, *RemainingSize* is `NULL`.       |
 | `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state.|
 
-## `GBL_EFI_FASTBOOT_PROTOCOL.SetLock()`
-
-### Summary
-
-Sets device partition locks.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_SET_LOCK)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-    IN BOOL                       Critical,
-    IN BOOL                       Lock,
-);
-```
-
-### Parameters
-
-*Self*
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
-
-*Critical*
-
-Set to true if operation is to lock/unlock critical partitions. Set to false if
-operation is to lock/unlock device.
-
-*Lock*
-
-Set to true to lock. Set to false to unlock.
-
-### Description
-
-Device lock state determines what operations can be performed on device partitions.
-`SetLock()` locks or unlocks device or critical partitions.
-
-### Status Codes Returned
-
-| Return Code             | Semantics                                          |
-|:------------------------|:---------------------------------------------------|
-| `EFI_SUCCESS`           | The call completed successfully.                   |
-| `EFI_INVALID_PARAMETER` | *Self* is invalid or improperly aligned.           |
-| `EFI_ACCESS_DENIED`     | Caller intends to lock/unlock device or critical partition but device prohibits the operation. |
-
-## `GBL_EFI_FASTBOOT_PROTOCOL.GetLock()`
-
-### Summary
-
-Qeury lock status.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_GET_LOCK)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-    IN BOOL                       Critical,
-    OUT BOOL                      *Lock,
-);
-```
-
-### Parameters
-
-*Self*
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) instance.
-
-*Critical*
-
-Set to true to query lock/unlock status of critical partitions. Set to false to
-query lock/unlock status of device.
-
-*Lock*
-
-Stores the output lock status. Set to true if status is locked. Set to false
-otherwise.
-
-### Description
-
-`GetLock()` queries the lock status of device or critical partitions.
-
-### Status Codes Returned
-
-| Return Code             | Semantics                                          |
-|:------------------------|:---------------------------------------------------|
-| `EFI_SUCCESS`           | The call completed successfully.                   |
-| `EFI_INVALID_PARAMETER` | *Self* is invalid or improperly aligned.           |
-| `EFI_UNSUPPORTED`       | The corresponding lock is unsupported. |
-
 ## `GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`
 
 ### Summary
@@ -486,11 +382,11 @@ typedef enum  {
 
 ### Status Codes
 
-| Return Code             | Semantics |
-|:------------------------|:-|
+| Return Code             | Semantics                                                     |
+|:------------------------|:--------------------------------------------------------------|
 | `EFI_SUCCESS`           | The partition permision information was successfully queried. |
-| `EFI_INVALID_PARAMETER` | *PartName* or *Action* is `NULL`. |
-| `EFI_DEVICE_ERROR` | An internal device error occurred. |
+| `EFI_INVALID_PARAMETER` | *PartName* or *Action* is `NULL`.                             |
+| `EFI_DEVICE_ERROR`      | An internal device error occurred.                            |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.CommandExec()`
 

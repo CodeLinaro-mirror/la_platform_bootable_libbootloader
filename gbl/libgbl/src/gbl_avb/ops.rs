@@ -191,7 +191,12 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
         #[cfg(feature = "gbl_dev")]
         let result = self.with_dev_fallback(
             result,
-            Ok(AvbDeviceStatus { is_unlocked: true, is_dm_verity_error: false }),
+            Ok(AvbDeviceStatus {
+                is_unlocked: true,
+                is_unlocked_critical: true,
+                is_dm_verity_error: false,
+                is_unlockable: true,
+            }),
             "read device status",
         );
 

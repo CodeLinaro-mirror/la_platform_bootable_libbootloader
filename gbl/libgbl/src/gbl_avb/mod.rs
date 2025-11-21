@@ -17,6 +17,7 @@
 use arrayvec::ArrayVec;
 use avb_bindgen::{AVB_MAX_NUMBER_OF_LOADED_PARTITIONS, AVB_PART_NAME_MAX_SIZE};
 use core::ffi::CStr;
+use fastboot::{LockState, LockType};
 
 pub(crate) mod ops;
 pub mod state;
@@ -42,8 +43,28 @@ pub type ArrayMaxRequestedParts<T> = ArrayVec<T, MAX_REQUESTED_PARTITIONS_TO_VER
 pub struct AvbDeviceStatus {
     /// Indicates if the device is currently in an unlocked state.
     pub is_unlocked: bool,
+    /// Indicates if the device critical lock is unlocked.
+    pub is_unlocked_critical: bool,
     /// Indicates if a dm-verity error has been detected.
     pub is_dm_verity_error: bool,
+    /// Indicates if the device is unlockable.
+    pub is_unlockable: bool,
+}
+
+impl AvbDeviceStatus {
+    /// Returns whether the indicated lock is locked or unlocked.
+    pub const fn lock_state(&self, lock_type: LockType) -> LockState {
+        let unlocked = match lock_type {
+            LockType::Device => self.is_unlocked,
+            LockType::Critical => self.is_unlocked_critical,
+        };
+
+        if unlocked {
+            LockState::Unlocked
+        } else {
+            LockState::Locked
+        }
+    }
 }
 
 /// Represents AVB vbmeta property.

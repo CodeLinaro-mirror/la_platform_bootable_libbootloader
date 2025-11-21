@@ -163,27 +163,6 @@ impl Protocol<'_, GblFastbootProtocol> {
         Ok((out_size, out_remains))
     }
 
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.set_lock()`
-    pub fn set_lock(&self, is_critical: bool, is_lock: bool) -> Result<()> {
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        unsafe { efi_call!(self.interface().set_lock, self.interface_ptr(), is_critical, is_lock) }
-    }
-
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_lock()`
-    pub fn get_lock(&self, is_critical: bool) -> Result<bool> {
-        let mut out: bool = false;
-        // SAFETY:
-        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
-        // `out` is for output only and will not be retained. It outlives the call.
-        unsafe {
-            efi_call!(self.interface().get_lock, self.interface_ptr(), is_critical, &mut out)?
-        };
-        Ok(out)
-    }
-
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.command_exec()`
     pub fn command_exec<'a>(
         &self,

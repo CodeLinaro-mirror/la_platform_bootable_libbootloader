@@ -23,9 +23,9 @@ use core::{ffi::CStr, fmt::Write};
 pub use efi::protocol::{gbl_efi_image_loading::EfiImageBufferInfo, Revision, Versioned};
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
-    GblEfiAvbPartition, GblEfiAvbPartitionFlags, GblEfiAvbVerificationResult,
-    GblEfiFastbootCommandExecResult, GblEfiFastbootEraseAction, GblEfiFastbootMessageType,
-    GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    GblEfiAvbLockState, GblEfiAvbLockType, GblEfiAvbPartition, GblEfiAvbPartitionFlags,
+    GblEfiAvbVerificationResult, GblEfiFastbootCommandExecResult, GblEfiFastbootEraseAction,
+    GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
 };
 use liberror::{Error, Result};
 use mockall::mock;
@@ -298,6 +298,8 @@ pub mod gbl_efi_avb {
         pub write_persistent_value_result: Option<Result<()>>,
         /// Expected return value from `handle_verification_result`.
         pub handle_verification_result_result: Option<Result<()>>,
+        /// Expected return value from `write_lock_state`.
+        pub write_lock_state_result: Option<Result<()>>,
     }
 
     impl GblAvbProtocol {
@@ -386,6 +388,15 @@ pub mod gbl_efi_avb {
         ) -> Result<()> {
             self.handle_verification_result_result.unwrap()
         }
+
+        /// Wraps `GBL_EFI_AVB_PROTOCOL.write_lock_state()`.
+        pub fn write_lock_state(
+            &self,
+            _type: GblEfiAvbLockType,
+            _state: GblEfiAvbLockState,
+        ) -> Result<()> {
+            self.write_lock_state_result.unwrap()
+        }
     }
 }
 
@@ -423,16 +434,6 @@ pub mod gbl_efi_fastboot {
 
         /// Protocol<'_, GblFastbootProtocol>::get_staged.
         pub fn get_staged(&self, _: &mut [u8]) -> Result<(usize, usize)> {
-            unimplemented!()
-        }
-
-        /// Protocol<'_, GblFastbootProtocol>::set_lock()`
-        pub fn set_lock(&self, _: bool, _: bool) -> Result<()> {
-            unimplemented!()
-        }
-
-        /// Protocol<'_, GblFastbootProtocol>::get_lock()`
-        pub fn get_lock(&self, _: bool) -> Result<bool> {
             unimplemented!()
         }
 

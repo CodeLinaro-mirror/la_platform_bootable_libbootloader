@@ -239,7 +239,8 @@ fn test_gbl_avb(entry: &EfiEntry) -> Result<()> {
         write_rollback_index,
         read_persistent_value,
         write_persistent_value,
-        handle_verification_result
+        handle_verification_result,
+        write_lock_state,
     ) {
         res = Err(e);
     }
@@ -403,9 +404,7 @@ fn test_gbl_fastboot(entry: &EfiEntry) -> Result<()> {
     };
 
     // Anything that modifies persistent state is not something we really want to run.
-    if let Err(e) =
-        field_check!(protocol, get_staged, set_lock, get_lock, vendor_erase, command_exec,)
-    {
+    if let Err(e) = field_check!(protocol, get_staged, vendor_erase, command_exec,) {
         res = Err(e);
     }
 
