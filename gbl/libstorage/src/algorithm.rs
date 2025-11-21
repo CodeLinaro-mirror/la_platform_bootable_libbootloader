@@ -363,34 +363,28 @@ pub(crate) async fn erase_async(
         io.erase_blocks(left / blk_sz_u64, (right - left) / blk_sz_u64).await?;
     }
 
-    // read-modify-write leading partial block
-    if left > offset {
-        let start = off.round_down(blk_sz).try_into()?;
-        let data_sz = (off - start).try_into()?;
-        // Reads the data.
-        read_async(io, start, &mut scratch[..data_sz], &mut alignment_scratch[..]).await?;
+    // Erases leading and trailing partial block.
+    let end: u64 = end.try_into()?;
+    for (start, end) in [(offset, min(left, end)), (max(right, left), end)] {
+        if start >= end {
+            continue;
+        }
+        // Partial data can be on both side.
+        //        |~~data~~|~~~erase~~~|~~data~~|
+        //        |-----------------------------|
+        let start_l = start / blk_sz_u64 * blk_sz_u64;
+        let size_l = usize::try_from(start % blk_sz_u64)?;
+        let off_r = usize::try_from(end - start_l)?;
+        // Reads the data that needs to be kept.
+        read_async(io, start_l, &mut scratch[..size_l], &mut alignment_scratch[..]).await?;
+        read_async(io, end, &mut scratch[off_r..], &mut alignment_scratch[..]).await?;
         // Erases the block.
-        io.erase_blocks(start / blk_sz_u64, 1).await?;
+        io.erase_blocks(start_l / blk_sz_u64, 1).await?;
         // Read back the erased part of the block. This is necessary because the erased state
         // can be implementation specific and not necessarily, for example, 0.
-        read_async(io, offset, &mut scratch[data_sz..], &mut alignment_scratch[..]).await?;
+        read_async(io, start, &mut scratch[size_l..off_r], &mut alignment_scratch[..]).await?;
         // Writes back the part of data that should not be erased.
-        write_async(io, start, &mut scratch[..], &mut alignment_scratch[..]).await?;
-    }
-
-    // read-modify-write trailing partial block.
-    let end = u64::try_from(end)?;
-    if end > max(left, right) {
-        let data_off = usize::try_from(end - right)?;
-        // Reads the data.
-        read_async(io, end, &mut scratch[data_off..], &mut alignment_scratch[..]).await?;
-        // Erases the block.
-        io.erase_blocks(right / blk_sz_u64, 1).await?;
-        // Read back the erased part of the block. This is necessary because the erased state
-        // can be implementation specific and not necessarily, for example, 0.
-        read_async(io, right, &mut scratch[..data_off], &mut alignment_scratch[..]).await?;
-        // Writes back the part of data that should not be erased.
-        write_async(io, right, &mut scratch[..], &mut alignment_scratch[..]).await?;
+        write_async(io, start_l, &mut scratch[..], &mut alignment_scratch[..]).await?;
     }
 
     Ok(())
