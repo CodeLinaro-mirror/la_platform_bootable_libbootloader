@@ -798,7 +798,7 @@ mod test {
 
     fn read_test_helper(case: &TestCase) {
         let data = (0..case.storage_size).map(|v| v as u8).collect::<Vec<_>>();
-        let mut disk = TestDisk::new_ram_alloc(case.alignment, case.block_size, data).unwrap();
+        let mut disk = TestDisk::new_ram_alloc(case.block_size, case.alignment, data).unwrap();
         // Make an aligned buffer. A misaligned version is created by taking a sub slice that
         // starts at an unaligned offset. Because of this we need to allocate
         // `case.misalignment` more to accommodate it.
@@ -825,7 +825,7 @@ mod test {
         let rw_sz = usize::try_from(case.rw_size).unwrap();
         let mut expected = data[rw_off..][..rw_sz].to_vec();
         expected.reverse();
-        let mut disk = TestDisk::new_ram_alloc(case.alignment, case.block_size, data).unwrap();
+        let mut disk = TestDisk::new_ram_alloc(case.block_size, case.alignment, data).unwrap();
         // Make an aligned buffer. A misaligned version is created by taking a sub slice that
         // starts at an unaligned offset. Because of this we need to allocate
         // `case.misalignment` more to accommodate it.
@@ -846,8 +846,9 @@ mod test {
     fn erase_test_helper(case: &TestCase) {
         let data = (0..case.storage_size).map(|v| v as u8).collect::<Vec<_>>();
         let mut disk =
-            TestDisk::new_ram_alloc(case.alignment, case.block_size, data.clone()).unwrap();
-        let mut erase_scratch = vec![0u8; case.block_size.try_into().unwrap()];
+            TestDisk::new_ram_alloc(case.block_size, case.alignment, data.clone()).unwrap();
+        let mut erase_scratch =
+            vec![0u8; disk.io().info().erase_block_size().unwrap().try_into().unwrap()];
         let rw_off = usize::try_from(case.rw_offset).unwrap();
         let rw_sz = usize::try_from(case.rw_size).unwrap();
         let orig = disk.io().storage()[rw_off..][..rw_sz].to_vec();
@@ -987,7 +988,7 @@ mod test {
         0,
         ALIGNMENT,
         BLOCK_SIZE,
-        STORAGE + BLOCK_SIZE
+        STORAGE * 2
     }
     read_write_test! {
         aligned_offset_uanligned_size_extra_offset,
@@ -996,7 +997,7 @@ mod test {
         0,
         ALIGNMENT,
         BLOCK_SIZE,
-        STORAGE + BLOCK_SIZE
+        STORAGE * 2
     }
     read_write_test! {
         aligned_offset_intra_block_extra_offset,
@@ -1005,7 +1006,7 @@ mod test {
         0,
         ALIGNMENT,
         BLOCK_SIZE,
-        STORAGE + BLOCK_SIZE
+        STORAGE * 2
     }
     read_write_test! {
         unaligned_offset_aligned_end_extra_offset,
@@ -1014,7 +1015,7 @@ mod test {
         0,
         ALIGNMENT,
         BLOCK_SIZE,
-        STORAGE + BLOCK_SIZE
+        STORAGE * 2
     }
     read_write_test! {
         unaligned_offset_len_extra_offset,
@@ -1023,7 +1024,7 @@ mod test {
         0,
         ALIGNMENT,
         BLOCK_SIZE,
-        STORAGE + BLOCK_SIZE
+        STORAGE * 2
     }
     read_write_test! {
         unaligned_offset_len_partial_cross_block_extra_offset,
@@ -1032,7 +1033,7 @@ mod test {
         0,
         ALIGNMENT,
         BLOCK_SIZE,
-        STORAGE + BLOCK_SIZE
+        STORAGE * 2
     }
     read_write_test! {
         ualigned_offset_len_partial_intra_block_extra_offset,
@@ -1041,7 +1042,7 @@ mod test {
         0,
         ALIGNMENT,
         BLOCK_SIZE,
-        STORAGE + BLOCK_SIZE
+        STORAGE * 2
     }
 
     // Same sets of test cases but with unaligned output buffer {'misALIGNMENT` != 0}
