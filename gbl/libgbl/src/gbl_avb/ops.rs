@@ -19,6 +19,7 @@ use crate::{
         state::{KeyValidationStatus, VerificationStatus},
         AvbDeviceStatus, AvbPartition, AvbProperty,
     },
+    partition::split_partition_suffix,
     GblOps,
 };
 use abr::SlotIndex;
@@ -277,16 +278,10 @@ fn cstr_to_str<E>(s: &CStr, err: E) -> Result<&str, E> {
 
 /// A helper function to split partition into base name and slot index
 fn split_slotted(partition: &str) -> Result<(&str, SlotIndex), Error> {
-    // Attempt to split on the last underscore
-    let (partition_name, suffix) = partition.rsplit_once('_').ok_or(Error::InvalidInput)?;
-
-    // Ensure suffix has exactly one character
-    if suffix.len() != 1 {
-        return Err(Error::InvalidInput);
-    }
+    let (partition_name, slot_char) =
+        split_partition_suffix(partition).ok_or(Error::InvalidInput)?;
 
     // Convert that single character into a SlotIndex
-    let slot_char = suffix.chars().next().unwrap();
     let slot = slot_char.try_into().map_err(|_| Error::InvalidInput)?;
 
     Ok((partition_name, slot))

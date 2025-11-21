@@ -31,12 +31,13 @@ use gbl_storage::{
 use liberror::Error;
 use libutils::FormattedBytes;
 use safemath::SafeNum;
+use zerocopy::{FromBytes, IntoBytes};
 
 /// Maximum name length for raw partition.
 pub const RAW_PARTITION_NAME_LEN: usize = 72;
 
 /// Wraps a bytes buffer containing a null-terminated C string
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, FromBytes, IntoBytes)]
 pub struct RawName([u8; RAW_PARTITION_NAME_LEN]);
 
 impl RawName {
@@ -72,6 +73,14 @@ impl RawName {
 impl AsRef<str> for RawName {
     fn as_ref(&self) -> &str {
         self.to_str()
+    }
+}
+
+impl TryFrom<&str> for RawName {
+    type Error = Error;
+
+    fn try_from(name: &str) -> Result<Self, Self::Error> {
+        Self::new_formatted(format_args!("{name}"))
     }
 }
 
@@ -585,6 +594,18 @@ pub async fn sync_gpt(
     Ok(())
 }
 
+/// Splits a partition name into a pair of `(basename: &str, suffix: char)`.
+///
+/// Returns `None` if partition did not have slot suffix.
+pub fn split_partition_suffix(part: &str) -> Option<(&str, char)> {
+    let (name, suffix) = part.rsplit_once('_')?;
+    if name.len() > 0 && suffix.len() == 1 && suffix.chars().next()?.is_ascii_lowercase() {
+        Some((name, suffix.chars().next()?))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
@@ -1001,5 +1022,20 @@ pub(crate) mod test {
         devs.add_raw_device(c"raw_1", [0x55u8; 4 * 1024]);
         let mut io = find_multi_partition_io(&devs, &["raw_0", "raw_1"]).unwrap();
         assert!(block_on(io.read(0, &mut [0u8; 1024][..])).is_err());
+    }
+
+    #[test]
+    fn test_split_partition_suffix() {
+        assert_eq!(split_partition_suffix("boot_a"), Some(("boot", 'a')));
+        assert_eq!(split_partition_suffix("boot_b"), Some(("boot", 'b')));
+        assert_eq!(split_partition_suffix("boot__b"), Some(("boot_", 'b')));
+        assert_eq!(split_partition_suffix("vendor_boot_b"), Some(("vendor_boot", 'b')));
+        assert_eq!(split_partition_suffix("boo_tb"), None);
+        assert_eq!(split_partition_suffix("_a"), None);
+        assert_eq!(split_partition_suffix("boo"), None);
+        assert_eq!(split_partition_suffix("boot_A"), None);
+        assert_eq!(split_partition_suffix("boot_0"), None);
+        assert_eq!(split_partition_suffix("boot_"), None);
+        assert_eq!(split_partition_suffix("boot__"), None);
     }
 }
