@@ -15,16 +15,23 @@
 use crate::{
     fastboot::{BufferPool, GblFastboot, PinFutContainerTyped},
     gbl_println,
-    partition::Partition,
+    partition::{split_partition_suffix, Partition, RawName},
     slots::{Bootability, Slot},
     GblOps,
 };
-use core::{ffi::CStr, future::Future, ops::DerefMut, str::from_utf8};
+use core::{
+    ffi::CStr,
+    future::Future,
+    mem::size_of,
+    ops::{Deref, DerefMut},
+    str::from_utf8,
+};
 use fastboot::{next_arg, next_arg_u64, CommandResult, VarInfoSender};
 use gbl_async::{block_on, select, yield_now};
 use gbl_storage::BlockIo;
 use liberror::Error;
 use libutils::snprintf;
+use zerocopy::{error::SizeError, FromBytes, IntoBytes, Unaligned};
 
 const MAX_DOWNLOAD_SIZE: &'static str = "max-download-size";
 
@@ -36,6 +43,7 @@ const CURRENT_SLOT: &'static str = "current-slot";
 const SLOT_SUCCESSFUL: &'static str = "slot-successful";
 const SLOT_UNBOOTABLE: &'static str = "slot-unbootable";
 const SLOT_RETRY_COUNT: &'static str = "slot-retry-count";
+const HAS_SLOT: &'static str = "has-slot";
 
 const MAX_FETCH_SIZE: &'static str = "max-fetch-size";
 // Limited by DATA message which only allows 8 hex digits.
@@ -60,6 +68,7 @@ pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     SLOT_SUCCESSFUL,
     SLOT_UNBOOTABLE,
     SLOT_RETRY_COUNT,
+    HAS_SLOT,
     MAX_FETCH_SIZE,
     PARTITION_SIZE,
     PARTITION_TYPE,
@@ -68,6 +77,59 @@ pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     DEFAULT_BLOCK,
     MAX_DOWNLOAD_SIZE,
 ];
+
+#[derive(Unaligned, FromBytes, IntoBytes)]
+#[repr(packed)]
+struct PartHasSlot(RawName, u8);
+
+/// Query result of `getvar has-slot`.
+///
+/// If `PartHasSlot(part, NO)`, then `part` is the name of an unslotted partition.
+/// If `PartHasSlot(name, YES)`, then `name` is the name-without-suffix of a slotted partition.
+impl PartHasSlot {
+    const NO: u8 = 0;
+    const YES: u8 = 1;
+}
+
+/// A vector backed by a borrowed slice.
+struct SliceVec<'a, T> {
+    buf: &'a mut [T],
+    len: usize,
+}
+
+impl<'a, T> SliceVec<'a, T> {
+    fn new(buf: &'a mut [T]) -> Self {
+        Self { buf, len: 0 }
+    }
+
+    fn push(&mut self, v: T) {
+        if self.len >= self.buf.len() {
+            panic!("SliceVec capacity exceeded: cap={}", self.buf.len());
+        }
+        self.buf[self.len] = v;
+        self.len += 1;
+    }
+}
+
+impl<T> Deref for SliceVec<'_, T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        &self.buf[..self.len]
+    }
+}
+
+impl<T> DerefMut for SliceVec<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buf[..self.len]
+    }
+}
+
+impl<'a, T> From<SliceVec<'a, T>> for &'a [T] {
+    fn from(v: SliceVec<'a, T>) -> Self {
+        &v.buf[..v.len]
+    }
+}
 
 struct FastbootSlotInfo {
     successful: &'static str,
@@ -128,6 +190,7 @@ where
             SLOT_RETRY_COUNT => {
                 snprintf!(out, "{}", self.get_fastboot_slot_info(args_str)?.retry_count)
             }
+            HAS_SLOT => self.get_var_has_slot(args_str, out)?,
             MAX_FETCH_SIZE => snprintf!(out, "{}", MAX_FETCH_SIZE_VAL),
             PARTITION_SIZE => self.get_var_partition_size(args_str, out)?,
             PARTITION_TYPE => self.get_var_partition_type(args_str, out)?,
@@ -167,6 +230,7 @@ where
                     send.send_var_info(SLOT_RETRY_COUNT, [suffix], snprintf!(buf, "{retry_count}"))
                         .await?;
                 }
+                self.get_all_partition_has_slot(send).await?;
             }
             Err(Error::Unsupported | Error::NotFound) => {
                 // TODO(b/442975038): Make this an error in production, allow fallback only for
@@ -399,5 +463,88 @@ where
             .find(|slot| slot.is_ok() && slot.unwrap().suffix.as_char() == suffix)
             .ok_or("Invalid slot")??;
         Ok(slot.into())
+    }
+
+    /// Builds a lookup table that tells us whether a partition has slot or not.
+    ///
+    /// Returns a `&[PartHasSlot]`.
+    fn get_part_has_slot_table(&mut self) -> Result<&[PartHasSlot], Error> {
+        let default_slot = self.slots_iter()?.next().ok_or("Missing slot info")??.suffix.as_char();
+        // The table size could theoretically be as large as the number of total partitions, so
+        // stack allocation would be insufficient. We instead dynamically allocate a memory slice
+        // on the boot_buffer scratch pad.
+        let partition_count =
+            self.disks.iter().map(|b| b.num_partitions().unwrap_or_default()).sum();
+        let buf = <[PartHasSlot]>::mut_from_prefix_with_elems(
+            self.boot_buffer.scratch(),
+            partition_count,
+        )
+        .map_err(|e| match e.into() {
+            SizeError { .. } => {
+                Error::BufferTooSmall(Some(partition_count * size_of::<PartHasSlot>()))
+            }
+        })?
+        .0;
+        let mut part_has_slot = SliceVec::new(buf);
+        for blk in self.disks.iter() {
+            for part_idx in 0..blk.num_partitions().unwrap_or_default() {
+                let part = blk.get_partition_by_idx(part_idx)?;
+                let part = part.name()?;
+                match split_partition_suffix(part) {
+                    None => match part_has_slot.iter().position(|p| p.0.to_str() == part) {
+                        None => part_has_slot.push(PartHasSlot(part.try_into()?, PartHasSlot::NO)),
+                        Some(pos) => part_has_slot[pos].1 = PartHasSlot::NO,
+                    },
+                    Some((name, suffix)) if suffix == default_slot => {
+                        if part_has_slot.iter().all(|p| p.0.to_str() != name) {
+                            part_has_slot.push(PartHasSlot(name.try_into()?, PartHasSlot::YES));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(part_has_slot.into())
+    }
+
+    /// "fastboot getvar has-slot:<partition-name-without-slot-suffix>"
+    fn get_var_has_slot<'t, 's>(
+        &mut self,
+        mut args: impl Iterator<Item = &'t str> + Clone,
+        out: &'s mut [u8],
+    ) -> CommandResult<&'s str> {
+        let part = args.next().ok_or("Missing partition")?;
+        let has_slot = self
+            .get_part_has_slot_table()?
+            .iter()
+            .find_map(
+                |PartHasSlot(name, has_slot)| {
+                    if name.to_str() == part {
+                        Some(has_slot)
+                    } else {
+                        None
+                    }
+                },
+            )
+            .copied()
+            .ok_or(Error::NotFound)?;
+        Ok(snprintf!(out, "{}", if has_slot == PartHasSlot::NO { "no" } else { "yes" }))
+    }
+
+    /// Gets all "has-slot"
+    async fn get_all_partition_has_slot(
+        &mut self,
+        responder: &mut impl VarInfoSender,
+    ) -> CommandResult<()> {
+        for PartHasSlot(part, has_slot) in self.get_part_has_slot_table()? {
+            responder
+                .send_var_info(
+                    HAS_SLOT,
+                    [part.to_str()],
+                    if *has_slot == PartHasSlot::NO { "no" } else { "yes" },
+                )
+                .await?;
+        }
+        Ok(())
     }
 }

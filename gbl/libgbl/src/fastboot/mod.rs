@@ -1642,6 +1642,61 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn test_get_var_partition_has_slot() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut load_buffer = AlignedBuffer::new(MiB!(8), KERNEL_ALIGNMENT);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
+        storage.add_raw_device(c"raw_0", [0xaau8; KiB!(4)]);
+        storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.slot_count = Some(Ok(3));
+        gbl_ops.slot_infos =
+            vec![Ok(slot('a')), Ok(slot_successful('b')), Ok(slot_unbootable('c'))];
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let mut gbl_fb = GblFastboot::new(
+            &mut gbl_ops,
+            parts,
+            Task::run,
+            &tasks,
+            &dl_buffers,
+            load_buffer.as_mut().into(),
+        );
+
+        check_var(&mut gbl_fb, "has-slot", "boot", "yes");
+        check_var(&mut gbl_fb, "has-slot", "vendor_boot", "yes");
+        check_var(&mut gbl_fb, "has-slot", "raw_0", "no");
+        check_var(&mut gbl_fb, "has-slot", "raw_1", "no");
+        let resp: TestResponder = Default::default();
+        let mut out = vec![0u8; MAX_RESPONSE_SIZE];
+        assert!(block_on(gbl_fb.get_var_as_str(c"has-slot", [].into_iter(), &resp, &mut out[..]))
+            .is_err());
+        assert!(block_on(gbl_fb.get_var_as_str(
+            c"has-slot",
+            [c"boot_a"].into_iter(),
+            &resp,
+            &mut out[..],
+        ))
+        .is_err());
+        assert!(block_on(gbl_fb.get_var_as_str(
+            c"has-slot",
+            [c"boot_b"].into_iter(),
+            &resp,
+            &mut out[..],
+        ))
+        .is_err());
+        assert!(block_on(gbl_fb.get_var_as_str(
+            c"has-slot",
+            [c"raw"].into_iter(),
+            &resp,
+            &mut out[..],
+        ))
+        .is_err());
+    }
+
+    #[test]
     fn test_get_var_partition_info() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
         let mut storage = FakeGblOpsStorage::default();
@@ -1722,6 +1777,7 @@ pub(crate) mod test {
     #[test]
     fn test_get_var_all() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut load_buffer = AlignedBuffer::new(MiB!(8), KERNEL_ALIGNMENT);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
@@ -1732,9 +1788,14 @@ pub(crate) mod test {
         let mut gbl_ops = FakeGblOps::new(&storage);
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
-        let boot_buffer = Default::default();
-        let mut gbl_fb =
-            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let mut gbl_fb = GblFastboot::new(
+            &mut gbl_ops,
+            parts,
+            Task::run,
+            &tasks,
+            &dl_buffers,
+            load_buffer.as_mut().into(),
+        );
 
         let mut logger = TestVarSender(vec![]);
         block_on(gbl_fb.get_var_all(&mut logger)).unwrap();
@@ -1751,6 +1812,10 @@ pub(crate) mod test {
                 "slot-successful:b: no",
                 "slot-unbootable:b: no",
                 "slot-retry-count:b: 7",
+                "has-slot:boot: yes",
+                "has-slot:vendor_boot: yes",
+                "has-slot:raw_0: no",
+                "has-slot:raw_1: no",
                 "max-fetch-size: 0x7fffffff",
                 "block-device:0:total-blocks: 0x80",
                 "block-device:0:block-size: 0x200",
@@ -3034,6 +3099,7 @@ pub(crate) mod test {
         storage.add_gpt_device(&disk);
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
+        let mut load_buffer = AlignedBuffer::new(MiB!(8), KERNEL_ALIGNMENT);
         let mut gbl_ops = FakeGblOps::new(&storage);
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
@@ -3061,7 +3127,7 @@ pub(crate) mod test {
             buffers,
             transports,
             Some(tcp),
-            Default::default(),
+            load_buffer.as_mut().into(),
         ));
 
         assert_eq!(
@@ -3079,6 +3145,7 @@ pub(crate) mod test {
                 b"INFOslot-successful:b: no",
                 b"INFOslot-unbootable:b: no",
                 b"INFOslot-retry-count:b: 7",
+                b"INFOhas-slot:vendor_boot: yes",
                 b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
@@ -3120,6 +3187,8 @@ pub(crate) mod test {
                 b"INFOslot-successful:b: no",
                 b"INFOslot-unbootable:b: no",
                 b"INFOslot-retry-count:b: 7",
+                b"INFOhas-slot:boot: yes",
+                b"INFOhas-slot:vendor_boot: yes",
                 b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
