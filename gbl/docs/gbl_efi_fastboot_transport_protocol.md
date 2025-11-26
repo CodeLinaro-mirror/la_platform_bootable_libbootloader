@@ -198,15 +198,13 @@ provided buffer.
 If `Mode` is set to `SINGLE_PACKET`. Implementation should return on any
 fastboot packet received. If provided buffer is not enough to read the
 received data, implementation should return `EFI_BUFFER_TOO_SMALL`
-and `BufferSize` should be set to the required buffer size. This mode is
-typically used when expecting fastboot command packet from the host.
+and `BufferSize` should be set to the required buffer size.
 
 If `Mode` is set to `FIXED_LENGTH`, caller should set `BufferSize` to the total
 amount data expected to be received from the transport. Partial recieved is
 allowed. Implementation does not need to block until buffer is fully filled.
 Caller should be prepared to call this API again with updated size for
-remaining data. This mode is typically used when in fastboot data phase such as
-downloading.
+remaining data.
 
 `Buffer` is caller allocated and managed. Implementation should store the
 received data in internal buffer first and then copy to `Buffer`. To improve
