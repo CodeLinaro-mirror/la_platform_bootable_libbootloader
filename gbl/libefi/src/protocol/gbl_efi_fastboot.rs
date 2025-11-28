@@ -247,6 +247,25 @@ impl Protocol<'_, GblFastbootProtocol> {
         Ok(out_action)
     }
 
+    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_partition_type()`.
+    pub fn get_partition_type(&self, part_name: &CStr, part_type: &mut [u8]) -> Result<usize> {
+        let mut part_type_len = part_type.len();
+        // SAFETY:
+        // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // No parameters are retained, all parameters outlive the call, and no pointers are Null.
+        unsafe {
+            efi_call!(
+                @bufsize part_type_len,
+                self.interface().get_partition_type,
+                self.interface_ptr(),
+                part_name.as_ptr() as _,
+                part_type.as_mut_ptr(),
+                &mut part_type_len,
+            )?
+        };
+        Ok(part_type_len)
+    }
+
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.serial_number`
     pub fn serial_number(&self) -> Result<&str> {
         let serial_number = &self.interface().serial_number;

@@ -44,8 +44,9 @@ use efi_types::{
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
     GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION, GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP,
     GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL, GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO,
-    GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, GBL_EFI_ONE_SHOT_BOOT_MODE_BOOTLOADER,
-    GBL_EFI_ONE_SHOT_BOOT_MODE_NONE, GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY, PARTITION_NAME_LEN_U16,
+    GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN,
+    GBL_EFI_ONE_SHOT_BOOT_MODE_BOOTLOADER, GBL_EFI_ONE_SHOT_BOOT_MODE_NONE,
+    GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY, PARTITION_NAME_LEN_U16,
 };
 use fastboot::{CommandExecType, Unlockability};
 use fdt::Fdt;
@@ -53,7 +54,7 @@ use gbl_async::block_on;
 use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::{Error, Result};
 use libgbl::{
-    constants::IMAGE_NAME_MAX_LEN,
+    constants::{FASTBOOT_PARTITION_TYPE_LEN, IMAGE_NAME_MAX_LEN},
     device_tree::{
         DeviceTreeComponent, DeviceTreeComponentSource, DeviceTreeComponentType,
         DeviceTreeComponentsRegistry, MAXIMUM_DEVICE_TREE_COMPONENTS,
@@ -66,8 +67,8 @@ use libgbl::{
     gbl_println,
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
-        InfoSender, LockState, LockType, OkaySender, OneShotBootMode, Partition, PartitionBuffer,
-        RngAlgorithm as GblRngAlgorithm, Slot, SHA256_DIGEST_SIZE,
+        FastbootPartitionType, InfoSender, LockState, LockType, OkaySender, OneShotBootMode,
+        Partition, PartitionBuffer, RngAlgorithm as GblRngAlgorithm, Slot, SHA256_DIGEST_SIZE,
     },
     partition::{GblDisk, RawName},
     slots::{BootToken, Cursor},
@@ -75,7 +76,7 @@ use libgbl::{
 };
 use libprofile::ProfileBackend;
 use spin::Mutex;
-use static_assertions::const_assert_eq;
+use static_assertions::{const_assert, const_assert_eq};
 #[cfg(feature = "fuchsia")]
 use zbi::ZbiContainer;
 use zerocopy::IntoBytes;
@@ -83,6 +84,10 @@ use zerocopy::IntoBytes;
 // Ensure the max partition name length in the image loading protocol matches the max image type
 // name length in GBL ops.
 const_assert_eq!(PARTITION_NAME_LEN_U16 as usize, IMAGE_NAME_MAX_LEN);
+
+// Asserts that the fastboot partition type buffer is at least as large as the length defined in the
+// fastboot protocol.
+const_assert!(FASTBOOT_PARTITION_TYPE_LEN >= GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN);
 
 fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDeviceTree {
     let metadata = component.metadata.unwrap_or_default();
@@ -897,6 +902,29 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
                 Err(e) => Err(e),
             },
             Err(Error::NotFound) => Ok(FastbootEraseAction::EraseAsPhysicalPartition),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn fastboot_get_partition_type(&mut self, part: &str) -> Result<FastbootPartitionType> {
+        let mut part_type = [0u8; _];
+        match self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()
+            .and_then(|p| p.get_partition_type(RawName::try_from(part)?.to_cstr(), &mut part_type))
+        {
+            Ok(part_type_len) => Ok((part_type_len, part_type).into()),
+            Err(Error::NotFound | Error::Unsupported) => Ok(Default::default()),
+            Err(e @ Error::BufferTooSmall(_)) => {
+                gbl_println!(
+                    self,
+                    "fastboot_get_partition_type: buffer_len={}, error={e:?}",
+                    part_type.len(),
+                );
+                Ok(Default::default())
+            }
             Err(e) => Err(e),
         }
     }

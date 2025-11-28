@@ -434,6 +434,11 @@ pub mod gbl_efi_fastboot {
         ) -> Result<GblEfiFastbootCommandExecResult> {
             unimplemented!()
         }
+
+        /// Protocol<'_, GblFastbootProtocol>::get_partition_type()`
+        pub fn get_partition_type(&self, _: &CStr, _: &mut [u8]) -> Result<usize> {
+            unimplemented!()
+        }
     }
 
     /// Map to the libefi name so code under test can just use one name.

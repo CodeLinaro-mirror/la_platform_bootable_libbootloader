@@ -74,6 +74,10 @@ pub const PVMFW_DATA_ALIGNMENT: usize = PAGE_SIZE;
 // Type alias for raw partition image name.
 type PartitionImageName = ArrayString<IMAGE_NAME_MAX_LEN>;
 
+/// This should be more than enough (Linux kernel MODULE_NAME_LEN is also 56).
+/// Keep in sync with the constant defined in gbl_efi_fastboot_protocol.h
+pub const FASTBOOT_PARTITION_TYPE_LEN: usize = 56;
+
 /// Image names list.
 /// Used for identifying what buffer size/alignment is necessary.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

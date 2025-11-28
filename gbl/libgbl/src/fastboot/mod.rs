@@ -1590,7 +1590,7 @@ pub(crate) mod test {
                 into_refmut_bytes, slot, slot_successful, slot_unbootable, FakeGblOps,
                 FakeGblOpsStorage, SenderMessage,
             },
-            Partition, PartitionBuffer,
+            FastbootPartitionType, Partition, PartitionBuffer,
         },
         Os,
     };
@@ -1662,6 +1662,18 @@ pub(crate) mod test {
         assert_eq!(val, expected, "var {}:{} = {} != {}", var, args, val, expected,);
     }
 
+    /// Helper to test fastboot variable failure.
+    fn check_var_failure(gbl_fb: &mut impl FastbootImplementation, var: &str, args: &str) {
+        let resp: TestResponder = Default::default();
+        let args_c = args.split(':').map(|v| CString::new(v).unwrap()).collect::<Vec<_>>();
+        let args_c = args_c.iter().map(|v| v.as_c_str());
+        let var_c = CString::new(var).unwrap();
+        let mut out = vec![0u8; MAX_RESPONSE_SIZE];
+        assert!(
+            block_on(gbl_fb.get_var_as_str(var_c.as_c_str(), args_c, &resp, &mut out[..])).is_err()
+        );
+    }
+
     /// A helper to set the download content.
     fn set_download(gbl_fb: &mut impl FastbootImplementation, data: &[u8]) {
         block_on(gbl_fb.set_download(data)).unwrap()
@@ -1728,7 +1740,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_get_var_partition_has_slot() {
+    fn test_get_var_partition_info() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
         let mut load_buffer = AlignedBuffer::new(MiB!(8), KERNEL_ALIGNMENT);
         let mut storage = FakeGblOpsStorage::default();
@@ -1736,10 +1748,11 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         storage.add_raw_device(c"raw_0", [0xaau8; KiB!(4)]);
         storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
+        storage.add_raw_device(c"userdata", [0u8; KiB!(8)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.slot_count = Some(Ok(3));
-        gbl_ops.slot_infos =
-            vec![Ok(slot('a')), Ok(slot_successful('b')), Ok(slot_unbootable('c'))];
+        gbl_ops
+            .partition_type
+            .insert("userdata".to_owned(), FastbootPartitionType::from_slice(b"ext4").unwrap());
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let mut gbl_fb = GblFastboot::new(
@@ -1750,52 +1763,6 @@ pub(crate) mod test {
             &dl_buffers,
             GblFbData { boot_buffer: load_buffer.as_mut().into(), ..Default::default() },
         );
-
-        check_var(&mut gbl_fb, "has-slot", "boot", "yes");
-        check_var(&mut gbl_fb, "has-slot", "vendor_boot", "yes");
-        check_var(&mut gbl_fb, "has-slot", "raw_0", "no");
-        check_var(&mut gbl_fb, "has-slot", "raw_1", "no");
-        let resp: TestResponder = Default::default();
-        let mut out = vec![0u8; MAX_RESPONSE_SIZE];
-        assert!(block_on(gbl_fb.get_var_as_str(c"has-slot", [].into_iter(), &resp, &mut out[..]))
-            .is_err());
-        assert!(block_on(gbl_fb.get_var_as_str(
-            c"has-slot",
-            [c"boot_a"].into_iter(),
-            &resp,
-            &mut out[..],
-        ))
-        .is_err());
-        assert!(block_on(gbl_fb.get_var_as_str(
-            c"has-slot",
-            [c"boot_b"].into_iter(),
-            &resp,
-            &mut out[..],
-        ))
-        .is_err());
-        assert!(block_on(gbl_fb.get_var_as_str(
-            c"has-slot",
-            [c"raw"].into_iter(),
-            &resp,
-            &mut out[..],
-        ))
-        .is_err());
-    }
-
-    #[test]
-    fn test_get_var_partition_info() {
-        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
-        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
-        storage.add_raw_device(c"raw_0", [0xaau8; KiB!(4)]);
-        storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        let tasks = vec![].into();
-        let parts = gbl_ops.disks();
-        let boot_buffer = Default::default();
-        let mut gbl_fb =
-            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
 
         // Check different semantics
         check_var(&mut gbl_fb, "partition-size", "boot_a", "0x2000");
@@ -1814,34 +1781,32 @@ pub(crate) mod test {
         check_var(&mut gbl_fb, "partition-size", "boot_a//0x1000", "0x1000");
         check_var(&mut gbl_fb, "partition-size", "raw_0", "0x1000");
         check_var(&mut gbl_fb, "partition-size", "raw_1", "0x2000");
+        check_var(&mut gbl_fb, "partition-size", "userdata", "0x2000");
+
+        check_var(&mut gbl_fb, "partition-type", "boot_a", "raw");
+        check_var(&mut gbl_fb, "partition-type", "boot_b", "raw");
+        check_var(&mut gbl_fb, "partition-type", "vendor_boot_a", "raw");
+        check_var(&mut gbl_fb, "partition-type", "vendor_boot_a/1", "raw");
+        check_var(&mut gbl_fb, "partition-type", "raw_0", "raw");
+        check_var(&mut gbl_fb, "partition-type", "userdata", "ext4");
 
         check_var(&mut gbl_fb, "partition-guid", "boot_a", "42aaac2e-37e3-43ba-9930-42dfa96e6334");
         check_var(&mut gbl_fb, "partition-guid", "boot_b", "bdadfeca-879c-43e9-8f0d-8ef7da29b5e7");
 
-        let resp: TestResponder = Default::default();
-        let mut out = vec![0u8; MAX_RESPONSE_SIZE];
-        // GUID cannot be reported for raw partition.
-        assert!(block_on(gbl_fb.get_var_as_str(
-            c"partition-guid",
-            [c"raw_1"].into_iter(),
-            &resp,
-            &mut out[..],
-        ))
-        .is_err());
-        assert!(block_on(gbl_fb.get_var_as_str(
-            c"partition-guid",
-            [c"non-existent"].into_iter(),
-            &resp,
-            &mut out[..],
-        ))
-        .is_err());
-        assert!(block_on(gbl_fb.get_var_as_str(
-            c"partition",
-            [c"non-existent"].into_iter(),
-            &resp,
-            &mut out[..],
-        ))
-        .is_err());
+        check_var_failure(&mut gbl_fb, "partition-guid", "raw_1");
+        check_var_failure(&mut gbl_fb, "partition-guid", "non-existent");
+        check_var_failure(&mut gbl_fb, "partition", "non-existent");
+
+        check_var(&mut gbl_fb, "has-slot", "boot", "yes");
+        check_var(&mut gbl_fb, "has-slot", "vendor_boot", "yes");
+        check_var(&mut gbl_fb, "has-slot", "raw_0", "no");
+        check_var(&mut gbl_fb, "has-slot", "raw_1", "no");
+        check_var(&mut gbl_fb, "has-slot", "userdata", "no");
+
+        check_var_failure(&mut gbl_fb, "has-slot", "");
+        check_var_failure(&mut gbl_fb, "has-slot", "boot_a");
+        check_var_failure(&mut gbl_fb, "has-slot", "boot_b");
+        check_var_failure(&mut gbl_fb, "has-slot", "raw");
     }
 
     /// `TestVarSender` implements `TestVarSender`. It stores outputs in a vector of string.
