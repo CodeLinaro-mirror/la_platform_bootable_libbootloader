@@ -69,7 +69,7 @@ pub(crate) trait AVFVerificationData {
     ) -> core::result::Result<T::Output, VbmetaVerifyError>;
 
     /// Returns vbmeta rollback index
-    fn vbmeta_rollback_index(&self) -> core::result::Result<Option<u64>, VbmetaVerifyError>;
+    fn vbmeta_rollback_index(&self) -> Result<u64>;
 }
 
 impl AVFVerificationData for SlotVerifyData<'_> {
@@ -107,15 +107,20 @@ impl AVFVerificationData for SlotVerifyData<'_> {
         Ok(hasher.finish())
     }
 
-    fn vbmeta_rollback_index(&self) -> core::result::Result<Option<u64>, VbmetaVerifyError> {
+    fn vbmeta_rollback_index(&self) -> Result<u64> {
         // TODO:: consider including indexes from other vbmetas (b/448363880).
-        let Some(data) =
-            self.vbmeta_data().iter().find(|d| d.partition_name().to_str() == Ok("vbmeta"))
-        else {
-            return Ok(None);
-        };
-        let idx_loc = data.header_verified()?.rollback_index_location() as usize;
-        Ok(self.rollback_indexes().get(idx_loc).copied())
+        let idx_loc = self
+            .vbmeta_data()
+            .iter()
+            .find(|d| d.partition_name().to_str() == Ok("vbmeta"))
+            .ok_or(Error::NotFound)?
+            .header_verified()
+            .map_err(|_| Error::Other(Some("vbmeta verify error")))?
+            .rollback_index_location() as usize;
+        self.rollback_indexes()
+            .get(idx_loc)
+            .copied()
+            .ok_or(Error::Other(Some("missing rollback index")))
     }
 }
 
@@ -514,12 +519,10 @@ fn prepare_dice_inputs(
     };
     let code = verify_data.vbmeta_digest_sha512();
     let hidden = [0u8; HIDDEN_SIZE]; // Leave hidden input empty.
-    let rollback_idx = verify_data
-        .vbmeta_rollback_index()
-        .map_err(|_| Error::Other(Some("vbmeta verify error")))?;
-    if !unlocked && rollback_idx.is_none() {
-        return Err(Error::Other(Some("cannot determine rollback index")));
-    }
+    let rollback_idx = match verify_data.vbmeta_rollback_index() {
+        Err(_) if unlocked => None,
+        res => Some(res?),
+    };
     Ok((authority, code, hidden, mode, rollback_idx))
 }
 
@@ -621,8 +624,8 @@ pub(crate) mod test {
             Ok(digest::<U>(&[5, 4, 3, 2, 1]))
         }
 
-        fn vbmeta_rollback_index(&self) -> core::result::Result<Option<u64>, VbmetaVerifyError> {
-            Ok(self.rollback_index)
+        fn vbmeta_rollback_index(&self) -> Result<u64> {
+            self.rollback_index.ok_or(Error::NotFound)
         }
     }
 
