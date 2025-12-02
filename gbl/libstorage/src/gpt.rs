@@ -211,12 +211,12 @@ fn check_header_fields(header: &GptHeader) -> Result<()> {
 /// * `is_primary`: If the header is a primary header.
 fn check_header(io: &mut impl BlockIo, header: &GptHeader, is_primary: bool) -> Result<()> {
     let num_blks = SafeNum::from(io.info().num_blocks);
-    let blk_sz = io.info().block_size;
 
     // GPT spec requires that at least 128 entries worth of space be reserved.
-    let min_reserved_entries_blk = min_gpt_entries_size(header.entries_count) / blk_sz;
-    // Minimum space needed: 2 * (header + entries) + MBR.
-    let min_disk_blks: u64 = ((min_reserved_entries_blk + 1) * 2 + 1).try_into().unwrap();
+    // But a lot of devices have custom entries count. So there is no point in verify against 128.
+
+    // Minimum space needed: 2 * (header + 0 * entries) + MBR.
+    let min_disk_blks: u64 = 2 * 1 + 1;
     if min_disk_blks > u64::try_from(num_blks).unwrap() {
         return Err(Error::GptError(GptError::DiskTooSmall));
     }
@@ -228,9 +228,10 @@ fn check_header(io: &mut impl BlockIo, header: &GptHeader, is_primary: bool) -> 
     // Assuming maximum range where partition entries are adjacent to GPT headers.
     //
     // Should leave a minimum space for MBR + primary header + primary entries before.
-    let min_first: u64 = (min_reserved_entries_blk + 2).try_into().unwrap();
-    // Should leave a minimum space for secondary header + secondary entries space after.
-    let max_last: u64 = (num_blks - 1 - min_reserved_entries_blk - 1).try_into().unwrap();
+    // But assume min entries can be 0.
+    let min_first: u64 = 2;
+    // Should leave a minimum space for secondary header (no secondary entries space after).
+    let max_last: u64 = (num_blks - 1 - 1).try_into().unwrap();
     if header.first > header.last + 1 || header.first < min_first || header.last > max_last {
         return Err(Error::GptError(GptError::InvalidFirstLastUsableBlock {
             first: header.first,
@@ -241,10 +242,9 @@ fn check_header(io: &mut impl BlockIo, header: &GptHeader, is_primary: bool) -> 
 
     // Checks entries starting block.
     if is_primary {
-        // For primary header, entries must be before first usable block and can hold at least
-        // `GPT_MIN_NUM_ENTRIES` entries
-        let right: u64 =
-            (SafeNum::from(header.first) - min_reserved_entries_blk).try_into().unwrap();
+        // For primary header, entries must be before first usable block and no entries.
+        // Assuming min 0 entries allowed.
+        let right: u64 = header.first;
         if !(header.entries >= 2 && header.entries <= right) {
             return Err(Error::GptError(GptError::InvalidPrimaryEntriesStart {
                 value: header.entries,
@@ -1498,12 +1498,12 @@ pub(crate) mod test {
                 128 => Error::GptError(GptError::InvalidFirstLastUsableBlock {
                     first: 94,
                     last: 92,
-                    range: (34, 94),
+                    range: (2, 126),
                 }),
                 256 => Error::GptError(GptError::InvalidFirstLastUsableBlock {
                     first: 190,
                     last: 188,
-                    range: (66, 190),
+                    range: (2, 254),
                 }),
                 _ => unimplemented!(),
             };
@@ -1514,24 +1514,20 @@ pub(crate) mod test {
     #[test]
     fn test_sync_gpt_first_usable_out_of_range() {
         fn modify(hdr: &mut GptHeader, _: Ref<&mut [u8], [GptEntry]>) {
-            hdr.first = match hdr.entries_count {
-                128 => 33,
-                256 => 65,
-                _ => unimplemented!(),
-            };
+            hdr.first = 1;
             hdr.update_crc();
         }
         for (entries_count, data) in get_gpt_test_1_data() {
             let err = match entries_count {
                 128 => Error::GptError(GptError::InvalidFirstLastUsableBlock {
-                    first: 33,
+                    first: 1,
                     last: 94,
-                    range: (34, 94),
+                    range: (2, 126),
                 }),
                 256 => Error::GptError(GptError::InvalidFirstLastUsableBlock {
-                    first: 65,
+                    first: 1,
                     last: 190,
-                    range: (66, 190),
+                    range: (2, 254),
                 }),
                 _ => unimplemented!(),
             };
@@ -1541,21 +1537,22 @@ pub(crate) mod test {
 
     #[test]
     fn test_sync_gpt_last_usable_out_of_range() {
-        fn modify(hdr: &mut GptHeader, _: Ref<&mut [u8], [GptEntry]>) {
-            hdr.last += 1;
-            hdr.update_crc();
-        }
         for (entries_count, data) in get_gpt_test_1_data() {
+            let modify = |hdr: &mut GptHeader, _: Ref<&mut [u8], [GptEntry]>| {
+                hdr.last +=
+                    1 + gpt_entries_blk(BLOCK_SIZE.try_into().unwrap(), entries_count).unwrap();
+                hdr.update_crc();
+            };
             let err = match entries_count {
                 128 => Error::GptError(GptError::InvalidFirstLastUsableBlock {
                     first: 34,
-                    last: 95,
-                    range: (34, 94),
+                    last: 127,
+                    range: (2, 126),
                 }),
                 256 => Error::GptError(GptError::InvalidFirstLastUsableBlock {
                     first: 66,
-                    last: 191,
-                    range: (66, 190),
+                    last: 255,
+                    range: (2, 254),
                 }),
                 _ => unimplemented!(),
             };
@@ -1577,16 +1574,23 @@ pub(crate) mod test {
                 },
                 Error::GptError(GptError::InvalidPrimaryEntriesStart {
                     value: 1,
-                    expect_range: (2, 2),
+                    expect_range: (
+                        2,
+                        match entries_count {
+                            128 => 34,
+                            256 => 66,
+                            _ => unimplemented!(),
+                        },
+                    ),
                 }),
                 match entries_count {
                     128 => Error::GptError(GptError::InvalidSecondaryEntriesStart {
                         value: 94,
-                        expect_range: (95, 95),
+                        expect_range: (95, 127),
                     }),
                     256 => Error::GptError(GptError::InvalidSecondaryEntriesStart {
                         value: 190,
-                        expect_range: (191, 191),
+                        expect_range: (191, 255),
                     }),
                     _ => unimplemented!(),
                 },
@@ -1726,30 +1730,18 @@ pub(crate) mod test {
 
     #[test]
     fn test_load_gpt_disk_too_small() {
-        for (entries_count, data) in get_gpt_test_1_data() {
+        for (_entries_count, data) in get_gpt_test_1_data() {
             let mut disk = data.to_vec();
-            // Resizes so that it's not enough to hold a full 128 or 256 maximum entries.
-            // MBR + (header + entries) * 2 - 1
-            disk.resize(
-                mbr_gpt_header_size_block_align(entries_count)
-                    + gpt_header_size_block_align(entries_count)
-                    - BLOCK_SIZE,
-                0,
-            );
+            // MBR + (header + 0 * entries) * 2 - 1
+            disk.resize(MBR_SIZE + GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE * 2 - BLOCK_SIZE, 0);
             let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
             let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
-            let primary_err = Error::GptError(GptError::DiskTooSmall);
-            // With 256 entries if secondary is removed or corrupt the entries capacity can not be
-            // deducted. So secondary header would not catch DiskTooSmall error for 256 -1, but
-            // rather get some header check error. In this case magic is incorrect.
-            let secondary_err = match entries_count {
-                128 => Error::GptError(GptError::DiskTooSmall),
-                256 => Error::GptError(GptError::IncorrectMagic(0)),
-                _ => unimplemented!(),
-            };
             assert_eq!(
                 sync_res,
-                GptSyncResult::NoValidGpt { primary: primary_err, secondary: secondary_err }
+                GptSyncResult::NoValidGpt {
+                    primary: Error::GptError(GptError::DiskTooSmall),
+                    secondary: Error::GptError(GptError::DiskTooSmall)
+                }
             );
         }
     }
