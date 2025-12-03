@@ -156,8 +156,10 @@ class GblSigntoolTest(unittest.TestCase):
 def tmp_appended_tail(path):
   with tempfile.TemporaryDirectory() as temp_dir:
     appended_path = Path(temp_dir) / path.name
-    shutil.copy(path, appended_path)
-    with open(appended_path, 'ab') as f:
+    with open(path, 'rb') as f:
+      content = f.read()
+    with open(appended_path, 'wb') as f:
+      f.write(content)
       f.write(b'\x00' * 4 * 4096)
     yield appended_path
 
