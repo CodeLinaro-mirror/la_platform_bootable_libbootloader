@@ -57,6 +57,7 @@ use {
     },
     cfg_if::cfg_if,
     efi::{efi_println, report_error_and_reset, EfiEntry},
+    libbuild_number::BUILD_NUMBER,
     libgbl::{Os, Result},
     utils::loaded_image_path,
 };
@@ -102,10 +103,11 @@ fn get_target_os(_entry: &EfiEntry, _disks: &[EfiGblDisk]) -> TargetOs {
 #[cfg(not(test))]
 pub fn app_main(entry: EfiEntry) -> Result<()> {
     use libutils::get_sp;
-    efi_println!(entry, "****Generic Bootloader Application****");
-    efi_println!(entry, "Board type: {}", BOARD_TYPE_STR);
+    efi_println!(entry, "**** Generic Bootloader (GBL) ****");
+    efi_println!(entry, "Version: {BUILD_NUMBER}");
+    efi_println!(entry, "Board type: {BOARD_TYPE_STR}");
     if let Ok(v) = loaded_image_path(&entry) {
-        efi_println!(entry, "Image path: {}", v);
+        efi_println!(entry, "Image path: {v}");
     }
 
     let disks = find_block_devices(&entry).inspect_err(|e| {

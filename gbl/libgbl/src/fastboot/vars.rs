@@ -29,6 +29,7 @@ use core::{
 use fastboot::{next_arg, next_arg_u64, CommandResult, VarInfoSender};
 use gbl_async::{block_on, select, yield_now};
 use gbl_storage::BlockIo;
+use libbuild_number::BUILD_NUMBER;
 use liberror::Error;
 use libutils::snprintf;
 use zerocopy::{error::SizeError, FromBytes, IntoBytes, Unaligned};
@@ -36,7 +37,6 @@ use zerocopy::{error::SizeError, FromBytes, IntoBytes, Unaligned};
 const MAX_DOWNLOAD_SIZE: &'static str = "max-download-size";
 
 const VERSION_BOOTLOADER: &'static str = "version-bootloader";
-const VERSION_BOOTLOADER_VAL: &'static str = "1.0";
 
 const SLOT_COUNT: &'static str = "slot-count";
 const CURRENT_SLOT: &'static str = "current-slot";
@@ -178,7 +178,7 @@ where
         let args_str = args_str.map(|v| v.unwrap());
         Ok(match name.to_str()? {
             MAX_DOWNLOAD_SIZE => snprintf!(out, "{:#x}", self.max_download_size().await),
-            VERSION_BOOTLOADER => snprintf!(out, "{}", VERSION_BOOTLOADER_VAL),
+            VERSION_BOOTLOADER => snprintf!(out, "gbl.{}", BUILD_NUMBER),
             SLOT_COUNT => snprintf!(out, "{}", self.gbl_ops.get_slot_count()?),
             CURRENT_SLOT => snprintf!(out, "{}", self.gbl_ops.get_current_slot()?.suffix.as_char()),
             SLOT_SUCCESSFUL => {
@@ -212,7 +212,7 @@ where
         let mut buf = [0u8; 32];
         let dl_sz = snprintf!(buf, "{:#x}", self.max_download_size().await);
         send.send_var_info(MAX_DOWNLOAD_SIZE, [], dl_sz).await?;
-        send.send_var_info(VERSION_BOOTLOADER, [], VERSION_BOOTLOADER_VAL).await?;
+        send.send_var_info(VERSION_BOOTLOADER, [], snprintf!(buf, "gbl.{BUILD_NUMBER}")).await?;
         match self.gbl_ops.get_slot_count() {
             Ok(slot_count) => {
                 send.send_var_info(SLOT_COUNT, [], snprintf!(buf, "{slot_count}")).await?;
