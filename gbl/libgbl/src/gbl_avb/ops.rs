@@ -83,7 +83,7 @@ pub struct GblAvbOps<'a: 'c, 'b, 'c, T> {
     key_validation_status: Option<KeyValidationStatus>,
 }
 
-impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> GblAvbOps<'a, 'b, 'c, T> {
+impl<'a, 'b, 'c, 'p, T: GblOps<'p>> GblAvbOps<'a, 'b, 'c, T> {
     /// Creates a new [GblAvbOps].
     pub fn new(
         gbl_ops: &'b mut T,
@@ -321,7 +321,7 @@ fn calculate_partition_read_range(
 /// # Lifetimes
 /// * `'a`: preloaded data lifetime
 /// * `'b`: [GblOps] partition lifetime
-impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, 'c, T> {
+impl<'a, 'b, 'c, 'p, T: GblOps<'p>> AvbOps<'a> for GblAvbOps<'a, 'b, 'c, T> {
     fn read_from_partition(
         &mut self,
         partition: &CStr,
@@ -506,7 +506,7 @@ impl<'a, 'b, 'c, 'p, 'q, T: GblOps<'p, 'q>> AvbOps<'a> for GblAvbOps<'a, 'b, 'c,
 }
 
 /// [GblAvbOps] always implements [CertOps], but it's only used if `use_cert` is set.
-impl<'a, 'b, T: GblOps<'a, 'b>> CertOps for GblAvbOps<'_, '_, '_, T> {
+impl<'a, T: GblOps<'a>> CertOps for GblAvbOps<'_, '_, '_, T> {
     fn read_permanent_attributes(
         &mut self,
         attributes: &mut CertPermanentAttributes,
@@ -1008,7 +1008,7 @@ mod test {
     /// * the [FakeGblOps]
     /// * the corresponding vbmeta public key
     /// * the corresponding vbmeta public key metadata
-    fn create_fake_gbl_ops_with_cert() -> (FakeGblOps<'static, 'static>, Vec<u8>, Vec<u8>) {
+    fn create_fake_gbl_ops_with_cert() -> (FakeGblOps<'static>, Vec<u8>, Vec<u8>) {
         let mut gbl_ops = FakeGblOps::new(&[]);
 
         // Cert verification requires both permanent attribute ops plus reading

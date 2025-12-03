@@ -219,8 +219,8 @@ where
 /// * `Err(BadBufferSize)` - if pvmfw binary cannot be extracted or the size data is invalid
 /// * `Err(BufferTooSmall)` - of the pvmfw binary and config data doesn't fit into the target buffer
 /// * `Err(ArithmeticOverflow)` - on overflow when calculating image buffer size
-pub fn build_pvmfw_data_region<'a, 'b, T: AVFVerificationData>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub fn build_pvmfw_data_region<'a, T: AVFVerificationData>(
+    ops: &mut impl GblOps<'a>,
     output_buffer: &mut [u8],
     pvmfw_binary: &[u8],
     boot_info: &BootInfo<T>,
@@ -366,8 +366,8 @@ impl PvmfwConfHeader {
 
 /// Write the pvmfw configuration to the output buffer. Creates the configuration header and appends
 /// the configuration entries.
-fn write_pvmfw_config<'a, 'b, T: AVFVerificationData>(
-    ops: &mut impl GblOps<'a, 'b>,
+fn write_pvmfw_config<'a, T: AVFVerificationData>(
+    ops: &mut impl GblOps<'a>,
     config_out: &mut [u8],
     scratch_buffer: &mut [u8],
     boot_info: &BootInfo<T>,
@@ -400,11 +400,11 @@ const VENDOR_HASH_PROP: &CStr = c"vendor_hashtree_descriptor_root_digest";
 
 /// Write an FDT (the VM reference DT) to the output buffer and return its size, its padded size,
 /// and the unused portion of the buffer.
-fn pvmfw_build_reference_dt<'a, 'b, 'c, T: AVFVerificationData>(
-    ops: &mut impl GblOps<'a, 'b>,
-    output_buffer: &'c mut [u8],
+fn pvmfw_build_reference_dt<'a, 'b, T: AVFVerificationData>(
+    ops: &mut impl GblOps<'a>,
+    output_buffer: &'b mut [u8],
     boot_info: &BootInfo<T>,
-) -> Result<(usize, usize, &'c mut [u8])> {
+) -> Result<(usize, usize, &'b mut [u8])> {
     let mut ref_dt = Fdt::new_empty(&mut output_buffer[..])?;
     write_ref_dt_properties(ops, &mut ref_dt, REF_DT_AVF_PATH, boot_info.verify_data)?;
     boot_info.as_avb_dt_props(&mut ref_dt, REF_DT_AVB_PATH)?;
@@ -414,8 +414,8 @@ fn pvmfw_build_reference_dt<'a, 'b, 'c, T: AVFVerificationData>(
     Ok((entry_size, entry_padded_size, rest))
 }
 
-fn write_ref_dt_properties<'a, 'b, 'c, T>(
-    ops: &mut impl GblOps<'a, 'b>,
+fn write_ref_dt_properties<'a, T>(
+    ops: &mut impl GblOps<'a>,
     target_dt: &mut Fdt<T>,
     avf_node_path: &str,
     verify_data: &impl AVFVerificationData,
@@ -450,8 +450,8 @@ where
 }
 
 /// Add AVF-specific properties to host FDT
-pub fn avf_fixup_host_dt<'a, 'b, 'c, T>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub fn avf_fixup_host_dt<'a, T>(
+    ops: &mut impl GblOps<'a>,
     host_dt: &mut Fdt<T>,
     pvmfw_buf: &[u8],
     pvmfw_bin_len: usize,
@@ -469,8 +469,8 @@ where
 ///
 /// # Note
 /// `androidboot.hypervisor.version` is free-form and should be set by vendor via bootconfig fixup
-pub fn avf_update_bootconfig<'a, 'b>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub fn avf_update_bootconfig<'a>(
+    ops: &mut impl GblOps<'a>,
     bootconfig: &mut BootConfigBuilder,
 ) -> core::result::Result<(), Error> {
     const PROTECTED_PROP: &str = "androidboot.hypervisor.protected_vm.supported";
@@ -524,12 +524,12 @@ fn prepare_dice_inputs(
 }
 
 /// Prepare the DICE handover config entry of pvmfw
-fn pvmfw_build_dice_handover<'a, 'b, 'c, T: AVFVerificationData>(
-    ops: &mut impl GblOps<'a, 'b>,
-    output_buffer: &'c mut [u8],
+fn pvmfw_build_dice_handover<'a, 'b, T: AVFVerificationData>(
+    ops: &mut impl GblOps<'a>,
+    output_buffer: &'b mut [u8],
     boot_info: &BootInfo<T>,
     scratch_buffer: &mut [u8],
-) -> Result<(usize, usize, &'c mut [u8])> {
+) -> Result<(usize, usize, &'b mut [u8])> {
     const MAX_CONFIG_SIZE: usize = 64; // Enough for our config descriptor
     let (conf_desc_buffer, vendor_handover_buffer) = scratch_buffer
         .split_at_mut_checked(MAX_CONFIG_SIZE)

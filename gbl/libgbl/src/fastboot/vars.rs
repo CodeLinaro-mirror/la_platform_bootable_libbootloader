@@ -154,10 +154,9 @@ impl From<Slot> for FastbootSlotInfo {
 }
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
-impl<'a: 'c, 'b: 'c, 'c, 'd, 'e, G, B, S, T, P, C, F>
-    GblFastboot<'a, 'b, 'c, 'd, 'e, G, B, S, T, P, C, F>
+impl<'a: 'c, 'b: 'c, 'c, 'd, G, B, S, T, P, C, F> GblFastboot<'a, 'b, 'c, 'd, G, B, S, T, P, C, F>
 where
-    G: GblOps<'a, 'e>,
+    G: GblOps<'a>,
     B: BlockIo,
     S: DerefMut<Target = [u8]>,
     T: DerefMut<Target = [u8]>,

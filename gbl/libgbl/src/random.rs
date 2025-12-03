@@ -26,7 +26,7 @@ pub fn should_fallback_to_default_rng(e: Error) -> bool {
 /// Helper function to obtain a random seed, preferring raw hardware entropy, with a
 /// fallback to the default RNG algorithm if needed. Raw seed is more suitable for
 /// initializing other random data.
-pub fn get_random_seed<'a, 'b>(ops: &mut impl GblOps<'a, 'b>, buffer: &mut [u8]) -> Result<()> {
+pub fn get_random_seed<'a>(ops: &mut impl GblOps<'a>, buffer: &mut [u8]) -> Result<()> {
     // Try to obtain raw hardware entropy.
     match ops.get_random_bytes(RngAlgorithm::Raw, buffer) {
         Ok(_) => Ok(()),

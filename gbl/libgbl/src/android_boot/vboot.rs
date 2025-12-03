@@ -101,11 +101,11 @@ pub(crate) fn into_verify_data<'a>(
 ///
 /// * On success, returns a tuple of (verification result, BootStateColor, is_unlocked).
 /// * Returns an error if verification process failed and boot cannot continue.
-pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub fn avb_verify_slot<'a, 'b: 'c, 'c>(
+    ops: &mut impl GblOps<'a>,
     slot: Slot,
-    partitions: &'d mut PartitionsToVerify<'c>,
-) -> Result<(SlotVerifyData<'d>, VerificationStatus, bool)> {
+    partitions: &'c mut PartitionsToVerify<'b>,
+) -> Result<(SlotVerifyData<'c>, VerificationStatus, bool)> {
     let slot_index = SlotIndex::try_from(slot.suffix.as_char())
         .inspect_err(|_| gbl_println!(ops, "AVB: Invalid slot: {}", slot.suffix.as_char()))
         .map_err(|_| Error::InvalidInput)?;
@@ -255,11 +255,11 @@ pub fn avb_verify_slot<'a, 'b, 'c: 'd, 'd>(
 /// Used only by the DEV GBL to boot the device even if a critical AVB error is encountered,
 /// by using a custom precompiled vbmeta image to work around on-device issues.
 #[cfg(feature = "gbl_dev")]
-pub fn avb_fake_verify_slot<'a, 'b, 'c: 'd, 'd>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub fn avb_fake_verify_slot<'a, 'b: 'c, 'c>(
+    ops: &mut impl GblOps<'a>,
     slot: Slot,
-    partitions: &'d mut PartitionsToVerify<'c>,
-) -> Result<(SlotVerifyData<'d>, VerificationStatus, bool)> {
+    partitions: &'c mut PartitionsToVerify<'b>,
+) -> Result<(SlotVerifyData<'c>, VerificationStatus, bool)> {
     use crate::android_boot::slotted_part;
     use crate::gbl_avb::ops::custom_vbmeta::CustomVbmetaAvbOps;
 

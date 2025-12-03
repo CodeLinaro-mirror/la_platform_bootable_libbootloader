@@ -81,8 +81,8 @@ pub const STANDARD_PARTITIONS: &[Partition] = &[
 /// Loads Android images from the given slot on disk and fixes up bootconfig, commandline, and FDT.
 ///
 /// On success, returns a tuple of (ramdisk, fdt, kernel, unused buffer).
-pub fn android_load_verify_fixup<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'b, 'c>,
+pub fn android_load_verify_fixup<'a, 'b>(
+    ops: &mut impl GblOps<'b>,
     slot: Slot,
     is_recovery: bool,
     boot_buffer: BootBuffer<'a>,
@@ -387,8 +387,8 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
 /// * `fdt`: Target FDT to fixup.
 /// * `ramdisk`: Target ramdisk for setting `linux,initrd-start/end`
 /// * `append_bootconfig`: Set to true to append bootconfig from ramdisk as bootarg.
-fn finalize_dt<'b, 'c>(
-    ops: &mut impl GblOps<'b, 'c>,
+fn finalize_dt<'b>(
+    ops: &mut impl GblOps<'b>,
     fdt: &mut [u8],
     ramdisk: &[u8],
     append_bootconfig: bool,
@@ -421,8 +421,8 @@ fn finalize_dt<'b, 'c>(
 /// * `ops`: An implementation of GblOps.
 /// * `buf`: Buffer containing an existing bootconfig.
 /// * `curr_bootconfig_sz`: The size including trailer of the existing bootconfig.
-fn fixup_bootconfig<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'b, 'c>,
+fn fixup_bootconfig<'a, 'b>(
+    ops: &mut impl GblOps<'b>,
     buf: &'a mut [u8],
     curr_bootconfig_sz: usize,
 ) -> Result<BootConfigBuilder<'a>> {
@@ -437,7 +437,7 @@ fn fixup_bootconfig<'a, 'b, 'c>(
 /// Gets the target slot to boot.
 ///
 /// Defaults to `a` slot if slotting backend is not implemented on the platform.
-pub(crate) fn get_boot_slot<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) -> Result<Slot> {
+pub(crate) fn get_boot_slot<'a>(ops: &mut impl GblOps<'a>) -> Result<Slot> {
     match ops.get_current_slot() {
         Ok(slot) => Ok(slot),
         Err(Error::Unsupported | Error::NotFound) => {
@@ -458,15 +458,15 @@ pub(crate) fn get_boot_slot<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) -> Result<Slo
 }
 
 /// Provides methods to run GBL fastboot.
-pub struct GblFastbootEntry<'d, G> {
-    pub(crate) ops: &'d mut G,
-    pub(crate) boot_buffer: BootBuffer<'d>,
-    pub(crate) result: &'d mut GblFastbootResult,
+pub struct GblFastbootEntry<'a, G> {
+    pub(crate) ops: &'a mut G,
+    pub(crate) boot_buffer: BootBuffer<'a>,
+    pub(crate) result: &'a mut GblFastbootResult,
 }
 
-impl<'a, 'd, 'e, G> GblFastbootEntry<'d, G>
+impl<'a, 'b, G> GblFastbootEntry<'b, G>
 where
-    G: GblOps<'a, 'e>,
+    G: GblOps<'a>,
 {
     /// Runs GBL fastboot with the given buffer pool, tasks container, and transports/tcp channels.
     ///
@@ -481,16 +481,16 @@ where
     /// * `tcp`: An implementation of `GblTcpStream` that represents TCP channel.
     ///
     /// Returns the user-defined GblOps on completion.
-    pub async fn run<'b: 'c, 'c>(
+    pub async fn run<'c: 'd, 'd>(
         self,
-        buffer_pool: &'b Shared<impl BufferPool>,
-        tasks: impl PinFutContainer<'c> + 'c,
+        buffer_pool: &'c Shared<impl BufferPool>,
+        tasks: impl PinFutContainer<'d> + 'd,
         transports: &mut [impl GblGenericTransport],
         tcp: Option<impl GblTcpStream>,
-    ) -> &'d mut G
+    ) -> &'b mut G
     where
-        'a: 'c,
-        'd: 'c,
+        'a: 'd,
+        'b: 'd,
     {
         *self.result =
             run_gbl_fastboot(self.ops, buffer_pool, tasks, transports, tcp, self.boot_buffer).await;
@@ -519,7 +519,7 @@ where
         download: &mut [u8],
         transports: &mut [impl GblGenericTransport],
         tcp: Option<impl GblTcpStream>,
-    ) -> &'d mut G {
+    ) -> &'b mut G {
         if N < 1 {
             return self.run_n::<1>(download, transports, tcp);
         }
@@ -627,11 +627,11 @@ impl Default for BootBuffer<'_> {
 ///   `GblFastbootEntry` for more details.
 ///
 /// On success, returns a tuple of slices corresponding to `(ramdisk, FDT, kernel, unused)`
-pub fn android_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
+pub fn android_main<'a, 'b, G: GblOps<'a>>(
     ops: &mut G,
-    mut boot_buffer: BootBuffer<'c>,
+    mut boot_buffer: BootBuffer<'b>,
     run_fastboot: impl FnOnce(GblFastbootEntry<'_, G>),
-) -> Result<(&'c [u8], &'c [u8], &'c [u8], &'c mut [u8])> {
+) -> Result<(&'b [u8], &'b [u8], &'b [u8], &'b mut [u8])> {
     let bcb = read_bootloader_message_to(ops, boot_buffer.scratch()).inspect_err(|e| {
         gbl_println!(ops, "Failed to read bootloader message from misc partition: {e}")
     })?;
@@ -1986,7 +1986,7 @@ androidboot.veritymode.managed=yes
     }
 
     /// Helper for getting default FakeGblOps for tests.
-    pub(crate) fn default_test_gbl_ops(storage: &FakeGblOpsStorage) -> FakeGblOps<'_, 'static> {
+    pub(crate) fn default_test_gbl_ops(storage: &FakeGblOpsStorage) -> FakeGblOps<'_> {
         let mut ops = FakeGblOps::new(&storage);
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
@@ -2172,7 +2172,7 @@ androidboot.veritymode.managed=yes
     }
 
     /// Helper for testing that fastboot mode is triggered.
-    fn test_fastboot_is_triggered<'a, 'b>(ops: &mut impl GblOps<'a, 'b>) {
+    fn test_fastboot_is_triggered<'a>(ops: &mut impl GblOps<'a>) {
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();

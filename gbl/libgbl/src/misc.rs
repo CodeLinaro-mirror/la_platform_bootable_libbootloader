@@ -32,10 +32,10 @@ pub(crate) const MISC_PARTITION: &str = "misc";
 /// * Ok(&mut BootloaderMessage) a mutable reference to the BootloaderMessage instance.
 /// * Err(BufferTooSmall(_)) if buffer is too small.
 /// * Err(_) if IO error.
-pub fn read_bootloader_message_to<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
-    buffer: &'c mut [u8],
-) -> Result<&'c mut BootloaderMessage> {
+pub fn read_bootloader_message_to<'a, 'b>(
+    ops: &mut impl GblOps<'a>,
+    buffer: &'b mut [u8],
+) -> Result<&'b mut BootloaderMessage> {
     let (bcb, _) = BootloaderMessage::mut_from_prefix(buffer).map_err(|e| match e.into() {
         SizeError { .. } => Error::BufferTooSmall(Some(BootloaderMessage::SIZE_BYTES)),
     })?;
@@ -45,8 +45,8 @@ pub fn read_bootloader_message_to<'a, 'b, 'c>(
 }
 
 /// Writes the bootloader_message (BCB) to `misc` partition.
-pub fn write_bootloader_message<'a, 'b>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub fn write_bootloader_message<'a>(
+    ops: &mut impl GblOps<'a>,
     bcb: &mut BootloaderMessage,
 ) -> Result<()> {
     ops.write_to_partition_sync(MISC_PARTITION, 0, bcb.as_mut_bytes())
@@ -56,9 +56,7 @@ const MISC_MEMTAG_MESSAGE_OFFSET_IN_MISC: u64 =
     SYSTEM_SPACE_OFFSET_IN_MISC + MISC_MEMTAG_MESSAGE_OFFSET_IN_SYSTEM_SPACE;
 
 /// Reads the misc_memtag_message from `misc` partition.
-pub fn read_misc_memtag_message<'a, 'b>(
-    ops: &mut impl GblOps<'a, 'b>,
-) -> Result<MiscMemtagMessage> {
+pub fn read_misc_memtag_message<'a>(ops: &mut impl GblOps<'a>) -> Result<MiscMemtagMessage> {
     let mut mmm = MiscMemtagMessage::new_zeroed();
     ops.read_from_partition_sync(
         MISC_PARTITION,
@@ -69,8 +67,8 @@ pub fn read_misc_memtag_message<'a, 'b>(
 }
 
 /// Writes the misc_memtag_message to `misc` partition.
-pub fn write_misc_memtag_message<'a, 'b>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub fn write_misc_memtag_message<'a>(
+    ops: &mut impl GblOps<'a>,
     mut mmm: MiscMemtagMessage,
 ) -> Result<()> {
     ops.write_to_partition_sync(
@@ -89,8 +87,8 @@ pub(crate) mod test {
     };
 
     /// Reads the bootloader_message (BCB) from `misc` partition.
-    pub(crate) fn read_bootloader_message<'a, 'b>(
-        ops: &mut impl GblOps<'a, 'b>,
+    pub(crate) fn read_bootloader_message<'a>(
+        ops: &mut impl GblOps<'a>,
     ) -> Result<BootloaderMessage> {
         let mut bcb = BootloaderMessage::new_zeroed();
         read_bootloader_message_to(ops, bcb.as_mut_bytes())?;

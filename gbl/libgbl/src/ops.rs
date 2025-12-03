@@ -14,8 +14,8 @@
 
 //! GblOps trait that defines GBL callbacks.
 
+pub use crate::{constants::Partition, image_buffer::ImageBuffer, slots::BootToken};
 use crate::{
-    constants::ImageType,
     error::Result as GblResult,
     gbl_avb::{
         state::{KeyValidationStatus, VerificationStatus},
@@ -27,10 +27,9 @@ use crate::{
         write_unique_partition, GblDisk,
     },
 };
-pub use crate::{constants::Partition, image_buffer::ImageBuffer, slots::BootToken};
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, Ops as AbrOps, SlotIndex};
 use bytes::buf::UninitSlice;
-use core::{ffi::CStr, fmt::Write, num::NonZeroUsize, ops::DerefMut, result::Result};
+use core::{ffi::CStr, fmt::Write, ops::DerefMut, result::Result};
 use gbl_async::block_on;
 use libprofile::ProfileBackend;
 #[cfg(feature = "fuchsia")]
@@ -101,7 +100,7 @@ missing:
 - key management => atx extension in callback =>  atx_ops: ptr::null_mut(), // support optional ATX.
 */
 /// Trait that defines callbacks that can be provided to Gbl.
-pub trait GblOps<'a, 'd> {
+pub trait GblOps<'a> {
     /// Gets a console for logging messages.
     fn console_out(&mut self) -> Option<&mut dyn Write>;
 
@@ -369,13 +368,6 @@ pub trait GblOps<'a, 'd> {
     ///
     /// Returns `Err(Error::NotReady)`, if some previously returned buffer is still in use.
     fn sync_partition_buffer(&mut self, sync_preloaded: bool) -> Result<(), Error>;
-
-    /// Get buffer for specific image of requested size.
-    fn get_image_buffer(
-        &mut self,
-        image_type: ImageType,
-        size: NonZeroUsize,
-    ) -> GblResult<ImageBuffer<'d>>;
 
     /// Returns the custom device tree to use, if any.
     ///
@@ -648,7 +640,7 @@ impl<'a, T> RambootOps<'a, T> {
     }
 }
 
-impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
+impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
     fn console_out(&mut self) -> Option<&mut dyn Write> {
         self.ops.console_out()
     }
@@ -748,14 +740,6 @@ impl<'a, 'd, T: GblOps<'a, 'd>> GblOps<'a, 'd> for RambootOps<'_, T> {
 
     fn sync_partition_buffer(&mut self, sync_preloaded: bool) -> Result<(), Error> {
         self.ops.sync_partition_buffer(sync_preloaded)
-    }
-
-    fn get_image_buffer(
-        &mut self,
-        image_type: ImageType,
-        size: NonZeroUsize,
-    ) -> GblResult<ImageBuffer<'d>> {
-        self.ops.get_image_buffer(image_type, size)
     }
 
     fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
@@ -961,7 +945,6 @@ pub(crate) mod test {
         android_boot::device_tree::{PROP_BOOTARGS, RNG_SEED_SIZE_BYTES},
         constants::Partition,
         device_tree::DeviceTreeComponentType,
-        error::IntegrationError,
         partition::GblDisk,
         slots::Bootability,
     };
@@ -979,10 +962,7 @@ pub(crate) mod test {
     use gbl_storage::{new_gpt_max, Disk, GptMax, RamBlockIo};
     use libprofile::{ProfileTimer, Reporter};
     use libutils::snprintf;
-    use std::{
-        collections::{HashMap, LinkedList, VecDeque},
-        ffi::CString,
-    };
+    use std::{collections::VecDeque, ffi::CString};
     #[cfg(feature = "fuchsia")]
     use zbi::{ZbiFlags, ZbiType};
 
@@ -1056,7 +1036,7 @@ pub(crate) mod test {
 
     /// Fake [GblOps] implementation for testing.
     #[derive(Default)]
-    pub(crate) struct FakeGblOps<'a, 'd> {
+    pub(crate) struct FakeGblOps<'a> {
         /// Partition data to expose.
         pub partitions: &'a [TestGblDisk],
 
@@ -1091,9 +1071,6 @@ pub(crate) mod test {
 
         /// For return by `Self::avb_validate_vbmeta_public_key`
         pub avb_key_validation_status: Option<AvbIoResult<KeyValidationStatus>>,
-
-        /// For return by `Self::get_image_buffer()`
-        pub image_buffers: HashMap<ImageType, LinkedList<ImageBuffer<'d>>>,
 
         /// Custom device tree.
         pub custom_device_tree: Option<&'a [u8]>,
@@ -1182,13 +1159,13 @@ pub(crate) mod test {
     }
 
     /// Print `console_out` output, which can be useful for debugging.
-    impl<'a, 'd> Write for FakeGblOps<'a, 'd> {
+    impl<'a> Write for FakeGblOps<'a> {
         fn write_str(&mut self, s: &str) -> Result<(), std::fmt::Error> {
             Ok(print!("{s}"))
         }
     }
 
-    impl<'a, 'd> FakeGblOps<'a, 'd> {
+    impl<'a> FakeGblOps<'a> {
         /// For now we've just hardcoded the `zircon_add_device_zbi_items()` callback to add a
         /// single commandline ZBI item with these contents; if necessary we can generalize this
         /// later and allow tests to configure the ZBI modifications.
@@ -1236,20 +1213,6 @@ pub(crate) mod test {
             res
         }
 
-        /// Copies an entire partition contents into a vector.
-        ///
-        /// This is a common enough operation in tests that it's worth a small wrapper to provide
-        /// a more convenient API using [Vec].
-        ///
-        /// Panics if the given partition name doesn't exist.
-        #[cfg(feature = "fuchsia")]
-        pub fn copy_partition(&mut self, name: &str) -> Vec<u8> {
-            let mut contents =
-                vec![0u8; self.partition_size(name).unwrap().unwrap().try_into().unwrap()];
-            assert!(self.read_from_partition_sync(name, 0, &mut contents[..]).is_ok());
-            contents
-        }
-
         /// Flips a range of bytes on the given partition.
         #[cfg(feature = "fuchsia")]
         pub fn flip_partition_bytes(&mut self, name: &str, off: u64, sz: usize) {
@@ -1283,7 +1246,7 @@ pub(crate) mod test {
         fn report(&self, _: &'static str, _: &'static str, _: Duration) {}
     }
 
-    impl<'a, 'd> GblOps<'a, 'd> for FakeGblOps<'a, 'd> {
+    impl<'a> GblOps<'a> for FakeGblOps<'a> {
         fn console_out(&mut self) -> Option<&mut dyn Write> {
             Some(self)
         }
@@ -1491,23 +1454,6 @@ pub(crate) mod test {
             let res = f.as_mut().map(|v| (*v)(self, sync)).unwrap_or(Ok(()));
             self.sync_partition_buffer_handler = f;
             res
-        }
-
-        fn get_image_buffer(
-            &mut self,
-            image_type: ImageType,
-            _size: NonZeroUsize,
-        ) -> GblResult<ImageBuffer<'d>> {
-            if let Some(buf_list) = self.image_buffers.get_mut(&image_type) {
-                if let Some(buf) = buf_list.pop_front() {
-                    return Ok(buf);
-                };
-            };
-
-            gbl_println!(self, "FakeGblOps.get_image_buffer({image_type}) no buffer for the image");
-            Err(IntegrationError::UnificationError(Error::Other(Some(
-                "No buffer provided. Add sufficient buffers to FakeGblOps.image_buffers",
-            ))))
         }
 
         fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
