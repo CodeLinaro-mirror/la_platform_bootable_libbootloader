@@ -112,11 +112,11 @@ the transport channel.
 
 ### Status Codes Returned
 
-|||
-| ----------- | ----------- |
-| EFI_SUCCESS | Transport is started successfully. |
-| EFI_ALREADY_STARTED | The transport is already started. |
-| EFI_DEVICE_ERROR | The physical device reported an error. |
+| Return Code         | Semantics                              |
+|:--------------------|:---------------------------------------|
+| EFI_SUCCESS         | Transport is started successfully.     |
+| EFI_ALREADY_STARTED | The transport is already started.      |
+| EFI_DEVICE_ERROR    | The physical device reported an error. |
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Stop()
 
@@ -147,11 +147,11 @@ transport channel.
 
 ### Status Codes Returned
 
-|||
-| ----------- | ----------- |
-| EFI_SUCCESS | Transport is stopped successfully.|
-| EFI_NOT_STARTED | The transport is not started.|
-| EFI_DEVICE_ERROR | The physical device reported an error.|
+| Return Code      | Semantics                              |
+|:-----------------|:---------------------------------------|
+| EFI_SUCCESS      | Transport is stopped successfully.     |
+| EFI_NOT_STARTED  | The transport is not started.          |
+| EFI_DEVICE_ERROR | The physical device reported an error. |
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Receive()
 
@@ -240,10 +240,11 @@ the host to drain/reset USB bus before issuing new command.
 ### Related Definitions
 
 ```c
-enum GBL_EFI_FASTBOOT_RX_MODE {
-  SINGLE_PACKET,
-  FIXED_LENGTH,
-}
+enum {
+  GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
+  GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH,
+};
+typedef uint32_t GBL_EFI_FASTBOOT_RX_MODE;
 ```
 
 #### SINGLE_PACKET
@@ -254,14 +255,14 @@ Receives multiple packets until a fixed number of bytes.
 
 ### Status Codes Returned
 
-|||
-| ----------- | ----------- |
-| EFI_SUCCESS | Read is successful |
-| EFI_INVALID_PARAMETER | A parameter is invalid.|
-| EFI_BUFFER_TOO_SMALL | The provided buffer is too small for available data.|
-| EFI_NOT_STARTED | The transport is not started.|
-| EFI_NOT_READY | No data available from the transport.|
-| EFI_DEVICE_ERROR | The physical device reported an error.|
+| Return Code           | Semantics                                            |
+|:----------------------|:-----------------------------------------------------|
+| EFI_SUCCESS           | Read is successful                                   |
+| EFI_INVALID_PARAMETER | A parameter is invalid.                              |
+| EFI_BUFFER_TOO_SMALL  | The provided buffer is too small for available data. |
+| EFI_NOT_STARTED       | The transport is not started.                        |
+| EFI_NOT_READY         | No data available from the transport.                |
+| EFI_DEVICE_ERROR      | The physical device reported an error.               |
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Send()
 
@@ -310,13 +311,13 @@ reset is not desired.
 
 ### Status Codes Returned
 
-|||
-| ----------- | ----------- |
-| EFI_SUCCESS | Some data is sent successfully. |
-| EFI_INVALID_PARAMETER | A parameter is invalid.|
-| EFI_NOT_STARTED | The transport is not started.|
-| EFI_NOT_READY | The driver is not ready to queue or send new data. |
-| EFI_DEVICE_ERROR | The physical device reported an error.|
+| Return Code           | Semantics                                          |
+|:----------------------|:---------------------------------------------------|
+| EFI_SUCCESS           | Some data is sent successfully.                    |
+| EFI_INVALID_PARAMETER | A parameter is invalid.                            |
+| EFI_NOT_STARTED       | The transport is not started.                      |
+| EFI_NOT_READY         | The driver is not ready to queue or send new data. |
+| EFI_DEVICE_ERROR      | The physical device reported an error.             |
 
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Flush()
@@ -350,9 +351,9 @@ case `EFI_TIMEOUT` should be returned if this happens.
 
 ### Status Codes Returned
 
-|||
-| ----------- | ----------- |
-| EFI_SUCCESS | Transport is stopped successfully.|
-| EFI_NOT_STARTED | The transport is not started.|
-| EFI_TIMEOUT | Timeout waiting for send to complete.|
-| EFI_DEVICE_ERROR | The physical device reported an error.|
+| Return Code      | Semantics                              |
+|:-----------------|:---------------------------------------|
+| EFI_SUCCESS      | Transport is stopped successfully.     |
+| EFI_NOT_STARTED  | The transport is not started.          |
+| EFI_TIMEOUT      | Timeout waiting for send to complete.  |
+| EFI_DEVICE_ERROR | The physical device reported an error. |

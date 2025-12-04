@@ -132,25 +132,28 @@ should make sure to use consistent partition names for them.
 
 ### Related Definitions
 
-#### GBL_EFI_BOOT_BUFFER_TYPE
+#### GBL_EFI_PARTITION_BUFFER_FLAG
 
 ```c
-typedef enum {
-  PRELOADED = 1 << 0,
-} GBL_EFI_PARTITION_BUFFER_FLAG;
+enum {
+    GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED = 1 << 0,
+};
+
+typedef uint32_t GBL_EFI_PARTITION_BUFFER_FLAG;
 ```
 
-**PRELOADED** \
+##### PRELOADED
+
 If set, it indicates the buffer returned by `GetPartitionBuffer()` already
 contains the image loaded by the firwmare.
 
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| EFI_SUCCESS | Buffer provided successfully |
-| EFI_NOT_FOUND | The platform does not have reserved memory for this image. |
+| Return Code           | Semantics                                                                          |
+|:----------------------|:-----------------------------------------------------------------------------------|
+| EFI_SUCCESS           | Buffer provided successfully                                                       |
+| EFI_NOT_FOUND         | The platform does not have reserved memory for this image.                         |
 | EFI_INVALID_PARAMETER | `Self` is invalid or any of `ImageType`, `Addr`, `Size` and `IsPreloaded` is NULL. |
 
 ## GBL_EFI_BOOT_MEMORY_PROTOCOL.SyncPartitionBuffer()
@@ -198,11 +201,11 @@ should not be considered valid anymore.
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| EFI_SUCCESS | Sync completed successfully |
-| EFI_DEVICE_ERROR | An internal error occurred. |
-| EFI_INVALID_PARAMETER | `Self` is invalid. |
+| Return Code           | Semantics                   |
+|:----------------------|:----------------------------|
+| EFI_SUCCESS           | Sync completed successfully |
+| EFI_DEVICE_ERROR      | An internal error occurred. |
+| EFI_INVALID_PARAMETER | `Self` is invalid.          |
 
 ### Examples
 
@@ -283,42 +286,49 @@ when done.
 #### GBL_EFI_BOOT_BUFFER_TYPE
 
 ```c
-typedef
-enum GBL_EFI_BOOT_BUFFER_TYPE {
-  GENERAL_LOAD,
-  KERNEL,
-  RAMDISK,
-  FDT,
-  PVMFW_DATA,
-  FASTBOOT_DOWNLOAD,
-} GBL_EFI_BOOT_BUFFER_TYPE;
+enum {
+  GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD,
+  GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
+  GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK,
+  GBL_EFI_BOOT_BUFFER_TYPE_FDT,
+  GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA,
+  GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD,
+};
+
+typedef uint32_t GBL_EFI_BOOT_BUFFER_TYPE;
 ```
 
-**GENERAL_LOAD** \
+##### GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD
+
 General purpose load buffer. This is typically for cases where firmware
 only want to provide a single piece of memory for the bootloader to load all of
 kernel/ramdisk/fdt and does not care where each one is.
 
-**KERNEL** \
+##### GBL_EFI_BOOT_BUFFER_TYPE_KERNEL
+
 Memory for assembling finalized kernel. Must be 2MB aligned.
 
-**RAMDISK** \
+##### GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK
+
 Memory for assembling finalized ramdisk.
 
-**FDT** \
+##### GBL_EFI_BOOT_BUFFER_TYPE_FDT
+
 Memory for assembling finalized FDT. Must be 8-bytes aligned.
 
-**PVM_FW** \
+##### GBL_EFI_BOOT_BUFFER_TYPE_PVM_FW
+
 Memory for loading finalized protected VM firmware. Both the size and address
 must be 4K bytes aligned.
 
-**FASTBOOT_DOWNLOAD** \
+##### GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD
+
 Memory for use as download buffer in fastboot mode.
 
 ### Status Codes Returned
 
-|||
-| --- | --- |
-| EFI_SUCCESS | Buffer provided successfully |
-| EFI_NOT_FOUND | The platform does not have reserved memory, or has no suggested allocation size for this type. |
-| EFI_INVALID_PARAMETER | `Self` is invalid or any of `Addr` and `Size` is NULL. |
+| Return Code           | Semantics                                                                                      |
+|:----------------------|:-----------------------------------------------------------------------------------------------|
+| EFI_SUCCESS           | Buffer provided successfully                                                                   |
+| EFI_NOT_FOUND         | The platform does not have reserved memory, or has no suggested allocation size for this type. |
+| EFI_INVALID_PARAMETER | `Self` is invalid or any of `Addr` and `Size` is NULL.                                         |

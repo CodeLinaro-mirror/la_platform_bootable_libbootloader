@@ -355,25 +355,27 @@ EFI_STATUS
 // Vbmeta key validation status.
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
-typedef enum {
-  GBL_EFI_AVB_KEY_INVALID,
-  GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY,
-  GBL_EFI_AVB_KEY_VALID,
-} GBL_EFI_AVB_KEY_VALIDATION_STATUS;
+enum {
+    GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID,
+    GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY,
+    GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID,
+};
+
+typedef uint32_t GBL_EFI_AVB_KEY_VALIDATION_STATUS;
 ```
 
-##### GBL_EFI_AVB_KEY_INVALID
+##### GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID
 
 The public key is not valid. The device cannot continue the boot process for
 locked devices; GBL reports a `RED` status and resets. Unlocked devices can
 still boot with an `ORANGE` state.
 
-##### GBL_EFI_AVB_KEY_VALID_CUSTOM_KEY
+##### GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY
 
 The public key is valid but not fully trusted. GBL continues booting a locked
 device with a `YELLOW` state and an unlocked device with an `ORANGE` state.
 
-##### GBL_EFI_AVB_KEY_VALID
+##### GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID
 
 The public key is valid and trusted, so the device can continue the boot process
 for both locked and unlocked states.
@@ -893,7 +895,7 @@ EFI_STATUS
 #### GBL_EFI_AVB_LOCK_TYPE
 
 ```c
-typedef enum {
+enum {
     GBL_EFI_AVB_LOCK_TYPE_DEVICE,
     GBL_EFI_AVB_LOCK_TYPE_CRITICAL,
 };
@@ -918,7 +920,7 @@ If a firmware implementation does not support the _Critical_ lock, calls to
 #### GBL_EFI_AVB_LOCK_STATE
 
 ```c
-typedef enum {
+enum {
     GBL_EFI_AVB_LOCK_STATE_UNLOCKED,
     GBL_EFI_AVB_LOCK_STATE_LOCKED,
 };
