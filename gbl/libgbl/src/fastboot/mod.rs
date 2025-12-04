@@ -1520,6 +1520,7 @@ pub(crate) mod test {
     use fastboot::{test_utils::TestUploadBuilder, CommandExecType, MAX_RESPONSE_SIZE};
     use gbl_async::{block_on, poll, poll_n_times};
     use gbl_storage::GPT_GUID_LEN;
+    use libbuild_number::BUILD_NUMBER;
     use liberror::Error;
     use libtestutils::AlignedBuffer;
     use spin::{Mutex, MutexGuard};
@@ -1774,6 +1775,11 @@ pub(crate) mod test {
         }
     }
 
+    /// Returns the expected value of the `version-bootloader` variable.
+    fn expected_version_bootloader() -> String {
+        format!("gbl.{BUILD_NUMBER}")
+    }
+
     #[test]
     fn test_get_var_all() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
@@ -1803,7 +1809,7 @@ pub(crate) mod test {
             logger.0,
             [
                 "max-download-size: 0x20000",
-                "version-bootloader: 1.0",
+                format!("version-bootloader: {}", expected_version_bootloader()).as_str(),
                 "slot-count: 2",
                 "current-slot: a",
                 "slot-successful:a: no",
@@ -1893,7 +1899,7 @@ pub(crate) mod test {
             logger.0,
             [
                 "max-download-size: 0x20000",
-                "version-bootloader: 1.0",
+                format!("version-bootloader: {}", expected_version_bootloader()).as_str(),
                 "max-fetch-size: 0x7fffffff",
                 "gbl-default-block: None",
                 format!("{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -2806,7 +2812,9 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[b"OKAY1.0"]),
+            make_expected_transport_out(&[
+                format!("OKAY{}", expected_version_bootloader()).as_bytes()
+            ]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -3136,7 +3144,7 @@ pub(crate) mod test {
                 b"FAILNotFound",
                 b"FAILNotFound",
                 b"INFOmax-download-size: 0x20000",
-                b"INFOversion-bootloader: 1.0",
+                format!("INFOversion-bootloader: {}", expected_version_bootloader()).as_bytes(),
                 b"INFOslot-count: 2",
                 b"INFOcurrent-slot: a",
                 b"INFOslot-successful:a: no",
@@ -3178,7 +3186,7 @@ pub(crate) mod test {
                 b"OKAY0x2000",
                 b"OKAY0x3000",
                 b"INFOmax-download-size: 0x20000",
-                b"INFOversion-bootloader: 1.0",
+                format!("INFOversion-bootloader: {}", expected_version_bootloader()).as_bytes(),
                 b"INFOslot-count: 2",
                 b"INFOcurrent-slot: a",
                 b"INFOslot-successful:a: no",
@@ -4804,7 +4812,9 @@ pub(crate) mod test {
 
         assert_eq!(
             listener1.transport_out_queue(),
-            make_expected_transport_out(&[b"OKAY1.0"]),
+            make_expected_transport_out(&[
+                format!("OKAY{}", expected_version_bootloader()).as_bytes()
+            ]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
