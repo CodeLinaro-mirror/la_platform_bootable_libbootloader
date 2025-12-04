@@ -1,5 +1,6 @@
 # Android Format Style
 
-edition = "2021"
+style_edition = "2021"
+edition = "2024"
 use_small_heuristics = "Max"
 newline_style = "Unix"
