@@ -74,7 +74,7 @@ use libgbl::{
         ImageBuffer, InfoSender, LockState, LockType, OkaySender, OneShotBootMode, Partition,
         PartitionBuffer, RngAlgorithm as GblRngAlgorithm, Slot, SHA256_DIGEST_SIZE,
     },
-    partition::GblDisk,
+    partition::{GblDisk, RawName},
     slots::{BootToken, Cursor},
     GblOps, Os, Result as GblResult,
 };
@@ -999,7 +999,7 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             .boot_services()
             .find_first_and_open::<GblFastbootProtocol>()
         {
-            Ok(v) => match v.vendor_erase(part) {
+            Ok(v) => match v.vendor_erase(RawName::try_from(part)?.to_cstr()) {
                 Ok(GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION)
                 | Err(Error::NotFound) => Ok(FastbootEraseAction::EraseAsPhysicalPartition),
                 Ok(GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP) => Ok(FastbootEraseAction::Noop),

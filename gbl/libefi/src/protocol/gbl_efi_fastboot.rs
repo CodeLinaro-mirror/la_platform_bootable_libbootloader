@@ -229,19 +229,18 @@ impl Protocol<'_, GblFastbootProtocol> {
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.vendor_erase()`.
-    pub fn vendor_erase(&self, part_name: &str) -> Result<GblEfiFastbootEraseAction> {
+    pub fn vendor_erase(&self, part_name: &CStr) -> Result<GblEfiFastbootEraseAction> {
         let mut out_action: GblEfiFastbootEraseAction =
             GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION;
         // SAFETY:
-        // `self.interface()?` guarantees self.interface is non-null and points to a valid object
-        // established by `Protocol::new()`.
-        // No parameters are retained, all parameters outlive the call, and no pointers are Null.
+        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        // * `part_name.as_ptr()` points to a null-terminated string and outlives the call.
+        // * `out_action` is for output only and outlives the call.
         unsafe {
             efi_call!(
                 self.interface().vendor_erase,
                 self.interface_ptr(),
-                part_name.as_ptr(),
-                part_name.len(),
+                part_name.as_ptr() as _,
                 &mut out_action
             )?
         };

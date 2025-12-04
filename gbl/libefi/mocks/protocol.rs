@@ -438,7 +438,7 @@ pub mod gbl_efi_fastboot {
         }
 
         /// Protocol<'_, GblFastbootProtocol>::vendor_erase()`
-        pub fn vendor_erase(&self, _: &str) -> Result<GblEfiFastbootEraseAction> {
+        pub fn vendor_erase(&self, _: &CStr) -> Result<GblEfiFastbootEraseAction> {
             unimplemented!()
         }
 
