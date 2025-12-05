@@ -268,7 +268,6 @@ rust_library(
     srcs = glob(["rust/src/**/*.rs"]),
     crate_features = ["uuid"],
     edition = "2021",
-    rustc_flags = ["--allow=mismatched_lifetime_syntaxes"],
     deps = [
         ":avb_bindgen",
         ":libavb_c_staticlib",
