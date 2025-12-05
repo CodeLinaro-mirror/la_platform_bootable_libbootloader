@@ -16,6 +16,8 @@ load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform", "dev_test", "ex
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
 load("@gbl_llvm_prebuilts//:info.bzl", "gbl_llvm_tool_path")
+load("@rules_license//rules:license.bzl", "license")
+load("@rules_license//sample_reports:licenses_used.bzl", "licenses_used")
 load("@rules_pkg//pkg:install.bzl", "pkg_install")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 load("@rules_pkg//pkg:zip.bzl", "pkg_zip")
@@ -337,6 +339,18 @@ genrule(
     """,
 )
 
+# GBL uses Apache 2.0.
+license(
+    name = "gbl_license",
+    license_kind = "@rules_license//licenses/spdx:Apache-2.0",
+    # This file is relative to the repo root so lives outside the GBL Bazel
+    # directory, but at the moment nothing uses this path (it's just included
+    # in the JSON output for informational purposes) so it's just a string and
+    # for now doesn't need to be properly integrated into the Bazel build.
+    license_text = "bootable/libbootloader/LICENSES/Apache-2.0.txt",
+    visibility = ["//visibility:private"],
+)
+
 filegroup(
     name = "all_platforms",
     srcs = [
@@ -352,6 +366,23 @@ filegroup(
         ":x86_64_prod",
         ":x86_64_prod_pdb",
     ],
+    applicable_licenses = [":gbl_license"],
+)
+
+# Collects all licenses used by the GBL EFI application & its dependencies.
+#
+# `licenses_used` is a sample implementation provided by rules_license, which
+# outputs a JSON file mapping the build targets to their licenses. We could
+# write our own rule here if we need some additional functionality, but it's
+# a little complicated so using the existing one for now is simpler.
+#
+# This currently grabs all licenses used, but we could split into smaller
+# scopes if we want to provide separate licenses only for particular targets
+# (e.g. ARM prod build).
+licenses_used(
+    name = "all_platforms_licenses",
+    out = "license_map.json",
+    deps = [":all_platforms"],
 )
 
 filegroup(
@@ -373,6 +404,7 @@ pkg_files(
     name = "gbl_efi_dist_files",
     srcs = [
         ":all_platforms",
+        ":all_platforms_licenses",
         ":gbl_efi_prod_zip",
     ],
     strip_prefix = strip_prefix.files_only(),
