@@ -1057,17 +1057,24 @@ where
     ) -> CommandResult<()> {
         let mut part_io = self.parse_and_get_partition_io(part).await?;
         let buffer = self.get_download_buffer().await;
+        // 4MB batches (chosen empirically) or as large as the download buffer permits.
+        let batch_sz = min(4 * 1024 * 1024, buffer.len() / 2);
+        let (mut read_buf, mut send_buf) = buffer.split_at_mut(batch_sz);
         let end = u64::try_from(SafeNum::from(offset) + size)?;
-        let mut curr = offset;
+        let (mut read_off, mut upload_off) = (offset, offset);
         responder
             .send_formatted_info(|v| write!(v, "Uploading {} bytes...", size).unwrap())
             .await?;
         let mut uploader = responder.initiate_upload(size).await?;
-        while curr < end {
-            let to_send = min(usize::try_from(end - curr)?, buffer.len());
-            part_io.read(curr, &mut buffer[..to_send]).await?;
-            uploader.upload(&mut buffer[..to_send]).await?;
-            curr += u64::try_from(to_send)?;
+        while upload_off < end {
+            let to_send = min(usize::try_from(end - read_off)?, batch_sz);
+            let read = part_io.read(read_off, &mut read_buf[..to_send]);
+            let send = uploader.upload(&mut send_buf[..usize::try_from(read_off - upload_off)?]);
+            let (read_res, send_res) = join(read, send).await;
+            read_res.and_then(|_| send_res)?;
+            upload_off = read_off;
+            read_off += u64::try_from(to_send)?;
+            core::mem::swap(&mut read_buf, &mut send_buf);
         }
         Ok(())
     }
@@ -4738,7 +4745,7 @@ pub(crate) mod test {
             // The response is from "getvar:partition-size:raw"
             (v == b"OKAY0x800").then_some(Err(Error::Disconnected)).unwrap_or(Ok(()))?;
             // Data uploaded by '"fetch:raw:0:0x800"
-            (v == &vec![0x55u8; KiB!(2)]).then_some(Err(Error::Disconnected)).unwrap_or(Ok(()))?;
+            (v[0] == 0x55).then_some(Err(Error::Disconnected)).unwrap_or(Ok(()))?;
             Ok(())
         };
         let listener: SharedTestListener = Default::default();

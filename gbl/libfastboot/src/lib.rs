@@ -924,6 +924,9 @@ impl<'a, T: Transport> Uploader for &mut Responder<'a, T> {
     /// `UploadBuilder::start()`.
     async fn upload(&mut self, data: &[u8]) -> Result<()> {
         self.transport_error?;
+        if data.is_empty() {
+            return Ok(());
+        }
         self.remaining_upload = self
             .remaining_upload
             .checked_sub(data.len().try_into().map_err(|_| "")?)
