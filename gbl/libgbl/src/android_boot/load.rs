@@ -17,6 +17,7 @@ use crate::{
     android_boot::{avf::BootInfo, build_pvmfw_data_region},
     constants::{Partition, FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
     decompress::decompress_kernel,
+    device_tree::DeviceTreeComponentSource,
     fastboot::boot_items::BootItemContainer,
     gbl_avb::state::BootStateColor,
     gbl_println,
@@ -256,6 +257,8 @@ pub struct LoadedImages<'a> {
     pub vendor_bootconfig: &'a [u8],
     /// DTB.
     pub dtb: &'a [u8],
+    /// DTB source.
+    pub dtb_source: Option<DeviceTreeComponentSource>,
     /// DTB from partition.
     pub dtb_part: &'a [u8],
     /// pVM firmware image.
@@ -402,6 +405,7 @@ fn load_v2_or_lower_verified<'a, 'b, 'c>(
     let info = BootImageV2Info::new(boot).unwrap();
     images.boot_cmdline = info.cmdline;
     images.dtb = get_range(boot, &info.dtb_range)?;
+    images.dtb_source = Some(DeviceTreeComponentSource::Boot);
     images.kernel = get_range(boot, &info.kernel_range)?;
     images.ramdisks.push(get_range(boot, &info.ramdisk_range)?);
     Ok(())
@@ -492,6 +496,7 @@ fn load_v3_and_v4_verified<'a, 'b, 'c>(
     let vendor_boot_info = VendorBootImageInfo::new(vendor_boot)?;
     images.vendor_cmdline = VendorBootImageInfo::cmdline(vendor_boot)?;
     images.dtb = get_range(vendor_boot, &vendor_boot_info.dtb_range)?;
+    images.dtb_source = Some(DeviceTreeComponentSource::VendorBoot);
     images.vendor_bootconfig = get_range(vendor_boot, &vendor_boot_info.bootconfig_range)?;
     images.kernel = get_range(boot, &boot_info.kernel_range)?;
     parse_vendor_ramdisks(&vendor_boot, &vendor_boot_info, is_recovery, &mut images.ramdisks)?;
