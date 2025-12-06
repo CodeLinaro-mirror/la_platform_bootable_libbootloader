@@ -217,11 +217,19 @@ where
             Ok(slot_count) => {
                 send.send_var_info(SLOT_COUNT, [], snprintf!(buf, "{slot_count}")).await?;
 
-                let current_slot = self.gbl_ops.get_current_slot()?.suffix.as_char();
-                send.send_var_info(CURRENT_SLOT, [], snprintf!(buf, "{current_slot}")).await?;
+                // Variable may be optional. Continues instead of erroring out.
+                match self.gbl_ops.get_current_slot().map(|v| v.suffix.as_char()) {
+                    Ok(v) => send.send_var_info(CURRENT_SLOT, [], snprintf!(buf, "{v}")).await?,
+                    Err(e) => gbl_println!(self.gbl_ops, "Failed to get current_slot {e}"),
+                };
 
                 for idx in 0..slot_count {
-                    let slot = self.gbl_ops.get_slot_info(idx)?;
+                    // Variable may be optional. Continues instead of erroring out.
+                    let Ok(slot) = self.gbl_ops.get_slot_info(idx).inspect_err(|e| {
+                        gbl_println!(self.gbl_ops, "Failed to get slot_info for slot {idx}, {e}");
+                    }) else {
+                        continue;
+                    };
                     let FastbootSlotInfo { successful, unbootable, retry_count } = slot.into();
                     let mut suffix_buf = [0u8; 4];
                     let suffix = snprintf!(suffix_buf, "{}", slot.suffix.as_char());
@@ -536,7 +544,13 @@ where
         &mut self,
         responder: &mut impl VarInfoSender,
     ) -> CommandResult<()> {
-        for PartHasSlot(part, has_slot) in self.get_part_has_slot_table()? {
+        let res = self.get_part_has_slot_table();
+        // Variable may be optional. Continues instead of erroring out.
+        if let Some(e) = res.clone().err() {
+            gbl_println!(self.gbl_ops, "Failed to get slot_info for partitions, {e}");
+            return Ok(());
+        }
+        for PartHasSlot(part, has_slot) in res? {
             responder
                 .send_var_info(
                     HAS_SLOT,
