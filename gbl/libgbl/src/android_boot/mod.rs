@@ -255,24 +255,21 @@ pub fn android_load_verify_fixup<'a, 'b, 'c>(
                 _ => remains,
             };
             if images.dtb.len() > 0 {
-                gbl_println!(ops, "Handling device tree from boot/vendor_boot");
+                let source = images.dtb_source.unwrap();
+                gbl_println!(ops, "Handling device tree from {source}");
                 remains = if FdtHeader::from_bytes_ref(images.dtb).is_ok() {
-                    gbl_println!(ops, "Device tree found in boot/vendor_boot");
+                    gbl_println!(ops, "Raw device tree found");
                     components.append(
                         ops,
-                        DeviceTreeComponentSource::Boot,
+                        source,
                         DeviceTreeComponentType::DeviceTree,
                         images.dtb,
                         remains,
                     )?
                 } else if let Ok(table) = DtTableImage::from_bytes(images.dtb) {
-                    gbl_println!(
-                        ops,
-                        "Dttable with {} entries found in boot/vendor_boot",
-                        table.entries_count()
-                    );
+                    gbl_println!(ops, "Dttable with {} entries found", table.entries_count());
                     components.append_from_dttable(
-                        DeviceTreeComponentSource::Boot,
+                        source,
                         DeviceTreeComponentType::DeviceTree,
                         &table,
                         remains,
