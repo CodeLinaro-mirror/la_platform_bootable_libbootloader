@@ -372,12 +372,13 @@ anything, `Action` should be set to `NOOP`.
 ### Related Definitions
 
 ```c
-typedef enum  {
+enum {
   // Treats the partition as a physical partition on disk and erases it.
-  ERASE_AS_PHYSICAL_PARTITION,
+  GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
   // Ignores the partition.
-  NOOP,
-} GBL_EFI_FASTBOOT_ERASE_ACTION;
+  GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP,
+};
+typedef uint32_t GBL_EFI_FASTBOOT_ERASE_ACTION;
 ```
 
 ### Status Codes
@@ -521,17 +522,19 @@ Following commands can not be overridden:
 ### Related Definitions
 
 ```c
-typedef enum GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT {
+enum {
   GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
   GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
   GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL,
-} GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT;
+};
+typedef uint32_t GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT;
 
-typedef enum EFI_FASTBOOT_MESSAGE_TYPE {
-  OKAY,
-  FAIL,
-  INFO,
-} EFI_FASTBOOT_MESSAGE_TYPE;
+enum {
+  GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
+  GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL,
+  GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO,
+};
+typedef uint32_t GBL_EFI_FASTBOOT_MESSAGE_TYPE;
 
 typedef
 EFI_STATUS (*FASTBOOT_MESSAGE_SENDER) (
