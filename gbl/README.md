@@ -87,6 +87,15 @@ where `<arch>` is the target architecture of interest and should be one of
 `x86_64`, `aarch64`, `riscv64`. `<arch>` affects intellisense on architecture
 specific code.
 
+Note: The generated rust-project.json points to host version of generated
+sources. You may need to run
+
+```
+./tools/bazel test @gbl//tests
+```
+
+to make sure all generated sources(bindgen) are populated.
+
 And reload your IDE.
 
 ## Gemini CLI
