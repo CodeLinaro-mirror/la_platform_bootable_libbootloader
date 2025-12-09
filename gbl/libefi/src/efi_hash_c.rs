@@ -203,7 +203,7 @@ mod test {
     fn efi_hash_wrapper_test<Algorithm: HashAlgorithm>(test_struct: HashTest<Algorithm>) {
         run_test(|image_handle, systab_ptr| {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let mut handles = [DeviceHandle(1 as *mut _)];
+            let handles = [DeviceHandle(1 as *const _)];
 
             let mut h2_sp = EfiServiceBindingProtocol {
                 create_child: Some(create_child),
@@ -220,8 +220,7 @@ mod test {
             efi_call_traces().with(|traces| {
                 let mut traces = traces.borrow_mut();
 
-                traces.locate_handle_buffer_trace.outputs =
-                    VecDeque::from([(handles.len(), handles.as_mut_ptr())]);
+                traces.locate_handle_trace.outputs = VecDeque::from([handles.into()]);
 
                 traces.open_protocol_trace.outputs =
                     VecDeque::from([(as_efi_handle(&mut h2_sp), EFI_STATUS_SUCCESS)]);
@@ -234,7 +233,7 @@ mod test {
                 let mut traces = traces.borrow_mut();
 
                 traces.create_child_trace.outputs =
-                    VecDeque::from([(2 as *mut _, EFI_STATUS_SUCCESS)]);
+                    VecDeque::from([(2 as *const _, EFI_STATUS_SUCCESS)]);
             });
 
             hash2_call_traces().with(|traces| {

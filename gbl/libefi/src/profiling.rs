@@ -199,14 +199,12 @@ mod test {
                 get_timestamp: Some(get_timestamp),
                 get_properties: Some(get_properties),
             };
-            let mut handles: [DeviceHandle; 1] = [1.into()];
+            let handles: [DeviceHandle; 1] = [1.into()];
             efi_call_traces().with(|trace| {
                 let mut trace = trace.borrow_mut();
 
-                trace.locate_handle_buffer_trace.outputs = VecDeque::from([
-                    (handles.len(), handles.as_mut_ptr()),
-                    (handles.len(), handles.as_mut_ptr()),
-                ]);
+                trace.locate_handle_trace.outputs =
+                    VecDeque::from([handles.into(), handles.into()]);
 
                 let ts_handle = as_efi_handle(&mut ts);
                 trace.open_protocol_trace.outputs =
@@ -266,12 +264,11 @@ mod test {
             // but it is important that the implementation is robust.
             let mut ts =
                 EfiTimestampProtocol { get_timestamp: Some(get_timestamp), get_properties: None };
-            let mut handles: [DeviceHandle; 1] = [1.into()];
+            let handles: [DeviceHandle; 1] = [1.into()];
             efi_call_traces().with(|trace| {
                 let mut trace = trace.borrow_mut();
 
-                trace.locate_handle_buffer_trace.outputs =
-                    VecDeque::from([(handles.len(), handles.as_mut_ptr())]);
+                trace.locate_handle_trace.outputs = VecDeque::from([handles.into()]);
 
                 let ts_handle = as_efi_handle(&mut ts);
                 trace.open_protocol_trace.outputs =
@@ -297,7 +294,7 @@ mod test {
         run_test(|image_handle, systab_ptr| {
             GET_TIMESTAMP_COUNTER.with(|c| *c.borrow_mut() = 0);
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let mut handles: [DeviceHandle; 1] = [1.into()];
+            let handles: [DeviceHandle; 1] = [1.into()];
 
             // Make sure the profiling implementation handles a protocol
             // with a missing `get_timestamp` method.
@@ -308,8 +305,7 @@ mod test {
             efi_call_traces().with(|trace| {
                 let mut trace = trace.borrow_mut();
 
-                trace.locate_handle_buffer_trace.outputs =
-                    VecDeque::from([(handles.len(), handles.as_mut_ptr())]);
+                trace.locate_handle_trace.outputs = VecDeque::from([handles.into()]);
 
                 let ts_handle = as_efi_handle(&mut ts);
                 trace.open_protocol_trace.outputs =

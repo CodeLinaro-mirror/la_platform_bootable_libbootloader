@@ -94,7 +94,7 @@ typedef struct {
   EfiStatus (*register_protocol_notify)(const EfiGuid* protocol, EfiEvent event,
                                         void** registration);
   EfiStatus (*locate_handle)(EfiLocateHandleSearchType search_type,
-                             const EfiGuid* protocol, void* search_key,
+                             const EfiGuid* protocol, const void* search_key,
                              size_t* buf_size, EfiHandle* buf);
   EfiStatus (*locate_device_path)(const EfiGuid* protocol,
                                   EfiDevicePathProtocol** path,
@@ -121,7 +121,7 @@ typedef struct {
                                      EfiHandle driver_image_handle,
                                      EfiHandle child_handle);
   EfiStatus (*open_protocol)(EfiHandle handle, const EfiGuid* protocol,
-                             void** intf, EfiHandle agent_handle,
+                             void const** intf, EfiHandle agent_handle,
                              EfiHandle controller_handle,
                              EfiOpenProtocolAttributes attr);
   EfiStatus (*close_protocol)(EfiHandle handle, const EfiGuid* protocol,
@@ -133,8 +133,9 @@ typedef struct {
   EfiStatus (*protocols_per_handle)(EfiHandle handle, EfiGuid*** protocol_buf,
                                     size_t* protocol_buf_count);
   EfiStatus (*locate_handle_buffer)(EfiLocateHandleSearchType search_type,
-                                    const EfiGuid* protocol, void* search_key,
-                                    size_t* num_handles, EfiHandle** buf);
+                                    const EfiGuid* protocol,
+                                    const void* search_key, size_t* num_handles,
+                                    EfiHandle** buf);
   EfiStatus (*locate_protocol)(const EfiGuid* protocol, void* registration,
                                void** intf);
   EfiStatus (*install_multiple_protocol_interfaces)(EfiHandle* handle, ...);
