@@ -51,38 +51,6 @@ pub trait Identified {
     const GUID: EfiGuid;
 }
 
-impl GblEfiImageInfo {
-    /// Decodes the UCS2 GblEfiImageInfo.ImageType using buffer, and returns &str of UTF8
-    /// representation.
-    ///
-    /// Buffer must be big enough to contain UTF8 representation of the UCS2 image type.
-    ///
-    /// Maximum image type as UCS2 is PARTITION_NAME_LEN_U16.
-    /// And [PARTITION_NAME_LEN_U8] bytes is maximum buffer size needed for UTF8 representation.
-    ///
-    /// # Result
-    /// Ok(&str) - On success return UTF8 representation of the image type.
-    /// Err(usize) if provided buffer is too small, with the minimum buffer size as the payload.
-    pub fn get_type_str<'a>(&self, buffer_utf8: &'a mut [u8]) -> Result<&'a str, usize> {
-        let mut index = 0;
-        let chars_iter = char::decode_utf16(self.ImageType.iter().copied())
-            .map(|c_res| c_res.unwrap_or(char::REPLACEMENT_CHARACTER))
-            .take_while(|c| *c != '\0');
-        for c in chars_iter.clone() {
-            if c.len_utf8() <= buffer_utf8[index..].len() {
-                index += c.encode_utf8(&mut buffer_utf8[index..]).len();
-            } else {
-                let buffer_min_len = chars_iter.clone().map(char::len_utf8).sum();
-                return Err(buffer_min_len);
-            }
-        }
-        // SAFETY:
-        // _unchecked should be OK here since we wrote each utf8 byte ourselves,
-        // but it's just an optimization, checked version would be fine also.
-        unsafe { Ok(core::str::from_utf8_unchecked(&buffer_utf8[..index])) }
-    }
-}
-
 macro_rules! flag_impls {
     ($enum_type:tt) => {
         impl core::ops::BitAnd for $enum_type {

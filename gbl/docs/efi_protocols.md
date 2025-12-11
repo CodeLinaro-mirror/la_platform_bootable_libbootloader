@@ -286,10 +286,6 @@ still allowing GBL to implement the boot flow logic.
 assembling finalized kernel, ramdisk, fdt, pvmfw image and downloading in
 fastboot.
 
-### GblImageLoadingProtocol
-
-Deprecated. Please use GblBootMemoryProtocol.
-
 ### GblAvbProtocol
 
 * [`GBL_EFI_AVB_PROTOCOL`](./gbl_efi_avb_protocol.md)

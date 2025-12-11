@@ -20,12 +20,12 @@
 use crate::{DeviceHandle, MOCK_EFI};
 use alloc::vec::Vec;
 use core::{ffi::CStr, fmt::Write};
-pub use efi::protocol::{gbl_efi_image_loading::EfiImageBufferInfo, Revision, Versioned};
+pub use efi::protocol::{Revision, Versioned};
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
     GblEfiAvbLockState, GblEfiAvbLockType, GblEfiAvbPartition, GblEfiAvbPartitionFlags,
     GblEfiAvbVerificationResult, GblEfiFastbootCommandExecResult, GblEfiFastbootEraseAction,
-    GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    GblEfiFastbootMessageType, GblEfiVerifiedDeviceTree,
 };
 use liberror::{Error, Result};
 use mockall::mock;
@@ -183,24 +183,6 @@ pub mod timestamp {
 
     /// Map to the libefi name so code under test can just use one name.
     pub type TimestampProtocol = MockTimestampProtocol;
-}
-
-/// Mock image_loading protocol.
-pub mod gbl_efi_image_loading {
-    use super::*;
-
-    pub use efi::protocol::gbl_efi_image_loading::EfiImageBufferInfo;
-
-    mock! {
-        /// Mock [efi::ImageLoadingProtocol].
-        pub GblImageLoadingProtocol {
-            /// Returns [EfiImageBuffer] matching `gbl_image_info`
-            pub fn get_buffer(&self, gbl_image_info: &GblEfiImageInfo) -> Result<EfiImageBufferInfo>;
-        }
-    }
-
-    /// Map to the libefi name so code under test can just use one name.
-    pub type GblImageLoadingProtocol = MockGblImageLoadingProtocol;
 }
 
 /// Mock os_configuration protocol.
