@@ -31,7 +31,7 @@ requires cooperation with vendor firmware, OEM commands,
 ### Revision Number
 
 ```c
-#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 5)
+#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 6)
 ```
 
 See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
@@ -266,9 +266,9 @@ typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_GET_STAGED)(
     IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-    IN UINT8*                     Out,
+    OUT UINT8*                    Out,
     IN OUT UINTN*                 OutLen,
-    OUT UINTN*                    RemainingSize,
+    OUT UINTN*                    RemainingSize
 );
 ```
 
@@ -329,8 +329,7 @@ EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_VENDOR_ERASE)(
     IN GBL_EFI_FASTBOOT_PROTOCOL*       Self,
     IN CHAR8*                           PartName,
-    IN UINTN                            PartNameLen,
-    OUT GBL_EFI_FASTBOOT_ERASE_ACTION   *Action,
+    OUT GBL_EFI_FASTBOOT_ERASE_ACTION*  Action
 );
 ```
 
@@ -345,10 +344,6 @@ A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure) in
 The name of the partition to query as a UTF-8 encoded, Null-terminated string.
 This should be the same partition name passed from
 `fastboot erase <partition>`.
-
-*PartNameLen*
-
-The length of *PartName* in bytes, excluding any Null-terminator.
 
 *Action*
 
