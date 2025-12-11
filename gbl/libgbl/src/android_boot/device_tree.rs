@@ -35,8 +35,8 @@ const PROP_BOOTARGS_EXT: &CStr = c"bootargs_ext";
 
 /// Helper function to build DT commandline from loaded images, overlays
 /// `bootargs_ext` and additional items provided via fastboot.
-pub(crate) fn fdt_build_bootargs<'a, 'b>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub(crate) fn fdt_build_bootargs<'a>(
+    ops: &mut impl GblOps<'a>,
     fdt: &mut Fdt<&mut [u8]>,
     images: &LoadedImages,
     overlays: &[&[u8]],
@@ -74,10 +74,10 @@ pub(crate) fn fdt_build_bootargs<'a, 'b>(
 /// * `fdt`: Target FDT to append to.
 /// * `cmds`: Commandline strings to add.
 /// * `extra_reserved`: Additional empty space to add.
-pub(crate) fn fdt_append_bootargs<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub(crate) fn fdt_append_bootargs<'a, 'b>(
+    ops: &mut impl GblOps<'a>,
     fdt: &mut Fdt<&mut [u8]>,
-    cmds: impl IntoIterator<Item = &'c str> + Clone,
+    cmds: impl IntoIterator<Item = &'b str> + Clone,
     extra_reserved: usize,
 ) -> Result<()> {
     let curr = fdt.get_property("chosen", PROP_BOOTARGS).map(|v| v.len()).unwrap_or(0);
@@ -115,8 +115,8 @@ pub const KASLR_SEED_SIZE_BYTES: usize = core::mem::size_of::<u64>();
 
 /// Helper function that utilizes device RNG capabilities to provide initial entropy
 /// to HLOS and initialize the KASLR feature.
-pub(crate) fn fdt_propagate_random<'a, 'b>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub(crate) fn fdt_propagate_random<'a>(
+    ops: &mut impl GblOps<'a>,
     dt: &mut Fdt<&mut [u8]>,
 ) -> Result<()> {
     fdt_propagate_random_seed(ops, dt, "/chosen", RNG_SEED_PROP, RNG_SEED_SIZE_BYTES)?;
@@ -125,8 +125,8 @@ pub(crate) fn fdt_propagate_random<'a, 'b>(
     Ok(())
 }
 
-fn fdt_propagate_random_seed<'a, 'b>(
-    ops: &mut impl GblOps<'a, 'b>,
+fn fdt_propagate_random_seed<'a>(
+    ops: &mut impl GblOps<'a>,
     dt: &mut Fdt<&mut [u8]>,
     path: &str,
     name: &CStr,

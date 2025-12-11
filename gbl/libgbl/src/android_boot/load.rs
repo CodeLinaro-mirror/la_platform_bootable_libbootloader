@@ -288,14 +288,14 @@ impl LoadedImages<'_> {
 }
 
 /// Helper for getting a successfully verified partition from `SlotVerifyData`
-fn get_verified_partition<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
+fn get_verified_partition<'a, 'b>(
+    ops: &mut impl GblOps<'a>,
     part: Partition,
     slot: Slot,
     unlocked: bool,
     optional: bool,
-    verify_data: &'c SlotVerifyData,
-) -> Result<&'c [u8], Error> {
+    verify_data: &'b SlotVerifyData,
+) -> Result<&'b [u8], Error> {
     let slotted = slotted_part(part.name(), slot);
     let part_res =
         verify_data.partition_data().iter().find(|v| v.partition_name() == part.name_cstr());
@@ -324,10 +324,10 @@ fn get_verified_partition<'a, 'b, 'c>(
 }
 
 /// Helper for parsing and logging boot image version.
-fn log_and_parse_bootimg<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
-    data: &'c [u8],
-) -> Result<BootImage<&'c [u8]>, Error> {
+fn log_and_parse_bootimg<'a, 'b>(
+    ops: &mut impl GblOps<'a>,
+    data: &'b [u8],
+) -> Result<BootImage<&'b [u8]>, Error> {
     let bootimg = BootImage::parse(&data[..]).map_err(Error::from)?;
     let ver_str = match bootimg {
         BootImage::V0(_) => "V0",
@@ -350,13 +350,13 @@ fn log_and_parse_bootimg<'a, 'b, 'c>(
 /// * `is_recovery`: Whether we are booting to recovery.
 /// * `verify_data`: `SlotVerifyData` returns from `avb_slot_verify`.
 /// * `load`: The destination image assembly load buffer.
-pub(super) fn android_load_verified<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub(super) fn android_load_verified<'a, 'b>(
+    ops: &mut impl GblOps<'a>,
     slot: Slot,
     unlocked: bool,
     is_recovery: bool,
-    verify_data: &'c SlotVerifyData,
-) -> Result<LoadedImages<'c>, Error> {
+    verify_data: &'b SlotVerifyData,
+) -> Result<LoadedImages<'b>, Error> {
     let mut images = LoadedImages::default();
     images.dtb_part =
         get_verified_partition(ops, Partition::Dtb, slot, unlocked, true, verify_data)?;
@@ -477,14 +477,14 @@ fn parse_vendor_ramdisks<'a, const CAP: usize>(
 /// https://source.android.com/docs/core/architecture/bootloader/boot-image-header
 /// https://source.android.com/docs/core/architecture/partitions/vendor-boot-partitions
 /// https://source.android.com/docs/core/architecture/partitions/generic-boot
-fn load_v3_and_v4_verified<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
-    boot: &'c [u8],
+fn load_v3_and_v4_verified<'a, 'b>(
+    ops: &mut impl GblOps<'a>,
+    boot: &'b [u8],
     slot: Slot,
     unlocked: bool,
     is_recovery: bool,
-    verify_data: &'c SlotVerifyData,
-    images: &mut LoadedImages<'c>,
+    verify_data: &'b SlotVerifyData,
+    images: &mut LoadedImages<'b>,
 ) -> Result<(), Error> {
     let boot_info = BootImageV3Info::new(boot).unwrap();
     images.boot_cmdline = BootImageV3Info::cmdline(boot)?;
@@ -614,9 +614,9 @@ impl<'a> BootBufferLoader<'a> {
     }
 
     /// Loads pvmfw image.
-    pub(super) fn pvmfw_load<'b, 'c>(
+    pub(super) fn pvmfw_load<'b>(
         &mut self,
-        ops: &mut impl GblOps<'b, 'c>,
+        ops: &mut impl GblOps<'b>,
         img: &[u8],
         verify_data: &SlotVerifyData,
         unlocked: bool,
@@ -649,9 +649,9 @@ impl<'a> BootBufferLoader<'a> {
     }
 
     /// Decompresses and loads kernel into the kernel buffer.
-    pub(super) fn kernel_load<'b, 'c>(
+    pub(super) fn kernel_load<'b>(
         &mut self,
-        ops: &mut impl GblOps<'b, 'c>,
+        ops: &mut impl GblOps<'b>,
         kernel: &[u8],
     ) -> Result<(), Error> {
         self.general_kernel = self.general.len()..self.general.len();

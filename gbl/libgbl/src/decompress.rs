@@ -119,8 +119,8 @@ fn decompress_gzip(content: &[u8], out: &mut [u8]) -> Result<usize> {
 /// without decompression.
 ///
 /// Returns the size of the decompressed data copied into `out`.
-pub fn decompress_kernel<'a, 'b>(
-    ops: &mut impl GblOps<'a, 'b>,
+pub fn decompress_kernel<'a>(
+    ops: &mut impl GblOps<'a>,
     kernel: &[u8],
     out: &mut [u8],
 ) -> Result<usize> {

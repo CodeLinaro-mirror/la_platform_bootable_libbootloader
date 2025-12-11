@@ -15,14 +15,10 @@
 //! Implements [Gbl::Ops] for the EFI environment.
 
 use crate::{efi, efi_blocks::EfiGblDisk, utils::get_efi_fdt};
-use alloc::alloc::{alloc, handle_alloc_error, Layout};
 #[cfg(feature = "fuchsia")]
 use alloc::vec::Vec;
 use arrayvec::ArrayVec;
-use core::{
-    ffi::CStr, fmt::Write, iter::repeat_with, mem::MaybeUninit, num::NonZeroUsize, ops::DerefMut,
-    ptr::null, slice::from_raw_parts_mut,
-};
+use core::{ffi::CStr, fmt::Write, iter::repeat_with, ops::DerefMut, ptr::null};
 use efi::{
     efi_print, efi_println,
     profiling::EfiProfileBackend,
@@ -33,7 +29,6 @@ use efi::{
         gbl_efi_boot_control::{GblBootControlProtocol, GblEfiOsEntryPoint},
         gbl_efi_boot_memory::{gbl_get_partition_buffer, gbl_sync_partition_buffer},
         gbl_efi_fastboot::GblFastbootProtocol,
-        gbl_efi_image_loading::{EfiImageBufferInfo, GblImageLoadingProtocol},
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
         random_number_generator::{RandomNumberGeneratorProtocol, RngAlgorithm as EfiRngAlgorithm},
         Protocol, Versioned,
@@ -43,7 +38,7 @@ use efi::{
 use efi_types::{
     GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbLoadedPartition,
     GblEfiAvbPartition, GblEfiAvbProperty, GblEfiAvbVerificationResult, GblEfiDeviceTreeMetadata,
-    GblEfiFastbootMessageType, GblEfiImageInfo, GblEfiVerifiedDeviceTree,
+    GblEfiFastbootMessageType, GblEfiVerifiedDeviceTree,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
@@ -58,7 +53,7 @@ use gbl_async::block_on;
 use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::{Error, Result};
 use libgbl::{
-    constants::{ImageType, BOOTCMD_SIZE, IMAGE_NAME_MAX_LEN},
+    constants::IMAGE_NAME_MAX_LEN,
     device_tree::{
         DeviceTreeComponent, DeviceTreeComponentSource, DeviceTreeComponentType,
         DeviceTreeComponentsRegistry, MAXIMUM_DEVICE_TREE_COMPONENTS,
@@ -71,15 +66,14 @@ use libgbl::{
     gbl_println,
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
-        ImageBuffer, InfoSender, LockState, LockType, OkaySender, OneShotBootMode, Partition,
-        PartitionBuffer, RngAlgorithm as GblRngAlgorithm, Slot, SHA256_DIGEST_SIZE,
+        InfoSender, LockState, LockType, OkaySender, OneShotBootMode, Partition, PartitionBuffer,
+        RngAlgorithm as GblRngAlgorithm, Slot, SHA256_DIGEST_SIZE,
     },
     partition::GblDisk,
     slots::{BootToken, Cursor},
     GblOps, Os, Result as GblResult,
 };
 use libprofile::ProfileBackend;
-use safemath::SafeNum;
 use spin::Mutex;
 use static_assertions::const_assert_eq;
 #[cfg(feature = "fuchsia")]
@@ -122,24 +116,6 @@ fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDevi
     }
 }
 
-/// Helper for getting platform reserved buffer from EFI image loading prototol.
-pub(crate) fn get_buffer_from_protocol(
-    efi_entry: &EfiEntry,
-    image_name: &str,
-    size: usize,
-) -> Result<EfiImageBufferInfo> {
-    // Max length of a UTF16 partition name in u16 units.
-    let mut image_type = [0u16; efi_types::PARTITION_NAME_LEN_U16 as usize];
-    image_type.iter_mut().zip(image_name.encode_utf16()).for_each(|(dst, src)| {
-        *dst = src;
-    });
-    Ok(efi_entry
-        .system_table()
-        .boot_services()
-        .find_first_and_open::<GblImageLoadingProtocol>()?
-        .get_buffer(&GblEfiImageInfo { ImageType: image_type, SizeBytes: size })?)
-}
-
 pub struct Ops<'a, 'b> {
     pub efi_entry: &'a EfiEntry,
     pub disks: &'b [EfiGblDisk<'a>],
@@ -177,83 +153,6 @@ impl<'a, 'b> Ops<'a, 'b> {
         let (_, fdt_bytes) = get_efi_fdt(&self.efi_entry)?;
         let fdt = Fdt::new(fdt_bytes).ok()?;
         fdt.get_property(path, prop).ok()
-    }
-
-    /// Get buffer for partition loading and verification.
-    /// Uses GBL EFI ImageLoading protocol.
-    ///
-    /// # Arguments
-    /// * `image_type` - image type to differentiate the buffer properties
-    /// * `size` - requested buffer size
-    ///
-    /// # Return
-    /// * Ok(ImageBuffer) - Return buffer for partition loading and verification.
-    /// * Err(_) - on error
-    pub(crate) fn get_buffer_image_loading(
-        &mut self,
-        image_type: ImageType,
-        size: NonZeroUsize,
-    ) -> GblResult<ImageBuffer<'static>> {
-        // EfiImageBuffer -> ImageBuffer
-        // Make sure not to drop efi_image_buffer since we transferred ownership to ImageBuffer
-        Ok(ImageBuffer::new(
-            image_type,
-            get_buffer_from_protocol(self.efi_entry, image_type.name(), size.get())?
-                .take()
-                .ok_or(Error::InvalidState)?,
-        )?)
-    }
-
-    /// Get buffer for partition loading and verification.
-    /// Uses provided allocator.
-    ///
-    /// # Arguments
-    /// * `image_type` - image type to differentiate the buffer properties
-    /// * `size` - requested buffer size
-    ///
-    /// # Return
-    /// * Ok(ImageBuffer) - Return buffer for partition loading and verification.
-    /// * Err(_) - on error
-    // SAFETY:
-    // Allocated buffer is leaked intentionally. ImageBuffer is assumed to reference static memory.
-    // ImageBuffer is not expected to be released, and is allocated to hold data necessary for next
-    // boot stage (kernel boot). All allocated buffers are expected to be used by kernel.
-    fn allocate_image_buffer(
-        image_type: ImageType,
-        size: NonZeroUsize,
-    ) -> Result<ImageBuffer<'static>> {
-        let size = match image_type {
-            ImageType::Ramdisk => (SafeNum::from(size.get()) + BOOTCMD_SIZE).try_into()?,
-            _ => size.get(),
-        };
-        // Check for `from_raw_parts_mut()` safety requirements.
-        assert!(size < isize::MAX.try_into().unwrap());
-
-        let layout = Layout::from_size_align(size, image_type.alignment())
-            .or(Err(Error::InvalidAlignment))?;
-        // SAFETY:
-        // `layout.size()` is checked to be not zero.
-        let ptr = unsafe { alloc(layout) } as *mut MaybeUninit<u8>;
-        if ptr.is_null() {
-            handle_alloc_error(layout);
-        }
-
-        // SAFETY:
-        // `ptr` is checked to be not Null.
-        // `ptr` is a valid pointer to start of a single memory region of `size`-bytes because it
-        // was just returned by alloc. Buffer alignment requirement for u8 is 1-byte which is
-        // always the case.
-        // `alloc()` makes sure there is no other allocation of the same memory region until
-        // current one is released.
-        // `size` is a valid size of the memory region since `alloc()` succeeded.
-        //
-        // Total size of buffer is not greater than `isize::MAX` since it is checked at the
-        // beginning of the function.
-        //
-        // `ptr + size` doesn't wrap since it is returned from alloc and it didn't fail.
-        let buf = unsafe { from_raw_parts_mut(ptr, size) };
-
-        Ok(ImageBuffer::new(image_type, buf)?)
     }
 
     /// Helper for opening GblBootControlProtocol protocol.
@@ -418,7 +317,7 @@ fn handle_command_exec_via_protocol<'arg, Sender: InfoSender + OkaySender + Fail
     }
 }
 
-impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
+impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     fn console_out(&mut self) -> Option<&mut dyn Write> {
         Some(self)
     }
@@ -783,17 +682,6 @@ impl<'a, 'b, 'd> GblOps<'b, 'd> for Ops<'a, 'b> {
             Err(Error::NotFound) => Ok(()),
             v => v,
         }
-    }
-
-    fn get_image_buffer(
-        &mut self,
-        image_type: ImageType,
-        size: NonZeroUsize,
-    ) -> GblResult<ImageBuffer<'d>> {
-        self.get_buffer_image_loading(image_type, size).or_else(|_| {
-            Self::allocate_image_buffer(image_type, size)
-                .map_err(|e| libgbl::IntegrationError::UnificationError(e))
-        })
     }
 
     fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {

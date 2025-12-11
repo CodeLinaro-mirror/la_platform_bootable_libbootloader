@@ -81,12 +81,12 @@ fn relocate_to_tail(kernel: &mut [u8]) -> GblResult<(&mut [u8], &mut [u8])> {
 /// Performs load, verification and fixup in a caller provided buffer.
 ///
 /// On success, returns a pair of buffers corresponding to the zbi items and kernel.
-fn zircon_load_verify_fixup<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
+fn zircon_load_verify_fixup<'a, 'b>(
+    ops: &mut impl GblOps<'a>,
     slot: Option<SlotIndex>,
     slot_booted_successfully: bool,
-    load_buffer: &'c mut [u8],
-) -> GblResult<(&'c mut [u8], &'c mut [u8])> {
+    load_buffer: &'b mut [u8],
+) -> GblResult<(&'b mut [u8], &'b mut [u8])> {
     // Zircon kernel requires ZBI items address to be page aligned.
     let load = aligned_subslice(load_buffer, PAGE_SIZE)?;
     read_zircon_image(ops, slot, &mut *load)?;
@@ -119,10 +119,10 @@ pub struct LoadedVerifiedZircon<'a> {
 /// # Returns
 ///
 /// On success, returns a `LoadedVerifiedZircon`.
-pub fn zircon_load_verify_abr_with_buffer<'a, 'b, 'c>(
-    ops: &mut impl GblOps<'a, 'b>,
-    load_buffer: &'c mut [u8],
-) -> GblResult<LoadedVerifiedZircon<'c>> {
+pub fn zircon_load_verify_abr_with_buffer<'a, 'b>(
+    ops: &mut impl GblOps<'a>,
+    load_buffer: &'b mut [u8],
+) -> GblResult<LoadedVerifiedZircon<'b>> {
     let (slot, successful) = get_boot_slot(&mut GblAbrOps(ops), true);
     gbl_println!(ops, "Loading kernel from {}...", zircon_part_name(Some(slot)));
     let (zbi_items, kernel) = zircon_load_verify_fixup(ops, Some(slot), successful, load_buffer)?;
@@ -147,11 +147,11 @@ pub fn zircon_load_verify_abr_with_buffer<'a, 'b, 'c>(
 /// # Returns
 ///
 /// On success, returns a `LoadedVerifiedZircon`.
-pub fn zircon_main<'a, 'b, 'c, G: GblOps<'a, 'b>>(
+pub fn zircon_main<'a, 'b, G: GblOps<'a>>(
     ops: &mut G,
-    load: &'c mut [u8],
+    load: &'b mut [u8],
     run_fastboot: impl FnOnce(GblFastbootEntry<'_, G>),
-) -> GblResult<LoadedVerifiedZircon<'c>> {
+) -> GblResult<LoadedVerifiedZircon<'b>> {
     gbl_println!(ops, "Loading and verifying Fuchsia...");
 
     // TODO(b/445679472): Revisit this after Fuchsia adopts BCB or its own boot mode standard.
@@ -179,14 +179,16 @@ mod test {
     use crate::{
         fastboot::test::{make_expected_transport_out, SharedTestListener},
         fuchsia_boot::test::{
-            append_cmd_line, append_zbi_file, create_gbl_ops, create_storage, normalize_zbi,
-            read_test_data, TEST_CERT_PIK_VERSION, TEST_CERT_PSK_VERSION,
-            TEST_ROLLBACK_INDEX_LOCATION, TEST_ROLLBACK_INDEX_VALUE,
+            append_cmd_line, append_zbi_file, create_gbl_ops, create_storage,
+            create_storage_legacy_names, normalize_zbi, read_test_data, TEST_CERT_PIK_VERSION,
+            TEST_CERT_PSK_VERSION, TEST_KERNEL_RESERVED_MEMORY_SIZE, TEST_ROLLBACK_INDEX_LOCATION,
+            TEST_ROLLBACK_INDEX_VALUE, ZIRCON_A_ZBI_FILE, ZIRCON_SLOTLESS_ZBI_FILE,
         },
         ops::test::FakeGblOps,
     };
     use abr::{
         mark_slot_active, mark_slot_successful, mark_slot_unbootable, set_one_shot_bootloader,
+        ABR_MAX_TRIES_REMAINING,
     };
     use avb_bindgen::{AVB_CERT_PIK_VERSION_LOCATION, AVB_CERT_PSK_VERSION_LOCATION};
     use libtestutils::AlignedBuffer;
@@ -676,5 +678,112 @@ mod test {
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
+    }
+
+    #[test]
+    fn test_zircon_load_verify_fixup_slotless() {
+        let storage = create_storage();
+        let mut ops = create_gbl_ops(&storage);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
+        let (zbi_items, kernel) =
+            zircon_load_verify_fixup(&mut ops, None, true, &mut load_buffer).unwrap();
+
+        let expected_kernel = read_test_data(ZIRCON_SLOTLESS_ZBI_FILE);
+
+        // Create ZBI Items without slot (mostly taken from make_expected_zbi_items_wo_avb)
+        let mut expected_zbi_items = AlignedBuffer::new(256 * 1024, ZBI_ALIGNMENT_USIZE);
+        let mut items = ZbiContainer::new(&mut expected_zbi_items[..]).unwrap();
+        items.extend(&ZbiContainer::parse(&expected_kernel[..]).unwrap()).unwrap();
+        append_zbi_file(&mut expected_zbi_items, FakeGblOps::TEST_BOOTLOADER_FILE_1);
+        append_zbi_file(&mut expected_zbi_items, FakeGblOps::TEST_BOOTLOADER_FILE_2);
+        append_cmd_line(&mut expected_zbi_items, FakeGblOps::ADDED_ZBI_COMMANDLINE_CONTENTS);
+        append_cmd_line(&mut expected_zbi_items, b"vb_prop_0=val\0");
+        append_cmd_line(&mut expected_zbi_items, b"vb_prop_1=val\0");
+
+        assert_zbi_eq!(kernel, &expected_kernel);
+        assert_zbi_eq!(zbi_items, &expected_zbi_items);
+    }
+
+    #[test]
+    fn test_zircon_load_verify_fixup_not_enough_buffer() {
+        let storage = create_storage();
+        let mut ops = create_gbl_ops(&storage);
+        let zircon_a_zbi = read_test_data(ZIRCON_A_ZBI_FILE);
+        // Allocate a buffer that is too small.
+        let mut load_buffer = AlignedBuffer::new(
+            zircon_a_zbi.len() + TEST_KERNEL_RESERVED_MEMORY_SIZE - 1,
+            ZIRCON_KERNEL_ALIGNMENT,
+        );
+        let result = zircon_load_verify_fixup(&mut ops, Some(SlotIndex::A), true, &mut load_buffer);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zircon_load_verify_abr_with_buffer_exhaust_retries() {
+        let storage = create_storage();
+        let mut ops = create_gbl_ops(&storage);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
+
+        for _ in 0..ABR_MAX_TRIES_REMAINING {
+            let result = zircon_load_verify_abr_with_buffer(&mut ops, &mut load_buffer).unwrap();
+            assert_eq!(result.slot, SlotIndex::A);
+        }
+        for _ in 0..ABR_MAX_TRIES_REMAINING {
+            let result = zircon_load_verify_abr_with_buffer(&mut ops, &mut load_buffer).unwrap();
+            assert_eq!(result.slot, SlotIndex::B);
+        }
+        // Tests that load falls back to R eventually.
+        let result = zircon_load_verify_abr_with_buffer(&mut ops, &mut load_buffer).unwrap();
+        assert_eq!(result.slot, SlotIndex::R);
+    }
+
+    #[test]
+    fn test_zircon_load_verify_abr_with_buffer_legacy_naming() {
+        let storage = create_storage_legacy_names();
+        let mut ops = create_gbl_ops(&storage);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
+
+        // Tests by exhausting all slots retries so it exercises all legacy name matching code
+        // paths.
+        for _ in 0..ABR_MAX_TRIES_REMAINING {
+            let result = zircon_load_verify_abr_with_buffer(&mut ops, &mut load_buffer).unwrap();
+            assert_eq!(result.slot, SlotIndex::A);
+        }
+        for _ in 0..ABR_MAX_TRIES_REMAINING {
+            let result = zircon_load_verify_abr_with_buffer(&mut ops, &mut load_buffer).unwrap();
+            assert_eq!(result.slot, SlotIndex::B);
+        }
+        // Tests that load falls back to R eventually.
+        let result = zircon_load_verify_abr_with_buffer(&mut ops, &mut load_buffer).unwrap();
+        assert_eq!(result.slot, SlotIndex::R);
+    }
+
+    #[test]
+    fn test_zircon_load_verify_fixup_no_bootloader_file() {
+        let storage = create_storage();
+        let mut ops = create_gbl_ops(&storage);
+        // Ensure no bootloader files are present.
+        ops.zbi_bootloader_files_buffer.fill(0);
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
+
+        let (zbi_items, kernel) =
+            zircon_load_verify_fixup(&mut ops, Some(SlotIndex::A), true, &mut load_buffer).unwrap();
+
+        let expected_kernel = read_test_data(ZIRCON_A_ZBI_FILE);
+
+        // Make ZBI items without bootloader (make_expected_zbi_items() as reference).
+        let mut expected_zbi_items = AlignedBuffer::new(256 * 1024, ZBI_ALIGNMENT_USIZE);
+        let mut items = ZbiContainer::new(&mut expected_zbi_items[..]).unwrap();
+        items.extend(&ZbiContainer::parse(&expected_kernel[..]).unwrap()).unwrap();
+        append_cmd_line(&mut expected_zbi_items, FakeGblOps::ADDED_ZBI_COMMANDLINE_CONTENTS);
+        append_cmd_line(&mut expected_zbi_items, b"vb_prop_0=val\0");
+        append_cmd_line(&mut expected_zbi_items, b"vb_prop_1=val\0");
+        append_cmd_line(
+            &mut expected_zbi_items,
+            format!("zvb.current_slot={}", char::from(SlotIndex::A)).as_bytes(),
+        );
+
+        assert_zbi_eq!(kernel, &expected_kernel);
+        assert_zbi_eq!(zbi_items, &expected_zbi_items);
     }
 }

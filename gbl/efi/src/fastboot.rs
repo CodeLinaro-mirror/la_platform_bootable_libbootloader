@@ -282,7 +282,7 @@ impl<'a> PinFutContainer<'a> for VecPinFut<'a> {
 }
 
 /// Helper for handling fastboot mode.
-pub(crate) fn efi_gbl_fastboot_entry<'a, 'b, G: GblOps<'a, 'b>>(
+pub(crate) fn efi_gbl_fastboot_entry<'a, G: GblOps<'a>>(
     entry: &EfiEntry,
     fb: GblFastbootEntry<'_, G>,
 ) {

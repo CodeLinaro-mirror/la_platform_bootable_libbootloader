@@ -18,54 +18,13 @@ use crate::{
     gbl_println, GblOps, Result as GblResult,
 };
 use avb::{slot_verify, Descriptor, HashtreeErrorMode, Ops as _, SlotVerifyError, SlotVerifyFlags};
-use libprofile_macros::profile_expr;
 use zbi::{merge_within, ZbiContainer};
 use zerocopy::SplitByteSliceMut;
 
-/// Verifies a loaded ZBI kernel.
-///
-/// # Arguments
-///
-/// * glb_ops - GblOps implementation
-/// * slot - slot to verify
-/// * slot_booted_successfully - if true, roll back indexes will be increased
-/// * zbi_kernel - preloaded kernel to verify
-/// * zbi_items - vbmeta items will be appended to this ZbiContainer
-pub(crate) fn zircon_verify_kernel<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>(
-    gbl_ops: &mut impl GblOps<'b, 'c>,
-    slot: Option<SlotIndex>,
-    slot_booted_successfully: bool,
-    zbi_kernel: &'a mut [u8],
-    zbi_items: &mut ZbiContainer<B>,
-) -> GblResult<()> {
-    // Copy ZBI items after kernel first. Because ordering matters, and new items should override
-    // older ones.
-    // TODO(b/379778252) It is not as efficient as moving kernel since ZBI items would contain file
-    // system and be bigger than kernel.
-    profile_expr!(
-        backend = gbl_ops.get_profiling_backend(),
-        copy_items_after_kernel(zbi_kernel, zbi_items)?
-    );
-    let (kernel, _) = zbi_split_unused_buffer_mut(&mut zbi_kernel[..])?;
-    zircon_verify_kernel_internal(gbl_ops, slot, slot_booted_successfully, kernel, zbi_items)
-}
-
-/// Copy ZBI items following kernel to separate container.
-pub fn copy_items_after_kernel<'a, B: SplitByteSliceMut + PartialEq>(
-    zbi_kernel: &'a mut [u8],
-    zbi_items: &mut ZbiContainer<B>,
-) -> GblResult<()> {
-    let zbi_container = ZbiContainer::parse(&mut zbi_kernel[..])?;
-    let mut items_iter = zbi_container.iter();
-    items_iter.next(); // Skip first kernel item
-    zbi_items.extend_items(items_iter)?;
-    Ok(())
-}
-
 /// Performs AVB verification of a ZBI kernel from the given buffer and fixes up AVB ZBI items into
 /// the same ZBI container. `load_buffer` should reserve extra space for in-coming AVB items.
-pub(crate) fn zircon_verify_kernel_in_place<'a, 'b>(
-    gbl_ops: &mut impl GblOps<'a, 'b>,
+pub(crate) fn zircon_verify_kernel_in_place<'a>(
+    gbl_ops: &mut impl GblOps<'a>,
     slot: Option<SlotIndex>,
     slot_booted_successfully: bool,
     load_buffer: &mut [u8],
@@ -81,8 +40,8 @@ pub(crate) fn zircon_verify_kernel_in_place<'a, 'b>(
 }
 
 /// Internal helper for AVB verification for zircon.
-fn zircon_verify_kernel_internal<'a, 'b, 'c, B: SplitByteSliceMut + PartialEq>(
-    gbl_ops: &mut impl GblOps<'b, 'c>,
+fn zircon_verify_kernel_internal<'a, 'b, B: SplitByteSliceMut + PartialEq>(
+    gbl_ops: &mut impl GblOps<'b>,
     slot: Option<SlotIndex>,
     slot_booted_successfully: bool,
     zbi_kernel: &'a mut [u8],
@@ -187,33 +146,6 @@ mod test {
     use libtestutils::AlignedBuffer;
     use zbi::ZBI_ALIGNMENT_USIZE;
 
-    // Unittest for `copy_items_after_kernel()` helper function.
-    #[test]
-    fn copy_items_after_kernel_success() {
-        let zbi = &read_test_data(ZIRCON_A_ZBI_FILE);
-        let mut load_buffer = AlignedBuffer::new(zbi.len() + 1024, ZIRCON_KERNEL_ALIGNMENT);
-        load_buffer[..zbi.len()].clone_from_slice(zbi);
-        // Add items that will be copied
-        append_cmd_line(&mut load_buffer, b"vb_prop_0=val\0");
-        append_cmd_line(&mut load_buffer, b"vb_prop_1=val\0");
-
-        // Create ZBI items container that contain 1 element
-        let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
-        let _ = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
-        append_cmd_line(&mut zbi_items_buffer, b"vb_prop_2=val\0");
-        let mut zbi_items = ZbiContainer::parse(&mut zbi_items_buffer[..]).unwrap();
-
-        // Verifies that ZBI items are appended
-        let mut expected_zbi_items = AlignedBuffer::new(load_buffer.len(), ZBI_ALIGNMENT_USIZE);
-        let _ = ZbiContainer::new(&mut expected_zbi_items[..]).unwrap();
-        append_cmd_line(&mut expected_zbi_items, b"vb_prop_2=val\0");
-        append_cmd_line(&mut expected_zbi_items, b"vb_prop_0=val\0");
-        append_cmd_line(&mut expected_zbi_items, b"vb_prop_1=val\0");
-
-        copy_items_after_kernel(&mut load_buffer, &mut zbi_items).unwrap();
-        assert_eq!(normalize_zbi(&zbi_items_buffer), normalize_zbi(&expected_zbi_items));
-    }
-
     // The cert test keys were both generated with rollback version 42.
     const TEST_CERT_PIK_VERSION: u64 = 42;
     const TEST_CERT_PSK_VERSION: u64 = 42;
@@ -298,12 +230,25 @@ mod test {
         let original_rollbacks = ops.avb_ops.rollbacks.clone();
         let original_load_buffer = Vec::from(&load_buffer[..]);
 
-        zircon_verify_kernel(
+        let mut zbi_items = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
+
+        // Copy ZBI items after kernel first. Because ordering matters, and new items should override
+        // older ones.
+        let zbi_container = ZbiContainer::parse(&mut load_buffer[..]).unwrap();
+        let mut items_iter = zbi_container.iter();
+        // Skip first kernel item
+        items_iter.next();
+        // TODO(b/379778252) It is not as efficient as moving kernel since ZBI items would contain file
+        // system and be bigger than kernel.
+        zbi_items.extend_items(items_iter).unwrap();
+
+        let (kernel, _) = zbi_split_unused_buffer_mut(&mut load_buffer[..]).unwrap();
+        zircon_verify_kernel_internal(
             ops,
             Some(SlotIndex::A),
             slot_booted_successfully,
-            &mut load_buffer,
-            &mut ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap(),
+            kernel,
+            &mut zbi_items,
         )
         .inspect_err(|_| {
             // On verify failure, the load buffer contents should be unmodified.
