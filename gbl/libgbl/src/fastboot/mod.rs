@@ -986,7 +986,7 @@ where
 
         // Progress logging task.
         let log = async {
-            if total >= 128 * 1024 * 1024 {
+            if total < 128 * 1024 * 1024 {
                 return Ok(());
             }
             let recv = || channel.remaining().map(|v| total - v);
