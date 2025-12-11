@@ -159,12 +159,17 @@ pub fn zircon_main<'a, 'b, G: GblOps<'a>>(
     let result = &mut Default::default();
     if zircon_check_enter_fastboot(ops) {
         gbl_println!(ops, "Entering fastboot mode...");
-        run_fastboot(GblFastbootEntry { ops, boot_buffer: (&mut load[..]).into(), result });
+        run_fastboot(GblFastbootEntry {
+            ops,
+            boot_buffer: (&mut load[..]).into(),
+            result,
+            load_result: None,
+        });
         gbl_println!(ops, "Leaving fastboot mode...");
     }
 
     // Checks if "fastboot boot" has loaded an android image.
-    if let Some(LoadedImageInfo::Fuchsia { slot, .. }) = result.loaded_image_info {
+    if let LoadedImageInfo::Fuchsia { slot, .. } = result.loaded_image_info {
         gbl_println!(ops, "Booting from \"fastboot boot\"");
         let (zbi_items, kernel) = result.split_loaded_fuchsia(load).unwrap();
         return Ok(LoadedVerifiedZircon { zbi_items, kernel, slot });

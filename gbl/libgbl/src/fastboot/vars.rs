@@ -516,7 +516,7 @@ where
         let partition_count =
             self.disks.iter().map(|b| b.num_partitions().unwrap_or_default()).sum();
         let buf = <[PartHasSlot]>::mut_from_prefix_with_elems(
-            self.boot_buffer.scratch(),
+            self.data.boot_buffer.scratch(),
             partition_count,
         )
         .map_err(|e| match e.into() {

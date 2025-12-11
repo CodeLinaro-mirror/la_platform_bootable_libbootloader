@@ -23,13 +23,15 @@ use crate::{
     },
 };
 use crate::{
-    android_boot::{android_load_verify_fixup, get_boot_slot, load::sub_slice_range, BootBuffer},
+    android_boot::{
+        android_load_verify_fixup, get_boot_slot, load::sub_slice_range, BootBuffer, LoadedImages,
+    },
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message, AndroidBootMode},
     ops::{CommandExecType, FastbootEraseAction, RambootOps},
     partition::{check_part_unique, GblDisk, MultiPartitionIo, Partition, PartitionIo, RawName},
     slots::Slot,
-    GblOps,
+    GblOps, IntegrationError,
 };
 pub use abr::{mark_slot_active, set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
 use arrayvec::ArrayVec;
@@ -162,8 +164,11 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> Default for Task<'a, 'b, B, P> {
 }
 
 /// Contains the load buffer layout of images loaded by "fastboot boot".
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum LoadedImageInfo {
+    /// None
+    #[default]
+    None,
     /// Android loaded images.
     Android {
         /// Address range of ramdisk.
@@ -185,13 +190,46 @@ pub enum LoadedImageInfo {
     },
 }
 
+/// Helper function for splitting loaded android images from a boot buffer.
+pub fn split_loaded_android<'a>(
+    info: LoadedImageInfo,
+    mut boot_buffer: BootBuffer<'a>,
+) -> Option<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
+    let LoadedImageInfo::Android { ramdisk, fdt, kernel } = &info else {
+        return None;
+    };
+
+    // Computes the size of each image component.
+    let [ramdisk_sz, fdt_sz, kernel_sz] = [&ramdisk, &fdt, &kernel].map(|v| ptr_range_len(v));
+
+    // Partitions the general load buffer.
+    let general_buf = boot_buffer.take_boot_items().split_unused();
+    let general = &general_buf.as_ptr_range();
+    let ramdisk = sub_slice_range(general, ramdisk).unwrap_or(0..0);
+    let fdt = sub_slice_range(general, fdt).unwrap_or(ramdisk.end..ramdisk.end);
+    let kernel = sub_slice_range(general, kernel).unwrap_or(fdt.end..fdt.end);
+    assert!(fdt.start >= ramdisk.end && kernel.start >= fdt.end);
+    let (rem, unused) = general_buf.split_at_mut(kernel.end);
+    let (rem, general_kernel) = rem.split_at_mut(kernel.start);
+    let (rem, general_fdt) = rem.split_at_mut(fdt.start);
+    let (_, general_ramdisk) = rem.split_at_mut(ramdisk.start);
+
+    // Chooses between designated or partitioned general buffer.
+    let ramdisk = &mut boot_buffer.ramdisk.unwrap_or(general_ramdisk)[..ramdisk_sz];
+    let fdt = &mut boot_buffer.fdt.unwrap_or(general_fdt)[..fdt_sz];
+    let kernel = &mut boot_buffer.kernel.unwrap_or(general_kernel)[..kernel_sz];
+    Some((ramdisk, fdt, kernel, unused))
+}
+
 /// Contains result data returned by GBL Fastboot.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GblFastbootResult {
     /// Buffer layout for images loaded by "fastboot boot"
-    pub loaded_image_info: Option<LoadedImageInfo>,
+    pub loaded_image_info: LoadedImageInfo,
     /// Slot suffix that was last set active by "fastboot set_active"
     pub last_set_active_slot: Option<char>,
+    /// Whether to stop in fastboot mode after load verify fixup.
+    pub pause_in_fastboot: bool,
 }
 
 impl GblFastbootResult {
@@ -199,33 +237,9 @@ impl GblFastbootResult {
     ///  `Self::loaded_image_info` if it is a `Some(LoadedImageInfo::Android)`.
     pub(crate) fn split_loaded_android<'a>(
         &self,
-        mut boot_buffer: BootBuffer<'a>,
+        boot_buffer: BootBuffer<'a>,
     ) -> Option<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
-        let Some(LoadedImageInfo::Android { ramdisk, fdt, kernel }) = &self.loaded_image_info
-        else {
-            return None;
-        };
-
-        // Computes the size of each image component.
-        let [ramdisk_sz, fdt_sz, kernel_sz] = [&ramdisk, &fdt, &kernel].map(|v| ptr_range_len(v));
-
-        // Partitions the general load buffer.
-        let general_buf = boot_buffer.take_boot_items().split_unused();
-        let general = &general_buf.as_ptr_range();
-        let ramdisk = sub_slice_range(general, ramdisk).unwrap_or(0..0);
-        let fdt = sub_slice_range(general, fdt).unwrap_or(ramdisk.end..ramdisk.end);
-        let kernel = sub_slice_range(general, kernel).unwrap_or(fdt.end..fdt.end);
-        assert!(fdt.start >= ramdisk.end && kernel.start >= fdt.end);
-        let (rem, unused) = general_buf.split_at_mut(kernel.end);
-        let (rem, general_kernel) = rem.split_at_mut(kernel.start);
-        let (rem, general_fdt) = rem.split_at_mut(fdt.start);
-        let (_, general_ramdisk) = rem.split_at_mut(ramdisk.start);
-
-        // Choosess between designated or partitioned general buffer.
-        let ramdisk = &mut boot_buffer.ramdisk.unwrap_or(general_ramdisk)[..ramdisk_sz];
-        let fdt = &mut boot_buffer.fdt.unwrap_or(general_fdt)[..fdt_sz];
-        let kernel = &mut boot_buffer.kernel.unwrap_or(general_kernel)[..kernel_sz];
-        Some((ramdisk, fdt, kernel, unused))
+        split_loaded_android(self.loaded_image_info.clone(), boot_buffer)
     }
 
     /// Splits the given buffer into `(zbi_items, kernel)` according to layout info in
@@ -236,8 +250,7 @@ impl GblFastbootResult {
         &self,
         load: &'a mut [u8],
     ) -> Option<(&'a mut [u8], &'a mut [u8])> {
-        let Some(LoadedImageInfo::Fuchsia { zbi_items, kernel, .. }) = &self.loaded_image_info
-        else {
+        let LoadedImageInfo::Fuchsia { zbi_items, kernel, .. } = &self.loaded_image_info else {
             return None;
         };
         let zbi_items = sub_slice_range(&load.as_ptr_range(), zbi_items).unwrap();
@@ -251,6 +264,20 @@ impl GblFastbootResult {
 /// Helper for computing the length of a pointer range.
 fn ptr_range_len(range: &Range<*const u8>) -> usize {
     (range.end as usize).checked_sub(range.start as _).unwrap()
+}
+
+// Represents GBL specific stage data type
+#[derive(Copy, Clone, Debug)]
+enum StageDataType {
+    LoadedKernel,
+    LoadedRamdisk,
+    LoadedFdt,
+}
+
+#[derive(Default)]
+pub(crate) struct GblFbData<'a> {
+    pub(crate) boot_buffer: BootBuffer<'a>,
+    pub(crate) load_result: Option<Result<LoadedImages<'a>, &'a IntegrationError>>,
 }
 
 /// `GblFastboot` implements fastboot commands in the GBL context.
@@ -295,7 +322,8 @@ where
     enable_async_task: bool,
     expected_download_crc: Option<u32>,
     default_block: Option<usize>,
-    boot_buffer: BootBuffer<'b>,
+    data: GblFbData<'b>,
+    stage_data_type: Option<StageDataType>,
     result: GblFastbootResult,
     // Introduces marker type so that we can enforce constraint 'd <= min('b, 'c).
     // The constraint is expressed in the implementation block for the `FastbootImplementation`
@@ -325,6 +353,7 @@ where
     ///   type `F` for input to `PinFutContainerTyped<F>::add_with()`.
     /// * `tasks`: A shared instance of `PinFutContainerTyped<F>`.
     /// * `buffer_pool`: A shared instance of `BufferPool`.
+    /// * `data`: Additional data provided to fastboot.
     ///
     /// The combination of `task_mapper` and `tasks` allows type `F`, which will be running the
     /// async function `Task::run()`, to be defined at the callsite. This is necessary for the
@@ -339,7 +368,7 @@ where
         task_mapper: fn(Task<'a, 'b, B, P>) -> F,
         tasks: &'d Shared<C>,
         buffer_pool: &'b Shared<P>,
-        boot_buffer: BootBuffer<'b>,
+        data: GblFbData<'b>,
     ) -> Self {
         Self {
             gbl_ops,
@@ -352,7 +381,8 @@ where
             enable_async_task: false,
             expected_download_crc: None,
             default_block: None,
-            boot_buffer,
+            data,
+            stage_data_type: None,
             result: Default::default(),
             _tasks_context_lifetime: PhantomData,
         }
@@ -658,7 +688,8 @@ where
             }
             _ => {
                 // Update the bootloader message (BCB) in the `misc` partition.
-                let bcb = read_bootloader_message_to(self.gbl_ops, self.boot_buffer.scratch())?;
+                let bcb =
+                    read_bootloader_message_to(self.gbl_ops, self.data.boot_buffer.scratch())?;
                 bcb.update_boot_command(mode);
                 write_bootloader_message(self.gbl_ops, bcb)?;
             }
@@ -760,14 +791,14 @@ where
         let mut boot_part = [0u8; 16];
         let boot_part = snprintf!(boot_part, "boot_{}", slot.suffix.as_char());
         let mut ramboot_ops = RambootOps { ops: self.gbl_ops, ram_partitions: &[(boot_part, img)] };
-        let boot_buffer = self.boot_buffer.as_borrowed();
+        let boot_buffer = self.data.boot_buffer.as_borrowed();
         let (ramdisk, fdt, kernel, _) =
             android_load_verify_fixup(&mut ramboot_ops, slot, false, boot_buffer)?;
-        self.result.loaded_image_info = Some(LoadedImageInfo::Android {
+        self.result.loaded_image_info = LoadedImageInfo::Android {
             ramdisk: ramdisk.as_ptr_range(),
             fdt: fdt.as_ptr_range(),
             kernel: kernel.as_ptr_range(),
-        });
+        };
         resp.send_formatted_info(|f| {
             write!(f, "Boot image as Android slot {}", slot.suffix.as_char()).unwrap()
         })
@@ -778,7 +809,7 @@ where
     /// Helper for "fastboot boot" Fuchsia image.
     #[cfg(feature = "fuchsia")]
     async fn boot_fuchsia(&mut self, img: &[u8], mut resp: impl InfoSender) -> CommandResult<()> {
-        let load_buffer = self.boot_buffer.scratch();
+        let load_buffer = self.data.boot_buffer.scratch();
         // Format is ZBI + Vbmeta.
         let (zbi, vbmeta) = zbi_split_unused_buffer_ref(get_kernel(img)?)?;
         let mut ramboot_ops = RambootOps {
@@ -794,11 +825,11 @@ where
         };
         let LoadedVerifiedZircon { zbi_items, kernel, slot } =
             zircon_load_verify_abr_with_buffer(&mut ramboot_ops, load_buffer)?;
-        self.result.loaded_image_info = Some(LoadedImageInfo::Fuchsia {
+        self.result.loaded_image_info = LoadedImageInfo::Fuchsia {
             zbi_items: zbi_items.as_ptr_range(),
             kernel: kernel.as_ptr_range(),
             slot,
-        });
+        };
         resp.send_formatted_info(|f| {
             write!(f, "Boot image as Fuchsia slot {}", char::from(slot)).unwrap()
         })
@@ -831,7 +862,7 @@ where
 
     /// Helper for checking and getting an `BootItemContainer` from general load buffer.
     fn boot_item_container(&mut self) -> CommandResult<&mut BootItemContainer<'b>> {
-        let v = self.boot_buffer.boot_items();
+        let v = self.data.boot_buffer.boot_items();
         match v.check_valid() {
             Err(_) => v.init().map_err(|e| {
                 CommandError::from(format_args!("Failed to initialize boot item container {e})"))
@@ -850,11 +881,64 @@ where
         }
     }
 
+    /// Gets or allocates download buffer.
     async fn get_download_buffer(&mut self) -> &mut [u8] {
         if self.current_download_buffer.is_none() {
             self.current_download_buffer = Some(self.buffer_pool.allocate_async().await);
         }
         self.current_download_buffer.as_mut().unwrap()
+    }
+
+    /// Helper for processing Self::load_result and emitting error messages.
+    fn get_load_result(&self) -> CommandResult<LoadedImages<'b>> {
+        match self.data.load_result {
+            None => Err("Images not loaded. Run \"oem gbl-pause-fastboot-after-load\"".into()),
+            Some(Err(e)) => Err(format_args!("Load didn't succeed: {e}").into()),
+            Some(Ok(v)) => Ok(v),
+        }
+    }
+
+    /// Upload OEM specific data.
+    async fn upload_oem_data(
+        &mut self,
+        mut responder: impl UploadBuilder + InfoSender,
+    ) -> CommandResult<()> {
+        // Makes sure a download buffer can be allocated.
+        if let Some(_) = self.take_download() {
+            responder.send_info("A previous download is discarded.").await?;
+        }
+        self.get_download_buffer().await;
+        let mut buffer = self.current_download_buffer.take().unwrap();
+        let (_, total) = self.gbl_ops.fastboot_get_staged(&mut [][..])?;
+        if total == 0 {
+            return Err("No data staged.".into());
+        } else if total >= 0x7fffffff {
+            return Err("Cannot upload more than 0x7fffffff bytes of data".into());
+        }
+
+        responder
+            .send_formatted_info(|v| write!(v, "Uploading {} bytes...", total).unwrap())
+            .await?;
+        // `total` already checked to be no more than 0x7fffffff.
+        let mut uploader = responder.initiate_upload(total.try_into().unwrap()).await?;
+        let mut left = total;
+        let mut read_len: CommandResult<usize> = Ok(0);
+        while left > 0 {
+            read_len = read_len
+                .and_then(|_| Ok(self.gbl_ops.fastboot_get_staged(&mut buffer)?))
+                .and_then(|(read, remains)| match left >= remains && left - remains == read {
+                    true => Ok(read),
+                    _ => Err("Staged data size changed when uploading".into()),
+                });
+            // On success, upload the actual amount of read data. On any failure, continue to upload
+            // arbitrary data until we pass the data phase, so that we can send the error message
+            // and process future fastboot commands.
+            let to_upload = read_len.as_ref().cloned().unwrap_or(min(left, buffer.len()));
+            uploader.upload(&mut buffer[..to_upload]).await?;
+            left -= to_upload
+        }
+        read_len?;
+        Ok(())
     }
 }
 
@@ -1003,46 +1087,18 @@ where
         Ok(())
     }
 
-    async fn upload(
-        &mut self,
-        mut responder: impl UploadBuilder + InfoSender,
-    ) -> CommandResult<()> {
-        // Makes sure a download buffer can be allocated.
-        if let Some(_) = self.take_download() {
-            responder.send_info("A previous download is discarded.").await?;
-        }
-        self.get_download_buffer().await;
-        let mut buffer = self.current_download_buffer.take().unwrap();
-        let (_, total) = self.gbl_ops.fastboot_get_staged(&mut [][..])?;
-        if total == 0 {
-            return Err("No data staged.".into());
-        } else if total >= 0x7fffffff {
-            return Err("Cannot upload more than 0x7fffffff bytes of data".into());
-        }
+    async fn upload(&mut self, responder: impl UploadBuilder + InfoSender) -> CommandResult<()> {
+        let Some(data_type) = self.stage_data_type.take() else {
+            return self.upload_oem_data(responder).await;
+        };
 
-        responder
-            .send_formatted_info(|v| write!(v, "Uploading {} bytes...", total).unwrap())
-            .await?;
-        // `total` already checked to be no more than 0x7fffffff.
-        let mut uploader = responder.initiate_upload(total.try_into().unwrap()).await?;
-        let mut left = total;
-        let mut read_len: CommandResult<usize> = Ok(0);
-        while left > 0 {
-            read_len = read_len
-                .and_then(|_| Ok(self.gbl_ops.fastboot_get_staged(&mut buffer)?))
-                .and_then(|(read, remains)| match left >= remains && left - remains == read {
-                    true => Ok(read),
-                    _ => Err("Staged data size changed when uploading".into()),
-                });
-            // On success, upload the actual amount of read data. On any failure, continue to upload
-            // arbitrary data until we pass the data phase, so that we can send the error message
-            // and process future fastboot commands.
-            let to_upload = read_len.as_ref().cloned().unwrap_or(min(left, buffer.len()));
-            uploader.upload(&mut buffer[..to_upload]).await?;
-            left -= to_upload
-        }
-        read_len?;
-        Ok(())
+        let data = match data_type {
+            StageDataType::LoadedRamdisk => self.get_load_result()?.ramdisk,
+            StageDataType::LoadedFdt => self.get_load_result()?.fdt,
+            StageDataType::LoadedKernel => self.get_load_result()?.kernel,
+        };
+        let mut uploader = responder.initiate_upload(data.len().try_into().unwrap()).await?;
+        Ok(uploader.upload(data).await?)
     }
 
     async fn fetch(
@@ -1107,6 +1163,7 @@ where
     ) -> CommandResult<()> {
         let mut args = cmd_str.split(' ');
         let cmd = args.next().ok_or("Missing command")?;
+        self.stage_data_type = None;
         match cmd {
             "gbl-sync-tasks" => self.oem_sync_tasks(responder).await,
             "gbl-enable-async-task" => {
@@ -1164,6 +1221,25 @@ where
                 let arg = next_arg(&mut args).ok_or("Missing tag")?;
                 let (data, sz) = self.take_download().ok_or("No download")?;
                 Ok(self.boot_item_container()?.append_blob(arg, &data[..sz])?)
+            }
+            "gbl-stage" => {
+                let arg = next_arg(&mut args).ok_or("Missing data type")?;
+                let img_type = [
+                    ("kernel", StageDataType::LoadedKernel),
+                    ("ramdisk", StageDataType::LoadedRamdisk),
+                    ("fdt", StageDataType::LoadedFdt),
+                ];
+                if let Some((_, v)) = img_type.iter().find(|(v, _)| *v == arg) {
+                    self.get_load_result()?;
+                    self.stage_data_type = Some(*v);
+                    return Ok(());
+                }
+                return Err("Unknown data type".into());
+            }
+            "gbl-pause-fastboot-after-load" => {
+                let v = next_arg_u64(&mut args)?.unwrap_or(1);
+                self.result.pause_in_fastboot = v != 0;
+                Ok(())
             }
             #[cfg(feature = "gbl_dev")]
             "stack-smash-demo" => {
@@ -1380,17 +1456,17 @@ async fn download<'a>(
 /// * `'a`: Lifetime of [GblOps].
 /// * `'b`: Lifetime of `download_buffers`.
 /// * `'c`: Lifetime of `tasks`.
-pub async fn run_gbl_fastboot<'a: 'c, 'b: 'c, 'c>(
+pub(crate) async fn run_gbl_fastboot<'a: 'c, 'b: 'c, 'c>(
     gbl_ops: &mut impl GblOps<'a>,
     buffer_pool: &'b Shared<impl BufferPool>,
     tasks: impl PinFutContainer<'c> + 'c,
     transports: &mut [impl GblGenericTransport],
     tcp: Option<impl GblTcpStream>,
-    boot_buffer: BootBuffer<'b>,
+    data: GblFbData<'b>,
 ) -> GblFastbootResult {
     let tasks = tasks.into();
     let disks = gbl_ops.disks();
-    let mut fb = GblFastboot::new(gbl_ops, disks, Task::run, &tasks, buffer_pool, boot_buffer);
+    let mut fb = GblFastboot::new(gbl_ops, disks, Task::run, &tasks, buffer_pool, data);
     fb.run(transports, tcp).await;
     fb.result
 }
@@ -1411,12 +1487,12 @@ pub async fn run_gbl_fastboot<'a: 'c, 'b: 'c, 'c>(
 /// * `buffer_pool`: An implementation of [BufferPool].
 /// * `transports`: Implementations of [GblGenericTransport].
 /// * `tcp`: An optional implementation of [GblTcpStream].
-pub async fn run_gbl_fastboot_stack<'a, const N: usize>(
+pub(crate) async fn run_gbl_fastboot_stack<'a, const N: usize>(
     gbl_ops: &mut impl GblOps<'a>,
     buffer_pool: impl BufferPool,
     transports: &mut [impl GblGenericTransport],
     tcp: Option<impl GblTcpStream>,
-    boot_buffer: BootBuffer<'_>,
+    data: GblFbData<'_>,
 ) -> GblFastbootResult {
     let buffer_pool = buffer_pool.into();
     // Creates N worker tasks.
@@ -1438,7 +1514,7 @@ pub async fn run_gbl_fastboot_stack<'a, const N: usize>(
     let mut tasks: [_; N] = tasks.each_mut().map(|v| unsafe { Pin::new_unchecked(v) });
     let tasks = PinFutSlice::new(&mut tasks[..]).into();
     let disks = gbl_ops.disks();
-    let mut fb = GblFastboot::new(gbl_ops, disks, Task::run, &tasks, &buffer_pool, boot_buffer);
+    let mut fb = GblFastboot::new(gbl_ops, disks, Task::run, &tasks, &buffer_pool, data);
     fb.run(transports, tcp).await;
     fb.result
 }
@@ -1672,7 +1748,7 @@ pub(crate) mod test {
             Task::run,
             &tasks,
             &dl_buffers,
-            load_buffer.as_mut().into(),
+            GblFbData { boot_buffer: load_buffer.as_mut().into(), ..Default::default() },
         );
 
         check_var(&mut gbl_fb, "has-slot", "boot", "yes");
@@ -1809,7 +1885,7 @@ pub(crate) mod test {
             Task::run,
             &tasks,
             &dl_buffers,
-            load_buffer.as_mut().into(),
+            GblFbData { boot_buffer: load_buffer.as_mut().into(), ..Default::default() },
         );
 
         let mut logger = TestVarSender(vec![]);
@@ -2762,9 +2838,14 @@ pub(crate) mod test {
         /// A helper for decoding Transport output packets as a string
         pub(crate) fn dump_transport_out_queue(&self) -> String {
             let mut res = String::from("");
-            for v in self.lock().transport_out_queue.iter() {
-                let v = String::from_utf8(v.clone()).unwrap_or(format!("{:?}", v));
-                res += format!("b{:?},\n", v).as_str();
+            for (i, v) in self.lock().transport_out_queue.iter().enumerate() {
+                let v = match v.len() <= MAX_RESPONSE_SIZE {
+                    true => {
+                        format!("b{:?}", String::from_utf8(v.clone()).unwrap_or(format!("{:?}", v)))
+                    }
+                    _ => format!("(packet #{i}, {} bytes)", v.len()),
+                };
+                res += format!("{v},\n").as_str();
             }
             res
         }
@@ -3187,7 +3268,7 @@ pub(crate) mod test {
             buffers,
             transports,
             Some(tcp),
-            load_buffer.as_mut().into(),
+            GblFbData { boot_buffer: load_buffer.as_mut().into(), ..Default::default() },
         ));
 
         assert_eq!(
@@ -3766,7 +3847,7 @@ pub(crate) mod test {
             buffers,
             transports,
             Some(tcp),
-            load_buffer.as_mut().into(),
+            GblFbData { boot_buffer: (&mut load_buffer[..]).into(), ..Default::default() },
         ));
 
         assert_eq!(
@@ -4009,7 +4090,7 @@ pub(crate) mod test {
             buffers,
             transports,
             Some(tcp),
-            (&mut load_buffer[..]).into(),
+            GblFbData { boot_buffer: (&mut load_buffer[..]).into(), ..Default::default() },
         ));
 
         assert_eq!(
@@ -4090,7 +4171,7 @@ pub(crate) mod test {
             buffers,
             transports,
             Some(tcp),
-            (&mut load_buffer[..]).into(),
+            GblFbData { boot_buffer: (&mut load_buffer[..]).into(), ..Default::default() },
         ));
 
         assert_eq!(
@@ -4769,7 +4850,7 @@ pub(crate) mod test {
             buffers,
             transports,
             Some(tcp),
-            (&mut general[..]).into(),
+            GblFbData { boot_buffer: (&mut general[..]).into(), ..Default::default() },
         ));
 
         assert_eq!(
@@ -4829,7 +4910,7 @@ pub(crate) mod test {
             buffers,
             transports,
             Some(tcp),
-            (&mut general[..]).into(),
+            GblFbData { boot_buffer: (&mut general[..]).into(), ..Default::default() },
         ));
 
         assert_eq!(
@@ -4887,7 +4968,7 @@ pub(crate) mod test {
             buffers,
             transports,
             Some(tcp),
-            (&mut general[..]).into(),
+            GblFbData { boot_buffer: (&mut general[..]).into(), ..Default::default() },
         ));
 
         assert_eq!(
@@ -5000,7 +5081,7 @@ pub(crate) mod test {
             Default::default(),
         ));
 
-        assert_eq!(res, GblFastbootResult { loaded_image_info: None, last_set_active_slot: None });
+        assert_eq!(res, Default::default());
     }
 
     #[test]
@@ -5038,7 +5119,7 @@ pub(crate) mod test {
             buffers,
             generic,
             Some(tcp),
-            (&mut general[..]).into(),
+            GblFbData { boot_buffer: (&mut general[..]).into(), ..Default::default() },
         ));
 
         assert_eq!(
