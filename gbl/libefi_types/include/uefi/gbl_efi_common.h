@@ -28,13 +28,18 @@
 
 #include "types.h"
 
-#define GBL_EFI_VENDOR_GUID                                     \
-  EfiGuid {                                                     \
-    .data1=0x5a6d92f3,                                          \
-      .data2=0xa2d0,                                            \
-      .data3=0x4083,                                            \
-      .data4=[0x91, 0xa1, 0xa5, 0x0f, 0x6c, 0x3d, 0x98, 0x30]   \
+// clang-format off
+#define GBL_EFI_VENDOR_GUID                                   \
+  EfiGuid {                                                   \
+    .data1=0x5a6d92f3,                                        \
+    .data2=0xa2d0,                                            \
+    .data3=0x4083,                                            \
+    .data4=[0x91, 0xa1, 0xa5, 0x0f, 0x6c, 0x3d, 0x98, 0x30]   \
   }
+// clang-format on
+
 #define GBL_EFI_OS_BOOT_TARGET_VARNAME "gbl_os_boot_fuchsia"
 
-#endif  /* __GBL_EFI_COMMON_H__ */
+#define PARTITION_NAME_LEN_U16 36
+
+#endif /* __GBL_EFI_COMMON_H__ */

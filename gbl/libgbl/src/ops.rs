@@ -14,7 +14,7 @@
 
 //! GblOps trait that defines GBL callbacks.
 
-pub use crate::{constants::Partition, image_buffer::ImageBuffer, slots::BootToken};
+pub use crate::{constants::Partition, slots::BootToken};
 use crate::{
     error::Result as GblResult,
     gbl_avb::{

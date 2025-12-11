@@ -49,8 +49,6 @@ pub mod partition;
 pub mod random;
 pub mod slots;
 
-mod image_buffer;
-
 pub use avb::Descriptor;
 pub use error::{IntegrationError, Result};
 pub use ops::{GblOps, Os};
