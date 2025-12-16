@@ -1737,6 +1737,275 @@ pub(crate) mod test {
         }
     }
 
+    // An ops implementation where all interfaces are unsupported.
+    #[derive(Default)]
+    pub(crate) struct OpsAllUnsupported<'a>(FakeGblOps<'a>);
+
+    impl<'a> GblOps<'a> for OpsAllUnsupported<'_> {
+        fn console_out(&mut self) -> Option<&mut dyn Write> {
+            Some(&mut self.0)
+        }
+
+        fn reboot(&mut self) -> Result<!, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn disks(
+            &self,
+        ) -> &'a [GblDisk<
+            Disk<impl BlockIo + 'a, impl DerefMut<Target = [u8]> + 'a>,
+            Gpt<impl DerefMut<Target = [u8]> + 'a>,
+        >] {
+            &[] as &[TestGblDisk]
+        }
+
+        fn expected_os(&mut self) -> Result<Option<Os>, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn get_random_bytes(&self, _: RngAlgorithm, _: &mut [u8]) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        #[cfg(feature = "fuchsia")]
+        fn zircon_add_device_zbi_items(
+            &mut self,
+            _: &mut ZbiContainer<&mut [u8]>,
+        ) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        #[cfg(feature = "fuchsia")]
+        fn get_zbi_bootloader_files_buffer(&mut self) -> Option<&mut [u8]> {
+            None
+        }
+
+        fn load_slot_interface<'c>(
+            &'c mut self,
+            _: &'c mut dyn FnMut(&mut [u8]) -> Result<(), Error>,
+            _: BootToken,
+        ) -> GblResult<slots::Cursor<'c>> {
+            Err(Error::Unsupported.into())
+        }
+
+        fn avb_read_partitions_to_verify(
+            &mut self,
+        ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avb_read_rollback_index(&mut self, _: usize) -> AvbIoResult<u64> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avb_write_rollback_index(&mut self, _: usize, _: u64) -> AvbIoResult<()> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avb_read_persistent_value(&mut self, _: &CStr, _: &mut [u8]) -> AvbIoResult<usize> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avb_write_persistent_value(&mut self, _: &CStr, _: &[u8]) -> AvbIoResult<()> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avb_erase_persistent_value(&mut self, _: &CStr) -> AvbIoResult<()> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avb_cert_read_permanent_attributes(
+            &mut self,
+            _: &mut CertPermanentAttributes,
+        ) -> AvbIoResult<()> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avb_cert_read_permanent_attributes_hash(
+            &mut self,
+        ) -> AvbIoResult<[u8; SHA256_DIGEST_SIZE]> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn get_partition_buffer(
+            &self,
+            _: &Partition,
+        ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
+            Err::<PartitionBuffer<&mut [u8]>, _>(Error::Unsupported)
+        }
+
+        fn sync_partition_buffer(&mut self, _: bool) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
+            None
+        }
+
+        fn fixup_bootconfig<'c>(
+            &mut self,
+            _: &[u8],
+            _: &'c mut [u8],
+        ) -> Result<Option<&'c [u8]>, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn fixup_device_tree(&mut self, _: &mut [u8]) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn select_device_trees(
+            &mut self,
+            _: &mut device_tree::DeviceTreeComponentsRegistry,
+        ) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn select_fit_configuration(
+            &mut self,
+            _: &[u8],
+            _: Option<&[u8]>,
+        ) -> Result<Option<usize>, Error> {
+            Err(Error::Unsupported)
+        }
+
+        async fn read_from_partition<'b>(
+            &mut self,
+            _: &str,
+            _: u64,
+            _: impl Into<&'b mut UninitSlice>,
+        ) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        /// Writes data to a partition.
+        async fn write_to_partition(&mut self, _: &str, _: u64, _: &mut [u8]) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn partition_size(&mut self, _: &str) -> Result<Option<u64>, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn avb_handle_verification_result<'b>(
+            &mut self,
+            _: VerificationStatus,
+            _: Option<&CStr>,
+            _: Option<impl Iterator<Item = AvbProperty<'b>>>,
+            _: Option<impl Iterator<Item = AvbPartition<'b>>>,
+        ) -> AvbIoResult<()> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avb_validate_vbmeta_public_key(
+            &self,
+            _: &[u8],
+            _: Option<&[u8]>,
+        ) -> AvbIoResult<KeyValidationStatus> {
+            Err(AvbIoError::NotImplemented)
+        }
+
+        fn avf_is_supported(&mut self) -> Result<bool, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn avf_read_vendor_dice_handover<'c>(
+            &mut self,
+            _: &'c mut [u8],
+        ) -> Result<&'c [u8], Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn avf_read_secretkeeper_public_key<'c>(
+            &mut self,
+            _: &'c mut [u8],
+        ) -> Result<Option<&'c [u8]>, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn get_slot_count(&mut self) -> Result<u8, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn get_slot_info(&mut self, _: u8) -> Result<Slot, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn get_current_slot(&mut self) -> Result<Slot, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn set_active_slot(&mut self, _: u8) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn handle_loaded_os(&mut self, _: &[u8], _: &[u8], _: &[u8]) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn get_base_sp(&mut self) -> Option<usize> {
+            None
+        }
+
+        fn fastboot_variable<'arg>(
+            &mut self,
+            _: &CStr,
+            _: impl Iterator<Item = &'arg CStr> + Clone,
+            _: &mut [u8],
+        ) -> Result<usize, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn fastboot_visit_all_variables(
+            &mut self,
+            _: impl FnMut(&mut Self, &[&CStr], &CStr),
+        ) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn fastboot_get_staged(&mut self, _: &mut [u8]) -> Result<(usize, usize), Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn avb_write_lock_state(&mut self, _: LockType, _: LockState) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn fastboot_read_lock_state(&mut self, _: LockType) -> Result<LockState, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn fastboot_get_unlock_ability(&mut self) -> Result<Unlockability, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn fastboot_vendor_erase(&mut self, _part: &str) -> Result<FastbootEraseAction, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn fastboot_command_exec<'arg, Sender: InfoSender + OkaySender + FailSender>(
+            &mut self,
+            _: impl Iterator<Item = &'arg CStr> + Clone,
+            _: &mut [u8],
+            _: usize,
+            _: Sender,
+        ) -> Result<CommandExecType, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn get_profiling_backend(&self) -> impl ProfileBackend {
+            NullProfiler {}
+        }
+    }
+
     #[test]
     fn calculate_stack_usage() {
         let storage = FakeGblOpsStorage::default();
