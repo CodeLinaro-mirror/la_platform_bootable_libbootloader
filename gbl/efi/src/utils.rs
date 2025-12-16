@@ -266,6 +266,7 @@ impl<'a> FastbootBuffer<'a> {
 
 impl Drop for FastbootBuffer<'_> {
     fn drop(&mut self) {
+        self.buffer.take();
         gbl_clear_boot_buffer(self.entry, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD).unwrap();
     }
 }
