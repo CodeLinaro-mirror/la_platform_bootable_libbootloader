@@ -262,22 +262,19 @@ where
         send.send_var_info(DEFAULT_BLOCK, [], self.get_var_default_block(&mut buf)?).await?;
         self.get_all_partition_size_type(send).await?;
 
-        send.send_var_info(
-            UNLOCKED,
-            [],
-            self.gbl_ops.fastboot_read_lock_state(fastboot::LockType::Device)?.as_unlocked_str(),
-        )
-        .await?;
-        send.send_var_info(
-            UNLOCKED_CRITICAL,
-            [],
-            self.gbl_ops.fastboot_read_lock_state(fastboot::LockType::Critical)?.as_unlocked_str(),
-        )
-        .await?;
+        for (lock_var, lock_type) in [
+            (UNLOCKED, fastboot::LockType::Device),
+            (UNLOCKED_CRITICAL, fastboot::LockType::Critical),
+        ] {
+            match self.gbl_ops.fastboot_read_lock_state(lock_type).map(|v| v.as_unlocked_str()) {
+                Err(e) => gbl_println!(self.gbl_ops, "Failed to get {lock_var}: {e}"),
+                Ok(v) => send.send_var_info(lock_var, [], v).await?,
+            };
+        }
 
         // Gets platform specific variables
         let tasks = self.tasks();
-        Ok(self.gbl_ops.fastboot_visit_all_variables(|ops, args, val| {
+        let _ = self.gbl_ops.fastboot_visit_all_variables(|ops, args, val| {
             if let Some((name, args)) = args.split_first_chunk::<1>() {
                 let name = name[0].to_str().unwrap_or("?");
                 // Needs to split because the interface allows backend to pass ':' concatenated
@@ -293,16 +290,20 @@ where
                 }
                 let args = args.iter().map(|v| v.to_str().unwrap_or("?"));
                 let val = val.to_str().unwrap_or("?");
-                // Manually polls async tasks so that we can still get parallelism while running in
-                // the context of backend.
+                // Manually polls async tasks so that we can still get parallelism while
+                // running in the context of backend.
                 let _ = block_on(select(send.send_var_info(name, args, val), async {
                     loop {
                         tasks.borrow_mut().poll_all();
                         yield_now().await;
                     }
-                }));
+                }))
+                .0
+                .transpose() // Option<Result<>> -> Result<Option<>>
+                .inspect_err(|e| gbl_println!(ops, "Failed to get platform vars: {e}"));
             }
-        })?)
+        });
+        Ok(())
     }
 
     /// Gets the max-download-size variable.
