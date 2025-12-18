@@ -125,6 +125,7 @@ pub struct Ops<'a, 'b> {
     /// Expected to be optionally provided during `handle_loaded_os`.
     pub os_entry_point: Option<GblEfiOsEntryPoint>,
     pub base_sp: usize,
+    pause_fastboot: bool,
 }
 
 impl<'a, 'b> Ops<'a, 'b> {
@@ -143,6 +144,7 @@ impl<'a, 'b> Ops<'a, 'b> {
             os,
             os_entry_point: None,
             base_sp,
+            pause_fastboot: false,
         }
     }
 
@@ -951,14 +953,28 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
             Err(Error::NotFound | Error::Unsupported) => {
                 use crate::utils::wait_key_stroke;
                 use core::time::Duration;
-                efi_println!(self.efi_entry, "Press 'f' to enter fastboot");
-                let pred = |key: efi_types::EfiInputKey| key.unicode_char == b'f' as _;
+                efi_println!(
+                    self.efi_entry,
+                    "Press 'f' to enter fastboot now, 'p' to enter fastboot after load."
+                );
+                let pred = |key: efi_types::EfiInputKey| b"pf".contains(&(key.unicode_char as u8));
                 match wait_key_stroke(self.efi_entry, pred, Duration::from_secs(2)) {
-                    Ok(true) => {
-                        efi_println!(self.efi_entry, "'f' pressed");
-                        Ok(Some(OneShotBootMode::Bootloader))
+                    Ok(Some(v)) => {
+                        efi_println!(
+                            self.efi_entry,
+                            "{:?} pressed",
+                            char::from_u32(v.unicode_char.into()).unwrap_or('?')
+                        );
+                        match v.unicode_char as u8 {
+                            b'p' => {
+                                self.pause_fastboot = true;
+                                Ok(None)
+                            }
+                            b'f' => Ok(Some(OneShotBootMode::Bootloader)),
+                            _ => unreachable!(),
+                        }
                     }
-                    Ok(false) => Ok(None),
+                    Ok(_) => Ok(None),
                     Err(e) => {
                         efi_println!(self.efi_entry, "wait_key_stroke failed: {e}");
                         Err(e)
@@ -967,6 +983,10 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
             }
             Err(e) => Err(e),
         }
+    }
+
+    fn one_shot_pause_fastboot_after_load(&mut self) -> bool {
+        core::mem::take(&mut self.pause_fastboot)
     }
 
     fn get_slot_count(&mut self) -> Result<u8> {

@@ -141,24 +141,28 @@ where
 
 /// Waits for a key stroke value from simple text input.
 ///
-/// Returns `Ok(true)` if the expected key stroke is read, `Ok(false)` if timeout, `Err` otherwise.
+/// # Returns
+///
+/// * Returns `Ok(Some(key))` if a key is received that satisfies `pred(key) == true`.
+/// * Returns `Ok(None)` if no key is received that satisfies `pred(key) == true`.
+/// * Returns `Err` on error.
 pub fn wait_key_stroke(
     efi_entry: &EfiEntry,
     pred: impl Fn(EfiInputKey) -> bool,
     timeout: Duration,
-) -> Result<bool> {
+) -> Result<Option<EfiInputKey>> {
     let input = efi_entry
         .system_table()
         .boot_services()
         .find_first_and_open::<SimpleTextInputProtocol>()?;
-    loop_with_timeout(efi_entry, timeout, || -> core::result::Result<Result<bool>, bool> {
+    loop_with_timeout(efi_entry, timeout, || -> core::result::Result<Result<EfiInputKey>, bool> {
         match input.read_key_stroke() {
-            Ok(Some(key)) if pred(key) => Ok(Ok(true)),
+            Ok(Some(key)) if pred(key) => Ok(Ok(key)),
             Err(e) => Ok(Err(e.into())),
             _ => Err(false),
         }
     })?
-    .unwrap_or(Ok(false))
+    .transpose()
 }
 
 // Converts an EFI memory type to a zbi_mem_range_t type.

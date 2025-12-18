@@ -537,6 +537,13 @@ pub trait GblOps<'a> {
     /// Gets the one-shot boot mode.
     fn get_one_shot_boot_mode(&mut self) -> Result<Option<OneShotBootMode>, Error>;
 
+    /// Returns whether GBL should pause after loading images and before booting OS .
+    fn one_shot_pause_fastboot_after_load(&mut self) -> bool {
+        // TODO(b/468009593): Removes and implements in all existing backends once breaking changes
+        // are in.
+        false
+    }
+
     /// Handles a loaded OS before booting.
     ///
     /// # Args

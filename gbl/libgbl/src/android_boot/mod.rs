@@ -21,15 +21,16 @@ use crate::{
     },
     fastboot::{
         boot_items::{BootItem, BootItemContainer},
-        run_gbl_fastboot, run_gbl_fastboot_stack, BufferPool, GblFastbootResult,
-        GblGenericTransport, GblTcpStream, LoadedImageInfo, PinFutContainer, Shared,
+        run_gbl_fastboot, run_gbl_fastboot_stack, split_loaded_android, BufferPool,
+        GblFastbootResult, GblFbData, GblGenericTransport, GblTcpStream, LoadedImageInfo,
+        PinFutContainer, Shared,
     },
     gbl_avb::{ArrayMaxParts, ArrayMaxRequestedParts},
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message},
     ops::{OneShotBootMode, PartitionBuffer},
     slots::Slot,
-    GblOps, Result,
+    GblOps, IntegrationError, Result,
 };
 use avb::IoError;
 use bootparams::{
@@ -457,11 +458,20 @@ pub(crate) fn get_boot_slot<'a>(ops: &mut impl GblOps<'a>) -> Result<Slot> {
     }
 }
 
+/// Contains loaded, verified and fixed-up images.
+#[derive(Copy, Clone)]
+pub(crate) struct LoadedImages<'a> {
+    pub(crate) ramdisk: &'a [u8],
+    pub(crate) fdt: &'a [u8],
+    pub(crate) kernel: &'a [u8],
+}
+
 /// Provides methods to run GBL fastboot.
 pub struct GblFastbootEntry<'a, G> {
     pub(crate) ops: &'a mut G,
     pub(crate) boot_buffer: BootBuffer<'a>,
     pub(crate) result: &'a mut GblFastbootResult,
+    pub(crate) load_result: Option<core::result::Result<LoadedImages<'a>, &'a IntegrationError>>,
 }
 
 impl<'a, 'b, G> GblFastbootEntry<'b, G>
@@ -476,7 +486,8 @@ where
     ///    download buffers.
     /// * `tasks`: An implementation of `PinFutContainer` used as task container for GBL fastboot to
     ///   schedule dynamically spawned async tasks.
-    /// * `transports`: Implementation of `GblGenericTransport` which exchanges fastboot packet from platform
+    /// * `transports`: Implementation of `GblGenericTransport` which exchanges fastboot packet
+    ///   from platform.
     ///   specific channels i.e. UX.
     /// * `tcp`: An implementation of `GblTcpStream` that represents TCP channel.
     ///
@@ -492,8 +503,8 @@ where
         'a: 'd,
         'b: 'd,
     {
-        *self.result =
-            run_gbl_fastboot(self.ops, buffer_pool, tasks, transports, tcp, self.boot_buffer).await;
+        let data = GblFbData { boot_buffer: self.boot_buffer, load_result: self.load_result };
+        *self.result = run_gbl_fastboot(self.ops, buffer_pool, tasks, transports, tcp, data).await;
         self.ops
     }
 
@@ -529,13 +540,8 @@ where
             arr[i] = v;
         }
         let bufs = &mut arr[..];
-        *self.result = block_on(run_gbl_fastboot_stack::<N>(
-            self.ops,
-            bufs,
-            transports,
-            tcp,
-            self.boot_buffer,
-        ));
+        let data = GblFbData { boot_buffer: self.boot_buffer, load_result: self.load_result };
+        *self.result = block_on(run_gbl_fastboot_stack::<N>(self.ops, bufs, transports, tcp, data));
         self.ops
     }
 
@@ -630,7 +636,7 @@ impl Default for BootBuffer<'_> {
 pub fn android_main<'a, 'b, G: GblOps<'a>>(
     ops: &mut G,
     mut boot_buffer: BootBuffer<'b>,
-    run_fastboot: impl FnOnce(GblFastbootEntry<'_, G>),
+    mut run_fastboot: impl FnMut(GblFastbootEntry<'_, G>),
 ) -> Result<(&'b [u8], &'b [u8], &'b [u8], &'b mut [u8])> {
     let bcb = read_bootloader_message_to(ops, boot_buffer.scratch()).inspect_err(|e| {
         gbl_println!(ops, "Failed to read bootloader message from misc partition: {e}")
@@ -660,19 +666,22 @@ pub fn android_main<'a, 'b, G: GblOps<'a>>(
 
     let slot = get_boot_slot(ops)?;
 
+    let result = &mut Default::default();
     // Checks and enters fastboot.
     if matches!(
         (one_shot_boot_mode, boot_mode),
         (Some(OneShotBootMode::Bootloader), _) | (None, AndroidBootMode::BootloaderBootOnce)
     ) {
-        let result = &mut Default::default();
-
         gbl_println!(ops, "Entering fastboot mode...");
-        // TODO(b/430068343): Support designated buffers for `fastboot boot`.
-        run_fastboot(GblFastbootEntry { ops, boot_buffer: boot_buffer.as_borrowed(), result });
+        run_fastboot(GblFastbootEntry {
+            ops,
+            boot_buffer: boot_buffer.as_borrowed(),
+            result,
+            load_result: None,
+        });
         gbl_println!(ops, "Leaving fastboot mode...");
         // Checks if "fastboot boot" has loaded an android image.
-        if matches!(&result.loaded_image_info, Some(LoadedImageInfo::Android { .. })) {
+        if matches!(&result.loaded_image_info, LoadedImageInfo::Android { .. }) {
             gbl_println!(ops, "Booting from \"fastboot boot\"");
             return Ok(result.split_loaded_android(boot_buffer).unwrap());
         }
@@ -689,7 +698,33 @@ pub fn android_main<'a, 'b, G: GblOps<'a>>(
 
     let is_recovery = boot_mode.should_enter_recovery()
         || matches!(one_shot_boot_mode, Some(OneShotBootMode::Recovery));
-    android_load_verify_fixup(ops, slot, is_recovery, boot_buffer)
+    let load_res = android_load_verify_fixup(ops, slot, is_recovery, boot_buffer.as_borrowed())
+        .map(|(ramdisk, fdt, kernel, _)| {
+            let [ramdisk, fdt, kernel] = [ramdisk, fdt, kernel].map(|v| v.as_ptr_range());
+            LoadedImageInfo::Android { ramdisk, fdt, kernel }
+        });
+
+    match result.pause_in_fastboot || ops.one_shot_pause_fastboot_after_load() {
+        true => {
+            let result = &mut Default::default();
+            // Some fastboot functions require a general load buffer as scratch. Use `unused` when
+            // load is successful to prevent clobbering of images, otherwise use `boot_buffer`.
+            let (load_res, boot_buffer) = match load_res.as_ref() {
+                Ok(v) => {
+                    let (ramdisk, fdt, kernel, unused) =
+                        split_loaded_android(v.clone(), boot_buffer.as_borrowed()).unwrap();
+                    (Ok(LoadedImages { ramdisk, fdt, kernel }), unused.into())
+                }
+                Err(e) => (Err(e), boot_buffer.as_borrowed()),
+            };
+            let load_result = Some(load_res.inspect_err(|e| gbl_println!(ops, "Load failed: {e}")));
+            gbl_println!(ops, "Pausing in fastboot...");
+            run_fastboot(GblFastbootEntry { ops, boot_buffer, result, load_result });
+            gbl_println!(ops, "Device stage may have changed. Rebooting...");
+            ops.reboot()?;
+        }
+        _ => Ok(split_loaded_android(load_res?, boot_buffer).unwrap()),
+    }
 }
 
 #[cfg(test)]
@@ -2622,5 +2657,111 @@ androidboot.veritymode.managed=yes
                 assert_eq!(r, Err(Error::NotFound.into()));
             }
         }
+    }
+
+    #[test]
+    fn test_android_main_post_load_fastboot() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
+        let listener: SharedTestListener = Default::default();
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
+        let load_buffer = (&mut load_buffer[..]).into();
+        let res = android_main(&mut ops, load_buffer, |fb| {
+            listener.add_transport_input(b"oem gbl-stage kernel");
+            listener.add_transport_input(b"oem gbl-stage ramdisk");
+            listener.add_transport_input(b"oem gbl-stage fdt");
+            listener.add_transport_input(b"oem gbl-pause-fastboot-after-load");
+            listener.add_transport_input(b"continue");
+            listener.add_transport_input(b"oem gbl-stage kernel");
+            listener.add_transport_input(b"upload");
+            listener.add_transport_input(b"oem gbl-stage ramdisk");
+            listener.add_transport_input(b"upload");
+            listener.add_transport_input(b"oem gbl-stage fdt");
+            listener.add_transport_input(b"upload");
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
+        });
+        assert_eq!(res.unwrap_err(), Error::Aborted.into());
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
+                b"FAILImages not loaded. Run \"oem gbl-pause-fastboot-after-load\"",
+                b"FAILImages not loaded. Run \"oem gbl-pause-fastboot-after-load\"",
+                b"FAILImages not loaded. Run \"oem gbl-pause-fastboot-after-load\"",
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+                b"OKAY",
+                &listener.transport_out_queue()[7],
+                &listener.transport_out_queue()[8],
+                b"OKAY",
+                b"OKAY",
+                &listener.transport_out_queue()[11],
+                &listener.transport_out_queue()[12],
+                b"OKAY",
+                b"OKAY",
+                &listener.transport_out_queue()[15],
+                &listener.transport_out_queue()[16],
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+
+        // Checks that we have uploaded a valid device tree.
+        let fdt = &listener.transport_out_queue()[16];
+        let fdt = fdt::Fdt::new(fdt).unwrap();
+        fdt.get_property("/chosen", c"linux,initrd-start").unwrap();
+        let kernel = listener.transport_out_queue()[8].to_vec();
+        let ramdisk = listener.transport_out_queue()[12].to_vec();
+        checks_loaded_v2_slot_a_normal_mode(&ramdisk, &kernel);
+    }
+
+    #[test]
+    fn test_android_main_post_load_fastboot_load_failed() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v1_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
+        let listener: SharedTestListener = Default::default();
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
+        let load_buffer = (&mut load_buffer[..]).into();
+        let res = android_main(&mut ops, load_buffer, |fb| {
+            listener.add_transport_input(b"oem gbl-pause-fastboot-after-load");
+            listener.add_transport_input(b"continue");
+            listener.add_transport_input(b"oem gbl-stage kernel");
+            listener.add_transport_input(b"oem gbl-stage ramdisk");
+            listener.add_transport_input(b"oem gbl-stage fdt");
+            listener.add_transport_input(b"continue");
+            fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
+        });
+        assert_eq!(res.unwrap_err(), Error::Aborted.into());
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
+                b"OKAY",
+                b"INFOSyncing storage...",
+                b"OKAY",
+                b"FAILLoad didn't succeed: AvbSlotVerifyError(Verification(None))",
+                b"FAILLoad didn't succeed: AvbSlotVerifyError(Verification(None))",
+                b"FAILLoad didn't succeed: AvbSlotVerifyError(Verification(None))",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ]),
+            "\nActual USB output:\n{}",
+            listener.dump_transport_out_queue()
+        );
     }
 }
