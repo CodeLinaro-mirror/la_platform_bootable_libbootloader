@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@gbl//toolchain:licenses.bzl", "generate_license")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
 package(
     default_visibility = ["//visibility:public"],
 )
+
+generate_license()
 
 # Upstream smoltcp uses a custom script in the cargo build flow to generate a `config.rs`
 # containing a set of configurations. We don't use cargo. Thus we use a pre-generated
@@ -90,6 +93,7 @@ rust_library(
         "src/crate_root.rs",
         "src/fixup.rs",
     ],
+    applicable_licenses = [":license"],
     crate_features = [
         "medium-ethernet",
         "proto-ipv4",

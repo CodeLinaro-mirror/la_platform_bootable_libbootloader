@@ -43,22 +43,36 @@ def rust_crate_build_file(
         A string for the BUILD file content.
     """
     crate_name = name if len(crate_name) == 0 else crate_name
-    deps = "[{}]".format(",".join(["\"{}\"".format(ele) for ele in deps]))
-    proc_macro_deps = "[{}]".format(",".join(["\"{}\"".format(ele) for ele in proc_macro_deps]))
-    features = "[{}]".format(",".join(["\"{}\"".format(ele) for ele in features]))
-    rustc_flags = "[{}]".format(",".join(["\"{}\"".format(ele) for ele in rustc_flags]))
+    deps = "[{}]".format(",".join(['"{}"'.format(ele) for ele in deps]))
+    proc_macro_deps = "[{}]".format(",".join(['"{}"'.format(ele) for ele in proc_macro_deps]))
+    features = "[{}]".format(",".join(['"{}"'.format(ele) for ele in features]))
+    rustc_flags = "[{}]".format(",".join(['"{}"'.format(ele) for ele in rustc_flags]))
+
     return """
-load("@rules_rust//rust:defs.bzl", \"{rule}\")
+load("@rules_rust//rust:defs.bzl", "{rule}")
+load("@gbl//toolchain:licenses.bzl", "generate_license")
+
+generate_license(name = "license")
 
 {rule}(
-    name = \"{}\",
-    crate_name = \"{}\",
+    name = "{name}",
+    crate_name = "{crate_name}",
     srcs = glob(["**/*.rs"]),
-    crate_features = {},
-    edition = \"{edition}\",
-    rustc_flags = {},
+    crate_features = {features},
+    edition = "{edition}",
+    rustc_flags = {rustc_flags},
     visibility = ["//visibility:public"],
-    deps = {},
-    proc_macro_deps = {}
+    deps = {deps},
+    proc_macro_deps = {proc_macro_deps},
+    applicable_licenses = [":license"],
 )
-""".format(name, crate_name, features, rustc_flags, deps, proc_macro_deps, edition = edition, rule = rule)
+""".format(
+        name = name,
+        crate_name = crate_name,
+        features = features,
+        rustc_flags = rustc_flags,
+        deps = deps,
+        proc_macro_deps = proc_macro_deps,
+        edition = edition,
+        rule = rule,
+    )
