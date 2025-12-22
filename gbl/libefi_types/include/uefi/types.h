@@ -31,7 +31,7 @@
 
 #include "gbl_protocol_utils.h"
 
-typedef void* EfiHandle;
+typedef const void* EfiHandle;
 typedef void* EfiEvent;
 typedef uint64_t EfiPhysicalAddr;
 typedef uint64_t EfiVirtualAddr;

@@ -53,13 +53,14 @@
 
 extern crate alloc;
 use alloc::vec::Vec;
+use core::ptr::NonNull;
 
 #[cfg(not(test))]
 mod allocation;
 
 #[cfg(test)]
 thread_local! {
-    static GLOBAL_EFI_ENTRY: std::cell::RefCell<Option<core::ptr::NonNull<EfiEntry>>> = std::cell::RefCell::new(None);
+    static GLOBAL_EFI_ENTRY: std::cell::RefCell<Option<NonNull<EfiEntry>>> = std::cell::RefCell::new(None);
 }
 
 /// Escape valve for operations that need the global EfiEntry
@@ -105,7 +106,12 @@ pub mod protocol;
 pub mod utils;
 
 use cfg_if::cfg_if;
-use core::{marker::PhantomData, ptr::null_mut, slice::from_raw_parts, time::Duration};
+use core::{
+    marker::PhantomData,
+    ptr::{null, null_mut},
+    slice::from_raw_parts,
+    time::Duration,
+};
 use efi_types::{
     defs::{
         EfiAllocatorType, EfiBootService, EfiConfigurationTable, EfiEvent, EfiGuid, EfiHandle,
@@ -129,6 +135,7 @@ use zerocopy::{FromBytes, Ref};
 
 /// `EfiEntry` stores the EFI system table pointer and image handle passed from the entry point.
 /// It's the root data structure that derives all other wrapper APIs and structures.
+#[derive(Debug)]
 pub struct EfiEntry {
     image_handle: EfiHandle,
     systab_ptr: *const EfiSystemTable,
@@ -356,6 +363,15 @@ pub struct BootServices<'a> {
 }
 
 impl<'a> BootServices<'a> {
+    /// Maximum number of handles to try locating via `locate_handles_by_protocol` in
+    /// `find_first_and_open`.
+    ///
+    /// Many protocols we want to open via `find_first_and_open` have only have a few
+    /// handles, so we pick an empirically reasonable size for the array.
+    /// If the call to `locate_handles_by_protocol` fails with BUFFER_TOO_SMALL,
+    /// fall back to finding handles via `locate_handle_buffer_by_protocol`.
+    const LOCATE_HANDLE_BUFFER_SIZE: usize = 8;
+
     /// Wrapper of `EFI_BOOT_SERVICES.AllocatePool()`.
     #[allow(dead_code)]
     fn allocate_pool(
@@ -402,14 +418,14 @@ impl<'a> BootServices<'a> {
 
     /// Wrapper of `EFI_BOOT_SERVICES.OpenProtocol()`.
     pub fn open_protocol<T: ProtocolImpl>(&self, handle: DeviceHandle) -> Result<Protocol<'a, T>> {
-        let mut out_handle: EfiHandle = null_mut();
+        let mut out_handle: EfiHandle = null();
         // SAFETY: EFI_BOOT_SERVICES method call.
         unsafe {
             efi_call!(
                 self.boot_services.open_protocol,
                 handle.0,
                 &T::GUID,
-                &mut out_handle as *mut _,
+                &mut out_handle,
                 self.efi_entry.image_handle().0,
                 null_mut(),
                 EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL
@@ -442,6 +458,34 @@ impl<'a> BootServices<'a> {
         }
     }
 
+    /// Call `EFI_BOOT_SERVICES.LocateHandle()` with fixed
+    /// `EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL`, user provided buffer,
+    /// and without a search key.
+    pub fn locate_handles_by_protocol<T: ProtocolImpl>(
+        &self,
+        buffer: &'a mut [DeviceHandle],
+    ) -> Result<LocatedHandles<'a>> {
+        let mut num_handles = buffer.len();
+        // SAFETY:
+        // * EFI_BOOT_SERVICES method call.
+        // * NULL is valid for `search_key`.
+        // * `num_handles` is valid to read and write.
+        // * `buffer` is valid to write for `num_handles` elements.
+        unsafe {
+            efi_call!(
+                @bufsize num_handles,
+                self.boot_services.locate_handle,
+                EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL,
+                &T::GUID,
+                null(),
+                &mut num_handles,
+                buffer.as_mut_ptr() as *mut _,
+            )?
+        };
+
+        Ok(LocatedHandles::new_borrowed(&buffer[..num_handles]))
+    }
+
     /// Call `EFI_BOOT_SERVICES.LocateHandleBuffer()` with fixed
     /// `EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL` and without search key.
     pub fn locate_handle_buffer_by_protocol<T: ProtocolImpl>(&self) -> Result<LocatedHandles<'a>> {
@@ -458,21 +502,39 @@ impl<'a> BootServices<'a> {
                 &mut handles as *mut *mut EfiHandle
             )?
         };
-        // `handles` should be a valid pointer if the above succeeds. But just double check
-        // to be safe. If assert fails, then there's a bug in the UEFI firmware.
-        assert!(!handles.is_null());
-        Ok(LocatedHandles::new(handles, num_handles, &self.efi_entry))
+
+        // SAFETY:
+        // * If the call to `locate_handle_buffer` succeeded,
+        //   `handles` should point to a `num_handles` length array
+        //   of DeviceHandles.
+        // * This code transfers ownership of the `handles` pointer.
+        Ok(unsafe {
+            LocatedHandles::new_allocated(
+                NonNull::new(handles).ok_or(Error::InvalidInput)?,
+                num_handles,
+                &self.efi_entry,
+            )
+        })
     }
 
     /// Search and open the first found target EFI protocol.
     pub fn find_first_and_open<T: ProtocolImpl>(&self) -> Result<Protocol<'a, T>> {
         // We don't use EFI_BOOT_SERVICES.LocateProtocol() because it doesn't give device handle
         // which is required to close the protocol.
-        let handle = self
-            .locate_handle_buffer_by_protocol::<T>()
-            .and_then(|lh| lh.handles().first().cloned().ok_or(Error::NotFound))
-            .inspect_err(|_| log_missing_protocol::<T>(self.efi_entry))?;
-        self.open_protocol::<T>(handle)
+        //
+        // Try locating handles first using an automatically allocated array.
+        // If the array isn't big enough, fall back to dynamically allocating the array.
+        let mut handles = [DeviceHandle::new(null()); Self::LOCATE_HANDLE_BUFFER_SIZE];
+        let helper = |hs| match self.locate_handles_by_protocol::<T>(hs) {
+            Ok(h) => Ok(h),
+            Err(Error::BufferTooSmall(_)) => self.locate_handle_buffer_by_protocol::<T>(),
+            Err(e) => Err(e),
+        };
+
+        helper(&mut handles)
+            .and_then(|l| l.handles().first().cloned().ok_or(Error::NotFound))
+            .inspect_err(|_| log_missing_protocol::<T>(self.efi_entry))
+            .and_then(|handle| self.open_protocol::<T>(handle))
     }
 
     /// Wrapper of `EFI_BOOT_SERVICE.GetMemoryMap()`.
@@ -1048,37 +1110,59 @@ impl DeviceHandle {
     }
 }
 
-/// `LocatedHandles` holds the array of handles return by
-/// `BootServices::locate_handle_buffer_by_protocol()`.
-pub struct LocatedHandles<'a> {
-    handles: &'a [DeviceHandle],
-    efi_entry: &'a EfiEntry,
+/// `LocatedHandles` holds the array of handles returned by
+/// `BootServices::locate_handle_buffer_by_protocol()` or
+/// `BootServices::locate_handles_by_protocol()`.
+pub enum LocatedHandles<'a> {
+    /// The handle buffer was allocated dynamically and must be explicitly freed.
+    Allocated {
+        /// The handles
+        handles: &'a [DeviceHandle],
+        /// Efi entry
+        efi_entry: &'a EfiEntry,
+    },
+    /// The handle buffer has been borrowed.
+    Borrowed(&'a [DeviceHandle]),
 }
 
 impl<'a> LocatedHandles<'a> {
-    pub(crate) fn new(handles: *mut EfiHandle, len: usize, efi_entry: &'a EfiEntry) -> Self {
-        // Implementation is not suppose to call this with a NULL pointer.
-        debug_assert!(!handles.is_null());
-        Self {
-            // SAFETY: Given correct UEFI firmware, non-null pointer points to valid memory.
-            // The memory is owned by the objects.
-            handles: unsafe { from_raw_parts(handles as *mut DeviceHandle, len) },
+    /// SAFETY:
+    /// * `handles` is a non-null dynamically allocated pointer to `len` EfiHandles.
+    /// * No other code has access to `handles` after the call.
+    pub(crate) unsafe fn new_allocated(
+        handles: NonNull<EfiHandle>,
+        len: usize,
+        efi_entry: &'a EfiEntry,
+    ) -> Self {
+        Self::Allocated {
+            // SAFETY:
+            // * It is the caller's responsibility to guarantee that `handles` is a
+            //   valid array of DeviceHandle of size `len`.
+            // * It is the caller's responsibility to guarantee that no other code
+            //   can access `handles` after the call.
+            handles: unsafe { from_raw_parts(handles.as_ptr() as *const DeviceHandle, len) },
             efi_entry: efi_entry,
         }
     }
+
+    pub(crate) fn new_borrowed(handles: &'a [DeviceHandle]) -> Self {
+        Self::Borrowed(handles)
+    }
+
     /// Get the list of handles as a slice.
     pub fn handles(&self) -> &[DeviceHandle] {
-        self.handles
+        match self {
+            Self::Allocated { handles, .. } => handles,
+            Self::Borrowed(handles) => handles,
+        }
     }
 }
 
 impl Drop for LocatedHandles<'_> {
     fn drop(&mut self) {
-        self.efi_entry
-            .system_table()
-            .boot_services()
-            .free_pool(self.handles.as_ptr() as *mut _)
-            .unwrap();
+        if let Self::Allocated { handles, efi_entry } = self {
+            efi_entry.system_table().boot_services().free_pool(handles.as_ptr() as *mut _).unwrap();
+        }
     }
 }
 
@@ -1246,9 +1330,10 @@ mod test {
         EfiBlockIoProtocol, EfiEventNotify, EfiHandle, EfiLocateHandleSearchType,
         EfiMemoryAttribute, EfiOpenProtocolAttributes, EfiSimpleTextOutputProtocol, EfiStatus,
         EfiTpl, GblEfiDebugErrorTag, GblEfiDebugProtocol, EFI_MEMORY_TYPE_LOADER_CODE,
-        EFI_MEMORY_TYPE_LOADER_DATA, EFI_STATUS_DEVICE_ERROR, EFI_STATUS_INVALID_PARAMETER,
-        EFI_STATUS_NOT_FOUND, EFI_STATUS_NOT_READY, EFI_STATUS_SUCCESS, EFI_STATUS_UNSUPPORTED,
-        EFI_TIMER_DELAY_TIMER_PERIODIC, GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
+        EFI_MEMORY_TYPE_LOADER_DATA, EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_DEVICE_ERROR,
+        EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_NOT_FOUND, EFI_STATUS_NOT_READY,
+        EFI_STATUS_SUCCESS, EFI_STATUS_UNSUPPORTED, EFI_TIMER_DELAY_TIMER_PERIODIC,
+        GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
     };
     use std::{cell::RefCell, collections::VecDeque, mem::size_of, slice::from_raw_parts_mut};
     use utils::RecurringTimer;
@@ -1283,6 +1368,7 @@ mod test {
         pub get_memory_map_trace: GetMemoryMapTrace,
         pub handle_protocol_trace: HandleProtocolTrace,
         pub locate_handle_buffer_trace: LocateHandleBufferTrace,
+        pub locate_handle_trace: LocateHandleTrace,
         pub open_protocol_trace: OpenProtocolTrace,
         pub reset_trace: ResetTrace,
         pub set_timer_trace: SetTimerTrace,
@@ -1338,7 +1424,7 @@ mod test {
     unsafe extern "efiapi" fn open_protocol(
         handle: EfiHandle,
         protocol_guid: *const EfiGuid,
-        intf: *mut *mut core::ffi::c_void,
+        intf: *mut *const core::ffi::c_void,
         agent_handle: EfiHandle,
         _: EfiHandle,
         attr: EfiOpenProtocolAttributes,
@@ -1436,13 +1522,68 @@ mod test {
         pub outputs: VecDeque<*mut core::ffi::c_void>,
     }
 
+    #[derive(Default)]
+    pub struct LocateHandleTrace {
+        pub outputs: VecDeque<Vec<DeviceHandle>>,
+    }
+
     /// EFI_BOOT_SERVICE.LocateHandleBuffer.
     #[derive(Default)]
     pub struct LocateHandleBufferTrace {
         // Capture `protocol`.
         pub inputs: VecDeque<EfiGuid>,
         // For returning in `num_handles` and `buf`.
-        pub outputs: VecDeque<(usize, *mut DeviceHandle)>,
+        pub outputs: VecDeque<(usize, *const DeviceHandle)>,
+    }
+
+    /// Mock of the `EFI_BOOT_SERVICE.LocateHandle` C API in test environment.
+    ///
+    /// # Safety
+    ///
+    /// Caller is responsible for guaranteeing that
+    /// * `buffer_size` is valid to read and to write
+    /// * `buf` points to memory that is valid to write for `buffer_size` elements
+    ///
+    /// `search_type` should always be EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL and
+    /// `search_key` should always be NULL.
+    unsafe extern "efiapi" fn locate_handle(
+        search_type: EfiLocateHandleSearchType,
+        _protocol: *const EfiGuid,
+        search_key: *const core::ffi::c_void,
+        buffer_size: *mut usize,
+        buf: *mut EfiHandle,
+    ) -> EfiStatus {
+        assert_eq!(search_type, EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL);
+        assert_eq!(search_key, null_mut());
+        EFI_CALL_TRACES.with(|traces| {
+            if buf == null_mut() {
+                return EFI_STATUS_INVALID_PARAMETER;
+            }
+            let trace = &mut traces.borrow_mut().locate_handle_trace;
+            let Some(handles) = trace.outputs.pop_front() else {
+                return EFI_STATUS_DEVICE_ERROR;
+            };
+            let buf_size;
+            // SAFETY:
+            // * It is a precondition that `buffer_size` be valid to read and write.
+            unsafe {
+                buf_size = *buffer_size;
+                *buffer_size = handles.len();
+            }
+            if handles.len() > buf_size {
+                return EFI_STATUS_BUFFER_TOO_SMALL;
+            }
+            // SAFETY:
+            // * It is a precondition that `buf` be writable for at least
+            //  `buffer_size` elements.
+            // * If `buffer_size` were smaller than the number of handles,
+            //   we would have returned early already.
+            let out_handles = unsafe { from_raw_parts_mut(buf, handles.len()) };
+            for (handle, out) in core::iter::zip(handles, out_handles.iter_mut()) {
+                *out = handle.0;
+            }
+            EFI_STATUS_SUCCESS
+        })
     }
 
     /// Mock of the `EFI_BOOT_SERVICE.LocateHandleBuffer` C API in test environment.
@@ -1453,7 +1594,7 @@ mod test {
     unsafe extern "efiapi" fn locate_handle_buffer(
         search_type: EfiLocateHandleSearchType,
         protocol: *const EfiGuid,
-        search_key: *mut core::ffi::c_void,
+        search_key: *const core::ffi::c_void,
         num_handles: *mut usize,
         buf: *mut *mut EfiHandle,
     ) -> EfiStatus {
@@ -1710,6 +1851,7 @@ mod test {
         boot_services.close_protocol = Some(close_protocol);
         boot_services.handle_protocol = Some(handle_protocol);
         boot_services.locate_handle_buffer = Some(locate_handle_buffer);
+        boot_services.locate_handle = Some(locate_handle);
         boot_services.get_memory_map = Some(get_memory_map);
         boot_services.exit_boot_services = Some(exit_boot_services);
         boot_services.create_event = Some(create_event);
@@ -1867,11 +2009,14 @@ mod test {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
 
             // Set up locate_handle_buffer_trace trace.
-            let mut located_handles: [DeviceHandle; 3] =
-                [DeviceHandle(1 as *mut _), DeviceHandle(2 as *mut _), DeviceHandle(3 as *mut _)];
+            let mut located_handles: [DeviceHandle; 3] = [
+                DeviceHandle(1 as *const _),
+                DeviceHandle(2 as *const _),
+                DeviceHandle(3 as *const _),
+            ];
             EFI_CALL_TRACES.with(|traces| {
                 traces.borrow_mut().locate_handle_buffer_trace.outputs =
-                    VecDeque::from([(located_handles.len(), located_handles.as_mut_ptr())]);
+                    VecDeque::from([(located_handles.len(), located_handles.as_ptr())]);
             });
 
             {
@@ -1901,11 +2046,14 @@ mod test {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
 
             // Set up locate_handle_buffer_trace trace.
-            let mut located_handles: [DeviceHandle; 3] =
-                [DeviceHandle(1 as *mut _), DeviceHandle(2 as *mut _), DeviceHandle(3 as *mut _)];
+            let located_handles = [
+                DeviceHandle(1 as *const _),
+                DeviceHandle(2 as *const _),
+                DeviceHandle(3 as *const _),
+            ];
             EFI_CALL_TRACES.with(|traces| {
-                traces.borrow_mut().locate_handle_buffer_trace.outputs =
-                    VecDeque::from([(located_handles.len(), located_handles.as_mut_ptr())]);
+                traces.borrow_mut().locate_handle_trace.outputs =
+                    VecDeque::from([located_handles.into()]);
             });
 
             // Set up open_protocol trace.
@@ -1925,7 +2073,69 @@ mod test {
             EFI_CALL_TRACES.with(|traces| {
                 assert_eq!(
                     traces.borrow_mut().open_protocol_trace.inputs,
-                    [(DeviceHandle(1 as *mut _), BlockIoProtocol::GUID, image_handle),]
+                    [(DeviceHandle(1 as *const _), BlockIoProtocol::GUID, image_handle),]
+                );
+            });
+        })
+    }
+
+    #[test]
+    fn test_find_first_and_open_empty_handles() {
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+
+            // Set up locate_handle_buffer_trace trace.
+            EFI_CALL_TRACES.with(|traces| {
+                traces.borrow_mut().locate_handle_trace.outputs = VecDeque::from([vec![]]);
+            });
+
+            // Set up open_protocol trace.
+            let mut block_io: EfiBlockIoProtocol = Default::default();
+            EFI_CALL_TRACES.with(|traces| {
+                traces.borrow_mut().open_protocol_trace.outputs =
+                    VecDeque::from([(as_efi_handle(&mut block_io), EFI_STATUS_SUCCESS)]);
+            });
+
+            let res = efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<BlockIoProtocol>()
+                .unwrap_err();
+
+            assert_eq!(res, Error::NotFound);
+        })
+    }
+
+    #[test]
+    fn test_find_first_and_open_many_handles() {
+        run_test(|image_handle, systab_ptr| {
+            let efi_entry = EfiEntry { image_handle, systab_ptr };
+            let handles = (1..=BootServices::LOCATE_HANDLE_BUFFER_SIZE * 4)
+                .map(DeviceHandle::from)
+                .collect::<Vec<_>>();
+
+            let mut block_io: EfiBlockIoProtocol = Default::default();
+            EFI_CALL_TRACES.with(|traces| {
+                let mut traces = traces.borrow_mut();
+                traces.locate_handle_trace.outputs = VecDeque::from([handles.clone()]);
+                traces.locate_handle_buffer_trace.outputs =
+                    VecDeque::from([(handles.len(), handles.as_ptr())]);
+                traces.open_protocol_trace.outputs =
+                    VecDeque::from([(as_efi_handle(&mut block_io), EFI_STATUS_SUCCESS)])
+            });
+
+            efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<BlockIoProtocol>()
+                .unwrap();
+
+            EFI_CALL_TRACES.with(|traces| {
+                let traces = traces.borrow_mut();
+                assert_eq!(traces.locate_handle_buffer_trace.inputs, [BlockIoProtocol::GUID]);
+                assert_eq!(
+                    traces.open_protocol_trace.inputs,
+                    [(DeviceHandle::from(1), BlockIoProtocol::GUID, image_handle),]
                 );
             });
         })
@@ -2225,16 +2435,13 @@ mod test {
         run_test(|image_handle, systab_ptr| {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
 
-            let mut located_handles = [DeviceHandle(1 as *mut _)];
+            let located_handles = [DeviceHandle(1 as *const _)];
             let mut test = TestProtocol;
 
             efi_call_traces().with(|traces| {
                 let mut traces = traces.borrow_mut();
 
-                traces
-                    .locate_handle_buffer_trace
-                    .outputs
-                    .push_back((located_handles.len(), located_handles.as_mut_ptr()));
+                traces.locate_handle_trace.outputs.push_back(located_handles.into());
                 traces
                     .open_protocol_trace
                     .outputs
@@ -2262,7 +2469,7 @@ mod test {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
 
             efi_call_traces()
-                .with(|traces| traces.borrow_mut().locate_handle_buffer_trace.outputs.clear());
+                .with(|traces| traces.borrow_mut().locate_handle_trace.outputs.clear());
 
             assert!(efi_entry
                 .system_table()
@@ -2284,16 +2491,13 @@ mod test {
         run_test(|image_handle, systab_ptr| {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
 
-            let mut located_handles = [DeviceHandle(1 as *mut _)];
+            let located_handles = [DeviceHandle(1 as *const _)];
             let mut test = TestProtocol;
 
             efi_call_traces().with(|traces| {
                 let mut traces = traces.borrow_mut();
 
-                traces
-                    .locate_handle_buffer_trace
-                    .outputs
-                    .push_back((located_handles.len(), located_handles.as_mut_ptr()));
+                traces.locate_handle_trace.outputs.push_back(located_handles.into());
                 traces
                     .open_protocol_trace
                     .outputs
@@ -2321,7 +2525,7 @@ mod test {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
 
             efi_call_traces()
-                .with(|traces| traces.borrow_mut().locate_handle_buffer_trace.outputs.clear());
+                .with(|traces| traces.borrow_mut().locate_handle_trace.outputs.clear());
 
             assert!(efi_entry
                 .system_table()
@@ -2364,7 +2568,7 @@ mod test {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
 
             efi_call_traces()
-                .with(|traces| traces.borrow_mut().locate_handle_buffer_trace.outputs.clear());
+                .with(|traces| traces.borrow_mut().locate_handle_trace.outputs.clear());
 
             assert!(efi_entry
                 .system_table()
@@ -2418,16 +2622,13 @@ mod test {
     ) {
         run_test(|image_handle, systab_ptr| {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let mut located_handles = [DeviceHandle(1 as *mut _)];
+            let located_handles = vec![DeviceHandle(1 as *const _)];
             let mut test = T::new();
 
             efi_call_traces().with(|traces| {
                 let mut traces = traces.borrow_mut();
 
-                traces
-                    .locate_handle_buffer_trace
-                    .outputs
-                    .push_back((located_handles.len(), located_handles.as_mut_ptr()));
+                traces.locate_handle_trace.outputs.push_back(located_handles);
                 traces
                     .open_protocol_trace
                     .outputs
@@ -2545,8 +2746,7 @@ mod test {
             efi_call_traces().with(|trace| {
                 let mut trace = trace.borrow_mut();
 
-                trace.locate_handle_buffer_trace.outputs =
-                    VecDeque::from([(handles.len(), handles.as_mut_ptr())]);
+                trace.locate_handle_trace.outputs = VecDeque::from([handles.into()]);
                 trace.open_protocol_trace.outputs =
                     VecDeque::from([(as_efi_handle(&mut debug_proto), EFI_STATUS_SUCCESS)]);
             });

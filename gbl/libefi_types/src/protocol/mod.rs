@@ -115,6 +115,7 @@ use core::{marker::PhantomPinned, pin::Pin};
 /// 3. Make calls on the [Client] API
 /// 4. Drop the [Client]
 /// 5. Close the protocol
+#[derive(Debug)]
 pub struct Client<C: 'static + Identified>(&'static C);
 
 impl<C: 'static + Identified> Client<C> {

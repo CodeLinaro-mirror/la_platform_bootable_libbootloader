@@ -358,7 +358,7 @@ pub(crate) mod test {
     fn test_hash() {
         run_test(|image_handle, systab_ptr| {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let mut handles = [DeviceHandle(1 as *mut _)];
+            let handles = [DeviceHandle(1 as *const _)];
 
             let mut h2_sp = EfiServiceBindingProtocol {
                 create_child: Some(create_child),
@@ -369,8 +369,7 @@ pub(crate) mod test {
 
             efi_call_traces().with(|traces| {
                 let mut traces = traces.borrow_mut();
-                traces.locate_handle_buffer_trace.outputs =
-                    VecDeque::from([(handles.len(), handles.as_mut_ptr())]);
+                traces.locate_handle_trace.outputs = VecDeque::from([handles.into()]);
 
                 traces.open_protocol_trace.outputs =
                     VecDeque::from([(as_efi_handle(&mut h2_sp), EFI_STATUS_SUCCESS)]);
@@ -382,7 +381,7 @@ pub(crate) mod test {
                 let mut traces = traces.borrow_mut();
 
                 traces.create_child_trace.outputs =
-                    VecDeque::from([(2 as *mut _, EFI_STATUS_SUCCESS)]);
+                    VecDeque::from([(2 as *const _, EFI_STATUS_SUCCESS)]);
             });
 
             // New scope to trigger cleanup.
@@ -407,7 +406,7 @@ pub(crate) mod test {
             service_binding_call_traces().with(|traces| {
                 let traces = traces.borrow();
 
-                assert_eq!(traces.destroy_child_trace.inputs, [(2 as *mut _)]);
+                assert_eq!(traces.destroy_child_trace.inputs, [(2 as *const _)]);
             })
         });
     }
@@ -416,7 +415,7 @@ pub(crate) mod test {
     fn test_hasher() {
         run_test(|image_handle, systab_ptr| {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let mut handles = [DeviceHandle(1 as *mut _)];
+            let handles = [DeviceHandle(1 as *const _)];
 
             let mut h2_sp = EfiServiceBindingProtocol {
                 create_child: Some(create_child),
@@ -433,8 +432,7 @@ pub(crate) mod test {
             efi_call_traces().with(|traces| {
                 let mut traces = traces.borrow_mut();
 
-                traces.locate_handle_buffer_trace.outputs =
-                    VecDeque::from([(handles.len(), handles.as_mut_ptr())]);
+                traces.locate_handle_trace.outputs = VecDeque::from([handles.into()]);
 
                 traces.open_protocol_trace.outputs =
                     VecDeque::from([(as_efi_handle(&mut h2_sp), EFI_STATUS_SUCCESS)]);
@@ -447,7 +445,7 @@ pub(crate) mod test {
                 let mut traces = traces.borrow_mut();
 
                 traces.create_child_trace.outputs =
-                    VecDeque::from([((2 as *mut _), EFI_STATUS_SUCCESS)]);
+                    VecDeque::from([((2 as *const _), EFI_STATUS_SUCCESS)]);
             });
 
             // New scope to trigger cleanup.
@@ -466,7 +464,7 @@ pub(crate) mod test {
                 assert_eq!(
                     traces.open_protocol_trace.inputs,
                     [(
-                        DeviceHandle(1 as *mut _),
+                        DeviceHandle(1 as *const _),
                         <Hash2ServiceBindingProtocol as ProtocolInfo>::GUID,
                         image_handle
                     ),]
@@ -476,7 +474,7 @@ pub(crate) mod test {
             service_binding_call_traces().with(|traces| {
                 let traces = traces.borrow();
 
-                assert_eq!(traces.destroy_child_trace.inputs, [(2 as *mut _)]);
+                assert_eq!(traces.destroy_child_trace.inputs, [(2 as *const _)]);
             })
         });
     }
