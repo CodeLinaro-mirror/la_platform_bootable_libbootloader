@@ -192,6 +192,24 @@ $ fastboot boot zircon_fastboot.img
 Note: In unlocked mode, it's possible to omit the vbmeta image. Verification
 will fail as expected, but boot will proceed since it is unlocked.
 
+## Pause in Fastboot after Loading OS
+
+GBL supports pausing in fastboot after loading, verifying and fixing-up OS.
+This is primarily used to inspect device post-load state for testing and
+analysis. There are two ways to enable this:
+
+1. Run `fastboot oem gbl-pause-fastboot-after-load` when in pre-load fastboot
+mode.
+
+1. Add build option `--@gbl//toolchain:pause_boot_in_fastboot` to bazel. This
+will force GBL to always pause in fastboot after loading OS.
+
+`fastboot continue` in this stage of fastboot behaves differently for dev/prod
+build:
+
+1. For dev build, `fastboot continue` continues to boot loaded images.
+2. For prod build, `fastboot continue` always triggers a reboot.
+
 ## GBL Fastboot UI
 
 This section describes how to create a UI interface that can be used to execute

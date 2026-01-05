@@ -618,6 +618,14 @@ impl Default for BootBuffer<'_> {
     }
 }
 
+/// Helper for checking that whether `fastboot continue` in paused fastboot mode should reboot.
+fn paused_fastboot_continue_should_reboot() -> bool {
+    // In prod, don't proceed since device security setting may have been changed.
+    // In dev, allow booting since an automated test flow may want to pause in fastboot to
+    // check expected device state but still want to continue to test that OS boot works as well.
+    cfg!(not(feature = "gbl_dev"))
+}
+
 /// Runs full Android bootloader bootflow before kernel handoff.
 ///
 /// The API performs slot selection, handles boot mode, fastboot and loads and verifies Android from
@@ -704,27 +712,27 @@ pub fn android_main<'a, 'b, G: GblOps<'a>>(
             LoadedImageInfo::Android { ramdisk, fdt, kernel }
         });
 
-    match result.pause_in_fastboot || ops.one_shot_pause_fastboot_after_load() {
-        true => {
-            let result = &mut Default::default();
-            // Some fastboot functions require a general load buffer as scratch. Use `unused` when
-            // load is successful to prevent clobbering of images, otherwise use `boot_buffer`.
-            let (load_res, boot_buffer) = match load_res.as_ref() {
-                Ok(v) => {
-                    let (ramdisk, fdt, kernel, unused) =
-                        split_loaded_android(v.clone(), boot_buffer.as_borrowed()).unwrap();
-                    (Ok(LoadedImages { ramdisk, fdt, kernel }), unused.into())
-                }
-                Err(e) => (Err(e), boot_buffer.as_borrowed()),
-            };
-            let load_result = Some(load_res.inspect_err(|e| gbl_println!(ops, "Load failed: {e}")));
-            gbl_println!(ops, "Pausing in fastboot...");
-            run_fastboot(GblFastbootEntry { ops, boot_buffer, result, load_result });
-            gbl_println!(ops, "Device stage may have changed. Rebooting...");
+    if result.pause_in_fastboot || ops.one_shot_pause_fastboot_after_load() {
+        let result = &mut Default::default();
+        // Some fastboot functions require a general load buffer as scratch. Use `unused` when
+        // load is successful to prevent clobbering of images, otherwise use `boot_buffer`.
+        let (load_res, boot_buffer) = match load_res.as_ref() {
+            Ok(v) => {
+                let (ramdisk, fdt, kernel, unused) =
+                    split_loaded_android(v.clone(), boot_buffer.as_borrowed()).unwrap();
+                (Ok(LoadedImages { ramdisk, fdt, kernel }), unused.into())
+            }
+            Err(e) => (Err(e), boot_buffer.as_borrowed()),
+        };
+        let load_result = Some(load_res.inspect_err(|e| gbl_println!(ops, "Load failed: {e}")));
+        gbl_println!(ops, "Pausing in fastboot...");
+        run_fastboot(GblFastbootEntry { ops, boot_buffer, result, load_result });
+        if paused_fastboot_continue_should_reboot() {
+            gbl_println!(ops, "Device state may have changed. Rebooting...");
             ops.reboot()?;
         }
-        _ => Ok(split_loaded_android(load_res?, boot_buffer).unwrap()),
     }
+    Ok(split_loaded_android(load_res?, boot_buffer).unwrap())
 }
 
 #[cfg(test)]
@@ -2686,7 +2694,10 @@ androidboot.veritymode.managed=yes
             listener.add_transport_input(b"continue");
             fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         });
-        assert_eq!(res.unwrap_err(), Error::Aborted.into());
+        match paused_fastboot_continue_should_reboot() {
+            true => assert_eq!(res.unwrap_err(), Error::Aborted.into()),
+            _ => res.map(|_| ()).unwrap(),
+        }
 
         assert_eq!(
             listener.transport_out_queue(),
@@ -2746,7 +2757,10 @@ androidboot.veritymode.managed=yes
             listener.add_transport_input(b"continue");
             fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         });
-        assert_eq!(res.unwrap_err(), Error::Aborted.into());
+        match paused_fastboot_continue_should_reboot() {
+            true => assert_eq!(res.unwrap_err(), Error::Aborted.into()),
+            _ => assert!(res.is_err()),
+        }
 
         assert_eq!(
             listener.transport_out_queue(),

@@ -986,7 +986,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     }
 
     fn one_shot_pause_fastboot_after_load(&mut self) -> bool {
-        core::mem::take(&mut self.pause_fastboot)
+        core::mem::take(&mut self.pause_fastboot) || cfg!(feature = "pause-boot-in-fastboot")
     }
 
     fn get_slot_count(&mut self) -> Result<u8> {
