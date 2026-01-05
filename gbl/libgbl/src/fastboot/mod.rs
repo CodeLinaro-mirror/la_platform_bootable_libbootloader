@@ -45,7 +45,7 @@ use core::{
     marker::PhantomData,
     mem::take,
     ops::{DerefMut, Range},
-    pin::Pin,
+    pin::{pin, Pin},
     str::from_utf8,
 };
 use fastboot::{
@@ -54,7 +54,7 @@ use fastboot::{
     LockType, OkaySender, RebootMode, Unlockability, UploadBuilder, Uploader, VarInfoSender,
     MAX_COMMAND_SIZE,
 };
-use gbl_async::{join, yield_now};
+use gbl_async::{join, join_mut, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
 use libutils::snprintf;
@@ -416,7 +416,7 @@ where
         // E.g.
         // If any transport protocol perform long operation like `flash`.
         // It would delay calls to transport implementation responsible for UI.
-        let cmd_loop_task = async {
+        let cmd_loop_task = &mut pin!(async {
             'outer: loop {
                 for t in transports.iter_mut() {
                     if t.has_packet() {
@@ -445,16 +445,16 @@ where
                 yield_now().await;
             }
             *cmd_loop_end.borrow_mut() = true;
-        };
+        });
 
         // Schedules [Task] spawned by GBL fastboot.
-        let gbl_fb_tasks = async {
+        let gbl_fb_tasks = &mut pin!(async {
             while tasks.borrow_mut().poll_all() > 0 || !*cmd_loop_end.borrow_mut() {
                 yield_now().await;
             }
-        };
+        });
 
-        let _ = join(cmd_loop_task, gbl_fb_tasks).await;
+        let _ = join_mut(cmd_loop_task, gbl_fb_tasks).await;
     }
 
     /// Extracts the next argument and verifies that it is a valid block device ID if present.
