@@ -247,6 +247,19 @@ config_setting(
     },
 )
 
+bool_flag(
+    name = "pause_boot_in_fastboot",
+    build_setting_default = False,
+    help = "Whether to enable always waiting for gdb connection",
+)
+
+config_setting(
+    name = "pause_boot_in_fastboot_true",
+    flag_values = {
+        ":pause_boot_in_fastboot": "True",
+    },
+)
+
 builtin_includes_common = [
     LLVM_PREBUILTS_CPP_INCLUDE,  # C++ headers must come first.
     LLVM_PREBUILTS_C_INCLUDE,
@@ -564,7 +577,16 @@ wait_gdb_switch = select({
     "//conditions:default": [],
 })
 
-rustc_common_flags = common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select) + wait_gdb_switch
+pause_boot_in_fastboot_switch = select({
+    ":pause_boot_in_fastboot_true": [
+        "--cfg",
+        "feature=\"pause-boot-in-fastboot\"",
+    ],
+    "//conditions:default": [],
+})
+
+rustc_common_flags = common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select) + \
+                     wait_gdb_switch + pause_boot_in_fastboot_switch
 
 # x86_64 UEFI toolchain
 rust_toolchain(
