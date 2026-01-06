@@ -76,6 +76,14 @@ pub fn efi_android_boot(
 
     #[cfg(target_arch = "aarch64")]
     {
+        // TODO(b/473552136): Temporary test for tracing functionality.
+        #[cfg(feature = "gbl_tracing")]
+        {
+            unsafe extern "C" {
+                safe fn get_peak_stack() -> usize;
+            }
+            efi_println!(entry, "max stack used: {} bytes", get_peak_stack());
+        }
         let _ = finalize_uefi(entry, entry_point, kernel, ramdisk, fdt, remains)?;
         // SAFETY: We currently targets at Cuttlefish emulator where images are provided valid.
         unsafe { boot::aarch64::jump_linux_el2_or_lower(kernel, ramdisk, fdt) };

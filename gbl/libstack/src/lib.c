@@ -63,7 +63,8 @@ static void libstack_system_reset() {
 // The stack canary and canary check function for PE/COFF
 // (i.e. "real" UEFI apps).
 size_t __security_cookie = 0;
-void __security_check_cookie(size_t cookie) {
+__attribute__((no_instrument_function)) void __security_check_cookie(
+    size_t cookie) {
   if (cookie != __security_cookie) {
     libstack_debug_print(u"Stack check failure\n");
     libstack_system_reset();

@@ -260,6 +260,20 @@ config_setting(
     },
 )
 
+# TODO(b/473552136): Temporary switch for enabling tracing in build.
+bool_flag(
+    name = "enable_tracing",
+    build_setting_default = False,
+    help = "Whether to enable gbl-tracing",
+)
+
+config_setting(
+    name = "tracing_enabled",
+    flag_values = {
+        ":enable_tracing": "True",
+    },
+)
+
 builtin_includes_common = [
     LLVM_PREBUILTS_CPP_INCLUDE,  # C++ headers must come first.
     LLVM_PREBUILTS_C_INCLUDE,
@@ -392,8 +406,15 @@ gbl_clang_cc_toolchain(
     cc_flags = cc_flags_uefi_common + [
         "-mbranch-protection=standard",
         "-march=armv8-a",
-    ],
-    ld_flags = uefi_ld_flags_common,
+    ] + select({
+        "//conditions:default": [],
+        ":tracing_enabled": ["-pg"],  # mcount instrumentation
+    }),
+    ld_flags = uefi_ld_flags_common + select({
+        "//conditions:default": [],
+        # Switch to a dedicate main entry that sets up tracing.
+        ":tracing_enabled": ["/entry:efi_main_tracing"],
+    }),
     target_cpu = "aarch64",
     target_system_triple = "aarch64-windows-msvc",
 )
@@ -751,7 +772,17 @@ rust_toolchain(
     extra_rustc_flags = [
         "-Z",
         "branch-protection=bti,pac-ret,leaf",
-    ] + rustc_common_flags + rustc_opt_flags,
+    ] + rustc_common_flags + rustc_opt_flags + select({
+        ":tracing_enabled": [
+            "-Z",
+            "instrument-mcount",
+            "--cfg=feature=\"gbl_tracing\"",
+            # Expansion of macro sometimes causes incorrect line information in debugging.
+            "-C",
+            "collapse-macro-debuginfo=yes",
+        ],
+        "//conditions:default": [],
+    }),
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
     rust_std = select({
