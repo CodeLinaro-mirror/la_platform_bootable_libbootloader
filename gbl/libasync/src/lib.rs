@@ -23,32 +23,20 @@ use core::{
     future::Future,
     ops::DerefMut,
     pin::{pin, Pin},
-    ptr::null,
-    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
+    task::{Context, Poll, Waker},
 };
-
-/// Clone method for `NOOP_VTABLE`.
-fn noop_clone(_: *const ()) -> RawWaker {
-    noop_raw_waker()
-}
-
-/// Noop method for `wake`, `wake_by_ref` and `drop` in `RawWakerVTable`.
-fn noop_wake_method(_: *const ()) {}
-
-/// A noop `RawWakerVTable`
-const NOOP_VTABLE: RawWakerVTable =
-    RawWakerVTable::new(noop_clone, noop_wake_method, noop_wake_method, noop_wake_method);
-
-/// Creates a noop instance that does nothing.
-fn noop_raw_waker() -> RawWaker {
-    RawWaker::new(null(), &NOOP_VTABLE)
-}
 
 /// Repetitively polls and blocks until a future completes.
 pub fn block_on<O>(fut: impl Future<Output = O>) -> O {
-    let mut fut = pin!(fut);
+    block_on_mut(&mut pin!(fut))
+}
+
+/// Repetitively polls and blocks until a pinned future completes.
+pub fn block_on_mut<O, F: Future<Output = O> + ?Sized>(
+    fut: &mut Pin<impl DerefMut<Target = F>>,
+) -> O {
     loop {
-        match poll(&mut fut) {
+        match poll(fut) {
             Some(res) => return res,
             _ => {}
         }
@@ -61,12 +49,7 @@ pub fn block_on<O>(fut: impl Future<Output = O>) -> O {
 pub fn poll<O, F: Future<Output = O> + ?Sized>(
     fut: &mut Pin<impl DerefMut<Target = F>>,
 ) -> Option<O> {
-    // SAFETY:
-    // * All methods for noop_raw_waker() are either noop or have no shared state. Thus they are
-    //   thread-safe.
-    let waker = unsafe { Waker::from_raw(noop_raw_waker()) };
-    let mut context = Context::from_waker(&waker);
-    match fut.as_mut().poll(&mut context) {
+    match fut.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
         Poll::Pending => None,
         Poll::Ready(res) => Some(res),
     }
@@ -123,14 +106,15 @@ impl YieldCounter {
     }
 }
 
-/// Repetitively polls two futures until both of them finish.
-pub async fn join<L, LO, R, RO>(fut_lhs: L, fut_rhs: R) -> (LO, RO)
+/// Repetitively polls two pinned futures until both of them finish.
+pub async fn join_mut<L, LO, R, RO>(
+    fut_lhs: &mut Pin<impl DerefMut<Target = L>>,
+    fut_rhs: &mut Pin<impl DerefMut<Target = R>>,
+) -> (LO, RO)
 where
     L: Future<Output = LO>,
     R: Future<Output = RO>,
 {
-    let fut_lhs = &mut pin!(fut_lhs);
-    let fut_rhs = &mut pin!(fut_rhs);
     let mut out_lhs = poll(fut_lhs);
     let mut out_rhs = poll(fut_rhs);
     while out_lhs.is_none() || out_rhs.is_none() {
@@ -144,6 +128,15 @@ where
         }
     }
     (out_lhs.unwrap(), out_rhs.unwrap())
+}
+
+/// Repetitively polls two futures until both of them finish.
+pub async fn join<L, LO, R, RO>(fut_lhs: L, fut_rhs: R) -> (LO, RO)
+where
+    L: Future<Output = LO>,
+    R: Future<Output = RO>,
+{
+    join_mut(&mut pin!(fut_lhs), &mut pin!(fut_rhs)).await
 }
 
 /// Waits until either of the given two futures completes.

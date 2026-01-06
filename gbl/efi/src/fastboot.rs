@@ -30,7 +30,7 @@ use efi::{
     EfiEntry, WatchdogTimerCode,
 };
 use fastboot::{Transport, MAX_COMMAND_SIZE};
-use gbl_async::{poll, YieldCounter};
+use gbl_async::{block_on_mut, YieldCounter};
 use liberror::{Error, Result};
 use libgbl::{
     fastboot::{GblGenericTransport, GblTcpStream, PinFutContainer, TcpStream},
@@ -371,5 +371,5 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, G: GblOps<'a>>(
     let mut bufs = Vec::from_iter(buffer.chunks_exact_mut(buffer.len() / GBL_FB_N));
     let bufs = &(&mut bufs[..]).into();
     let mut fut = Box::pin(fb.run(bufs, VecPinFut::default(), &mut transport_protocols, tcp));
-    while poll(&mut fut).is_none() {}
+    block_on_mut(&mut fut);
 }
