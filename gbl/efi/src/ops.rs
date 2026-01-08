@@ -966,6 +966,10 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
                     "Press 'f' to enter fastboot now, 'p' to enter fastboot after load."
                 );
                 let pred = |key: efi_types::EfiInputKey| b"pf".contains(&(key.unicode_char as u8));
+                // wait_key_stroke generates lots of polling function calls, most of which are just
+                // waiting for IO. Disable tracing to prevent it from adding too many meaningless
+                // traces.
+                let _guard = trace::TraceGuard::new(false);
                 match wait_key_stroke(self.efi_entry, pred, Duration::from_secs(2)) {
                     Ok(Some(v)) => {
                         efi_println!(
