@@ -60,6 +60,7 @@ use liberror::Error;
 use libutils::snprintf;
 use libutils::FormattedBytes;
 use safemath::SafeNum;
+use trace::{gbl_trace_get_enable, TraceGuard};
 #[cfg(feature = "fuchsia")]
 use zbi::{ZbiContainer, ZbiType};
 
@@ -76,7 +77,7 @@ pub use buffer_pool::BufferPool;
 use buffer_pool::ScopedBuffer;
 
 mod pin_fut_container;
-pub use pin_fut_container::PinFutContainer;
+pub use pin_fut_container::{FutContext, PinFutContainer};
 use pin_fut_container::{PinFutContainerTyped, PinFutSlice};
 
 // Re-exports dependency types
@@ -412,6 +413,7 @@ where
         let tasks = self.tasks();
         // The fastboot command loop task for interacting with the remote host.
         let cmd_loop_end = Shared::from(false);
+        let trace_config_orig = gbl_trace_get_enable();
 
         // This is main loop for processing all transports one by one.
         // `process_next_command()` may be calling `receive()` multiple times.
@@ -421,9 +423,13 @@ where
         // If any transport protocol perform long operation like `flash`.
         // It would delay calls to transport implementation responsible for UI.
         let cmd_loop_task = &mut pin!(async {
+            // Disable tracing by default to avoid having too many polling traces.
+            let _guard = TraceGuard::new(false);
             'outer: loop {
                 for t in transports.iter_mut() {
                     if t.has_packet() {
+                        // Enable trace when actually doing useful work.
+                        let _guard = TraceGuard::new(trace_config_orig);
                         match process_next_command(t, self).await {
                             Ok(true) => break 'outer,
                             Err(e) => {
@@ -436,6 +442,8 @@ where
 
                 if let Some(v) = tcp.as_mut() {
                     if v.accept_new() {
+                        // Enable trace when actually doing useful work.
+                        let _guard = TraceGuard::new(trace_config_orig);
                         match run_tcp_session(v, self).await {
                             Ok(()) => break 'outer,
                             Err(e) if e != Error::Disconnected => {
@@ -453,6 +461,9 @@ where
 
         // Schedules [Task] spawned by GBL fastboot.
         let gbl_fb_tasks = &mut pin!(async {
+            // Disable tracing for the poll loop. async tasks polled by poll_all() have their local
+            // trace config.
+            let _guard = TraceGuard::new(false);
             while tasks.borrow_mut().poll_all() > 0 || !*cmd_loop_end.borrow_mut() {
                 yield_now().await;
             }
@@ -612,6 +623,7 @@ where
             let (start, end) = p.sub(off, sz)?;
             parts_info.push((id, start, end));
         }
+        let _guard = TraceGuard::new(false);
         loop {
             match crate::partition::create_multi_partition_io(self.disks, parts_info.clone()) {
                 Err(Error::NotReady) => yield_now().await,
@@ -631,6 +643,7 @@ where
         blk: usize,
         part: Option<&str>,
     ) -> CommandResult<PartitionIo<'a, B>> {
+        let _guard = TraceGuard::new(false);
         loop {
             match self.disks[blk].partition_io(part) {
                 Err(Error::NotReady) => yield_now().await,
@@ -1086,6 +1099,7 @@ where
 
         // Progress logging task.
         let log = async {
+            let _guard = TraceGuard::new(false);
             if total < 128 * 1024 * 1024 {
                 return Ok(());
             }
@@ -1396,6 +1410,7 @@ struct DataChannel<'a>(RefCell<DataChannelInternal<'a>>);
 impl<'a> DataChannel<'a> {
     // Waits and reads data from the channel.
     async fn read(&self) -> Result<Option<&'a mut [u8]>, Error> {
+        let _guard = TraceGuard::new(false);
         loop {
             if let Some(Request::Ready(v)) = self.0.borrow_mut().request.take() {
                 return Ok(Some(v));
@@ -1521,7 +1536,9 @@ pub(crate) async fn run_gbl_fastboot_stack<'a, const N: usize>(
     // Parameterization of `N` will be an issue, but might be solvable with procedural macro.
     // SAFETY: `tasks` is immediately shadowed and thus guaranteed not moved for the rest of its
     // lifetime.
-    let mut tasks: [_; N] = tasks.each_mut().map(|v| unsafe { Pin::new_unchecked(v) });
+    let mut tasks: [_; N] = tasks
+        .each_mut()
+        .map(|v| (unsafe { Pin::new_unchecked(v) }, FutContext { trace_config: true }));
     let tasks = PinFutSlice::new(&mut tasks[..]).into();
     let disks = gbl_ops.disks();
     let mut fb = GblFastboot::new(gbl_ops, disks, Task::run, &tasks, &buffer_pool, data);
@@ -1677,17 +1694,18 @@ pub(crate) mod test {
         block_on(gbl_fb.set_download(data)).unwrap()
     }
 
-    impl<'a> PinFutContainer<'a> for Vec<Pin<Box<dyn Future<Output = ()> + 'a>>> {
+    impl<'a> PinFutContainer<'a> for Vec<(Pin<Box<dyn Future<Output = ()> + 'a>>, FutContext)> {
         fn add_with<F: Future<Output = ()> + 'a>(&mut self, f: impl FnOnce() -> F) {
-            self.push(Box::pin(f()));
+            self.push((Box::pin(f()), FutContext { trace_config: true }));
         }
 
         fn for_each_remove_if(
             &mut self,
-            mut cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>) -> bool,
+            mut cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>, &mut FutContext) -> bool,
         ) {
             for idx in (0..self.len()).rev() {
-                cb(&mut self[idx].as_mut()).then(|| self.swap_remove(idx));
+                let (f, b) = &mut self[idx];
+                cb(&mut f.as_mut(), b).then(|| self.swap_remove(idx));
             }
         }
     }

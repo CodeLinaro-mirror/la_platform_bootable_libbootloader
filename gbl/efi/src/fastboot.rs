@@ -33,7 +33,7 @@ use fastboot::{Transport, MAX_COMMAND_SIZE};
 use gbl_async::{block_on_mut, YieldCounter};
 use liberror::{Error, Result};
 use libgbl::{
-    fastboot::{GblGenericTransport, GblTcpStream, PinFutContainer, TcpStream},
+    fastboot::{FutContext, GblGenericTransport, GblTcpStream, PinFutContainer, TcpStream},
     {android_boot::GblFastbootEntry, GblOps},
 };
 
@@ -264,19 +264,20 @@ impl Drop for EfiFastbootTransport<'_> {
 
 // Wrapper of vector of pinned futures.
 #[derive(Default)]
-struct VecPinFut<'a>(Vec<Pin<Box<dyn Future<Output = ()> + 'a>>>);
+struct VecPinFut<'a>(Vec<(Pin<Box<dyn Future<Output = ()> + 'a>>, FutContext)>);
 
 impl<'a> PinFutContainer<'a> for VecPinFut<'a> {
     fn add_with<F: Future<Output = ()> + 'a>(&mut self, f: impl FnOnce() -> F) {
-        self.0.push(Box::pin(f()));
+        self.0.push((Box::pin(f()), FutContext { trace_config: true }));
     }
 
     fn for_each_remove_if(
         &mut self,
-        mut cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>) -> bool,
+        mut cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>, &mut FutContext) -> bool,
     ) {
         for idx in (0..self.0.len()).rev() {
-            cb(&mut self.0[idx].as_mut()).then(|| self.0.swap_remove(idx));
+            let (f, b) = &mut self.0[idx];
+            cb(&mut f.as_mut(), b).then(|| self.0.swap_remove(idx));
         }
     }
 }

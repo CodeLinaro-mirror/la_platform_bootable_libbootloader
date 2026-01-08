@@ -135,6 +135,8 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
 
     /// Receives the next packet from the transport.
     pub async fn receive_packet(&self, out: &mut [u8], mode: ReceiveMode) -> Result<usize> {
+        // Disables tracing while polling IO.
+        let _guard = trace::TraceGuard::new(false);
         loop {
             match self.receive(out, mode) {
                 Ok(out_size) => return Ok(out_size),
@@ -150,6 +152,8 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
     ///
     /// * `data`: Data to send. Can be more than one packet of data.
     pub async fn send_all(&self, mut data: &[u8]) -> Result<()> {
+        // Disables tracing while polling IO.
+        let _guard = trace::TraceGuard::new(false);
         while !data.is_empty() {
             match self.send(data) {
                 Err(Error::NotReady) => yield_now().await,

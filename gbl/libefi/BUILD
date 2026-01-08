@@ -43,6 +43,7 @@ rust_library(
         "@gbl//libprofile",
         "@gbl//libsafemath",
         "@gbl//libstorage",
+        "@gbl//libtrace",
         "@gbl//libutils",
         "@spin",
         "@zerocopy",
