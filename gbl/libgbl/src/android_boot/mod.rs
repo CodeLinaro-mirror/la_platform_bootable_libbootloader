@@ -726,6 +726,9 @@ pub fn android_main<'a, 'b, G: GblOps<'a>>(
         };
         let load_result = Some(load_res.inspect_err(|e| gbl_println!(ops, "Load failed: {e}")));
         gbl_println!(ops, "Pausing in fastboot...");
+        // Disable tracing for post-load fastboot as it is for debug/test only and not part of
+        // normal functional flow.
+        let _guard = trace::TraceGuard::new(false);
         run_fastboot(GblFastbootEntry { ops, boot_buffer, result, load_result });
         if paused_fastboot_continue_should_reboot() {
             gbl_println!(ops, "Device state may have changed. Rebooting...");

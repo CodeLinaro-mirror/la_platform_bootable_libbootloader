@@ -272,6 +272,7 @@ enum StageDataType {
     LoadedKernel,
     LoadedRamdisk,
     LoadedFdt,
+    Trace,
 }
 
 #[derive(Default)]
@@ -324,6 +325,8 @@ where
     default_block: Option<usize>,
     data: GblFbData<'b>,
     stage_data_type: Option<StageDataType>,
+    // Stores the taken trace.
+    gbl_trace: Option<(&'static mut [u8], usize)>,
     result: GblFastbootResult,
     // Introduces marker type so that we can enforce constraint 'd <= min('b, 'c).
     // The constraint is expressed in the implementation block for the `FastbootImplementation`
@@ -383,6 +386,7 @@ where
             default_block: None,
             data,
             stage_data_type: None,
+            gbl_trace: None,
             result: Default::default(),
             _tasks_context_lifetime: PhantomData,
         }
@@ -940,6 +944,21 @@ where
         read_len?;
         Ok(())
     }
+
+    /// Helper for handling "oem gbl-stage"
+    fn gbl_stage<'arg>(
+        &mut self,
+        mut args: impl Iterator<Item = &'arg str>,
+    ) -> CommandResult<StageDataType> {
+        let arg = next_arg(&mut args).ok_or("Missing data type")?;
+        match arg {
+            "kernel" => self.get_load_result().map(|_| StageDataType::LoadedKernel),
+            "ramdisk" => self.get_load_result().map(|_| StageDataType::LoadedRamdisk),
+            "fdt" => self.get_load_result().map(|_| StageDataType::LoadedFdt),
+            "trace" => Ok(StageDataType::Trace),
+            _ => Err("Unknown data type".into()),
+        }
+    }
 }
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
@@ -1096,6 +1115,10 @@ where
             StageDataType::LoadedRamdisk => self.get_load_result()?.ramdisk,
             StageDataType::LoadedFdt => self.get_load_result()?.fdt,
             StageDataType::LoadedKernel => self.get_load_result()?.kernel,
+            StageDataType::Trace => {
+                self.gbl_trace = self.gbl_trace.take().or(trace::gbl_trace_take_buffer());
+                self.gbl_trace.as_ref().map(|(b, s)| &b[..*s]).ok_or("Trace unavailable")?
+            }
         };
         let mut uploader = responder.initiate_upload(data.len().try_into().unwrap()).await?;
         Ok(uploader.upload(data).await?)
@@ -1222,20 +1245,7 @@ where
                 let (data, sz) = self.take_download().ok_or("No download")?;
                 Ok(self.boot_item_container()?.append_blob(arg, &data[..sz])?)
             }
-            "gbl-stage" => {
-                let arg = next_arg(&mut args).ok_or("Missing data type")?;
-                let img_type = [
-                    ("kernel", StageDataType::LoadedKernel),
-                    ("ramdisk", StageDataType::LoadedRamdisk),
-                    ("fdt", StageDataType::LoadedFdt),
-                ];
-                if let Some((_, v)) = img_type.iter().find(|(v, _)| *v == arg) {
-                    self.get_load_result()?;
-                    self.stage_data_type = Some(*v);
-                    return Ok(());
-                }
-                return Err("Unknown data type".into());
-            }
+            "gbl-stage" => Ok(self.stage_data_type = Some(self.gbl_stage(args)?)),
             "gbl-pause-fastboot-after-load" => {
                 let v = next_arg_u64(&mut args)?.unwrap_or(1);
                 self.result.pause_in_fastboot = v != 0;

@@ -36,5 +36,6 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "@gbl//libefi_types:efi_c_headers",
+        "@gbl//libtrace:headers",
     ],
 )

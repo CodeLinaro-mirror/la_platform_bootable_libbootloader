@@ -79,6 +79,7 @@ rust_library(
         "@gbl//libprofile",
         "@gbl//libsafemath",
         "@gbl//libstorage",
+        "@gbl//libtrace",
         "@gbl//libutils",
         "@lz4_flex",
         "@static_assertions",
