@@ -148,13 +148,10 @@ impl<'a, 'b> Ops<'a, 'b> {
         }
     }
 
-    /// Gets the property of an FDT node from EFI FDT.
-    ///
-    /// Returns `None` if fail to get the node
-    fn get_efi_fdt_prop(&self, path: &str, prop: &CStr) -> Option<&'a [u8]> {
+    /// Gets the EFI FDT.
+    fn get_efi_fdt(&self) -> Option<Fdt<&'a [u8]>> {
         let (_, fdt_bytes) = get_efi_fdt(&self.efi_entry)?;
-        let fdt = Fdt::new(fdt_bytes).ok()?;
-        fdt.get_property(path, prop).ok()
+        Fdt::new(fdt_bytes).ok()
     }
 
     /// Helper for opening GblBootControlProtocol protocol.
@@ -362,10 +359,15 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     ) -> Result<()> {
         // TODO(b/353272981): Switch to use OS configuration protocol once it is implemented on
         // existing platforms such as VIM3.
-        Ok(match self.get_efi_fdt_prop("zircon", c"zbi-blob") {
-            Some(blob) => container.extend_unaligned(blob).map_err(|_| "Failed to append ZBI")?,
-            _ => efi_println!(self.efi_entry, "No device ZBI items.\r\n"),
-        })
+        if let Some(fdt) = self.get_efi_fdt()
+            && let Ok(blob) = fdt.get_property("zircon", c"zbi-blob")
+        {
+            container.extend_unaligned(blob).map_err(|_| "Failed to append ZBI")?;
+        } else {
+            efi_println!(self.efi_entry, "No device ZBI items.\r\n");
+        }
+
+        Ok(())
     }
 
     #[cfg(feature = "fuchsia")]
@@ -526,19 +528,25 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         attributes: &mut CertPermanentAttributes,
     ) -> AvbIoResult<()> {
         // TODO(b/337846185): Switch to use GBL Verified Boot EFI protocol when available.
-        let perm_attr = self
-            .get_efi_fdt_prop("gbl", c"avb-cert-permanent-attributes")
-            .ok_or(AvbIoError::NotImplemented)?;
-        attributes.as_bytes_mut().clone_from_slice(perm_attr);
-        Ok(())
+        if let Some(fdt) = self.get_efi_fdt()
+            && let Ok(perm_attr) = fdt.get_property("gbl", c"avb-cert-permanent-attributes")
+        {
+            attributes.as_bytes_mut().clone_from_slice(perm_attr);
+            Ok(())
+        } else {
+            Err(AvbIoError::NotImplemented)
+        }
     }
 
     fn avb_cert_read_permanent_attributes_hash(&mut self) -> AvbIoResult<[u8; SHA256_DIGEST_SIZE]> {
         // TODO(b/337846185): Switch to use GBL Verified Boot EFI protocol when available.
-        let hash = self
-            .get_efi_fdt_prop("gbl", c"avb-cert-permanent-attributes-hash")
-            .ok_or(AvbIoError::NotImplemented)?;
-        Ok(hash.try_into().map_err(|_| AvbIoError::Io)?)
+        if let Some(fdt) = self.get_efi_fdt()
+            && let Ok(hash) = fdt.get_property("gbl", c"avb-cert-permanent-attributes-hash")
+        {
+            Ok(hash.try_into().map_err(|_| AvbIoError::Io)?)
+        } else {
+            Err(AvbIoError::NotImplemented)
+        }
     }
 
     fn avb_handle_verification_result<'c>(

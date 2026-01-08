@@ -43,6 +43,13 @@ pub(crate) fn fdt_build_bootargs<'a>(
     boot_items: Option<&BootItemContainer>,
     extra_reserved: usize,
 ) -> Result<()> {
+    // We need to obtain all Fdt instances first so that we can later store property slices from
+    // them to calculate the expected destination size before copying the data.
+    let mut parsed_overlays: ArrayVec<Fdt<&[u8]>, MAXIMUM_OVERLAYS_TO_APPLY> = ArrayVec::new();
+    for &overlay in overlays {
+        parsed_overlays.push(Fdt::new(overlay)?);
+    }
+
     // Reserves 2 for `boot_cmdline` and `vendor_cmdline`.
     let mut bootargs_to_append: ArrayVec<&str, { MAXIMUM_OVERLAYS_TO_APPLY + 2 }> = ArrayVec::new();
     bootargs_to_append.push(images.boot_cmdline);
@@ -50,8 +57,7 @@ pub(crate) fn fdt_build_bootargs<'a>(
 
     // Appends `/chosen/bootargs_ext` from `overlays` to the `/chosen/bootargs`:
     // https://source.android.com/docs/core/architecture/dto/optimize#kernel
-    for overlay in overlays {
-        let overlay = Fdt::new(overlay)?;
+    for overlay in &parsed_overlays {
         if let Ok(bootargs_ext) = overlay.get_property("/chosen", PROP_BOOTARGS_EXT) {
             let bootargs_cstr = CStr::from_bytes_until_nul(bootargs_ext)?;
             bootargs_to_append.push(bootargs_cstr.to_str()?);

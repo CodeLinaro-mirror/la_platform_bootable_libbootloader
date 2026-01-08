@@ -270,7 +270,11 @@ impl<'a, T: AsRef<[u8]> + 'a> Fdt<T> {
     }
 
     /// Get a property from an existing node.
-    pub fn get_property(&self, path: &str, name: &CStr) -> Result<&'a [u8]> {
+    ///
+    /// Note: The lifetime of the returned buffer must be tied to the Fdt
+    /// instance. This prevents the underlying device tree from being modified
+    /// while the buffer is in use, ensuring the data remains valid.
+    pub fn get_property(&self, path: &str, name: &CStr) -> Result<&[u8]> {
         let node = self.find_node(path)?;
         let mut len: c_int = 0;
         // SAFETY: API from libfdt_c.
