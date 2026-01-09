@@ -12,10 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_license//rules:license.bzl", "license")
 load(":readme.bzl", "readme_test")
 
 package(
     default_visibility = ["//visibility:public"],
+)
+
+# GBL code uses Apache 2.0.
+license(
+    name = "gbl_license",
+    license_kind = "@rules_license//licenses/spdx:Apache-2.0",
+    license_text = "LICENSE",
+    visibility = ["//visibility:public"],
 )
 
 readme_test(
