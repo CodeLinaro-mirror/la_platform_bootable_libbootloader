@@ -25,6 +25,7 @@ rust_library(
     crate_name = "gbl_async",
     edition = "2021",
     rustc_flags = ANDROID_RUST_LINTS,
+    deps = ["@gbl//libtrace"],
 )
 
 rust_test(

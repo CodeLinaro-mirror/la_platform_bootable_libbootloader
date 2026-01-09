@@ -13,7 +13,14 @@
 // limitations under the License.
 
 use core::{future::Future, pin::Pin};
-use gbl_async::poll;
+use gbl_async::poll_with_local_trace_config;
+
+/// Represents a future local context data.
+#[derive(Default)]
+pub struct FutContext {
+    /// Async local trace config.
+    pub trace_config: bool,
+}
 
 /// A container abstraction that takes input of dynamically typed [Future]s and stores them at
 /// pinned memory locations.
@@ -26,7 +33,7 @@ pub trait PinFutContainer<'a> {
     /// Calls the closure on each element in the container. Removes the element if it returns true.
     fn for_each_remove_if(
         &mut self,
-        cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>) -> bool,
+        cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>, &mut FutContext) -> bool,
     );
 }
 
@@ -41,14 +48,14 @@ pub(crate) trait PinFutContainerTyped<'a, F: Future + 'a> {
     /// Calls the closure on each element in the container. Removes the element if it returns true.
     fn for_each_remove_if(
         &mut self,
-        cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>) -> bool,
+        cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>, &mut FutContext) -> bool,
     );
 
     /// Returns the number of items
     #[cfg(test)]
     fn size(&mut self) -> usize {
         let mut res = 0;
-        self.for_each_remove_if(|_| {
+        self.for_each_remove_if(|_, _| {
             res += 1;
             false
         });
@@ -58,8 +65,8 @@ pub(crate) trait PinFutContainerTyped<'a, F: Future + 'a> {
     /// Polls all the [Future] once. Returns the number or unfinished ones.
     fn poll_all(&mut self) -> usize {
         let mut res = 0;
-        self.for_each_remove_if(|v| {
-            let finished = poll(v).is_some();
+        self.for_each_remove_if(|v, b| {
+            let finished = poll_with_local_trace_config(v, &mut b.trace_config).is_some();
             res += usize::from(!finished);
             finished
         });
@@ -81,7 +88,7 @@ impl<'a, F: Future<Output = ()> + 'a, T: PinFutContainer<'a>> PinFutContainerTyp
 
     fn for_each_remove_if(
         &mut self,
-        cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>) -> bool,
+        cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>, &mut FutContext) -> bool,
     ) {
         PinFutContainer::for_each_remove_if(self, cb)
     }
@@ -89,13 +96,13 @@ impl<'a, F: Future<Output = ()> + 'a, T: PinFutContainer<'a>> PinFutContainerTyp
 
 /// An implementation of `PinFutContainerTyped` backed by a preallocated slice.
 pub(crate) struct PinFutSlice<'a, F> {
-    arr: &'a mut [Pin<&'a mut F>],
+    arr: &'a mut [(Pin<&'a mut F>, FutContext)],
     used: usize,
 }
 
 impl<'a, F> PinFutSlice<'a, F> {
     /// Creates a new instance
-    pub fn new(arr: &'a mut [Pin<&'a mut F>]) -> Self {
+    pub fn new(arr: &'a mut [(Pin<&'a mut F>, FutContext)]) -> Self {
         Self { arr, used: 0 }
     }
 }
@@ -103,18 +110,18 @@ impl<'a, F> PinFutSlice<'a, F> {
 impl<'a, F: Future<Output = ()> + 'a> PinFutContainerTyped<'a, F> for PinFutSlice<'a, F> {
     fn add_with(&mut self, f: impl FnOnce() -> F) {
         if self.used < self.arr.len() {
-            self.arr[self.used].set(f());
+            self.arr[self.used].0.set(f());
             self.used += 1;
         }
     }
 
     fn for_each_remove_if(
         &mut self,
-        mut cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>) -> bool,
+        mut cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>, &mut FutContext) -> bool,
     ) {
         // Iterates from the end because we swap remove with the last.
         for idx in (0..self.used).rev() {
-            if cb(&mut (self.arr[idx].as_mut() as _)) {
+            if cb(&mut (self.arr[idx].0.as_mut() as _), &mut self.arr[idx].1) {
                 // Swaps remove with the last element
                 self.used -= 1;
                 self.arr.swap(idx, self.used);

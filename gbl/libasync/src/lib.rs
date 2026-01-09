@@ -25,6 +25,7 @@ use core::{
     pin::{pin, Pin},
     task::{Context, Poll, Waker},
 };
+use trace::{gbl_trace_get_enable, TraceGuard};
 
 /// Repetitively polls and blocks until a future completes.
 pub fn block_on<O>(fut: impl Future<Output = O>) -> O {
@@ -106,6 +107,21 @@ impl YieldCounter {
     }
 }
 
+/// Polls a future with local trace config
+///
+/// The API set trace config as `fut_local_config`, polls future, saves the updated
+/// config in `fut_local_config` and restores original trace config.
+#[inline(always)]
+pub fn poll_with_local_trace_config<O, F: Future<Output = O> + ?Sized>(
+    fut: &mut Pin<impl DerefMut<Target = F>>,
+    fut_local_config: &mut bool,
+) -> Option<O> {
+    let _guard = TraceGuard::new(*fut_local_config);
+    let res = poll(fut);
+    *fut_local_config = gbl_trace_get_enable();
+    res
+}
+
 /// Repetitively polls two pinned futures until both of them finish.
 pub async fn join_mut<L, LO, R, RO>(
     fut_lhs: &mut Pin<impl DerefMut<Target = L>>,
@@ -115,16 +131,24 @@ where
     L: Future<Output = LO>,
     R: Future<Output = RO>,
 {
-    let mut out_lhs = poll(fut_lhs);
-    let mut out_rhs = poll(fut_rhs);
+    let trace_config_orig = gbl_trace_get_enable();
+    // join_mut itself may become a future in another join/select. Thus don't enable tracing to
+    // prevent producing lots of polling call traces of itself.
+    let _guard = TraceGuard::new(false);
+    // Polling a future is similar to context switching to a thread. Makes a copy of its trace
+    // config and makes sure to save and restore it for each context switch.
+    let mut lhs_local_config = trace_config_orig;
+    let mut rhs_local_config = trace_config_orig;
+    let mut out_lhs = poll_with_local_trace_config(fut_lhs, &mut lhs_local_config);
+    let mut out_rhs = poll_with_local_trace_config(fut_rhs, &mut rhs_local_config);
     while out_lhs.is_none() || out_rhs.is_none() {
         yield_now().await;
         if out_lhs.is_none() {
-            out_lhs = poll(fut_lhs);
+            out_lhs = poll_with_local_trace_config(fut_lhs, &mut lhs_local_config);
         }
 
         if out_rhs.is_none() {
-            out_rhs = poll(fut_rhs);
+            out_rhs = poll_with_local_trace_config(fut_rhs, &mut rhs_local_config);
         }
     }
     (out_lhs.unwrap(), out_rhs.unwrap())
@@ -145,14 +169,22 @@ where
     L: Future<Output = LO>,
     R: Future<Output = RO>,
 {
+    let trace_config_orig = gbl_trace_get_enable();
+    // select itself may become a future in another join/select. Thus don't enable tracing to
+    // prevent producing lots of polling call traces of itself.
+    let _guard = TraceGuard::new(false);
     let fut_lhs = &mut pin!(fut_lhs);
     let fut_rhs = &mut pin!(fut_rhs);
-    let mut out_lhs = poll(fut_lhs);
-    let mut out_rhs = poll(fut_rhs);
+    // Polling a future is similar to context switching to a thread. Makes a copy of its trace
+    // config and makes sure to save and restore it for each context switch.
+    let mut lhs_local_config = trace_config_orig;
+    let mut rhs_local_config = trace_config_orig;
+    let mut out_lhs = poll_with_local_trace_config(fut_lhs, &mut lhs_local_config);
+    let mut out_rhs = poll_with_local_trace_config(fut_rhs, &mut rhs_local_config);
     while out_lhs.is_none() && out_rhs.is_none() {
         yield_now().await;
-        out_lhs = poll(fut_lhs);
-        out_rhs = poll(fut_rhs);
+        out_lhs = poll_with_local_trace_config(fut_lhs, &mut lhs_local_config);
+        out_rhs = poll_with_local_trace_config(fut_rhs, &mut rhs_local_config);
     }
     (out_lhs, out_rhs)
 }

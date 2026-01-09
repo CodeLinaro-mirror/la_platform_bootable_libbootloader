@@ -46,6 +46,8 @@ impl ProtocolInfo for BlockIo2Protocol {
 
 /// Helper for waiting an AtomicBool to become true while regularly calling EFI CheckEvent().
 pub(crate) async fn wait_completion(entry: &EfiEntry, complete: &AtomicBool) {
+    // Disable tracing when waiting for IO.
+    let _guard = trace::TraceGuard::new(false);
     while !complete.load(Ordering::Relaxed) {
         let bs = entry.system_table().boot_services();
         // UEFI implementation such as that of u-boot has no real interrupt. It relies on UEFI
