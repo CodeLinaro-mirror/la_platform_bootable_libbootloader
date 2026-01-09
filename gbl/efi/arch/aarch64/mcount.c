@@ -68,6 +68,25 @@ __attribute__((no_instrument_function)) static void EnablePmc() {
           : "x0");
 }
 
+// Get system tick (from generic timer)
+// See ARMv8-A architecture reference for more detail.
+__attribute__((no_instrument_function)) static uint64_t SysTick() {
+  uint64_t ticks = 0;
+  asm volatile(
+      "isb \n\t"
+      "mrs %0, cntpct_el0"
+      : "=r"(ticks));
+  return ticks;
+}
+
+// Get system tick frequency.
+// See ARMv8-A architecture reference for more detail.
+__attribute__((no_instrument_function)) static uint64_t SysTickFreq() {
+  uint64_t sys_tick_freq = 0;
+  asm volatile("mrs %0, cntfrq_el0" : "=r"(sys_tick_freq));
+  return sys_tick_freq;
+}
+
 // The dedicated stack memory range for GBL.
 static size_t gbl_stack_start = 0;
 static size_t gbl_stack_end = 0;
@@ -241,12 +260,19 @@ mcount_func_entry(size_t entry_stack_addr) {
   if (entry) {
     // <function> -> mcount() -> mcount_func_entry()
     size_t func_return_addr = fr->parent->parent->return_address;
+    // Tail call optimization causes a function to return directly to some
+    // earlier caller. In this case, we'll see callsite to be
+    // `mcount_return_override` since their return address is already
+    // overridden. Set to 0 to indicate this situation.
+    size_t callsite = (func_return_addr == (size_t)mcount_return_override)
+                          ? 0
+                          : (func_return_addr - image_base - 4);
     // Override function return address to capture function exit.
     size_t func_addr = fr->parent->return_address - 4 - image_base;
     *entry = (GblTraceFunctionEntry){
         {GBL_TRACE_TYPE_FUNCTION_ENTRY, start},
         func_addr,                                        // function address,
-        func_return_addr - image_base - 4,                // callsite
+        callsite,                                         // callsite
         gbl_stack_end - entry_stack_addr,                 // sys stack snapshot
         (size_t)fr->parent->parent - (size_t)fr->parent,  // local stack used
     };
@@ -310,8 +336,13 @@ efi_main_tracing(void* image_handle, EfiSystemTable* systab) {
   // Measures the frequency at runtime and assume it doesn't change throughout
   // GBL.
   size_t tick = PmcTick();
-  // This can also use aarch64 generic timer in case stall() is not implemented.
-  gST->boot_services->stall(1000 * 1000);  // 1 sec
+  // Use aarch64 generic timer to do a 1 second wait.
+  uint64_t sys_tick = SysTick();
+  uint64_t sys_tick_freq = SysTickFreq();
+  // aarch64 requires that generic timer tick always start from 0 on boot and
+  // roll-over time not less than 40 years. Thus we don't expect it to wrap.
+  while (SysTick() - sys_tick < sys_tick_freq) {
+  }
   uint64_t pmc_freq = PmcTick() - tick;
 
   // OEM firmware, i.e. u-boot, may not have unwind table enabled. Thus set this
