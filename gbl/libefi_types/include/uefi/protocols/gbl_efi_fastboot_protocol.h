@@ -33,6 +33,11 @@
 
 #define GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8 32
 
+static const uint64_t GBL_EFI_FASTBOOT_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 7);
+
+static const size_t GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN = 56;
+
 // Callback function pointer passed to GblEfiFastbootProtocol.get_var_all.
 //
 // context: Caller specific context.
@@ -49,9 +54,6 @@ EFI_ENUM(GblEfiFastbootMessageType, uint32_t,
 typedef EfiStatus (*FastbootMessageSender)(void* context,
                                            GblEfiFastbootMessageType msg_type,
                                            const char* msg, size_t msg_len);
-
-static const uint64_t GBL_EFI_FASTBOOT_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 6);
 
 EFI_ENUM(GblEfiFastbootEraseAction, uint32_t,
          // Treats the partition as a physical on disk partition and erases it.
@@ -91,6 +93,9 @@ typedef struct GblEfiFastbootProtocol {
                             size_t download_data_full_size,
                             GblEfiFastbootCommandExecResult* implementation,
                             FastbootMessageSender sender, void* ctx);
+  EfiStatus (*get_partition_type)(struct GblEfiFastbootProtocol* self,
+                                  const uint8_t* part_name, uint8_t* part_type,
+                                  size_t* part_type_len);
 } GblEfiFastbootProtocol;
 
 #endif  // __GBL_EFI_FASTBOOT_PROTOCOL_H__

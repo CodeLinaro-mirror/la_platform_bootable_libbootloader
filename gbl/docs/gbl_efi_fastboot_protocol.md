@@ -49,6 +49,7 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   GBL_EFI_FASTBOOT_GET_STAGED                   GetStaged;
   GBL_EFI_FASTBOOT_VENDOR_ERASE                 VendorErase;
   GBL_EFI_FASTBOOT_COMMAND_EXEC                 CommandExec;
+  GBL_EFI_FASTBOOT_GET_PARTITION_TYPE           GetPartitionType;
 } GBL_EFI_FASTBOOT_PROTOCOL;
 ```
 
@@ -93,6 +94,10 @@ See [`GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`](#gbl_efi_fastboot_protocolvendor
 Allows custom overriding of fastboot commands.
 See [`GBL_EFI_FASTBOOT_PROTOCOL.CommandExec()`](#gbl_efi_fastboot_protocolcommandexec).
 
+**GetPartitionType**
+
+Gets the type of partition.
+See [`GBL_EFI_FASTBOOT_PROTOCOL.GetPartitionType()`](#gbl_efi_fastboot_protocol_getpartitiontype).
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.GetVar()`
 
@@ -575,3 +580,71 @@ example, for Fastboot over USB, it is the native packet size. Implementation
 should consider the transport setup it provides when passing the string.
 Oversized message may be truncated by the caller when sent to the host.
 
+## GBL_EFI_FASTBOOT_PROTOCOL.GetPartitionType()
+
+### Summary
+
+Gets the type of partition.
+
+### Prototype
+
+```c
+typedef
+EFI_STATUS
+(EFIAPI * GBL_EFI_FASTBOOT_GET_PARTITION_TYPE)(
+    IN GBL_EFI_FASTBOOT_PROTOCOL*   Self,
+    IN CONST CHAR8*                 PartName,
+    OUT CHAR8*                      PartType,
+    IN OUT UINTN*                   PartTypeLen
+);
+```
+
+### Related Definitions
+
+```c
+static const UINTN GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN = 56;
+```
+
+### Parameters
+
+*Self*
+
+A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
+instance.
+
+*PartName*
+
+The NULL-terminated name of the partition to query.
+
+*PartType*
+
+A buffer to write the result to. This does not need to be NULL-terminated.
+
+*PartTypeLen*
+
+On entry, the size of the *PartType* buffer. This should be larger or equal to
+`GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN`.
+
+On exit, the size in bytes of the *PartType* string, excluding any
+NULL-terminator.
+
+### Description
+
+This API is for supporting `fastboot format`. The partition type returned here
+would be reported to the fastboot client in `getvar partition-type:<partname>`.
+
+If the partition should support formatting with `fastboot format`, then
+*PartType* should contain the filesystem type to format to.
+
+If a partition or all partitions shouldn't support `fastboot format`, then this
+API can be left unimplemented or return `EFI_UNSUPPORTED`. In that case GBL
+reports the partition type as `raw`.
+
+### Status Codes Returned
+
+Return Code             | Semantics
+:---------------------- | :--------
+`EFI_SUCCESS`           | The call completed successfully.
+`EFI_INVALID_PARAMETER` | One of *Self*, *PartName*, or *PartType* is `NULL`.
+`EFI_UNSUPPORTED`       | *PartName* is a raw partition that doesn't support `fastboot format`.
+`EFI_BUFFER_TOO_SMALL`  | *PartType* buffer is too small to store the result. The value of *PartTypeLen* should be updated to the minimum necessary buffer size.

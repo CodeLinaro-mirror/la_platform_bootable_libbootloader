@@ -15,7 +15,7 @@
 use crate::{
     fastboot::{BufferPool, GblFastboot, PinFutContainerTyped},
     gbl_println,
-    partition::{split_partition_suffix, Partition, RawName},
+    partition::{check_part_unique, split_partition_suffix, Partition, RawName},
     slots::{Bootability, Slot},
     GblOps,
 };
@@ -346,8 +346,15 @@ where
         mut args: impl Iterator<Item = &'t str> + Clone,
         out: &'s mut [u8],
     ) -> CommandResult<&'s str> {
-        self.partition_size(args.next().ok_or("Missing partition")?)?;
-        Ok(snprintf!(out, "raw"))
+        let part = args.next().ok_or("Missing partition")?;
+        let part = self.parse_partition_arg(part)?.0.ok_or("Missing partition")?;
+        match check_part_unique(self.disks, part) {
+            Ok(_) | Err(Error::NotUnique) => {
+                let part_type = self.gbl_ops.fastboot_get_partition_type(part)?;
+                Ok(snprintf!(out, "{part_type}"))
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// "fastboot getvar partition-guid"
@@ -383,6 +390,8 @@ where
                 let ptn = blk.get_partition_by_idx(ptn_idx)?;
                 let sz: u64 = ptn.size()?;
                 let part = ptn.name()?;
+                let part_type = self.gbl_ops.fastboot_get_partition_type(part)?;
+
                 // Assumes max partition name length of 72 plus max u64 hex string length 18.
                 let mut part_id_buf = [0u8; 128];
                 // If partition is not unique, append block ID suffix.
@@ -393,8 +402,9 @@ where
                 responder
                     .send_var_info(PARTITION_SIZE, [part], snprintf!(size_str, "{:#x}", sz))
                     .await?;
-                // Image type is not supported yet.
-                responder.send_var_info(PARTITION_TYPE, [part], snprintf!(size_str, "raw")).await?;
+                responder
+                    .send_var_info(PARTITION_TYPE, [part], snprintf!(size_str, "{part_type}"))
+                    .await?;
                 if let Partition::Gpt(gpt_partition) = ptn {
                     let guid = gpt_partition.gpt_entry().guid;
                     responder

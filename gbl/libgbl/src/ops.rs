@@ -16,6 +16,7 @@
 
 pub use crate::{constants::Partition, slots::BootToken};
 use crate::{
+    constants::FASTBOOT_PARTITION_TYPE_LEN,
     error::Result as GblResult,
     gbl_avb::{
         state::{KeyValidationStatus, VerificationStatus},
@@ -29,7 +30,12 @@ use crate::{
 };
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, Ops as AbrOps, SlotIndex};
 use bytes::buf::UninitSlice;
-use core::{ffi::CStr, fmt::Write, ops::DerefMut, result::Result};
+use core::{
+    ffi::CStr,
+    fmt::{Display, Write},
+    ops::{Deref, DerefMut},
+    result::Result,
+};
 use gbl_async::block_on;
 use libprofile::ProfileBackend;
 #[cfg(feature = "fuchsia")]
@@ -92,6 +98,56 @@ pub enum RngAlgorithm {
     /// Entropy directly from the source, without it going through some deterministic
     /// random bit generator.
     Raw,
+}
+
+/// Partition type to be returned for `fastboot getvar partition-type:`.
+#[derive(Copy, Clone)]
+pub struct FastbootPartitionType {
+    len: usize,
+    buf: [u8; FASTBOOT_PARTITION_TYPE_LEN],
+}
+
+impl Deref for FastbootPartitionType {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.buf[..self.len]
+    }
+}
+
+impl From<(usize, [u8; FASTBOOT_PARTITION_TYPE_LEN])> for FastbootPartitionType {
+    fn from((len, buf): (usize, [u8; FASTBOOT_PARTITION_TYPE_LEN])) -> Self {
+        Self { len, buf }
+    }
+}
+
+impl FastbootPartitionType {
+    pub(crate) const fn from_slice(b: &[u8]) -> Option<Self> {
+        let mut buf = [0u8; _];
+        if b.len() > buf.len() {
+            return None;
+        }
+        buf.split_at_mut(b.len()).0.copy_from_slice(b);
+        Some(Self { len: b.len(), buf })
+    }
+}
+
+impl Default for FastbootPartitionType {
+    fn default() -> Self {
+        const { Self::from_slice(b"raw").unwrap() }
+    }
+}
+
+impl FastbootPartitionType {
+    fn as_str(&self) -> &str {
+        str::from_utf8(self).unwrap_or("raw")
+    }
+}
+
+impl Display for FastbootPartitionType {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
 }
 
 // https://stackoverflow.com/questions/41081240/idiomatic-callbacks-in-rust
@@ -513,6 +569,9 @@ pub trait GblOps<'a> {
         download_used: usize,
         sender: Sender,
     ) -> Result<CommandExecType, Error>;
+
+    /// Gets the partition type.
+    fn fastboot_get_partition_type(&mut self, part: &str) -> Result<FastbootPartitionType, Error>;
 
     /// Returns the slot count.
     fn get_slot_count(&mut self) -> Result<u8, Error>;
@@ -955,6 +1014,10 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
         unreachable!();
     }
 
+    fn fastboot_get_partition_type(&mut self, _part: &str) -> Result<FastbootPartitionType, Error> {
+        unreachable!();
+    }
+
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         self.ops.get_profiling_backend()
     }
@@ -984,7 +1047,10 @@ pub(crate) mod test {
     use gbl_storage::{new_gpt_max, Disk, GptMax, RamBlockIo};
     use libprofile::{ProfileTimer, Reporter};
     use libutils::snprintf;
-    use std::{collections::VecDeque, ffi::CString};
+    use std::{
+        collections::{HashMap, VecDeque},
+        ffi::CString,
+    };
     #[cfg(feature = "fuchsia")]
     use zbi::{ZbiFlags, ZbiType};
 
@@ -1183,6 +1249,9 @@ pub(crate) mod test {
 
         /// Stack to store messages that needs to be send.
         pub command_exec_send_messages: VecDeque<Vec<SenderMessage>>,
+
+        /// For return by `fastboot_get_partition_type`.
+        pub partition_type: HashMap<String, FastbootPartitionType>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1678,6 +1747,13 @@ pub(crate) mod test {
             }
         }
 
+        fn fastboot_get_partition_type(
+            &mut self,
+            part: &str,
+        ) -> Result<FastbootPartitionType, Error> {
+            Ok(self.partition_type.get(part).copied().unwrap_or_default())
+        }
+
         fn get_slot_count(&mut self) -> Result<u8, Error> {
             self.slot_count.unwrap()
         }
@@ -2005,6 +2081,13 @@ pub(crate) mod test {
             _: usize,
             _: Sender,
         ) -> Result<CommandExecType, Error> {
+            Err(Error::Unsupported)
+        }
+
+        fn fastboot_get_partition_type(
+            &mut self,
+            _part: &str,
+        ) -> Result<FastbootPartitionType, Error> {
             Err(Error::Unsupported)
         }
 
