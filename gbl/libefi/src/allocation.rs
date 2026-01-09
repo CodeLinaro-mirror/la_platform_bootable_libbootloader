@@ -15,6 +15,8 @@
 use crate::{EfiEntry, RuntimeServices};
 use efi_types::{EFI_ALLOCATOR_TYPE_ALLOCATE_ANY_PAGES, EFI_MEMORY_TYPE_LOADER_DATA};
 
+#[cfg(feature = "gbl_tracing")]
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{
     alloc::{GlobalAlloc, Layout},
     mem::size_of,
@@ -237,10 +239,18 @@ impl EfiAllocator {
     }
 }
 
+#[cfg(feature = "gbl_tracing")]
+static HEAP_USAGE: AtomicUsize = AtomicUsize::new(0);
+
 unsafe impl GlobalAlloc for EfiAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         (|| -> Result<*mut u8> {
             let (by_pages, alloc_sz) = Self::select_alloc_type(&layout)?;
+            #[cfg(feature = "gbl_tracing")]
+            {
+                let total = HEAP_USAGE.fetch_add(alloc_sz, Ordering::Relaxed);
+                trace::gbl_trace_add_heap_snapshot((total + alloc_sz) as _);
+            }
             let ptr = match by_pages {
                 false => self.allocate(alloc_sz),
                 _ => self.allocate_pages(alloc_sz)?,
@@ -270,6 +280,11 @@ unsafe impl GlobalAlloc for EfiAllocator {
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let (by_pages, alloc_sz) = Self::select_alloc_type(&layout).unwrap();
+        #[cfg(feature = "gbl_tracing")]
+        {
+            let total = HEAP_USAGE.fetch_sub(alloc_sz, Ordering::Relaxed);
+            trace::gbl_trace_add_heap_snapshot((total - alloc_sz) as _);
+        }
         let sz = layout.size();
         // Checks if alignment adjustment was performed and finds real allocated pointer.
         let ptr = match alloc_sz == sz {
