@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "bool_setting")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "bool_setting", "int_flag")
 load(
     "@gbl_llvm_prebuilts//:info.bzl",
     "GBL_CPP_CONFIG_INC",
@@ -260,7 +260,6 @@ config_setting(
     },
 )
 
-# TODO(b/473552136): Temporary switch for enabling tracing in build.
 bool_flag(
     name = "enable_tracing",
     build_setting_default = False,
@@ -272,6 +271,12 @@ config_setting(
     flag_values = {
         ":enable_tracing": "True",
     },
+)
+
+int_flag(
+    name = "trace_buffer_size_mb",
+    build_setting_default = 64,
+    help = "Size of trace buffer.",
 )
 
 builtin_includes_common = [

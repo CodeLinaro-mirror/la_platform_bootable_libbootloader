@@ -16,6 +16,7 @@
 This file contains rules for defininig GBL toolchains.
 """
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load(
     "@bazel_tools//tools/cpp:cc_toolchain_config_lib.bzl",
     "action_config",
@@ -374,5 +375,27 @@ rename_output = rule(
             allow_single_file = True,
         ),
         "out": attr.string(mandatory = True),
+    },
+)
+
+# Implementation of int_flag_to_c_def
+def _int_flag_to_c_def_impl(ctx):
+    value = ctx.attr.flag[BuildSettingInfo].value
+    out = ctx.actions.declare_file(ctx.label.name + ".h")
+    ctx.actions.write(out, """
+#ifndef _{}_H
+#define _{}_H
+
+#define {} ({})
+#endif
+""".format(ctx.attr.macro, ctx.attr.macro, ctx.attr.macro, value))
+    return [DefaultInfo(files = depset([out]))]
+
+# Generates a header file with a C macro for the given flag value.
+int_flag_to_c_def = rule(
+    implementation = _int_flag_to_c_def_impl,
+    attrs = {
+        "flag": attr.label(mandatory = True),
+        "macro": attr.string(mandatory = True),
     },
 )

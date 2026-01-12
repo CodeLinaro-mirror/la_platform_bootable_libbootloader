@@ -1,4 +1,4 @@
-# Copyright (C) 2025 The Android Open Source Project
+# Copyright (C) 2026 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+load("@gbl//toolchain:gbl_toolchain.bzl", "int_flag_to_c_def")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(
@@ -24,6 +26,7 @@ cc_library(
             "mcount.c",
             "mcount_entry.S",
             "switch_stack.S",
+            "trace_buffer_size.h",
         ],
         "//conditions:default": [],
     }),
@@ -33,9 +36,24 @@ cc_library(
         # Always optimize tracing code.
         "-O3",
     ],
+    data = [":trace_buffer_size"],
+    includes = ["."],
     visibility = ["//visibility:public"],
     deps = [
         "@gbl//libefi_types:efi_c_headers",
         "@gbl//libtrace:headers",
     ],
+)
+
+int_flag_to_c_def(
+    name = "_trace_buffer_size",
+    flag = "@gbl//toolchain:trace_buffer_size_mb",
+    macro = "TRACE_BUFFER_SIZE_MB",
+)
+
+genrule(
+    name = "trace_buffer_size",
+    srcs = [":_trace_buffer_size"],
+    outs = ["trace_buffer_size.h"],
+    cmd = "cp $(SRCS) $(OUTS)",
 )

@@ -20,6 +20,8 @@
 #include <string.h>
 #include <uefi/efi.h>
 
+#include "trace_buffer_size.h"
+
 // Run efi_main using the given stack memory
 extern EfiStatus efi_main_switch_stack(void* image_handle, void* systab,
                                        void* stack_end);
@@ -345,7 +347,7 @@ efi_main_tracing(void* image_handle, EfiSystemTable* systab) {
 
   // Allocate trace storage buffer.
   // TODO(b/473552136): Make trace buffer size configurable
-  const size_t trace_buffer_size = 64 * 1024 * 1024;  // 64MB
+  const size_t trace_buffer_size = TRACE_BUFFER_SIZE_MB * 1024 * 1024;
   trace_buffer.buffer = AllocPage(systab, trace_buffer_size / EFI_PAGE_SIZE);
   trace_buffer.size = trace_buffer_size;
   memset(TraceMeta(), 0, sizeof(GblTraceMetadata));
