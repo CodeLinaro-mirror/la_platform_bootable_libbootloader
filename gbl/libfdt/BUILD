@@ -15,6 +15,7 @@
 load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_C_INCLUDE")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 
@@ -133,6 +134,12 @@ rust_test(
         "@gbl//libc:libc_deps_posix",
         "@gbl//libutils:libtestutils",
     ],
+)
+
+cc_library(
+    name = "dep_headers",
+    hdrs = ["instrument.h"],
+    includes = ["."],
 )
 
 link_static_cc_library(
