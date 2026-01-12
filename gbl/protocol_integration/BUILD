@@ -17,6 +17,7 @@ load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
 
 package(
+    default_applicable_licenses = ["@gbl//:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 
