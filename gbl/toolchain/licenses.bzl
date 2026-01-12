@@ -43,8 +43,9 @@ def generate_license(name = "license", license_text = "LICENSE", bsd_type = None
     Args:
         name (String): name of the license rule to generate.
         license_text (String): name of the file containing the license text.
-        bsd_type (optional String): if the repo uses the generic
+        bsd_type (optional String or List[String]): if the repo uses the generic
             MODULE_LICENSE_BSD marker, specify the exact Bazel license kind.
+            Can either be a single string or a list of strings.
     """
 
     # Locate the license marker files and convert them to Bazel licenses.
@@ -57,7 +58,12 @@ def generate_license(name = "license", license_text = "LICENSE", bsd_type = None
             license_kinds.append(LICENSE_MAP[marker])
         elif marker == "MODULE_LICENSE_BSD":
             if bsd_type:
-                license_kinds.append(bsd_type)
+                # Some projects license under multiple different BSD licenses,
+                # in which case this will be a list.
+                if type(bsd_type) == "list":
+                    license_kinds += bsd_type
+                else:
+                    license_kinds.append(bsd_type)
 
                 # Mark the bsd_type as None to indicate it's been used.
                 bsd_type = None
