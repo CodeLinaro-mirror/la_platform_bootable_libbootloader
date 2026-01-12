@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
+load("@gbl//toolchain:licenses.bzl", "generate_license")
 load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_C_INCLUDE")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_library")
@@ -20,7 +21,15 @@ load("@rules_rust//rust:defs.bzl", "rust_library")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 
 package(
+    default_applicable_licenses = [":license"],
     default_visibility = ["//visibility:public"],
+)
+
+generate_license(
+    name = "license",
+    # Specify that for libavb, MODULE_LICENSE_BSD means BSD 3-Clause as
+    # indicated in external/avb/LICENSE.
+    bsd_type = "@rules_license//licenses/spdx:BSD-3-Clause",
 )
 
 exports_files(glob(["**/*"]))

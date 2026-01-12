@@ -37,12 +37,14 @@ LICENSE_MAP = {
     "MODULE_LICENSE_ZERO_BSD": "@rules_license//licenses/spdx:0BSD",
 }
 
-def generate_license(name = "license", license_text = "LICENSE"):
+def generate_license(name = "license", license_text = "LICENSE", bsd_type = None):
     """Generates a license() rule by detecting MODULE_LICENSE_* files.
 
     Args:
         name (String): name of the license rule to generate.
         license_text (String): name of the file containing the license text.
+        bsd_type (optional String): if the repo uses the generic
+            MODULE_LICENSE_BSD marker, specify the exact Bazel license kind.
     """
 
     # Locate the license marker files and convert them to Bazel licenses.
@@ -53,9 +55,23 @@ def generate_license(name = "license", license_text = "LICENSE"):
         # dual-licensed, in which case we elect to use the supported license.
         if marker in LICENSE_MAP:
             license_kinds.append(LICENSE_MAP[marker])
+        elif marker == "MODULE_LICENSE_BSD":
+            if bsd_type:
+                license_kinds.append(bsd_type)
+
+                # Mark the bsd_type as None to indicate it's been used.
+                bsd_type = None
+            else:
+                fail("{}: Must specify `bsd_type` for MODULE_LICENSE_BSD".format(native.repo_name()))
 
     if not license_kinds:
         fail("{}: No known license kind found in markers: {}".format(native.repo_name(), marker_files))
+
+    # If bsd_type is still valid here, it means the caller passed it but the
+    # MODULE_LICENSE_BSD marker file doesn't exist - something may have changed
+    # in the licensing, error out here to alert us to re-examine the call site.
+    if bsd_type:
+        fail("{}: `bsd_type` was provided but no MODULE_LICENSE_BSD file exists: {}".format(native.repo_name()))
 
     if not native.glob([license_text]):
         fail("{}: License file '{}' not found".format(native.repo_name(), license_text))
