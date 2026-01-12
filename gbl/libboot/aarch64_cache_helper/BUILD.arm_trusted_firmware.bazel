@@ -12,10 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@gbl//toolchain:licenses.bzl", "generate_license")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(
+    default_applicable_licenses = [":license"],
     default_visibility = ["//visibility:public"],
+)
+
+generate_license(
+    name = "license",
+    # Uses both BSD 3-Clause and FreeBSD 2-Clause as indicated in
+    # external/arm-trusted-firmware/LICENSE.
+    bsd_type = [
+        "@rules_license//licenses/spdx:BSD-3-Clause",
+        "@rules_license//licenses/spdx:BSD-2-Clause-FreeBSD",
+    ],
 )
 
 exports_files(glob(["**/*"]))
