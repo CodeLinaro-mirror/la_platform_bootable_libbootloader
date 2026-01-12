@@ -13,8 +13,10 @@
 # limitations under the License.
 
 load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(
+    default_applicable_licenses = ["@gbl//:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 

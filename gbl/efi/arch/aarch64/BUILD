@@ -16,6 +16,7 @@ load("@gbl//toolchain:gbl_toolchain.bzl", "int_flag_to_c_def")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(
+    default_applicable_licenses = ["@gbl//:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 
