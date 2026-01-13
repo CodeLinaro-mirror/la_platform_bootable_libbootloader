@@ -155,7 +155,18 @@ def _check_licenses_rule_impl(ctx):
     if all_missing:
         # Sort for deterministic output
         sorted_missing = sorted(all_missing)
-        fail("The following targets are missing applicable_licenses:\n" + "\n".join(["  " + str(m) for m in sorted_missing]))
+
+        # TODO(b/381897961): make this a `fail()` rather than `print()` once
+        # everything properly reports a license. Until then, `fail()` causes
+        # `gen_rust_project` to fail preventing devs from updating the Rust
+        # language assistance tooling.
+        #
+        # However, this does mean that if the inputs don't change Bazel will
+        # skip re-building and not print anything, so to see the output run:
+        # `touch bootable/libbootloader/gbl/toolchain/licenses.bzl && ./tools/bazel build @gbl//efi:check_all_licenses`
+        #
+        # buildifier: disable=print
+        print("The following targets are missing applicable_licenses:\n" + "\n".join(["  " + str(m) for m in sorted_missing]))
 
     return [DefaultInfo()]
 
