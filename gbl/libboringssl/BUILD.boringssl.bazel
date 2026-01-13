@@ -13,42 +13,55 @@
 # limitations under the License.
 
 load(
-    "@boringssl//:gen/sources.bzl",
+    "@boringssl//:src/gen/sources.bzl",
     "bcm_internal_headers",
     "crypto_headers",
     "crypto_internal_headers",
 )
 load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
+load("@gbl//toolchain:licenses.bzl", "generate_license")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
+# We use these boringssl-defined lists of header files, but our package root is
+# at the top-level external/boringssl vs the internal package root of
+# external/boringssl/src, so we need to add src/ to make the paths work.
+src_bcm_internal_headers = ["src/" + h for h in bcm_internal_headers]
+
+src_crypto_headers = ["src/" + h for h in crypto_headers]
+
+src_crypto_internal_headers = ["src/" + h for h in crypto_internal_headers]
+
 package(
+    default_applicable_licenses = [":license"],
     default_visibility = ["//visibility:public"],
 )
 
+generate_license(name = "license")
+
 aarch64_asm_sources = [
-    "gen/bcm/sha1-armv8-win.S",
-    "gen/bcm/sha256-armv8-win.S",
-    "gen/bcm/sha512-armv8-win.S",
-    "crypto/cpu_aarch64_sysreg.cc",
+    "src/gen/bcm/sha1-armv8-win.S",
+    "src/gen/bcm/sha256-armv8-win.S",
+    "src/gen/bcm/sha512-armv8-win.S",
+    "src/crypto/cpu_aarch64_sysreg.cc",
     "@gbl//libboringssl:crypto.cpp",
 ]
 
 x86_64_asm_sources = [
     # TODO(b/425395210): define minimum extension support, fix x86_64 assembly build
-    # "gen/bcm/sha1-x86_64-win.asm",
-    # "gen/bcm/sha256-x86_64-win.asm",
-    # "gen/bcm/sha512-x86_64-win.asm",
+    # "src/gen/bcm/sha1-x86_64-win.asm",
+    # "src/gen/bcm/sha256-x86_64-win.asm",
+    # "src/gen/bcm/sha512-x86_64-win.asm",
 ]
 
 riscv64_asm_sources = []
 
 crypto_sources = [
     "@gbl//libboringssl:bcm.cpp",
-    "crypto/sha/sha1.cc",
-    "crypto/sha/sha256.cc",
-    "crypto/sha/sha512.cc",
-    "crypto/curve25519/curve25519.cc",
-    "crypto/thread_none.cc",
+    "src/crypto/sha/sha1.cc",
+    "src/crypto/sha/sha256.cc",
+    "src/crypto/sha/sha512.cc",
+    "src/crypto/curve25519/curve25519.cc",
+    "src/crypto/thread_none.cc",
 ]
 
 aarch64_flags = [
@@ -77,7 +90,7 @@ cc_library(
             "//conditions:default": [],
         },
     ),
-    hdrs = crypto_internal_headers + crypto_headers + bcm_internal_headers,
+    hdrs = src_crypto_internal_headers + src_crypto_headers + src_bcm_internal_headers,
     copts = [
         "-Werror",
         "-Wno-unused-parameter",
@@ -106,8 +119,9 @@ cc_library(
         "-std=c++17",
     ],
     includes = [
-        "crypto",
-        "include",
+        "src",
+        "src/crypto",
+        "src/include",
     ],
     deps = select({
         "@gbl//toolchain:gbl_rust_host_x86_64": [],

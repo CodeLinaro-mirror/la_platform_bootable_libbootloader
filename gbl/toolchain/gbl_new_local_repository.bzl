@@ -13,28 +13,81 @@
 # limitations under the License.
 
 """
-This file contains the `gbl_new_local_repository` rule
+Rules for creating local repositories by combining existing source directories
+with custom BUILD files.
 """
 
+load("@bazel_skylib//lib:paths.bzl", "paths")
 load(":rust_crate_build_file.bzl", "rust_crate_build_file")
+
+# Hack for missing original_name. original_name is available on 8.1 and above.
+# https://github.com/bazelbuild/bazel/issues/24467
+def _original_name(repo_ctx):
+    if hasattr(repo_ctx, "original_name"):
+        return repo_ctx.original_name
+    idx = repo_ctx.attr.name.rfind("+")
+    return repo_ctx.attr.name[idx + 1:]
+
+def _symlink_tree(repo_ctx, source_root):
+    """Symlinks each file in the given directory tree into the repo root.
+
+    The purpose of this (as opposed to just symlinking the root directly) is to
+    allow removing or modifying individual files in our generated repo without
+    touching the source repo.
+
+    Args:
+        repo_ctx: `repository_rule` context for the repo we're creating.
+        source_root: path to the source dir to replicate in this repo via links.
+    """
+    relative_dirs_to_read = ["."]
+
+    # Bazel doesn't allow infinite loops, just use a high enough number to cover
+    # any realistic tree. Each loop iteration handles one layer of a directory.
+    for _ in range(10000):
+        if not relative_dirs_to_read:
+            break
+
+        relative_dir = relative_dirs_to_read.pop()
+        source_dir = source_root.get_child(relative_dir)
+
+        for source_path in source_dir.readdir():
+            relative_path = paths.join(relative_dir, source_path.basename)
+
+            # Add directories to the stack to process on a future iteration,
+            # create symlinks to files. `repo_ctx.symlink` will automatically
+            # create any required parent directories.
+            if source_path.is_dir:
+                relative_dirs_to_read.append(relative_path)
+            else:
+                repo_ctx.symlink(source_path, relative_path)
+
+    # Verify that our loop count was sufficient to process every directory.
+    if relative_dirs_to_read:
+        fail("{}: failed to symlink entire source tree", _original_name(repo_ctx))
 
 def _gbl_new_local_repository_common_impl(repo_ctx, build_file, build_file_content):
     path = repo_ctx.workspace_root.get_child(repo_ctx.attr.path)
     if path.exists:
-        # Symlink everything into the assembled repo.
-        for entry in path.readdir():
-            # Ignore native BUILD file as we'll use override from the given build_file instead
-            if entry.basename == "BUILD" or entry.basename == "BUILD.bazel":
-                continue
-            repo_ctx.symlink(entry, repo_ctx.path(entry.basename))
+        # For simplicity, symlink the entire tree first and then explicitly
+        # remove the symlinks the caller wants to exclude.
+        _symlink_tree(repo_ctx, path)
 
-    # Symlink the provided build file or use the given build file content
-    if build_file != None and not build_file_content:
+        for path in getattr(repo_ctx.attr, "exclude_files", []):
+            # Explicitly check that the deleted file existed; if it didn't then
+            # the source repo might have significantly changed its structure and
+            # the caller should re-examine the exclusion requests.
+            if not repo_ctx.delete(path):
+                fail("{}: excluded file {} does not exist", _original_name(repo_ctx), path)
+
+    # Symlink the provided build file or use the given build file content. Also
+    # allow neither, in case the repo already contains a top-level BUILD file
+    # that we can use as-is.
+    if build_file and build_file_content:
+        fail("{}: cannot specify both build_file and build_file_content", _original_name(repo_ctx))
+    elif build_file:
         repo_ctx.symlink(build_file, "BUILD")
-    elif build_file == None:
+    elif build_file_content:
         repo_ctx.file("BUILD", build_file_content)
-    else:
-        fail("Exactly one of build_file or build_file_content must be provided")
 
 def _gbl_new_local_repository_impl(repo_ctx):
     _gbl_new_local_repository_common_impl(
@@ -46,9 +99,11 @@ def _gbl_new_local_repository_impl(repo_ctx):
 gbl_new_local_repository = repository_rule(
     doc = """Assemble a new local repository with a custom top-level BUILD file
 
-    Unlike "new_local_repository" from "@bazel_tools//tools/build_defs/repo:local.bzl", this ignores
-    existing BUILD files in path.
-""",
+    Unlike "new_local_repository" from "@bazel_tools//tools/build_defs/repo:local.bzl",
+    this supports excluding a set of files, which is commonly used when a repo already
+    has Bazel build files but they don't work for our purposes and we need to define
+    our own instead.
+    """,
     implementation = _gbl_new_local_repository_impl,
     attrs = {
         "path": attr.string(
@@ -57,23 +112,16 @@ gbl_new_local_repository = repository_rule(
         ),
         "build_file": attr.label(doc = "Label of the build file to use"),
         "build_file_content": attr.string(doc = "Content of the build file to use"),
+        "exclude_files": attr.string_list(doc = "List of files to exclude relative to root"),
     },
 )
 
-# Hack for missing original_name. original_name is available on 8.1 and above.
-# https://github.com/bazelbuild/bazel/issues/24467
-def _get_original_name_legacy(repo_ctx):
-    idx = repo_ctx.attr.name.rfind("+")
-    return repo_ctx.attr.name[idx + 1:]
-
 def _gbl_rust_crate_repository_impl(repo_ctx):
-    target_name = getattr(repo_ctx, "original_name", _get_original_name_legacy(repo_ctx))
-
     _gbl_new_local_repository_common_impl(
         repo_ctx,
         None,
         rust_crate_build_file(
-            target_name,
+            _original_name(repo_ctx),
             rule = repo_ctx.attr.rule,
             crate_name = repo_ctx.attr.crate_name,
             deps = repo_ctx.attr.deps,

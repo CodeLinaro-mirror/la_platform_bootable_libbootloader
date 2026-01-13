@@ -42,6 +42,8 @@ def define_gbl_workspace(name = None):
         name = "rust_prebuilts",
         path = "prebuilts/rust-toolchain/linux-x86/{}".format(GBL_RUST_VERSION),
         build_file = "@gbl//toolchain:BUILD.android_rust_prebuilts.bazel",
+        # We replace the top-level BUILD file with our own.
+        exclude_files = ["BUILD.bazel"],
     )
 
 # buildifier: disable=unused-variable
