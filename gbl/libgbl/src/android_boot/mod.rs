@@ -931,7 +931,7 @@ pub(crate) mod tests {
             format!(
                 "androidboot.vbmeta.device=PARTUUID=00000000-0000-0000-0000-000000000000
 androidboot.vbmeta.public_key_digest={}
-androidboot.vbmeta.avb_version=1.3
+androidboot.vbmeta.avb_version=1.4
 androidboot.vbmeta.device_state={}
 androidboot.vbmeta.hash_alg=sha512
 androidboot.vbmeta.size={}
