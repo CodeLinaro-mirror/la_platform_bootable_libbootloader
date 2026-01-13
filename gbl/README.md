@@ -278,6 +278,55 @@ The following gives an example of debugging GBL with the pdb file on Cuttlefish.
 
 List of EFI protocols used by GBL and a brief description of each [here](./docs/efi_protocols.md).
 
+## Trace Analysis
+
+For aarch64, GBL supports tracing and visualization by Perfetto
+([GBL cuttlefish trace example](https://ui.perfetto.dev/#!/?s=38c35e39b29b6cc328336962e8859384b40788d1)).
+To enable it, build GBL with the following option:
+
+```
+./tools/bazel run //bootable/libbootloader:gbl_efi_dist \
+   --@gbl//toolchain:enable_tracing \
+   --@gbl//toolchain:pause_boot_in_fastboot
+```
+
+`--@gbl//toolchain:enable_tracing` enables compiler instrumentation for
+tracing. `--@gbl//toolchain:pause_boot_in_fastboot` instructs GBL to always
+stop in fastboot after loading OS and before booting, which will be needed for
+retrieving trace data.
+
+Boots GBL on your device. Waits until GBL finishes loading OS and stops in
+fastboot. Then run the following fastboot commands to retrieve trace.
+
+```sh
+fastboot oem gbl-stage trace
+fastboot get_staged <trace file>
+```
+`<trace file>` is the output path for the trace data. The format of the trace
+data is defined in [libtrace/include/gbl_trace.h](libtrace/include/gbl_trace.h)
+
+To visualize the data with perfetto, run
+[tools/gbl-trace-to-perfetto.py](tools/gbl-trace-to-perfetto.py), which
+converts the trace file to trace event format with symbolized addresses:
+
+```sh
+python3 tools/gbl-trace-to-perfetto.py \
+    <trace file> \
+    <path to GBL binary> \
+    <output trace event format file>
+```
+`<path to GBL binary>` is the path to the GBL binary. The corresponding PDB
+file must be in the same directory. `<output trace event format file>` can then
+be opened with [Perfetto UI](https://ui.perfetto.dev/).
+
+By default, GBL allocates 64MB of space from EFI allocation for collecting
+traces. To change the setting, add option
+`--@gbl//toolchain:trace_buffer_size_mb=<size in MB>` when building. If GBL
+runs out of space, additional traces will be truncated.
+[tools/gbl-trace-to-perfetto.py](tools/gbl-trace-to-perfetto.py) will estimate
+and log potential truncation size.
+
+
 ## Licesing
 
 Unless stated otherwise, all GBL source files are licensed under the Apache

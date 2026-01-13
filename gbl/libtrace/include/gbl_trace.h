@@ -15,7 +15,17 @@
  *
  */
 
-// The file contains wire format of GBL trace data.
+// The file defines the wire format of GBL trace data:
+//
+// +------------------------------------------+
+// | GblTraceMetadata                         |
+// +------------------------------------------+
+// | First entry header (GblTraceEntryHeader) |
+// +------------------------------------------+
+// | First entry payload                      |
+// +------------------------------------------+
+// ~ ...                                      ~
+// +------------------------------------------+
 
 #ifndef __GBL_TRACE_H__
 #define __GBL_TRACE_H__
