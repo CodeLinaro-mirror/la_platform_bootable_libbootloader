@@ -35,6 +35,10 @@ generate_license(
 exports_files(glob(["**/*"]))
 
 avb_headers = [
+    "libavb_cert/avb_cert_ops.h",
+    "libavb_cert/avb_cert_types.h",
+    "libavb_cert/avb_cert_validate.h",
+    "libavb_cert/libavb_cert.h",
     "libavb/avb_chain_partition_descriptor.h",
     "libavb/avb_cmdline.h",
     "libavb/avb_crypto.h",
@@ -43,6 +47,7 @@ avb_headers = [
     "libavb/avb_hash_descriptor.h",
     "libavb/avb_hashtree_descriptor.h",
     "libavb/avb_kernel_cmdline_descriptor.h",
+    "libavb/avb_mldsa.h",
     "libavb/avb_ops.h",
     "libavb/avb_property_descriptor.h",
     "libavb/avb_rsa.h",
@@ -53,10 +58,6 @@ avb_headers = [
     "libavb/avb_vbmeta_image.h",
     "libavb/avb_version.h",
     "libavb/libavb.h",
-    "libavb_cert/avb_cert_ops.h",
-    "libavb_cert/avb_cert_types.h",
-    "libavb_cert/avb_cert_validate.h",
-    "libavb_cert/libavb_cert.h",
 ]
 
 # The rust_bindgen rule only accepts a single header for definitions,
@@ -170,6 +171,9 @@ cc_library(
 cc_library(
     name = "libavb_c",
     srcs = [
+        # C implementations for sysdeps which cannot be implemented using Rust
+        "@gbl//libavb:deps.c",
+        "libavb_cert/avb_cert_validate.c",
         "libavb/avb_chain_partition_descriptor.c",
         "libavb/avb_cmdline.c",
         "libavb/avb_crc32.c",
@@ -179,15 +183,15 @@ cc_library(
         "libavb/avb_hash_descriptor.c",
         "libavb/avb_hashtree_descriptor.c",
         "libavb/avb_kernel_cmdline_descriptor.c",
+        "libavb/avb_mldsa.c",
         "libavb/avb_property_descriptor.c",
         "libavb/avb_rsa.c",
         "libavb/avb_slot_verify.c",
         "libavb/avb_util.c",
         "libavb/avb_vbmeta_image.c",
         "libavb/avb_version.c",
-        "libavb_cert/avb_cert_validate.c",
-        # C implementations for sysdeps which cannot be implemented using Rust
-        "@gbl//libavb:deps.c",
+        # TODO(b/413054304#comment8): use real mldsa implementation.
+        "libavb/crypto/mldsa_impl.c",
     ],
     copts = [
         "-D_FILE_OFFSET_BITS=64",

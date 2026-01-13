@@ -49,6 +49,14 @@ typedef struct {
   AVB_SHA_CTX_TAG tag;
 } AvbSHA512ImplCtx;
 
+// TODO(b/413054304#comment8): migrate to real boringssl types.
+typedef struct {
+  int dummy;
+} AvbMLDSA65PrehashImplCtx;
+typedef struct {
+  int dummy;
+} AvbMLDSA87PrehashImplCtx;
+
 #ifdef __cplusplus
 }
 #endif
