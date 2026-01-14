@@ -25,7 +25,7 @@ package(
 
 link_static_cc_library(
     name = "libdttable_c_static",
-    cc_library = "@libdttable_c",
+    cc_library = "@libufdt_c//:libdttable_c",
 )
 
 rust_bindgen(
@@ -44,12 +44,12 @@ rust_bindgen(
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 """,
     ],
-    cc_lib = "@libdttable_c",
+    cc_lib = "@libufdt_c//:libdttable_c",
     clang_flags = [
         "-I{}".format(LLVM_PREBUILTS_C_INCLUDE),
         "-nostdinc",
     ],
-    header = "@libdttable_c//:dt_table.h",
+    header = "@libufdt_c//:utils/src/dt_table.h",
 )
 
 rust_library(

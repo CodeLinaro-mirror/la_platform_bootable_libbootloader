@@ -12,10 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@gbl//toolchain:licenses.bzl", "generate_license")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(
+    default_applicable_licenses = [":license"],
     default_visibility = ["//visibility:public"],
+)
+
+generate_license(
+    name = "license",
+    license_text = "NOTICE",
 )
 
 cc_library(
@@ -61,4 +68,20 @@ cc_library(
         "@gbl//libc:headers",
         "@libfdt_c",
     ],
+)
+
+# Newer version of `rust_bindgen` requires a `cc_library` target that actually produces a static
+# library and instead of only headers. Thus we generate a placeholder source file to meet the
+# requirement.
+genrule(
+    name = "bindgen_noop_cc",
+    outs = ["bindgen_noop_cc.cc"],
+    cmd = "touch $(OUTS)",
+)
+
+cc_library(
+    name = "libdttable_c",
+    srcs = [":bindgen_noop_cc"],
+    hdrs = ["utils/src/dt_table.h"],
+    includes = ["utils/src/"],
 )

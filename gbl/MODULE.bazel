@@ -93,12 +93,6 @@ gbl_new_local_repository(
 )
 
 gbl_new_local_repository(
-    name = "libdttable_c",
-    build_file = "@gbl//libdttable:BUILD.libdttable_c.bazel",
-    path = "external/libufdt/utils/src",
-)
-
-gbl_new_local_repository(
     name = "arm_trusted_firmware",
     build_file = "@gbl//libboot/aarch64_cache_helper:BUILD.arm_trusted_firmware.bazel",
     path = "external/arm-trusted-firmware",
