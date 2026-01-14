@@ -429,7 +429,14 @@ gbl_rust_crate_repository(
 gbl_new_local_repository(
     name = "boringssl",
     build_file = "@gbl//libboringssl:BUILD.boringssl.bazel",
-    path = "external/boringssl/src",
+    exclude_files = [
+        # We replace the top-level BUILD file with our own.
+        "BUILD",
+        # Exclude this subdir build file, otherwise it masks rules we use from
+        # src/gen/sources.bzl by making them private.
+        "src/BUILD.bazel",
+    ],
+    path = "external/boringssl",
 )
 
 gbl_new_local_repository(
