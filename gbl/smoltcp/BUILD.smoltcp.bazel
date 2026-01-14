@@ -16,10 +16,11 @@ load("@gbl//toolchain:licenses.bzl", "generate_license")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
 package(
+    default_applicable_licenses = [":license"],
     default_visibility = ["//visibility:public"],
 )
 
-generate_license()
+generate_license(name = "license")
 
 # Upstream smoltcp uses a custom script in the cargo build flow to generate a `config.rs`
 # containing a set of configurations. We don't use cargo. Thus we use a pre-generated
