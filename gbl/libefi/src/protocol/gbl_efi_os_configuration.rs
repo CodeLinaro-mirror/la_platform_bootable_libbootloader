@@ -52,17 +52,17 @@ impl Protocol<'_, GblOsConfigurationProtocol> {
         // SAFETY:
         // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // * `bootconfig` is non-null buffer used only within the call.
-        // * `fixup` is non-null buffer available for write, used only within the call.
         // * `fixup_size` is non-null usize buffer available for write, used only within the call.
+        // * `fixup` is non-null buffer available for write, used only within the call.
         unsafe {
             efi_call!(
                 @bufsize fixup_size,
                 self.interface().fixup_bootconfig,
                 self.interface_ptr(),
-                bootconfig.as_ptr(),
                 bootconfig.len(),
+                bootconfig.as_ptr(),
+                &mut fixup_size,
                 fixup.as_mut_ptr(),
-                &mut fixup_size
             )?;
         }
 
@@ -73,14 +73,14 @@ impl Protocol<'_, GblOsConfigurationProtocol> {
     pub fn select_device_trees(&self, components: &mut [GblEfiVerifiedDeviceTree]) -> Result<()> {
         // SAFETY:
         // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // * `components` is non-null buffer available for write, used only within the call.
         // * `components_len` is non-null usize buffer, used only within the call.
+        // * `components` is non-null buffer available for write, used only within the call.
         unsafe {
             efi_call!(
                 self.interface().select_device_trees,
                 self.interface_ptr(),
-                components.as_mut_ptr() as _,
                 components.len(),
+                components.as_mut_ptr() as _,
             )?;
         }
 
@@ -134,10 +134,10 @@ mod test {
         // No-op C callback implementation.
         unsafe extern "efiapi" fn c_return_success(
             _: *mut GblEfiOsConfigurationProtocol,
-            _: *const u8,
             _: usize,
-            _: *mut u8,
+            _: *const u8,
             fixup_size: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `fixup_size` is a valid pointer to writtable usize buffer.
@@ -173,10 +173,10 @@ mod test {
         // C callback implementation to add "e=f" to the given bootconfig.
         unsafe extern "efiapi" fn c_add_ef(
             _: *mut GblEfiOsConfigurationProtocol,
-            bootconfig: *const u8,
             bootconfig_size: usize,
-            fixup: *mut u8,
+            bootconfig: *const u8,
             fixup_size: *mut usize,
+            fixup: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `bootconfig` is a valid pointer to the buffer at least `bootconfig_size` size.
@@ -217,10 +217,10 @@ mod test {
         // C callback implementation to return an error.
         unsafe extern "efiapi" fn c_error(
             _: *mut GblEfiOsConfigurationProtocol,
-            _: *const u8,
             _: usize,
-            _: *mut u8,
+            _: *const u8,
             _: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             EFI_STATUS_INVALID_PARAMETER
         }
@@ -245,10 +245,10 @@ mod test {
         // C callback implementation to return an error.
         unsafe extern "efiapi" fn c_error(
             _: *mut GblEfiOsConfigurationProtocol,
-            _: *const u8,
             _: usize,
-            _: *mut u8,
+            _: *const u8,
             fixup_size: *mut usize,
+            _: *mut u8,
         ) -> EfiStatus {
             // SAFETY:
             // * `fixup_size` is a valid pointer to writtable usize buffer.
@@ -277,8 +277,8 @@ mod test {
         // C callback implementation to select first component.
         unsafe extern "efiapi" fn c_select_first(
             _: *mut GblEfiOsConfigurationProtocol,
-            device_trees: *mut GblEfiVerifiedDeviceTree,
             num: usize,
+            device_trees: *mut GblEfiVerifiedDeviceTree,
         ) -> EfiStatus {
             assert_eq!(num, 1);
 
