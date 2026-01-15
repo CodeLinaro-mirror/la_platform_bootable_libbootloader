@@ -298,7 +298,8 @@ Selection is performed by setting `GBL_EFI_VERIFIED_DEVICE_TREE.Selected` to
 `EFI_UNSUPPORTED` may be returned to indicate that firmware-specific selection
 isn't required. GBL will use its default autoselection logic, which selects the
 single provided base device tree without applying any overlays. GBL will fail to
-boot if more than one base device tree is provided by the boot partitions.
+boot if more than one base device tree is provided by the boot partitions. No
+pVM device assignment overlays will be selected by the autoselection logic.
 
 ### Status Codes Returned
 

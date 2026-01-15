@@ -47,7 +47,7 @@ use libutils::aligned_subslice;
 use misc::AndroidBootMode;
 
 mod avf;
-use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region};
+use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region, inject_vmdtbo};
 
 mod hasher;
 
@@ -180,7 +180,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
 
     let images = android_load_verified(ops, slot, unlocked, is_recovery, &verify_data)?;
 
-    let pvmfw = match images.pvmfw.is_empty() {
+    let mut pvmfw = match images.pvmfw.is_empty() {
         true => None,
         _ => Some(loader.pvmfw_load(
             ops,
@@ -189,6 +189,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
             unlocked,
             is_recovery,
             status.color,
+            images.dtbo,
         )?),
     };
     loader.ramdisk_load(&images.ramdisks[..])?;
@@ -223,10 +224,6 @@ pub fn android_load_verify_fixup<'a, 'b>(
             .clone_from_slice(images.vendor_bootconfig);
         Ok(images.vendor_bootconfig.len())
     })?;
-    // Adds AVF-specific bootconfig.
-    if pvmfw.is_some() {
-        avf_update_bootconfig(ops, &mut bootconfig_builder)?;
-    }
     let bootconfig_sz = bootconfig_builder.config_bytes().len();
     loader.set_bootconfig_size(bootconfig_sz);
     // Notes: We keep bootconfig in the ramdisk regardless of whether it is supported for simplicity
@@ -239,8 +236,8 @@ pub fn android_load_verify_fixup<'a, 'b>(
     let (designated_fdt, remains) = loader.get_fdt_and_general_unused_buffer()?;
     let mut components = DeviceTreeComponentsRegistry::new();
     // TODO(b/353272981): Remove get_custom_device_tree
-    let (remains, base, overlays) = match ops.get_custom_device_tree() {
-        Some(v) => (remains, v, &[][..]),
+    let (remains, base, overlays, vmdtbo) = match ops.get_custom_device_tree() {
+        Some(v) => (remains, v, &[][..], None),
         _ => {
             let mut remains = match images.dtbo.len() > 0 {
                 // TODO(b/384964561, b/374336105): Investigate if we can avoid additional copy.
@@ -248,7 +245,6 @@ pub fn android_load_verify_fixup<'a, 'b>(
                     gbl_println!(ops, "Handling overlays from dtbo");
                     components.append_from_dttable(
                         DeviceTreeComponentSource::Dtbo,
-                        DeviceTreeComponentType::Overlay,
                         &DtTableImage::from_bytes(images.dtbo)?,
                         remains,
                     )?
@@ -269,12 +265,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
                     )?
                 } else if let Ok(table) = DtTableImage::from_bytes(images.dtb) {
                     gbl_println!(ops, "Dttable with {} entries found", table.entries_count());
-                    components.append_from_dttable(
-                        source,
-                        DeviceTreeComponentType::DeviceTree,
-                        &table,
-                        remains,
-                    )?
+                    components.append_from_dttable(source, &table, remains)?
                 } else {
                     return Err(Error::Other(Some(
                         "Invalid or unrecognized device tree format in boot/vendor_boot",
@@ -288,7 +279,6 @@ pub fn android_load_verify_fixup<'a, 'b>(
                 let dttable = DtTableImage::from_bytes(images.dtb_part)?;
                 remains = components.append_from_dttable(
                     DeviceTreeComponentSource::Dtb,
-                    DeviceTreeComponentType::DeviceTree,
                     &dttable,
                     remains,
                 )?;
@@ -296,8 +286,8 @@ pub fn android_load_verify_fixup<'a, 'b>(
 
             gbl_println!(ops, "Selecting device tree components");
             ops.select_device_trees(&mut components)?;
-            let (base, overlays) = components.selected()?;
-            (remains, base, overlays)
+            let (base, overlays, vmdtbo) = components.selected()?;
+            (remains, base, overlays, vmdtbo)
         }
     };
     // Assembles DT in designated buffer if provided, otherwise allocates from `general` buffer.
@@ -311,15 +301,24 @@ pub fn android_load_verify_fixup<'a, 'b>(
     // Builds the FDT commandline. Reserves 1024 bytes for separators and fixup.
     fdt_build_bootargs(ops, &mut fdt, &images, overlays, boot_items.as_ref(), 1024)?;
 
+    let vmdtbo_idx = match pvmfw.as_mut() {
+        Some((reg, bin_sz)) => {
+            let (vmdtbo_idx, vmdtbo) = vmdtbo.unzip();
+            gbl_println!(ops, "AVF: VMDTBO index: {vmdtbo_idx:?}");
+            let total_size = match vmdtbo {
+                Some(v) => inject_vmdtbo(reg, *bin_sz, v)?,
+                None => reg.len(),
+            };
+            avf_fixup_host_dt(ops, &mut fdt, &reg[..total_size], *bin_sz, &verify_data)?;
+            vmdtbo_idx
+        }
+        _ => None,
+    };
+
     // `DeviceTreeComponentsRegistry` internally uses ArrayVec which causes it to have a default
     // life time equal to the scope it lives in. This is unnecessarily strict and prevents us from
     // accessing `load` buffer.
     drop(components);
-
-    match pvmfw {
-        Some((ref v, s)) => avf_fixup_host_dt(ops, &mut fdt, v, s, &verify_data)?,
-        _ => {}
-    }
 
     fdt_propagate_random(ops, &mut fdt)?;
 
@@ -346,16 +345,15 @@ pub fn android_load_verify_fixup<'a, 'b>(
     let fdt_ptr_range = fdt.as_ref()[..fdt.header_ref()?.actual_size()].as_ptr_range();
     loader.set_fdt_range(fdt_ptr_range);
 
-    // Backend bootconfig fixup.
-    let mut builder = fixup_bootconfig(ops, loader.expand_bootconfig_buffer()?, bootconfig_sz)?;
-    if let Some(ref v) = boot_items {
-        for val in v.utf8_items(BootItem::Bootconfig) {
-            write!(builder, "{}{}", val, val.ends_with("\n").then_some("").unwrap_or("\n"))
-                .map_err(Error::from)?;
-        }
-    }
-
-    let bootconfig_sz = builder.config_bytes().len();
+    // Finalize and fixup bootconfig.
+    let bootconfig_sz = finalize_bootconfig(
+        ops,
+        loader.expand_bootconfig_buffer()?,
+        bootconfig_sz,
+        pvmfw.is_some(),
+        vmdtbo_idx,
+        boot_items,
+    )?;
     loader.set_bootconfig_size(bootconfig_sz);
     let ramdisk_len = ramdisk_len + bootconfig_sz;
 
@@ -413,17 +411,33 @@ fn finalize_dt<'b>(
 /// * `ops`: An implementation of GblOps.
 /// * `buf`: Buffer containing an existing bootconfig.
 /// * `curr_bootconfig_sz`: The size including trailer of the existing bootconfig.
-fn fixup_bootconfig<'a, 'b>(
+/// * `avf_enabled`: Whether to write AVF-related bootconfig.
+/// * `vmdtbo_idx`: Index of a custom VMDTBO used for AVF device assignment.
+/// * `boot_items`: Fastboot boot items.
+fn finalize_bootconfig<'a, 'b, 'c>(
     ops: &mut impl GblOps<'b>,
     buf: &'a mut [u8],
     curr_bootconfig_sz: usize,
-) -> Result<BootConfigBuilder<'a>> {
+    avf_enabled: bool,
+    vmdtbo_idx: Option<usize>,
+    boot_items: Option<BootItemContainer<'c>>,
+) -> Result<usize> {
     let mut builder = BootConfigBuilder::from_prefix_unchecked(buf, curr_bootconfig_sz)?;
+    // Adds AVF-specific bootconfig.
+    if avf_enabled {
+        avf_update_bootconfig(ops, &mut builder, vmdtbo_idx)?;
+    }
+    if let Some(ref v) = boot_items {
+        for val in v.utf8_items(BootItem::Bootconfig) {
+            write!(builder, "{}{}", val, val.ends_with("\n").then_some("").unwrap_or("\n"))
+                .map_err(Error::from)?;
+        }
+    }
     // Adds platform-specific bootconfig.
     builder.add_with(|bytes, out| {
         Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
     })?;
-    Ok(builder)
+    Ok(builder.config_bytes().len())
 }
 
 /// Gets the target slot to boot.
@@ -2598,10 +2612,10 @@ androidboot.veritymode.managed=yes
             .extra(format!("androidboot.slot_suffix=_a\n"))
             .extra("androidboot.gbl.version=0\n")
             .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
-            .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .extra("gbl-fb-config-1=1\n")
             .extra("gbl-fb-config-2=1\n")
             .extra("gbl.blob.test=c29tZSB0ZXN0IGRhdGE=\n")
+            .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
         assert_eq!(kernel, read_test_data("kernel_a.img"));

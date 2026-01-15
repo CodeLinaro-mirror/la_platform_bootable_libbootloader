@@ -2112,15 +2112,19 @@ mod test {
     }
 
     #[test]
-    fn test_select_device_tree_components_select_base_and_overlay() {
+    fn test_select_device_tree_components_select_base_overlay_and_vmdtbo() {
         let base = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let overlay = include_bytes!("../../libfdt/test/data/overlay_by_path.dtbo").to_vec();
         let overlay2 = include_bytes!("../../libfdt/test/data/overlay_by_reference.dtbo").to_vec();
+        let vmdtbo1 = include_bytes!("../../libfdt/test/data/overlay_2_by_path.dtbo").to_vec();
+        let vmdtbo2 = include_bytes!("../../libfdt/test/data/overlay_2_by_reference.dtbo").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
 
         let base_scoped = base.clone();
         let overlay_scoped = overlay.clone();
         let overlay2_scoped = overlay2.clone();
+        let vmdtbo1_scoped = vmdtbo1.clone();
+        let vmdtbo2_scoped = vmdtbo2.clone();
         let mut mock_efi = MockEfi::new();
         mock_efi.con_out.expect_write_str().return_const(Ok(()));
         mock_efi
@@ -2130,12 +2134,18 @@ mod test {
                 let mut os_configuration = GblOsConfigurationProtocol::default();
 
                 os_configuration.expect_select_device_trees().return_once(move |components| {
-                    assert_eq!(components.len(), 3);
+                    assert_eq!(components.len(), 5);
 
                     // SAFETY:
                     // `components[*].device_trees` are pointing to corresponding base device
                     // tree and overlays buffers.
-                    let (base_passed, overlay_passed, overlay2_passed) = unsafe {
+                    let (
+                        base_passed,
+                        overlay_passed,
+                        overlay2_passed,
+                        vmdtbo1_passed,
+                        vmdtbo2_passed,
+                    ) = unsafe {
                         (
                             slice::from_raw_parts(
                                 components[0].device_tree as *const u8,
@@ -2149,17 +2159,28 @@ mod test {
                                 components[2].device_tree as *const u8,
                                 overlay2_scoped.len(),
                             ),
+                            slice::from_raw_parts(
+                                components[3].device_tree as *const u8,
+                                vmdtbo1_scoped.len(),
+                            ),
+                            slice::from_raw_parts(
+                                components[4].device_tree as *const u8,
+                                vmdtbo2_scoped.len(),
+                            ),
                         )
                     };
 
                     assert_eq!(base_passed, &base_scoped);
                     assert_eq!(overlay_passed, &overlay_scoped[..]);
                     assert_eq!(overlay2_passed, &overlay2_scoped[..]);
+                    assert_eq!(vmdtbo1_passed, &vmdtbo1_scoped[..]);
+                    assert_eq!(vmdtbo2_passed, &vmdtbo2_scoped[..]);
 
                     // Select the base device and the second overlay. The first overlay is not
                     // being selected.
                     components[0].selected = true;
                     components[2].selected = true;
+                    components[4].selected = true; // selected VMDTBO
                     Ok(())
                 });
 
@@ -2189,7 +2210,7 @@ mod test {
                 current_buffer,
             )
             .unwrap();
-        registry
+        current_buffer = registry
             .append(
                 &mut ops,
                 DeviceTreeComponentSource::Dtbo,
@@ -2198,9 +2219,30 @@ mod test {
                 current_buffer,
             )
             .unwrap();
+        current_buffer = registry
+            .append(
+                &mut ops,
+                DeviceTreeComponentSource::Dtbo,
+                DeviceTreeComponentType::PvmDeviceAssignmentOverlay,
+                &vmdtbo1,
+                current_buffer,
+            )
+            .unwrap();
+        registry
+            .append(
+                &mut ops,
+                DeviceTreeComponentSource::Dtbo,
+                DeviceTreeComponentType::PvmDeviceAssignmentOverlay,
+                &vmdtbo2,
+                current_buffer,
+            )
+            .unwrap();
 
         assert_eq!(ops.select_device_trees(&mut registry), Ok(()));
-        assert_eq!(registry.selected(), Ok((&base[..], &[&overlay2[..]][..])));
+        assert_eq!(
+            registry.selected(),
+            Ok((&base[..], &[&overlay2[..]][..], Some((3, &vmdtbo2[..]))))
+        );
     }
 
     #[test]

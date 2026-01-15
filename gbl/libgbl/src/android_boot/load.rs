@@ -622,6 +622,7 @@ impl<'a> BootBufferLoader<'a> {
         unlocked: bool,
         is_recovery: bool,
         color: BootStateColor,
+        dtbo_part: &[u8],
     ) -> Result<(&'a mut [u8], usize), Error> {
         // Parse the partition header and extract the pvmfw binary
         let info = BootImageV3Info::new(img)?;
@@ -629,7 +630,7 @@ impl<'a> BootBufferLoader<'a> {
         let pvmfw_bin_len = pvmfw_bin.len();
         let boot_info = BootInfo::new(unlocked, is_recovery, color, verify_data);
         Ok(match self.bufs.pvmfw_data.as_mut() {
-            Some(v) => build_pvmfw_data_region(ops, v, pvmfw_bin, &boot_info)
+            Some(v) => build_pvmfw_data_region(ops, v, pvmfw_bin, &boot_info, dtbo_part)
                 .map(|sz| (&mut take(v)[..sz], pvmfw_bin_len))?,
             _ => {
                 // Split out buffer from general load for loading pvmfw.
@@ -639,8 +640,13 @@ impl<'a> BootBufferLoader<'a> {
                 assert_eq!(self.general_fdt, 0..0);
                 assert_eq!(self.general_kernel, 0..0);
                 let off = aligned_offset(&self.general[..], PVMFW_DATA_ALIGNMENT)?;
-                let sz =
-                    build_pvmfw_data_region(ops, &mut self.general[off..], pvmfw_bin, &boot_info)?;
+                let sz = build_pvmfw_data_region(
+                    ops,
+                    &mut self.general[off..],
+                    pvmfw_bin,
+                    &boot_info,
+                    dtbo_part,
+                )?;
                 let (pvmfw, general) = take(&mut self.general)[off..].split_at_mut(sz);
                 self.general = general;
                 (pvmfw, pvmfw_bin_len)

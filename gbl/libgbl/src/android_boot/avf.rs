@@ -20,6 +20,7 @@ use crate::{
         load::split,
     },
     constants::PAGE_SIZE,
+    device_tree::entry_is_vmdtbo,
     gbl_avb::state::BootStateColor,
     gbl_println, GblOps, KiB,
 };
@@ -30,6 +31,7 @@ use core::{
     fmt::Write,
     mem::{align_of, size_of},
 };
+use dttable::DtTableImage;
 use fdt::{fdt_encode_cell_sized_property, std_props, Fdt};
 use liberror::{Error, Result};
 use opendice::{
@@ -214,8 +216,8 @@ where
 /// * `ops` - an implementation of `GblOps`
 /// * `output_buffer` - the target load buffer.
 /// * `pvmfw_binary` - a byte slice containing a preloaded pvmfw binary
-/// * `verify_data` - an `AVFVerificationData` implementation (eg `SlotVerifyData`)
-/// * `unlocked` - `true` if the bootloader is unlocked
+/// * `boot_info` - boot state data
+/// * `dtbo_partition` - loaded dtbo partition bytes
 ///
 /// # Returns
 ///
@@ -229,6 +231,7 @@ pub fn build_pvmfw_data_region<'a, T: AVFVerificationData>(
     output_buffer: &mut [u8],
     pvmfw_binary: &[u8],
     boot_info: &BootInfo<T>,
+    dtbo_partition: &[u8],
 ) -> Result<usize> {
     // Split the pvmfw region into binary and configuration buffers
     let pvmfw_bin_size = pvmfw_binary.len();
@@ -238,11 +241,13 @@ pub fn build_pvmfw_data_region<'a, T: AVFVerificationData>(
 
     // Write the pvmfw configuration data to the config region
     let config_size = write_pvmfw_config(ops, config, binary, boot_info)?;
+    let additional_sz = vmdtbo_entry_max_size(dtbo_partition)?;
+    config[config_size..config_size + additional_sz].fill(0u8);
     // Copy the binary to the start of pvmfw region
     binary.copy_from_slice(pvmfw_binary);
     // Size must be aligned to the page size used by the hypervisor
     let total_size = align_up(
-        (SafeNum::from(pvmfw_bin_size) + config_size)
+        (SafeNum::from(pvmfw_bin_size) + config_size + additional_sz)
             .try_into()
             .map_err(Error::ArithmeticOverflow)?,
         PAGE_SIZE,
@@ -250,6 +255,96 @@ pub fn build_pvmfw_data_region<'a, T: AVFVerificationData>(
 
     gbl_println!(ops, "AVF: init success");
     Ok(total_size)
+}
+
+/// Finds the size of the largest VMDTBO overlay present in the DTBO partition.
+fn vmdtbo_entry_max_size(dtbo_partition: &[u8]) -> Result<usize> {
+    if dtbo_partition.is_empty() {
+        return Ok(0);
+    }
+    let dttable = DtTableImage::from_bytes(dtbo_partition)
+        .map_err(|_| Error::Other(Some("invalid dtbo partition")))?;
+    let max_vmdtbo_size = dttable
+        .entries()
+        .filter_map(|e| match entry_is_vmdtbo(&e.metadata) {
+            true => Some(e.dtb.len()),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    align_up(max_vmdtbo_size, PvmfwConfEntry::ALIGNMENT)
+}
+
+/// Injects VMDTBO overlay into the pvmfw data configuration region
+///
+/// # Arguments
+///
+/// * `pvmfw_data_buf` - a valid pvmfw data region, including extra space for the vmdtbo
+/// * `pvmfw_binary_size` - size of the pvmfw binary within the entire pvmfw data region
+/// * `vmdtbo` - vmdtbo overlay to inject
+///
+/// # Returns
+///
+/// * `Ok(usize)` - on success, the new total size of pvmfw data, aligned correctly
+/// * `Err(BufferTooSmall)` - if there is not enough space to inject the VMDTBO
+/// * `Err(ArithmeticOverflow)` - on overflow when calculating image buffer size
+/// * `Err(InvalidAlignment)` - on overflow when calculating image buffer size
+///
+/// TODO(b/480459718): Replace VMDTBO injection with full pvmfw config build after performing DT
+/// component selection.
+pub fn inject_vmdtbo(
+    pvmfw_data_buf: &mut [u8],
+    pvmfw_binary_size: usize,
+    vmdtbo: &[u8],
+) -> Result<usize> {
+    const VMDTBO_ENTRY_IDX: usize = 2;
+
+    let vmdtbo_entry_sz = vmdtbo.len();
+    let vmdtbo_entry_sz_padded = align_up(vmdtbo_entry_sz, PvmfwConfEntry::ALIGNMENT)?;
+
+    let conf_data_buf = pvmfw_data_buf.get_mut(pvmfw_binary_size..).ok_or(Error::BadBufferSize)?;
+    let (conf_header_buf, conf_entries_buf) = conf_data_buf
+        .split_at_mut_checked(PvmfwConfHeader::PADDED_SIZE)
+        .ok_or(Error::BadBufferSize)?;
+
+    // Update contents of pvmfw configuration header - sizes and entry offsets
+    let conf_header =
+        PvmfwConfHeader::mut_from_prefix(conf_header_buf).map_err(|_| Error::InvalidAlignment)?.0;
+    if conf_header.entries[VMDTBO_ENTRY_IDX].size != 0 {
+        return Err(Error::Other(Some("vmdtbo already present")));
+    }
+    let new_config_size = SafeNum::from(conf_header.total_size) + vmdtbo_entry_sz_padded;
+    let new_pvmfw_data_size: usize =
+        (new_config_size + pvmfw_binary_size).try_into().map_err(Error::ArithmeticOverflow)?;
+
+    // Shift subsequent entries right and insert vmdtbo entry
+    let vmdtbo_offset: usize = conf_header.entries[VMDTBO_ENTRY_IDX].offset.try_into().unwrap();
+    if TryInto::<usize>::try_into(new_config_size - PvmfwConfHeader::PADDED_SIZE).unwrap()
+        > conf_entries_buf.len()
+    {
+        return Err(Error::BufferTooSmall(Some(new_pvmfw_data_size)));
+    }
+    let (_, next_entries) =
+        conf_entries_buf.split_at_mut(vmdtbo_offset - PvmfwConfHeader::PADDED_SIZE);
+    let entries_end = (conf_header.total_size as usize) - vmdtbo_offset;
+    // Move entries and make space for VMDTBO
+    next_entries.copy_within(0..entries_end, vmdtbo_entry_sz_padded);
+    let (vmdtbo_entry, _) = next_entries.split_at_mut(vmdtbo_entry_sz_padded);
+    let (vmdtbo_buf, vmdtbo_pad) = vmdtbo_entry.split_at_mut(vmdtbo_entry_sz);
+    vmdtbo_buf.copy_from_slice(vmdtbo);
+    vmdtbo_pad.fill(0u8);
+
+    // Update size of VMDTBO entry in header
+    conf_header.entries[VMDTBO_ENTRY_IDX].size = vmdtbo_entry_sz.try_into()?;
+    // Update offsets of entries following VMDTBO
+    for i in VMDTBO_ENTRY_IDX + 1..NUM_PVMFW_CONFIG_ENTRIES {
+        conf_header.entries[i].offset += TryInto::<u32>::try_into(vmdtbo_entry_sz_padded)?;
+    }
+    // Update total size of config data
+    conf_header.total_size = new_config_size.try_into().map_err(Error::ArithmeticOverflow)?;
+
+    // New total size of the entire pvmfw region, with alignment
+    align_up(new_pvmfw_data_size, PAGE_SIZE)
 }
 
 /// Add a device tree node describing pvmfw memory carveout. This is default behavior, required for
@@ -477,9 +572,11 @@ where
 pub fn avf_update_bootconfig<'a>(
     ops: &mut impl GblOps<'a>,
     bootconfig: &mut BootConfigBuilder,
+    vmdtbo_idx: Option<usize>,
 ) -> core::result::Result<(), Error> {
     const PROTECTED_PROP: &str = "androidboot.hypervisor.protected_vm.supported";
     const UNPROTECTED_PROP: &str = "androidboot.hypervisor.vm.supported";
+    const VMDTBO_IDX_PROP: &str = "androidboot.hypervisor.vm_dtbo_idx";
 
     for prop in [PROTECTED_PROP, UNPROTECTED_PROP] {
         if bootconfig.config_str().contains(prop) {
@@ -492,6 +589,9 @@ pub fn avf_update_bootconfig<'a>(
         } else {
             write!(bootconfig, "{prop}=true\n")?;
         }
+    }
+    if let Some(idx) = vmdtbo_idx {
+        write!(bootconfig, "{VMDTBO_IDX_PROP}={idx}\n")?;
     }
     Ok(())
 }
@@ -672,9 +772,11 @@ pub(crate) mod test {
         0x84, 0x41, 0x55, 0xa0, 0x42, 0x11, 0x22, 0x40,
     ];
 
-    #[test]
-    fn test_build_pvmfw_data_region() {
-        let mut out_pvmfw_buf = AlignedBuffer::new(0x100000, PVMFW_DATA_ALIGNMENT);
+    fn build_test_pvmfw_data(
+        out_pvmfw_buf: &mut [u8],
+        pvmfw_bin_size: usize,
+        dtbo_part: &[u8],
+    ) -> Result<usize> {
         let storage = FakeGblOpsStorage::default();
         let mut ops = FakeGblOps::new(&storage);
         ops.avf_is_supported = true;
@@ -683,19 +785,60 @@ pub(crate) mod test {
         ops.avf_vendor_dice_handover = Some(&DUMMY_VENDOR_HANDOVER[..]);
         let testdigest = TestVerifyData::new(Some([1, 2, 3, 4, 5]), Some(0));
         let boot_info = BootInfo::new(false, false, BootStateColor::Green, &testdigest);
-
-        const FILL_VALUE: u8 = 0xAB;
-        const FILL_COUNT: usize = 0xc00;
-        let used_bytes = build_pvmfw_data_region(
+        build_pvmfw_data_region(
             &mut ops,
-            &mut out_pvmfw_buf,
-            &dummy_pvmfw_binary(FILL_VALUE, FILL_COUNT),
+            out_pvmfw_buf,
+            &dummy_pvmfw_binary(0xAB, pvmfw_bin_size),
             &boot_info,
+            dtbo_part,
         )
-        .unwrap();
+    }
+
+    #[test]
+    fn test_build_pvmfw_data_region() {
+        const BIN_SIZE: usize = 0xc00;
+        let mut out_pvmfw_buf = AlignedBuffer::new(0x100000, PVMFW_DATA_ALIGNMENT);
+        let used_bytes = build_test_pvmfw_data(&mut out_pvmfw_buf, BIN_SIZE, &[][..]).unwrap();
         assert!(used_bytes > PAGE_SIZE);
         assert!(used_bytes % PAGE_SIZE == 0);
-        assert!(&out_pvmfw_buf[..FILL_COUNT].iter().all(|&b| b == FILL_VALUE));
+        assert!(&out_pvmfw_buf[..BIN_SIZE].iter().all(|&b| b == 0xAB));
+    }
+
+    fn parse_pvmfw_data_conf(
+        pvmfw_data: &[u8],
+        bin_size: usize,
+    ) -> (&PvmfwConfHeader, [Vec<u8>; NUM_PVMFW_CONFIG_ENTRIES]) {
+        let (_, conf_buf) = pvmfw_data.split_at_checked(bin_size).unwrap();
+        let (conf_header_buf, _) = conf_buf.split_at_checked(size_of::<PvmfwConfHeader>()).unwrap();
+        let header = PvmfwConfHeader::ref_from_bytes(conf_header_buf).unwrap();
+        let mut entries: [Vec<u8>; NUM_PVMFW_CONFIG_ENTRIES] = std::array::from_fn(|_| Vec::new());
+        for i in 0..NUM_PVMFW_CONFIG_ENTRIES {
+            let size = header.entries[i].size as usize;
+            let offset = header.entries[i].offset as usize;
+            entries[i] = conf_buf[offset..offset + size].into();
+        }
+        (header, entries)
+    }
+
+    #[test]
+    fn test_inject_vmdtbo() {
+        const BIN_SIZE: usize = 0x1000;
+        const VMDTBO_ENTRY_IDX: usize = 2;
+        let vmdtbo = [0xcd; 50];
+
+        let dtbo_part = include_bytes!("../../testdata/android/dtbo_a.img").to_vec();
+        let mut out_pvmfw_buf = AlignedBuffer::new(0x100000, PVMFW_DATA_ALIGNMENT);
+        build_test_pvmfw_data(&mut out_pvmfw_buf, BIN_SIZE, &dtbo_part).unwrap();
+        let (conf_header, mut conf_entries) = parse_pvmfw_data_conf(&out_pvmfw_buf, BIN_SIZE);
+        let old_conf_size = conf_header.total_size;
+        assert_eq!(conf_entries[VMDTBO_ENTRY_IDX].len(), 0);
+
+        inject_vmdtbo(&mut out_pvmfw_buf, BIN_SIZE, &vmdtbo).unwrap();
+        let (conf_header, new_conf_entries) = parse_pvmfw_data_conf(&out_pvmfw_buf, BIN_SIZE);
+
+        conf_entries[VMDTBO_ENTRY_IDX] = vmdtbo.into(); // VMDTBO entry should contain data now
+        assert!(old_conf_size < conf_header.total_size);
+        assert_eq!(conf_entries, new_conf_entries);
     }
 
     #[test]
@@ -779,21 +922,24 @@ pub(crate) mod test {
     fn test_write_avf_bootconfig() {
         let protected = "androidboot.hypervisor.protected_vm.supported";
         let unprotected = "androidboot.hypervisor.vm.supported";
+        let vmdtbo = "androidboot.hypervisor.vm_dtbo_idx";
         let mut ops = FakeGblOps::new(&[][..]);
-        let mut bootconf_buffer = [0u8; 128];
+        let mut bootconf_buffer = [0u8; 256];
         let mut bootconfig = BootConfigBuilder::new(&mut bootconf_buffer).unwrap();
 
         let bootconf_str = bootconfig.config_str();
         assert!(!bootconf_str.contains(protected));
         assert!(!bootconf_str.contains(unprotected));
 
-        avf_update_bootconfig(&mut ops, &mut bootconfig).unwrap();
+        avf_update_bootconfig(&mut ops, &mut bootconfig, None).unwrap();
+        assert!(!bootconfig.config_str().contains(vmdtbo));
         assert_eq!(bootconfig.config_str().matches(protected).count(), 1);
         assert_eq!(bootconfig.config_str().matches(unprotected).count(), 1);
 
-        avf_update_bootconfig(&mut ops, &mut bootconfig).unwrap();
+        avf_update_bootconfig(&mut ops, &mut bootconfig, Some(5)).unwrap();
         assert_eq!(bootconfig.config_str().matches(protected).count(), 1);
         assert_eq!(bootconfig.config_str().matches(unprotected).count(), 1);
+        assert!(bootconfig.config_str().contains(&format!("{vmdtbo}=5")));
     }
 
     #[test]
