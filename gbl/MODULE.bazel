@@ -83,7 +83,10 @@ cc_library(
 gbl_new_local_repository(
     name = "libfdt_c",
     build_file = "@gbl//libfdt:BUILD.libfdt_c.bazel",
-    path = "external/dtc/libfdt",
+    # The upstream build rule almost works for us, but we want to inject
+    # license information and instrumentation hooks.
+    exclude_files = ["BUILD.bazel"],
+    path = "external/dtc",
 )
 
 gbl_new_local_repository(

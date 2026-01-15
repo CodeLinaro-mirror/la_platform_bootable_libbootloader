@@ -53,7 +53,7 @@ use zerocopy::{Immutable, IntoBytes, KnownLayout, FromBytes};
         "-I{}".format(LLVM_PREBUILTS_C_INCLUDE),
         "-nostdinc",
     ],
-    header = "@libfdt_c//:libfdt.h",
+    header = "@libfdt_c//:libfdt/libfdt.h",
 )
 
 rust_bindgen(
