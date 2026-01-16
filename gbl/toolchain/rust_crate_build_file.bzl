@@ -30,7 +30,7 @@ def rust_crate_build_file(
     There is not any need of preprocessing, patching or source generation.
 
     Args:
-        name (String): name of the rust_library target.
+        name (String): name of the rust_library target. Also used as the package name.
         rule (String): Bazel Rust rule to build, defaults to `rust_library`.
         crate_name (String): name of the rust_library crate, same as name by default.
         deps (List of strings): The `deps` field.
@@ -52,7 +52,10 @@ def rust_crate_build_file(
 load("@rules_rust//rust:defs.bzl", "{rule}")
 load("@gbl//licensing:licenses.bzl", "generate_license")
 
-generate_license(name = "license")
+generate_license(
+    name = "license",
+    package_name = "{name}",
+)
 
 {rule}(
     name = "{name}",

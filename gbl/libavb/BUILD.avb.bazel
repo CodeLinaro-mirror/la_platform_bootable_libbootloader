@@ -27,6 +27,7 @@ package(
 
 generate_license(
     name = "license",
+    package_name = "libavb",
     # Specify that for libavb, MODULE_LICENSE_BSD means BSD 3-Clause as
     # indicated in external/avb/LICENSE.
     bsd_type = "@rules_license//licenses/spdx:BSD-3-Clause",

@@ -22,6 +22,7 @@ package(
 
 generate_license(
     name = "license",
+    package_name = "ARM Trusted Firmware",
     # Uses both BSD 3-Clause and FreeBSD 2-Clause as indicated in
     # external/arm-trusted-firmware/LICENSE.
     bsd_type = [

@@ -38,10 +38,17 @@ LICENSE_MAP = {
     "MODULE_LICENSE_ZERO_BSD": "@rules_license//licenses/spdx:0BSD",
 }
 
-def generate_license(name = "license", license_text = "LICENSE", bsd_type = None):
+def generate_license(
+        package_name,
+        name = "license",
+        license_text = "LICENSE",
+        bsd_type = None):
     """Generates a license() rule by detecting MODULE_LICENSE_* files.
 
     Args:
+        package_name (String): name of the package. In the final license output
+            file, licenses will be reported by package rather than for each
+            individual build target.
         name (String): name of the license rule to generate.
         license_text (String): name of the file containing the license text.
         bsd_type (optional String or List[String]): if the repo uses the generic
@@ -88,6 +95,7 @@ def generate_license(name = "license", license_text = "LICENSE", bsd_type = None
         license_kinds = license_kinds,
         license_text = license_text,
         visibility = ["//visibility:public"],
+        package_name = package_name,
     )
 
 LicenseCheckInfo = provider(

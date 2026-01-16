@@ -21,7 +21,10 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-generate_license(name = "license")
+generate_license(
+    name = "license",
+    package_name = "open-dice",
+)
 
 exports_files(glob(["include/**/*.h"]))
 

@@ -24,6 +24,7 @@ package(
 # have to manually define the license used here, which is MIT.
 license(
     name = "license",
+    package_name = "musl",
     license_kinds = ["@rules_license//licenses/spdx:MIT"],
     license_text = "LICENSE",
 )

@@ -22,6 +22,7 @@ package(
 
 generate_license(
     name = "license",
+    package_name = "libufdt",
     license_text = "NOTICE",
 )
 

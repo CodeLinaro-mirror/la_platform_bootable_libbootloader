@@ -22,6 +22,7 @@ package(
 # GBL code uses Apache 2.0.
 license(
     name = "gbl_license",
+    package_name = "GBL",
     license_kind = "@rules_license//licenses/spdx:Apache-2.0",
     license_text = "LICENSE",
 )

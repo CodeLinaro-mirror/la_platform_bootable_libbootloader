@@ -28,6 +28,7 @@ package(
 # BSD licensing, so we CANNOT use any files outside of this directory.
 generate_license(
     name = "license",
+    package_name = "libfdt",
     bsd_type = "@rules_license//licenses/spdx:BSD-2-Clause",
     # Do not use the default LICENSE file as it contains both GPL and BSD
     # license texts but we are opting only for BSD.

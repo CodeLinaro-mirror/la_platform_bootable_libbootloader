@@ -20,7 +20,10 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-generate_license(name = "license")
+generate_license(
+    name = "license",
+    package_name = "smoltcp",
+)
 
 # Upstream smoltcp uses a custom script in the cargo build flow to generate a `config.rs`
 # containing a set of configurations. We don't use cargo. Thus we use a pre-generated

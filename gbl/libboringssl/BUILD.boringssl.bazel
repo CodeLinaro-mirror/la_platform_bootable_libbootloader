@@ -36,7 +36,10 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-generate_license(name = "license")
+generate_license(
+    name = "license",
+    package_name = "boringssl",
+)
 
 aarch64_asm_sources = [
     "src/gen/bcm/sha1-armv8-win.S",
