@@ -97,12 +97,40 @@ LicenseCheckInfo = provider(
     },
 )
 
+def _skip_license_check(target):
+    """Returns True if this target can skip the licensing check.
+
+    Some Bazel internal dependencies don't expose licenses in a way that we can
+    use, but if they already use a notice-class license that we support we can
+    skip them in the license check.
+
+    This does make some assumptions about Bazel internals that could break in
+    future versions, if this becomes common we might need to investigate
+    alternatives.
+    """
+    label = target.label
+    for repo_package_name in [
+        # bazel is Apache 2, same as GBL.
+        ("bazel_tools", "tools/cpp", "empty_lib"),
+        ("bazel_tools", "tools/cpp", "link_extra_lib"),
+        ("bazel_tools", "tools/cpp", "malloc"),
+        # rules_cc+ is Apache 2, same as GBL.
+        ("rules_cc+", "", "empty_lib"),
+        ("rules_cc+", "", "link_extra_lib"),
+    ]:
+        if (label.repo_name, label.package, label.name) == repo_package_name:
+            return True
+    return False
+
 def _check_licenses_aspect_impl(target, ctx):
     missing = []
     transitive = []
 
-    # If it's not a rule (e.g. source file), we skip checking it directly
-    if hasattr(ctx, "rule"):
+    # If it's not a rule (e.g. source file), we skip checking it directly.
+    #
+    # Also skip a few targets we can't easily integrate into this check but we
+    # know we meet licensing requirements for.
+    if hasattr(ctx, "rule") and not _skip_license_check(target):
         # Skip filegroups as they are just groupings of files and don't need
         # licenses themselves.
         if ctx.rule.kind != "filegroup":
