@@ -22,15 +22,20 @@ package(
 cc_library(
     name = "relocation",
     srcs = ["relocation.cpp"],
-    hdrs = ["public/elf/relocation.h"],
+    hdrs = [
+        "include/libelf/elf.h",
+        "public/elf/relocation.h",
+    ],
     copts = select({
         "@gbl//toolchain:gbl_rust_elf_riscv64": [],
         # For the `elf_static_relocation_checker` host tool, enable
         # print and panics as exit().
         "//conditions:default": ["-DHOST_TOOLING"],
     }),
-    includes = ["public"],
-    deps = ["@elfutils//:elf_type_header"],
+    includes = [
+        "include",
+        "public",
+    ],
 )
 
 cc_test(
@@ -42,7 +47,6 @@ cc_test(
     ],
     deps = [
         ":relocation",
-        "@elfutils//:elf_type_header",
         "@googletest//:gtest_main",
     ],
 )
@@ -57,6 +61,5 @@ cc_binary(
     ],
     deps = [
         ":relocation",
-        "@elfutils//:elf_type_header",
     ],
 )
