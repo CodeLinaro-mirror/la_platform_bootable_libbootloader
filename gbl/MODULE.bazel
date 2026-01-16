@@ -48,16 +48,7 @@ gbl_rust_crate_repository = use_repo_rule("//toolchain:gbl_new_local_repository.
 
 gbl_new_local_repository(
     name = "linux_x86_64_sysroot",
-    build_file_content = """
-load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files(glob(["**/*"]))
-cc_library(
-    name = "linux_x86_64_sysroot_include",
-    hdrs = glob(["include/**/*.h"]),
-    includes = [ "include" ],
-    visibility = ["//visibility:public"],
-)
-""",
+    build_file = "@gbl//libboot:BUILD.linux_x86_64_sysroot.bazel",
     path = "prebuilts/kernel-build-tools/sysroots/x86_64-unknown-linux-musl",
 )
 
