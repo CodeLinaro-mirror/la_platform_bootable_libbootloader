@@ -15,7 +15,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 
 package(
-    default_applicable_licenses = ["@gbl//:gbl_license"],
+    default_applicable_licenses = ["@gbl//licensing:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 

@@ -18,8 +18,8 @@ load(
     "crypto_headers",
     "crypto_internal_headers",
 )
+load("@gbl//licensing:licenses.bzl", "generate_license")
 load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
-load("@gbl//toolchain:licenses.bzl", "generate_license")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # We use these boringssl-defined lists of header files, but our package root is

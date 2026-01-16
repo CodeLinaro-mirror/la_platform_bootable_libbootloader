@@ -22,7 +22,7 @@ load(
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
 
 package(
-    default_applicable_licenses = ["@gbl//:gbl_license"],
+    default_applicable_licenses = ["@gbl//licensing:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 

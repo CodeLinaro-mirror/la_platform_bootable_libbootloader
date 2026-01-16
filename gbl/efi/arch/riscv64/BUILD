@@ -14,7 +14,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(
-    default_applicable_licenses = ["@gbl//:gbl_license"],
+    default_applicable_licenses = ["@gbl//licensing:gbl_license"],
 )
 
 cc_library(

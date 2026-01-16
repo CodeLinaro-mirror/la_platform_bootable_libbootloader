@@ -19,7 +19,7 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 
 package(
-    default_applicable_licenses = ["@gbl//:gbl_license"],
+    default_applicable_licenses = ["@gbl//licensing:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 

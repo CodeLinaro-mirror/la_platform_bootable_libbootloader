@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@gbl//licensing:licenses.bzl", "check_licenses")
 load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform", "dev_test", "extract_pdb_file", "rename_output")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
-load("@gbl//toolchain:licenses.bzl", "check_licenses")
 load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
 load("@gbl_llvm_prebuilts//:info.bzl", "gbl_llvm_tool_path")
 load("@rules_license//sample_reports:licenses_used.bzl", "licenses_used")
@@ -24,7 +24,7 @@ load("@rules_pkg//pkg:zip.bzl", "pkg_zip")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(
-    default_applicable_licenses = ["@gbl//:gbl_license"],
+    default_applicable_licenses = ["@gbl//licensing:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 

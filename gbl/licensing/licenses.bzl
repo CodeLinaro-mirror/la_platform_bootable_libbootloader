@@ -32,7 +32,7 @@ load("@rules_license//rules:providers.bzl", "LicenseInfo")
 # the corresponding Bazel license rule.
 LICENSE_MAP = {
     "MODULE_LICENSE_APACHE2": "@rules_license//licenses/spdx:Apache-2.0",
-    "MODULE_LICENSE_BSD_LIKE": "@gbl//:BSD-like",
+    "MODULE_LICENSE_BSD_LIKE": "@gbl//licensing:BSD-like",
     "MODULE_LICENSE_MIT": "@rules_license//licenses/spdx:MIT",
     "MODULE_LICENSE_PERMISSIVE": "@rules_license//licenses/generic:permissive",
     "MODULE_LICENSE_ZERO_BSD": "@rules_license//licenses/spdx:0BSD",

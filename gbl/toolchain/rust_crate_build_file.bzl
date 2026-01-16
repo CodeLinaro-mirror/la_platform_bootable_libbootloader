@@ -50,7 +50,7 @@ def rust_crate_build_file(
 
     return """
 load("@rules_rust//rust:defs.bzl", "{rule}")
-load("@gbl//toolchain:licenses.bzl", "generate_license")
+load("@gbl//licensing:licenses.bzl", "generate_license")
 
 generate_license(name = "license")
 

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@gbl//licensing:licenses.bzl", "generate_license")
 load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
-load("@gbl//toolchain:licenses.bzl", "generate_license")
 load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_C_INCLUDE")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_library")

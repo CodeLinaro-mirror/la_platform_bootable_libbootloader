@@ -18,7 +18,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(
-    default_applicable_licenses = ["@gbl//:gbl_license"],
+    default_applicable_licenses = ["@gbl//licensing:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 

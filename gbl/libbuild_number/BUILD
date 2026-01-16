@@ -17,7 +17,7 @@ load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
 package(
-    default_applicable_licenses = ["@gbl//:gbl_license"],
+    default_applicable_licenses = ["@gbl//licensing:gbl_license"],
 )
 
 rust_library(

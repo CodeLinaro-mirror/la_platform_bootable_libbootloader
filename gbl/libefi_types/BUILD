@@ -23,7 +23,7 @@ package(
     # The raw C headers are dual-licensed under Apache 2.0 and BSD 2-Clause to
     # make them more easily portable to other codebases, but for the GBL build
     # itself we opt to use the standard GBL Apache 2.0 license.
-    default_applicable_licenses = ["@gbl//:gbl_license"],
+    default_applicable_licenses = ["@gbl//licensing:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 
