@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@gbl//licensing:licenses.bzl", "check_licenses")
+load("@gbl//licensing:licenses.bzl", "check_licenses", "merged_license")
 load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform", "dev_test", "extract_pdb_file", "rename_output")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
 load("@gbl_llvm_prebuilts//:info.bzl", "gbl_llvm_tool_path")
-load("@rules_license//sample_reports:licenses_used.bzl", "licenses_used")
 load("@rules_pkg//pkg:install.bzl", "pkg_install")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 load("@rules_pkg//pkg:zip.bzl", "pkg_zip")
@@ -363,17 +362,12 @@ filegroup(
 
 # Collects all licenses used by the GBL EFI application & its dependencies.
 #
-# `licenses_used` is a sample implementation provided by rules_license, which
-# outputs a JSON file mapping the build targets to their licenses. We could
-# write our own rule here if we need some additional functionality, but it's
-# a little complicated so using the existing one for now is simpler.
-#
 # This currently grabs all licenses used, but we could split into smaller
 # scopes if we want to provide separate licenses only for particular targets
 # (e.g. ARM prod build).
-licenses_used(
-    name = "all_platforms_licenses",
-    out = "license_map.json",
+merged_license(
+    name = "all_platforms_merged_license",
+    out = "LICENSE",
     deps = [":all_platforms"],
 )
 
@@ -402,7 +396,7 @@ pkg_files(
     name = "gbl_efi_dist_files",
     srcs = [
         ":all_platforms",
-        ":all_platforms_licenses",
+        ":all_platforms_merged_license",
         ":gbl_efi_prod_zip",
     ],
     strip_prefix = strip_prefix.files_only(),

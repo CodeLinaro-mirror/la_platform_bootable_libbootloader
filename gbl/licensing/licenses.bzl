@@ -24,6 +24,11 @@ license information. These utilities instead examine the package files to
 determine the correct licensing at build time.
 """
 
+load(
+    "@rules_license//rules:gather_licenses_info.bzl",
+    "gather_licenses_info",
+    "write_licenses_info",
+)
 load("@rules_license//rules:license.bzl", "license")
 load("@rules_license//rules:providers.bzl", "LicenseInfo")
 
@@ -211,5 +216,51 @@ check_licenses = rule(
     implementation = _check_licenses_rule_impl,
     attrs = {
         "deps": attr.label_list(aspects = [check_licenses_aspect]),
+    },
+)
+
+def _merged_license_impl(ctx):
+    """Rule implementation to merge licenses into a single output file."""
+
+    # Intermediate JSON file to track license metadata.
+    json_map = ctx.actions.declare_file(ctx.label.name + ".json")
+
+    # `write_licenses_info()` does most of the heavy lifting here. We just
+    # have to run the `gather_licenses_info` aspect on the deps (which we do
+    # in the `merged_license` rule) and this function will:
+    #   1. write a JSON containing all the license usage metadata
+    #   2. return the set of license files
+    license_files = write_licenses_info(ctx, ctx.attr.deps, json_map)
+
+    # Run our custom formatter to generate our desired output format.
+    ctx.actions.run(
+        executable = ctx.executable._formatter,
+        # The JSON map gives us metadata so we can map packages to their
+        # license, and the license files give us the actual license texts.
+        inputs = [json_map] + license_files,
+        outputs = [ctx.outputs.out],
+        arguments = [json_map.path, ctx.outputs.out.path],
+        mnemonic = "MergeLicenses",
+    )
+
+    return [DefaultInfo(files = depset([ctx.outputs.out]))]
+
+merged_license = rule(
+    implementation = _merged_license_impl,
+    doc = "Collects all licenses from dependencies and merges them into a single text file.",
+    attrs = {
+        "deps": attr.label_list(
+            doc = "List of targets to collect licenses for.",
+            aspects = [gather_licenses_info],
+        ),
+        "out": attr.output(
+            doc = "The output filename.",
+            mandatory = True,
+        ),
+        "_formatter": attr.label(
+            default = Label("@gbl//licensing:license_formatter"),
+            executable = True,
+            cfg = "exec",
+        ),
     },
 )

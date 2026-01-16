@@ -14,9 +14,15 @@
 
 load("@rules_license//rules:license.bzl", "license")
 load("@rules_license//rules:license_kind.bzl", "license_kind")
+load("@rules_python//python:defs.bzl", "py_binary")
 
 package(
     default_visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "license_formatter",
+    srcs = ["license_formatter.py"],
 )
 
 # GBL code uses Apache 2.0.
