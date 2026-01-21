@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@gbl//licensing:licenses.bzl", "check_licenses", "merged_license")
+load("@gbl//licensing:licenses.bzl", "merged_license")
 load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform", "dev_test", "extract_pdb_file", "rename_output")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
@@ -368,12 +368,6 @@ filegroup(
 merged_license(
     name = "all_platforms_merged_license",
     out = "LICENSE",
-    deps = [":all_platforms"],
-)
-
-# Build-time check that all components specify a license.
-check_licenses(
-    name = "check_all_licenses",
     deps = [":all_platforms"],
 )
 

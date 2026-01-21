@@ -327,7 +327,7 @@ runs out of space, additional traces will be truncated.
 and log potential truncation size.
 
 
-## Licesing
+## Licensing
 
 Unless stated otherwise, all GBL source files are licensed under the Apache
 License, Version 2.0.
@@ -338,3 +338,8 @@ BSD-2-Clause-Patent license.
 
 See `../LICENSES/Apache-2.0.txt` and `../LICENSES/BSD-2-Clause-Patents.txt` for
 the full texts.
+
+GBL also uses third-party code which may be licensed under different terms. When
+the GBL UEFI application is built, a `LICENSE` file will also be generated in
+the output directory containing the set of license texts that apply for GBL and
+its dependencies.

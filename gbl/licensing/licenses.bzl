@@ -35,13 +35,23 @@ load("@rules_license//rules:providers.bzl", "LicenseInfo")
 # Android 3P packages indicate licensing via empty marker files whose names
 # reflect the license used. This map converts from the Android marker file to
 # the corresponding Bazel license rule.
+#
+# This also serves as a list of all `license_kinds` that we accept. Make sure
+# that any additions to this map meet our licensing guidelines.
 LICENSE_MAP = {
     "MODULE_LICENSE_APACHE2": "@rules_license//licenses/spdx:Apache-2.0",
+    "MODULE_LICENSE_BSD_2_CLAUSE": "@rules_license//licenses/spdx:BSD-2-Clause-FreeBSD",
+    "MODULE_LICENSE_BSD_2_CLAUSE_FREEBSD": "@rules_license//licenses/spdx:BSD-2-Clause",
+    "MODULE_LICENSE_BSD_3_CLAUSE": "@rules_license//licenses/spdx:BSD-3-Clause",
     "MODULE_LICENSE_BSD_LIKE": "@gbl//licensing:BSD-like",
     "MODULE_LICENSE_MIT": "@rules_license//licenses/spdx:MIT",
     "MODULE_LICENSE_PERMISSIVE": "@rules_license//licenses/generic:permissive",
     "MODULE_LICENSE_ZERO_BSD": "@rules_license//licenses/spdx:0BSD",
 }
+
+# The known acceptable license kinds. Any target using a license kind other than
+# this will cause the build to fail.
+ACCEPTED_LICENSE_KINDS = LICENSE_MAP.values()
 
 def generate_license(
         package_name,
@@ -135,6 +145,24 @@ def _skip_license_check(target):
             return True
     return False
 
+def check_license_kinds(info):
+    """Checks that all license_kinds in the provided info are OK to use.
+
+    Fails build if any invalid license kinds are found.
+
+    Args:
+        info (LicenseInfo): the license info to check.
+    """
+    if not info.license_kinds:
+        fail("License '{}' doesn't provide any license_kinds".format(info.label))
+
+    for license_kind_info in info.license_kinds:
+        # Label canonicalization adds internal '+' characters to repos here,
+        # strip them out so we can compare to generic labels.
+        license_kind = license_kind_info.label.replace("+", "")
+        if license_kind not in ACCEPTED_LICENSE_KINDS:
+            fail("'{}' uses unsupported license kind '{}'".format(info.label, license_kind))
+
 def _check_licenses_aspect_impl(target, ctx):
     missing = []
     transitive = []
@@ -154,6 +182,9 @@ def _check_licenses_aspect_impl(target, ctx):
             has_license = False
             for dep in applicable_licenses + package_metadata:
                 if LicenseInfo in dep:
+                    # Check that all licenses are acceptable kinds. This
+                    # function fails directly if it finds an invalid kind.
+                    check_license_kinds(dep[LicenseInfo])
                     has_license = True
                     break
 
@@ -186,9 +217,10 @@ check_licenses_aspect = aspect(
     doc = "Aspect that collects targets with missing licenses.",
 )
 
-def _check_licenses_rule_impl(ctx):
+def _report_missing_licenses(deps):
+    """Helper to check for and report missing licenses in dependencies."""
     all_missing_depsets = []
-    for dep in ctx.attr.deps:
+    for dep in deps:
         if LicenseCheckInfo in dep:
             all_missing_depsets.append(dep[LicenseCheckInfo].missing_licenses)
 
@@ -197,19 +229,10 @@ def _check_licenses_rule_impl(ctx):
     if all_missing:
         # Sort for deterministic output
         sorted_missing = sorted(all_missing)
+        fail("The following targets are missing applicable_licenses:\n" + "\n".join(["  " + str(m) for m in sorted_missing]))
 
-        # TODO(b/381897961): make this a `fail()` rather than `print()` once
-        # everything properly reports a license. Until then, `fail()` causes
-        # `gen_rust_project` to fail preventing devs from updating the Rust
-        # language assistance tooling.
-        #
-        # However, this does mean that if the inputs don't change Bazel will
-        # skip re-building and not print anything, so to see the output run:
-        # `touch bootable/libbootloader/gbl/toolchain/licenses.bzl && ./tools/bazel build @gbl//efi:check_all_licenses`
-        #
-        # buildifier: disable=print
-        print("The following targets are missing applicable_licenses:\n" + "\n".join(["  " + str(m) for m in sorted_missing]))
-
+def _check_licenses_rule_impl(ctx):
+    _report_missing_licenses(ctx.attr.deps)
     return [DefaultInfo()]
 
 check_licenses = rule(
@@ -221,6 +244,11 @@ check_licenses = rule(
 
 def _merged_license_impl(ctx):
     """Rule implementation to merge licenses into a single output file."""
+
+    # Make sure every dependency has a known and valid license attached to it.
+    # This has to be a custom Bazel function because `write_licenses_info()`
+    # will just skip deps with missing licenses.
+    _report_missing_licenses(ctx.attr.deps)
 
     # Intermediate JSON file to track license metadata.
     json_map = ctx.actions.declare_file(ctx.label.name + ".json")
@@ -251,7 +279,7 @@ merged_license = rule(
     attrs = {
         "deps": attr.label_list(
             doc = "List of targets to collect licenses for.",
-            aspects = [gather_licenses_info],
+            aspects = [gather_licenses_info, check_licenses_aspect],
         ),
         "out": attr.output(
             doc = "The output filename.",
