@@ -55,7 +55,7 @@ where
 impl<T: BufferPool> Shared<T> {
     // Try allocate a [ScopedBuffer]
     pub(crate) fn allocate(&self) -> Option<ScopedBuffer<'_, T>> {
-        self.borrow_mut().allocate().map(|v| ScopedBuffer { buf: Some(v), pool: self })
+        self.borrow_mut().allocate().map(|v| ScopedBuffer::new(v, self))
     }
 
     // Allocates a [ScopedBuffer] and waits until succeed.
@@ -71,8 +71,15 @@ impl<T: BufferPool> Shared<T> {
 
 /// Represents a scoped buffer allocated by `BufferPool`.
 pub(crate) struct ScopedBuffer<'a, T: BufferPool> {
+    // Never None except during drop.
     buf: Option<T::Buffer>,
     pool: &'a Shared<T>,
+}
+
+impl<'a, T: BufferPool> ScopedBuffer<'a, T> {
+    fn new(buf: T::Buffer, pool: &'a Shared<T>) -> Self {
+        Self { buf: Some(buf), pool }
+    }
 }
 
 impl<T: BufferPool> Drop for ScopedBuffer<'_, T> {

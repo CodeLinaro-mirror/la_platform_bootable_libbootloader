@@ -26,12 +26,12 @@ use core::{
     ops::{Deref, DerefMut},
     str::from_utf8,
 };
-use fastboot::{next_arg, next_arg_u64, CommandResult, VarInfoSender};
+use fastboot::{CommandError, CommandResult, VarInfoSender};
 use gbl_async::{block_on, select, yield_now};
 use gbl_storage::BlockIo;
 use libbuild_number::BUILD_NUMBER;
 use liberror::Error;
-use libutils::snprintf;
+use libutils::{next_arg, snprintf, FromHexStr};
 use zerocopy::{error::SizeError, FromBytes, IntoBytes, Unaligned};
 
 const MAX_DOWNLOAD_SIZE: &'static str = "max-download-size";
@@ -426,8 +426,8 @@ where
         mut args: impl Iterator<Item = &'t str> + Clone,
         out: &'s mut [u8],
     ) -> CommandResult<&'s str> {
-        let id = next_arg_u64(&mut args)?.ok_or("Missing block device ID")?;
-        let id = usize::try_from(id)?;
+        let id: usize = FromHexStr::try_parse_next(&mut args)
+            .map_err(|_| CommandError::from("Missing block device ID"))?;
         let val_type = next_arg(&mut args).ok_or("Missing value type")?;
         let blk = &self.disks[id];
         let info = blk.block_info();

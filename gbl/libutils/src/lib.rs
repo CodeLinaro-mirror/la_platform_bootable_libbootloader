@@ -99,11 +99,6 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> FormattedBytes<T> {
         &mut self.buffer.as_mut()[..self.len]
     }
 
-    /// Converts to string.
-    pub fn to_str(&self) -> &str {
-        from_utf8(&self.buffer.as_ref()[..self.len]).unwrap_or("")
-    }
-
     /// Gets the buffer
     pub fn buffer(&mut self) -> &mut [u8] {
         self.buffer.as_mut()
@@ -126,6 +121,17 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> FormattedBytes<T> {
             Some(v) if v <= self.size() => Ok(()),
             v => Err(Error::BufferTooSmall(v)),
         }
+    }
+
+    /// Parses self as a string or returns the empty string on error.
+    pub fn as_str(&self) -> &str {
+        from_utf8(&self.buffer.as_ref()[..self.len]).unwrap_or("")
+    }
+}
+
+impl<T: AsRef<[u8]>> AsRef<[u8]> for FormattedBytes<T> {
+    fn as_ref(&self) -> &[u8] {
+        &self.buffer.as_ref()[..self.len]
     }
 }
 
@@ -209,6 +215,46 @@ macro_rules! func_name {
         full_path
     }};
 }
+
+/// A helper to check and fetch the next non-empty argument.
+///
+/// # Args
+///
+/// args: A string iterator.
+pub fn next_arg<'a, T: Iterator<Item = &'a str>>(args: &mut T) -> Option<&'a str> {
+    args.next().filter(|v| *v != "")
+}
+
+/// Helper trait for parsing integers from hex strings.
+pub trait FromHexStr: Sized {
+    /// Try to parse self from a possibly '0x' prefixed hex string.
+    fn try_from_hex_str(s: &str) -> Result<Self>;
+
+    /// Try to parse self from the next string element in an iterator.
+    fn try_parse_next<'a, T: Iterator<Item = &'a str>>(args: &mut T) -> Result<Self> {
+        Self::try_from_hex_str(next_arg(args).ok_or(Error::InvalidInput)?)
+    }
+
+    /// Parse an optional string.
+    fn parse_optional(arg: Option<&str>) -> Result<Option<Self>> {
+        arg.map(Self::try_from_hex_str).transpose()
+    }
+}
+
+macro_rules! parsable_int(
+    ($int_type:tt) => {
+        impl FromHexStr for $int_type {
+            fn try_from_hex_str(s: &str) -> Result<Self> {
+                $int_type::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16)
+                    .map_err(Error::from)
+            }
+        }
+    };
+);
+
+parsable_int!(u32);
+parsable_int!(u64);
+parsable_int!(usize);
 
 #[cfg(test)]
 mod test {

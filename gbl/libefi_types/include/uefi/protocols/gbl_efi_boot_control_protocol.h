@@ -27,7 +27,6 @@
 #define __GBL_EFI_BOOT_CONTROL_PROTOCOL_H__
 
 #include <stdint.h>
-
 #include <uefi/system_table.h>
 #include <uefi/types.h>
 

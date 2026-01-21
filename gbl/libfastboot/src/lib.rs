@@ -76,7 +76,7 @@ use core::{
 };
 use gbl_async::block_on;
 use liberror::{Error, Result};
-use libutils::FormattedBytes;
+use libutils::{next_arg, FormattedBytes, FromHexStr};
 
 /// Maximum packet size that can be accepted from the host.
 ///
@@ -226,27 +226,39 @@ const COMMAND_ERROR_LENGTH: usize = MAX_RESPONSE_SIZE - 4;
 pub struct CommandError(FormattedBytes<[u8; COMMAND_ERROR_LENGTH]>);
 
 impl CommandError {
-    /// Converts to string.
-    pub fn to_str(&self) -> &str {
-        self.0.to_str()
-    }
-
     /// Returns the `FormattedBytes` object.
     pub fn formatted_bytes(&mut self) -> &mut FormattedBytes<impl AsMut<[u8]> + AsRef<[u8]>> {
         &mut self.0
+    }
+
+    /// Returns the parsed string representation of self.
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl AsRef<[u8]> for CommandError {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl PartialEq for CommandError {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ref() == other.as_ref()
     }
 }
 
 impl Clone for CommandError {
     /// Clones the error.
     fn clone(&self) -> Self {
-        self.to_str().into()
+        self.as_str().into()
     }
 }
 
 impl Debug for CommandError {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.to_str())
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -418,6 +430,18 @@ pub trait FastbootImplementation {
     ///   data.
     async fn download(&mut self, responder: impl DownloadBuilder + InfoSender)
         -> CommandResult<()>;
+
+    /// Backend for `fastboot stream-flash ...` and `fastboot stream-fill ...`
+    ///
+    /// # Args
+    ///
+    /// * `command`: The write or stream command.
+    /// * `responder`: An instance of `InfoSender`.
+    async fn stream<'a>(
+        &mut self,
+        command: StreamCommand<&'a str>,
+        responder: impl InfoSender,
+    ) -> CommandResult<()>;
 
     /// Helper API for providing download from buffer
     async fn set_download(&mut self, data: &[u8]) -> CommandResult<()> {
@@ -1040,7 +1064,7 @@ async fn get_var(
             let mut val = [0u8; MAX_RESPONSE_SIZE];
             match fb_impl.get_var_as_str(var, args, &mut resp, &mut val[..]).await {
                 Ok(s) => reply_okay!(resp, "{}", s),
-                Err(e) => reply_fail!(resp, "{}", e.to_str()),
+                Err(e) => reply_fail!(resp, "{}", e.as_str()),
             }
         }
     }
@@ -1056,7 +1080,7 @@ async fn get_var_all(
     let get_res = fb_impl.get_var_all(&mut resp).await;
     match get_res {
         Ok(()) => reply_okay!(resp, ""),
-        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(e) => reply_fail!(resp, "{}", e.as_str()),
     }
 }
 
@@ -1068,14 +1092,18 @@ async fn download(
 ) -> Result<()> {
     let mut resp = Responder::new(transport);
     let total_download_size = match (|| -> CommandResult<usize> {
-        usize::try_from(
-            u32::try_from(next_arg_u64(&mut args)?.ok_or("Not enough argument")?)
-                .map_err(|_| "Download size overflows u32 (can't fit DATA message)")?,
-        )
-        .map_err(|_| "Download size overflow usize".into())
+        Ok(usize::try_from_hex_str(args.next().ok_or("Not enough arguments")?)?)
     })() {
-        Err(e) => return reply_fail!(resp, "{}", e.to_str()),
-        Ok(v) => v,
+        Err(e) => return reply_fail!(resp, "{}", e.as_str()),
+        Ok(v) => {
+            // Can't compare directly against u32::MAX because that's a u32, and
+            // usize does not impl From<u32>
+            if v > 0xFFFFFFFF {
+                return reply_fail!(resp, "Download size overflows u32 (can't fit DATA message)");
+            } else {
+                v
+            }
+        }
     };
     if total_download_size == 0 {
         return reply_fail!(resp, "Zero download size");
@@ -1094,7 +1122,7 @@ async fn download(
         return Err(Error::InvalidState);
     }
     match res {
-        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(e) => reply_fail!(resp, "{}", e.as_str()),
         _ => reply_okay!(resp, ""),
     }
 }
@@ -1112,8 +1140,27 @@ async fn flash(
             Err(e) => Err(e),
         };
     match flash_res {
-        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(e) => reply_fail!(resp, "{}", e.as_str()),
         _ => reply_okay!(resp, ""),
+    }
+}
+
+/// Helper for handling "fastboot:stream-flash:..." and "fastboot:stream-fill:...".
+async fn handle_stream_command<'a>(
+    cmd: &'a str,
+    transport: &mut impl Transport,
+    fb_impl: &mut impl FastbootImplementation,
+) -> Result<()> {
+    let mut resp = Responder::new(transport);
+    let stream_res = match StreamCommand::try_from(cmd) {
+        Ok(cmd) => fb_impl.stream(cmd, &mut resp).await,
+        Err(e) => Err(e.into()),
+    };
+
+    if let Err(e) = stream_res {
+        reply_fail!(resp, "{}", e.as_str())
+    } else {
+        reply_okay!(resp, "")
     }
 }
 
@@ -1130,7 +1177,7 @@ async fn erase(
             Err(e) => Err(e),
         };
     match flash_res {
-        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(e) => reply_fail!(resp, "{}", e.as_str()),
         _ => reply_okay!(resp, ""),
     }
 }
@@ -1145,7 +1192,7 @@ async fn upload(
     match resp.remaining_upload > 0 {
         true => return Err(Error::InvalidInput),
         _ => match upload_res {
-            Err(e) => reply_fail!(resp, "{}", e.to_str()),
+            Err(e) => reply_fail!(resp, "{}", e.as_str()),
             _ => reply_okay!(resp, ""),
         },
     }
@@ -1168,16 +1215,22 @@ async fn fetch(
         // partition name. This allows ":" in partition name.
         let mut rev = args.clone().rev();
         let sz_arg = next_arg(&mut rev).ok_or("Missing size")?;
-        let sz = u32::try_from(hex_to_u64(sz_arg)?).map_err(|_| "Size overflows u32")?;
-        let off = next_arg(&mut rev).ok_or("Invalid offset")?;
+        let off = next_arg(&mut rev).ok_or("Missing offset")?;
         let part = &cmd[..cmd.len() - (off.len() + sz_arg.len() + 2)];
-        fb_impl.fetch(part, hex_to_u64(off)?, sz, &mut resp).await
+        fb_impl
+            .fetch(
+                part,
+                FromHexStr::try_from_hex_str(off).map_err(|_| "Invalid offset")?,
+                FromHexStr::try_from_hex_str(sz_arg).map_err(|_| "Invalid size")?,
+                &mut resp,
+            )
+            .await
     }
     .await;
     match resp.remaining_upload > 0 {
         true => return Err(Error::InvalidInput),
         _ => match fetch_res {
-            Err(e) => reply_fail!(resp, "{}", e.to_str()),
+            Err(e) => reply_fail!(resp, "{}", e.as_str()),
             _ => reply_okay!(resp, ""),
         },
     }
@@ -1191,7 +1244,7 @@ async fn reboot(
 ) -> Result<!> {
     let mut resp = Responder::new(transport);
     let Err(e) = fb_impl.reboot(mode, &mut resp).await;
-    reply_fail!(resp, "{}", e.to_str())?;
+    reply_fail!(resp, "{}", e.as_str())?;
     Err(Error::Aborted)
 }
 
@@ -1203,7 +1256,7 @@ async fn boot(
     let mut resp = Responder::new(transport);
     let boot_res = async { fb_impl.boot(&mut resp).await }.await;
     match boot_res {
-        Err(ref e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(ref e) => reply_fail!(resp, "{}", e.as_str()),
         _ => reply_okay!(resp, ""),
     }?;
     Ok(boot_res.is_ok())
@@ -1217,7 +1270,7 @@ async fn r#continue(
     let mut resp = Responder::new(transport);
     match fb_impl.r#continue(&mut resp).await {
         Ok(_) => reply_okay!(resp, ""),
-        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(e) => reply_fail!(resp, "{}", e.as_str()),
     }
 }
 
@@ -1234,7 +1287,7 @@ async fn set_active(
     };
     match res.await {
         Ok(_) => reply_okay!(resp, ""),
-        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(e) => reply_fail!(resp, "{}", e.as_str()),
     }
 }
 
@@ -1249,7 +1302,7 @@ async fn oem(
     match oem_res {
         _ if resp.result_message_sent => Ok(()), // Assumes backend has handled the error.
         Ok(()) => reply_okay!(resp, ""),
-        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(e) => reply_fail!(resp, "{}", e.as_str()),
     }
 }
 
@@ -1291,7 +1344,7 @@ async fn command_exec(
                 reply_fail!(resp, "Command not allowed.")?;
             }
             Err(ref e) => {
-                reply_fail!(resp, "{}", e.to_str())?;
+                reply_fail!(resp, "{}", e.as_str())?;
             }
         }
         cmd_res.map_err(|_| Error::Other(None))
@@ -1327,7 +1380,83 @@ async fn flashing(
     };
     match res {
         Ok(s) => reply_okay!(resp, "{}", s),
-        Err(e) => reply_fail!(resp, "{}", e.to_str()),
+        Err(e) => reply_fail!(resp, "{}", e.as_str()),
+    }
+}
+
+/// The parsed representation of a stream flash or fill subcommand
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum StreamOperation {
+    /// A flash operation
+    Flash {
+        /// Checksum for the downloaded data
+        checksum: u32,
+    },
+    /// A fill operation
+    Fill {
+        /// Size in bytes of the fill
+        size: u64,
+        /// The fill payload
+        payload: u32,
+    },
+}
+
+/// The total parsed representation of a streaming flash or fill.
+#[derive(Copy, Clone, Debug, Eq)]
+pub struct StreamCommand<P: AsRef<str>> {
+    /// The name of the partition to write to
+    pub partition: P,
+    /// The offset from the start of the partition
+    pub offset: u64,
+    /// The write operation, stream or flash
+    pub operation: StreamOperation,
+}
+
+impl<A: AsRef<str>, B: AsRef<str>> PartialEq<StreamCommand<B>> for StreamCommand<A> {
+    fn eq(&self, other: &StreamCommand<B>) -> bool {
+        self.partition.as_ref() == other.partition.as_ref()
+            && self.offset == other.offset
+            && self.operation == other.operation
+    }
+}
+
+impl<'a, P: From<&'a str> + AsRef<str>> TryFrom<&'a str> for StreamCommand<P> {
+    type Error = Error;
+
+    // Expects a string of the form
+    //
+    // "stream-flash:<partition name>:<partition offset>:<checksum>"
+    //
+    // or
+    //
+    // "stream-fill:<partition name>:<partition offset>:<size bytes>:<payload>"
+    fn try_from(cmd_str: &'a str) -> Result<Self> {
+        let args = &mut cmd_str.split(':').peekable();
+        let command = next_arg(args).ok_or(Error::InvalidInput)?;
+        let partition = next_arg(args).ok_or(Error::InvalidInput)?.into();
+        let offset = FromHexStr::try_parse_next(args)?;
+        let command = match command {
+            "stream-flash" => Self {
+                partition,
+                offset,
+                operation: StreamOperation::Flash { checksum: FromHexStr::try_parse_next(args)? },
+            },
+            "stream-fill" => Self {
+                partition,
+                offset,
+                operation: StreamOperation::Fill {
+                    size: FromHexStr::try_parse_next(args)?,
+                    payload: FromHexStr::try_parse_next(args)?,
+                },
+            },
+            _ => Err(Error::InvalidInput)?,
+        };
+
+        if args.peek().is_none() {
+            Ok(command)
+        } else {
+            Err(Error::InvalidInput)
+        }
     }
 }
 
@@ -1366,7 +1495,11 @@ pub async fn process_next_command(
     let cmd_str = from_utf8(&packet[..cmd_size]).unwrap();
     let mut args = cmd_str.split(':');
     let Some(cmd) = args.next() else {
-        return transport.send_packet(fastboot_fail!(packet, "No command")).await.map(|_| false);
+        let mut fail_packet = [0u8; 24];
+        return transport
+            .send_packet(fastboot_fail!(fail_packet, "No command"))
+            .await
+            .map(|_| false);
     };
     match cmd {
         "boot" => return boot(transport, fb_impl).await.map(|v| v),
@@ -1378,6 +1511,8 @@ pub async fn process_next_command(
         "erase" => erase(cmd_str, transport, fb_impl).await,
         "fetch" => fetch(cmd_str, args, transport, fb_impl).await,
         "flash" => flash(cmd_str, transport, fb_impl).await,
+        "stream-flash" => handle_stream_command(cmd_str, transport, fb_impl).await,
+        "stream-fill" => handle_stream_command(cmd_str, transport, fb_impl).await,
         "getvar" => get_var(&mut packet[..], transport, fb_impl).await,
         "reboot" => reboot(RebootMode::Normal, transport, fb_impl).await?,
         "reboot-bootloader" => reboot(RebootMode::Bootloader, transport, fb_impl).await?,
@@ -1420,39 +1555,6 @@ pub async fn run_tcp_session(
     run(&mut TcpTransport::new_and_handshake(tcp_stream)?, fb_impl).await
 }
 
-/// A helper to convert a hex string into u64.
-pub(crate) fn hex_to_u64(s: &str) -> CommandResult<u64> {
-    Ok(u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16)?)
-}
-
-/// A helper to check and fetch the next non-empty argument.
-///
-/// # Args
-///
-/// args: A string iterator.
-pub fn next_arg<'a, T: Iterator<Item = &'a str>>(args: &mut T) -> Option<&'a str> {
-    args.next().filter(|v| *v != "")
-}
-
-/// A helper to check and fetch the next argument as a u64 hex string.
-///
-/// # Args
-///
-/// args: A string iterator.
-///
-///
-/// # Returns
-///
-/// * Returns Ok(Some(v)) is next argument is available and a valid u64 hex.
-/// * Returns Ok(None) is next argument is not available
-/// * Returns Err() if next argument is present but not a valid u64 hex.
-pub fn next_arg_u64<'a, T: Iterator<Item = &'a str>>(args: &mut T) -> CommandResult<Option<u64>> {
-    match next_arg(args) {
-        Some(v) => Ok(Some(hex_to_u64(v)?)),
-        _ => Ok(None),
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1466,6 +1568,16 @@ mod test {
         Fail(String),
     }
 
+    impl From<StreamCommand<&'_ str>> for StreamCommand<String> {
+        fn from(value: StreamCommand<&'_ str>) -> Self {
+            Self {
+                partition: value.partition.into(),
+                offset: value.offset,
+                operation: value.operation,
+            }
+        }
+    }
+
     #[derive(Default)]
     struct FastbootTest<'a> {
         // A mapping from (variable name, argument) to variable value.
@@ -1474,6 +1586,8 @@ mod test {
         flash_partition: String,
         // The partition arg from Fastboot erase command
         erase_partition: String,
+        // The command from a Fastboot stream-flash or stream-fill
+        stream_command: Option<StreamCommand<String>>,
         // Upload size, batches of data to upload,
         upload_config: (u32, Vec<Vec<u8>>),
         // A map from partition name to (upload size override, partition data)
@@ -1621,7 +1735,7 @@ mod test {
             let (resp, infos, res) = &mut self.oem_output;
             self.oem_command = cmd.into();
             for ele in infos {
-                responder.send_info(ele.as_str()).await?;
+                responder.send_info(ele.as_ref()).await?;
             }
             match resp {
                 Some(OemResponse::Okay(v)) => responder.send_okay(v as _).await.unwrap(),
@@ -1629,6 +1743,15 @@ mod test {
                 _ => {}
             }
             res.take().unwrap_or(Ok(()))
+        }
+
+        async fn stream<'b>(
+            &mut self,
+            command: StreamCommand<&'b str>,
+            _responder: impl InfoSender,
+        ) -> CommandResult<()> {
+            self.stream_command = Some(command.into());
+            Ok(())
         }
 
         async fn flashing_write_lock_state(
@@ -1835,7 +1958,7 @@ mod test {
         let mut res = "".into();
         for v in queue {
             let s = v.iter().map(|v| escape_default(*v).to_string()).collect::<Vec<_>>().concat();
-            res += format!("b{:?},\n", s).as_str();
+            res += format!("b{:?},\n", s).as_ref();
         }
         res
     }
@@ -1906,7 +2029,7 @@ mod test {
         let mut transport = TestTransport::new();
         transport.add_input(b"download");
         let _ = block_on(run(&mut transport, &mut fastboot_impl));
-        assert_eq!(transport.out_queue, [b"FAILNot enough argument"]);
+        assert_eq!(transport.out_queue, [b"FAILNot enough arguments"]);
     }
 
     #[test]
@@ -2167,6 +2290,7 @@ mod test {
         transport.add_input(b"fetch:boot_a:200:xxx");
         transport.add_input(b"fetch:boot_a:0:100000000"); // u32 overflows
         let _ = block_on(run(&mut transport, &mut fastboot_impl));
+
         assert_eq!(
             transport.out_queue,
             VecDeque::<Vec<u8>>::from([
@@ -2174,11 +2298,11 @@ mod test {
                 b"FAILNot enough argments".into(),
                 b"FAILNot enough argments".into(),
                 b"FAILNot enough argments".into(),
-                b"FAILInvalid offset".into(),
+                b"FAILMissing offset".into(),
                 b"FAILMissing size".into(),
-                b"FAILinvalid digit found in string".into(),
-                b"FAILinvalid digit found in string".into(),
-                b"FAILSize overflows u32".into(),
+                b"FAILInvalid offset".into(),
+                b"FAILInvalid size".into(),
+                b"FAILInvalid size".into(),
             ])
         );
     }
@@ -2422,5 +2546,88 @@ mod test {
     #[test]
     fn test_get_unlock_ability_prohibited() {
         get_unlock_ability_helper(Unlockability::Prohibited, "OKAY0");
+    }
+
+    fn stream_test_helper(input: &str, expected: Option<StreamCommand<&str>>) {
+        let mut fastboot_impl: FastbootTest = Default::default();
+        let mut transport = TestTransport::new();
+        transport.add_input(input.as_bytes());
+        let _ = block_on(run(&mut transport, &mut fastboot_impl));
+
+        // Minor hack to get Option<StreamCommand<T>> of different types to compare.
+        match (expected, fastboot_impl.stream_command) {
+            (None, None) => {}
+            (Some(expected), Some(actual)) => assert_eq!(expected, actual),
+            _ => assert!(false, "stream command mismatch"),
+        }
+    }
+
+    #[test]
+    fn test_stream_flash() {
+        stream_test_helper(
+            "stream-flash:boot_a:0:0xefb5af2e",
+            Some(StreamCommand {
+                partition: "boot_a",
+                offset: 0,
+                operation: StreamOperation::Flash { checksum: 0xefb5af2e },
+            }),
+        );
+    }
+
+    #[test]
+    fn test_stream_fill() {
+        stream_test_helper(
+            "stream-fill:boot_a:400:200:0xfafafafa",
+            Some(StreamCommand {
+                partition: "boot_a",
+                offset: 0x400,
+                operation: StreamOperation::Fill { size: 0x200, payload: 0xfafafafa },
+            }),
+        );
+    }
+
+    #[test]
+    fn test_stream_flash_too_few_args() {
+        stream_test_helper("stream-flash", None);
+        stream_test_helper("stream-flash:boot_a", None);
+        stream_test_helper("stream-flash:boot_a:0", None);
+    }
+
+    #[test]
+    fn test_stream_flash_too_many_args() {
+        stream_test_helper("stream-flash:boot_a:400:200:0xfafafafa", None);
+    }
+
+    #[test]
+    fn test_stream_flash_unparseable() {
+        stream_test_helper("stream-flash:boot_a:0:squid", None);
+        stream_test_helper("stream-flash:boot_a:squid:0", None);
+        // 68 bit int
+        stream_test_helper("stream-flash:boot_a:0:0xFFFFFFFFFFFFFFFFF", None);
+        stream_test_helper("stream-flash:boot_a:0xFFFFFFFFFFFFFFFFF:0", None);
+    }
+
+    #[test]
+    fn test_stream_fill_too_few_args() {
+        stream_test_helper("stream-fill", None);
+        stream_test_helper("stream-fill:boot_a", None);
+        stream_test_helper("stream-fill:boot_a:0", None);
+        stream_test_helper("stream-fill:boot_a:0:200", None);
+    }
+
+    #[test]
+    fn test_stream_fill_too_many_args() {
+        stream_test_helper("stream-fill:boot_a:0x0:0x200:0x0:0x400", None);
+    }
+
+    #[test]
+    fn test_stream_fill_unparseable() {
+        stream_test_helper("stream-fill:boot_a:400:200:squid", None);
+        stream_test_helper("stream-fill:boot_a:400:squid:200", None);
+        stream_test_helper("stream-fill:boot_a:squid:400:200", None);
+        // 68 bit int
+        stream_test_helper("stream-fill:boot_a:0xFFFFFFFFFFFFFFFFF:400:200", None);
+        stream_test_helper("stream-fill:boot_a:0:0xFFFFFFFFFFFFFFFFF:200", None);
+        stream_test_helper("stream-fill:boot_a:0:200:0xFFFFFFFFFFFFFFFFF", None);
     }
 }

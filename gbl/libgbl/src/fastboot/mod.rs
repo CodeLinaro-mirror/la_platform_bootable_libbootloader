@@ -43,22 +43,21 @@ use core::{
     fmt::{Display, Write},
     future::Future,
     marker::PhantomData,
-    mem::take,
+    mem::{size_of, take},
     ops::{DerefMut, Range},
     pin::{pin, Pin},
     str::from_utf8,
 };
 use fastboot::{
-    next_arg, next_arg_u64, process_next_command, run_tcp_session, CommandError, CommandResult,
-    DownloadBuilder, Downloader, FailSender, FastbootImplementation, InfoSender, LockState,
-    LockType, OkaySender, RebootMode, Unlockability, UploadBuilder, Uploader, VarInfoSender,
-    MAX_COMMAND_SIZE,
+    process_next_command, run_tcp_session, CommandError, CommandResult, DownloadBuilder,
+    Downloader, FailSender, FastbootImplementation, InfoSender, LockState, LockType, OkaySender,
+    RebootMode, StreamCommand, StreamOperation, Unlockability, UploadBuilder, Uploader,
+    VarInfoSender, MAX_COMMAND_SIZE,
 };
 use gbl_async::{join, join_mut, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
-use libutils::snprintf;
-use libutils::FormattedBytes;
+use libutils::{next_arg, snprintf, FormattedBytes, FromHexStr};
 use safemath::SafeNum;
 use trace::{gbl_trace_get_enable, TraceGuard};
 #[cfg(feature = "fuchsia")]
@@ -99,7 +98,9 @@ enum TaskWorkload<'a, 'b, B: BlockIo, P: BufferPool> {
     Flash(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>, usize),
     /// Sparse image flashing task. (partition io, downloaded data)
     FlashSparse(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>),
-    // Image erase task.
+    /// Fill a partition range with a 32 bit value. (partition io, fill buffer, value)
+    Fill(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>, u32),
+    /// Image erase task.
     Erase(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>),
     None,
 }
@@ -108,8 +109,43 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> TaskWorkload<'a, 'b, B, P> {
     /// Runs the task and returns the result, task will be reset to None.
     async fn run(&mut self) -> Result<(), Error> {
         let res = match self {
-            Self::Flash(io, data, sz) => io.write(0, &mut data[..*sz]).await,
+            Self::Flash(io, data, size) => io.write(0, &mut data[..*size]).await,
             Self::FlashSparse(io, data) => io.write_sparse(0, data).await,
+            Self::Fill(io, buffer, payload) => {
+                let buffer_len = buffer.len();
+                let io_size = io.size_bytes();
+                // Don't fill more than necessary if the write is smaller than the buffer.
+                let buffer = &mut buffer[0..min(buffer_len, io_size as usize)];
+
+                let buffer_start = buffer.as_ref().as_ptr().addr();
+                // New scope to drop &[u32] view of buffer after filling and aligning it.
+                let (buf_start, buf_end) = {
+                    // SAFETY:
+                    //
+                    // * Fill buffer is dropped after scope ends.
+                    // * All bit values are valid for u32.
+                    let (_, fill_buffer, _) = unsafe { buffer.as_mut().align_to_mut::<u32>() };
+                    fill_buffer.fill(*payload);
+
+                    // This cannot overflow because the start of fill_buffer
+                    // will always be at least as large the start of buffer.
+                    (
+                        fill_buffer.as_ptr().addr() - buffer_start,
+                        fill_buffer.len() * size_of::<u32>(),
+                    )
+                };
+
+                // Download buffer is now aligned on u32 and filled with the payload.
+                let buffer = &mut buffer[buf_start..buf_end];
+
+                for off in (0..io_size).step_by(buffer.len()) {
+                    // io_size is always larger than or equal to off,
+                    // so the subtraction never overflows.
+                    let write_len = min(buffer.len(), usize::try_from(io_size - off)?);
+                    io.write(off, &mut buffer[..write_len]).await?;
+                }
+                Ok(())
+            }
             Self::Erase(io, buffer) => match io.erase(buffer).await {
                 Err(Error::Unsupported) => io.zeroize(buffer).await,
                 v => v,
@@ -172,7 +208,7 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> Default for Task<'a, 'b, B, P> {
 }
 
 /// Contains the load buffer layout of images loaded by "fastboot boot".
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum LoadedImageInfo {
     /// None
     #[default]
@@ -492,16 +528,15 @@ where
         args: &mut impl Iterator<Item = &'s str>,
     ) -> CommandResult<Option<usize>> {
         let devs = self.disks;
-        let blk_id = match next_arg_u64(args)? {
+        let blk_id = match next_arg(args) {
             Some(v) => {
-                let v = usize::try_from(v)?;
+                let v = FromHexStr::try_from_hex_str(v)?;
                 // Checks out of range.
                 devs.get(v).ok_or("Invalid block ID")?;
                 Some(v)
             }
-            _ => None,
+            _ => self.default_block,
         };
-        let blk_id = blk_id.or(self.default_block);
         let blk_id = blk_id.or((devs.len() == 1).then_some(0));
         Ok(blk_id)
     }
@@ -545,9 +580,9 @@ where
         // Parses block device ID.
         let blk_id = self.check_next_arg_blk_id(&mut args)?;
         // Parses sub window offset.
-        let window_offset = next_arg_u64(&mut args)?;
+        let window_offset = FromHexStr::parse_optional(next_arg(&mut args))?;
         // Parses sub window size.
-        let window_size = next_arg_u64(&mut args)?;
+        let window_size = FromHexStr::parse_optional(next_arg(&mut args))?;
         Ok((part, blk_id, window_offset, window_size))
     }
 
@@ -637,11 +672,6 @@ where
                 v => return Ok(v?),
             }
         }
-    }
-
-    /// Takes the download data and resets download size.
-    fn take_download(&mut self) -> Option<(ScopedBuffer<'b, P>, usize)> {
-        Some((self.current_download_buffer.take()?, take(&mut self.current_download_size)))
     }
 
     /// Waits until a Disk device is ready and get the [PartitionIo] for `part`.
@@ -906,12 +936,28 @@ where
         }
     }
 
-    /// Gets or allocates download buffer.
-    async fn get_download_buffer(&mut self) -> &mut [u8] {
-        if self.current_download_buffer.is_none() {
-            self.current_download_buffer = Some(self.buffer_pool.allocate_async().await);
+    /// Takes the download data and resets download size.
+    fn take_download(&mut self) -> Option<(ScopedBuffer<'b, P>, usize)> {
+        Some((self.current_download_buffer.take()?, take(&mut self.current_download_size)))
+    }
+
+    /// Gets or allocates a download buffer and returns it by value.
+    async fn take_or_allocate_download_buffer(&mut self) -> ScopedBuffer<'b, P> {
+        if let Some(buf) = self.current_download_buffer.take() {
+            buf
+        } else {
+            self.buffer_pool.allocate_async().await
         }
-        self.current_download_buffer.as_mut().unwrap()
+    }
+
+    /// Gets or allocates download buffer and returns it by reference.
+    async fn get_download_buffer(&mut self) -> &mut ScopedBuffer<'b, P> {
+        let current = &mut self.current_download_buffer;
+        if let Some(buf) = current {
+            buf
+        } else {
+            current.insert(self.buffer_pool.allocate_async().await)
+        }
     }
 
     /// Helper for processing Self::load_result and emitting error messages.
@@ -932,8 +978,7 @@ where
         if let Some(_) = self.take_download() {
             responder.send_info("A previous download is discarded.").await?;
         }
-        self.get_download_buffer().await;
-        let mut buffer = self.current_download_buffer.take().unwrap();
+        let mut buffer = self.take_or_allocate_download_buffer().await;
         let (_, total) = self.gbl_ops.fastboot_get_staged(&mut [][..])?;
         if total == 0 {
             return Err("No data staged.".into());
@@ -1054,8 +1099,8 @@ where
         }
 
         let part_io = self.parse_and_get_partition_io(part).await?;
-        self.get_download_buffer().await;
-        let mut task = Task::new(TaskWorkload::Erase(part_io, self.take_download().unwrap().0));
+        let mut task =
+            Task::new(TaskWorkload::Erase(part_io, self.take_or_allocate_download_buffer().await));
         task.set_context(|f| write!(f, "erase:{part}"));
         Ok(self.schedule_task(&mut task, &mut responder).await?)
     }
@@ -1222,8 +1267,9 @@ where
             "gbl-set-download-crc" => {
                 // Longer term, if this feature is useful enough, it can be added to fastboot
                 // upstream, i.e. download:<size>:<crc>
-                let crc = next_arg_u64(&mut args)?.ok_or("Missing CRC32 value")?;
-                self.expected_download_crc = Some(u32::try_from(crc)?);
+                let crc = FromHexStr::try_parse_next(&mut args)
+                    .map_err(|_| CommandError::from("Missing CRC32 value"))?;
+                self.expected_download_crc = Some(crc);
                 Ok(())
             }
             "gbl-unset-download-crc" => {
@@ -1235,8 +1281,8 @@ where
                 Ok(())
             }
             "gbl-set-default-block" => {
-                let id = next_arg_u64(&mut args)?.ok_or("Missing block device ID")?;
-                let id = usize::try_from(id)?;
+                let id: usize = FromHexStr::try_parse_next(&mut args)
+                    .map_err(|_| CommandError::from("Missing block device ID"))?;
                 self.disks.get(id).ok_or("Out of range")?;
                 self.default_block = Some(id.try_into()?);
                 responder
@@ -1269,7 +1315,7 @@ where
             }
             "gbl-stage" => Ok(self.stage_data_type = Some(self.gbl_stage(args)?)),
             "gbl-pause-fastboot-after-load" => {
-                let v = next_arg_u64(&mut args)?.unwrap_or(1);
+                let v: u64 = FromHexStr::try_from_hex_str(next_arg(&mut args).unwrap_or("1"))?;
                 self.result.pause_in_fastboot = v != 0;
                 Ok(())
             }
@@ -1280,6 +1326,50 @@ where
             }
             _ => Err("Command not found".into()),
         }
+    }
+
+    async fn stream<'d>(
+        &mut self,
+        command: StreamCommand<&'d str>,
+        mut responder: impl InfoSender,
+    ) -> CommandResult<()> {
+        let part_io = self.parse_and_get_partition_io(command.partition.as_ref()).await?;
+        let mut task = match command.operation {
+            StreamOperation::Fill { size, payload } => {
+                let buffer = self.take_or_allocate_download_buffer().await;
+                Task::new(TaskWorkload::Fill(
+                    part_io.sub(
+                        command.offset,
+                        size.try_into().map_err(|_| CommandError::from("Integer overflow"))?,
+                    )?,
+                    buffer,
+                    payload,
+                ))
+            }
+            StreamOperation::Flash { checksum } => {
+                let (download, size) = self.take_download().ok_or("No downloaded data")?;
+                // TODO(b/479909443): yield while calculating incrementally.
+                let actual = crc32fast::hash(&download);
+                if actual != checksum {
+                    return Err(format_args!(
+                        "Checksum mismatch: expected {:#x}, got {:#x}",
+                        checksum, actual
+                    )
+                    .into());
+                }
+                Task::new(TaskWorkload::Flash(
+                    part_io.sub(
+                        command.offset,
+                        size.try_into().map_err(|_| CommandError::from("Integer overflow"))?,
+                    )?,
+                    download,
+                    size,
+                ))
+            }
+        };
+
+        task.set_context(|f| write!(f, "flash:{0}:{1}", command.partition, command.offset));
+        Ok(self.schedule_task(&mut task, &mut responder).await?)
     }
 
     async fn boot(&mut self, resp: impl InfoSender + OkaySender) -> CommandResult<()> {
@@ -1650,7 +1740,6 @@ pub(crate) mod test {
         ffi::CString,
         io::Read,
     };
-    #[cfg(feature = "fuchsia")]
     use zerocopy::IntoBytes;
 
     /// A test implementation of [InfoSender] and [OkaySender].
@@ -5092,5 +5181,130 @@ pub(crate) mod test {
             "\nActual USB output:\n{}",
             listener.dump_transport_out_queue()
         );
+    }
+
+    #[test]
+    fn test_gbl_stream_flash() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        let buffers = vec![vec![0u8; KiB!(2)]; 1].into();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &buffers, boot_buffer);
+
+        let resp: TestResponder = Default::default();
+        let img = &[0x55u8; KiB!(2)];
+
+        set_download(&mut gbl_fb, img);
+        let cmd = "stream-flash:boot_a:0:0xb47c63c1".try_into().unwrap();
+        assert!(block_on(gbl_fb.stream(cmd, &resp)).is_ok());
+        assert_eq!(fetch(&mut gbl_fb, "boot_a".into(), 0, KiB!(2)).unwrap(), img);
+
+        set_download(&mut gbl_fb, img);
+        let offset_cmd = "stream-flash:boot_a:0x400:0xb47c63c1".try_into().unwrap();
+        assert!(block_on(gbl_fb.stream(offset_cmd, &resp)).is_ok());
+        assert_eq!(fetch(&mut gbl_fb, "boot_a".into(), 0x400, KiB!(2)).unwrap(), img);
+
+        set_download(&mut gbl_fb, img);
+        let bad_checksum_cmd = "stream-flash:boot_a:0:0xDEADBEEF".try_into().unwrap();
+        assert_eq!(
+            block_on(gbl_fb.stream(bad_checksum_cmd, &resp)),
+            Err("Checksum mismatch: expected 0xdeadbeef, got 0xb47c63c1".into())
+        );
+
+        set_download(&mut gbl_fb, img);
+        let bad_offset_cmd = "stream-flash:boot_a:0xFFFFFF:0xb47c63c1".try_into().unwrap();
+        assert_eq!(block_on(gbl_fb.stream(bad_offset_cmd, &resp)), Err("OutOfRange".into()));
+
+        set_download(&mut gbl_fb, img);
+        let bad_partition_cmd = "stream-flash:boot_d:0:0xb47c63c1".try_into().unwrap();
+        assert_eq!(block_on(gbl_fb.stream(bad_partition_cmd, &resp)), Err("NotFound".into()));
+    }
+
+    fn gbl_stream_fill_test_helper(fill_size: usize, offset: usize) {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        let buffers = vec![vec![0u8; KiB!(2)]; 1].into();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &buffers, boot_buffer);
+        let resp: TestResponder = Default::default();
+
+        let expected_data = vec![0xF005500Fu32; fill_size / core::mem::size_of::<u32>()];
+        let cmd = format!("stream-fill:boot_b:{:x}:{:x}:0xF005500F", offset, fill_size);
+
+        assert!(block_on(gbl_fb.stream(cmd.as_str().try_into().unwrap(), &resp)).is_ok());
+        assert_eq!(
+            fetch(&mut gbl_fb, "boot_b".into(), offset, fill_size).unwrap(),
+            expected_data.as_bytes()
+        );
+    }
+
+    #[test]
+    fn test_gbl_stream_fill() {
+        gbl_stream_fill_test_helper(KiB!(2), 0);
+    }
+
+    #[test]
+    fn test_gbl_stream_fill_bigger_than_download_buffer() {
+        gbl_stream_fill_test_helper(KiB!(8), 0);
+    }
+
+    #[test]
+    fn test_gbl_stream_fill_smaller_than_download_buffer() {
+        gbl_stream_fill_test_helper(512, 0);
+    }
+
+    #[test]
+    fn test_gbl_stream_fill_offset() {
+        gbl_stream_fill_test_helper(KiB!(4), 512);
+    }
+
+    fn gbl_stream_fill_error_test_helper(cmd: StreamCommand<&str>, err: CommandError) {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        let buffers = vec![vec![0u8; KiB!(2)]; 1].into();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &buffers, boot_buffer);
+
+        let resp: TestResponder = Default::default();
+        assert_eq!(block_on(gbl_fb.stream(cmd, &resp)), Err(err));
+    }
+
+    #[test]
+    fn test_gbl_stream_fill_bad_partition() {
+        gbl_stream_fill_error_test_helper(
+            "stream-fill:boot_d:0:4096:0xF005500F".try_into().unwrap(),
+            "NotFound".into(),
+        );
+    }
+
+    #[test]
+    fn test_gbl_stream_fill_out_of_range() {
+        gbl_stream_fill_error_test_helper(
+            "stream-fill:boot_a:0:0x400000:0xF005500F".try_into().unwrap(),
+            "OutOfRange".into(),
+        );
+    }
+
+    #[test]
+    fn test_gbl_stream_fill_bad_offset() {
+        gbl_stream_fill_error_test_helper(
+            "stream-fill:boot_a:0x400000:800:0xF005500F".try_into().unwrap(),
+            "OutOfRange".into(),
+        )
     }
 }

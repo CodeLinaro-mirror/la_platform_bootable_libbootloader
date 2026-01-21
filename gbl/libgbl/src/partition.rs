@@ -453,6 +453,15 @@ impl<'a, B: BlockIo, const N: usize> MultiPartitionIo<'a, B, N> {
         }
         Ok(self)
     }
+
+    /// Returns the size in bytes of the smallest partition.
+    pub fn size_bytes(&self) -> u64 {
+        self.parts
+            .iter()
+            .map(|(_, start, end)| u64::try_from(SafeNum::from(*end) - *start).unwrap())
+            .min()
+            .unwrap_or(0)
+    }
 }
 
 impl<'a, B: BlockIo> MultiPartitionIo<'a, B, 1> {

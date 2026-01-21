@@ -36,6 +36,7 @@
 
 use core::{
     ffi::{FromBytesUntilNulError, FromBytesWithNulError},
+    num::ParseIntError,
     str::Utf8Error,
 };
 use efi_types::{
@@ -255,6 +256,12 @@ pub enum Error {
     VolumeFull,
     /// The device cannot be written to.
     WriteProtected,
+}
+
+impl From<ParseIntError> for Error {
+    fn from(_value: ParseIntError) -> Self {
+        Self::InvalidInput
+    }
 }
 
 impl From<Option<&'static str>> for Error {
