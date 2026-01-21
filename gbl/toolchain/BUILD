@@ -754,7 +754,7 @@ rust_toolchain(
                     "supported-split-debuginfo": [
                         "unpacked"
                     ],
-                    "target-pointer-width": "64"
+                    "target-pointer-width": 64
                 }
 """,
 )
@@ -902,7 +902,7 @@ rust_toolchain(
                     "supported-split-debuginfo": [
                         "unpacked"
                     ],
-                    "target-pointer-width": "64"
+                    "target-pointer-width": 64
                 }
 """,
 )
@@ -975,7 +975,7 @@ rust_toolchain(
                         "shadow-call-stack",
                         "kernel-address"
                     ],
-                    "target-pointer-width": "64"
+                    "target-pointer-width": 64
                 }
 """,
 )

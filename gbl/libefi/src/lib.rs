@@ -1976,7 +1976,7 @@ mod test {
 
             efi_call_traces().with(|traces| {
                 let actual = traces.borrow().console_out_trace.as_single_string();
-                assert_eq!(actual, "Protocol method not found in caller 'efi::BootServices::open_protocol': open_protocol\r\n");
+                assert_eq!(actual, "Protocol method not found in caller 'efi::BootServices<'_>::open_protocol': open_protocol\r\n");
             });
         })
     }

@@ -24,10 +24,6 @@
 //! Enabling the `mocks` feature adds the `#[mockall::automock]` attribute
 //! to the protocol traits if desired for testing.
 
-// This is both safe and stable but is being tweaked due to the "system" abi variant
-// potentially not supporting varargs.
-// See issue #100189 <https://github.com/rust-lang/rust/issues/100189> for more information
-#![feature(extended_varargs_abi_support)]
 #![cfg_attr(not(test), no_std)]
 
 #[rustfmt::skip]
