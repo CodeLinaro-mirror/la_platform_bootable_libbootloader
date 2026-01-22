@@ -19,6 +19,8 @@
 
 #include <internal.h>
 
+namespace bssl {
+
 __attribute__((visibility("hidden"))) uint32_t OPENSSL_armcap_P = 0;
 
 uint32_t OPENSSL_get_armcap(void) {
@@ -29,3 +31,5 @@ uint32_t OPENSSL_get_armcap(void) {
 static CRYPTO_once_t once = CRYPTO_ONCE_INIT;
 
 void OPENSSL_init_cpuid(void) { CRYPTO_once(&once, OPENSSL_cpuid_setup); }
+
+}  // namespace bssl
