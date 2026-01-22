@@ -98,7 +98,7 @@ LINUX_SYSROOT_INCLUDES = \"{}\"
     # In some prebuilt versions, "libc++.so" is a symlink to "libc++.so.1" etc. We need to use the
     # same name as the actual library file name in cc_import(). Otherwise it complains it can't
     # find the shared object.
-    libcpp_sharelib_path = _abs_path(repo_ctx, "llvm-linux-x86/lib/libc++.so")
+    libcpp_sharelib_path = _abs_path(repo_ctx, "llvm-linux-x86/lib/x86_64-unknown-linux-gnu/libc++.so")
     libcpp_base_name = repo_ctx.execute(["basename", libcpp_sharelib_path]).stdout.strip("\n")
     repo_ctx.symlink(libcpp_sharelib_path, libcpp_base_name)
 
