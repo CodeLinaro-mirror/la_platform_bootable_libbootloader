@@ -1,18 +1,18 @@
 # GBL EFI Boot Memory Protocol
 
-|||
-| :--- | :--- |
-| **Status** | Work in progress |
-| **Created** | 2025-07-13 |
+|             |                  |
+| :---------- | :--------------- |
+| **Status**  | Work in progress |
+| **Created** | 2025-07-13       |
 
 ## GBL_EFI_BOOT_MEMORY_PROTOCOL
 
 ### Summary
 
 This document describes the GBL Boot Memory protocol. The protocol allows UEFI
-firmware to provde reserved buffers for sharing preloaded partition image to
-the bootloader, or as destination buffers for the bootloader to load the images
-to, assemble kernel/ramdisk/fdt images, and download data in fastboot mode etc.
+firmware to provde reserved buffers for sharing preloaded partition image to the
+bootloader, or as destination buffers for the bootloader to load the images to,
+assemble kernel/ramdisk/fdt images, and download data in fastboot mode etc.
 
 ### GUID
 
@@ -32,7 +32,9 @@ to, assemble kernel/ramdisk/fdt images, and download data in fastboot mode etc.
 #define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
 ```
 
-See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
+See
+[GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions)
+for details about protocol revisions.
 
 ### Protocol Interface Structure
 
@@ -88,8 +90,8 @@ EFI_STATUS
 ### Parameters
 
 **Self** \
-A pointer to the
-[`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol) instance.
+A pointer to the [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol)
+instance.
 
 **BaseName** \
 A null-terminated UTF8 encoded string that represents slotless partition name.
@@ -101,8 +103,8 @@ On exit, stores the size of the reserved memory in number of bytes.
 On exit, stores the address of the reserved memory.
 
 **Flag** \
-On exit, stores a flag that contains additional information for the memory.
-See `GblEfiPartitionBufferFlag` for more details.
+On exit, stores a flag that contains additional information for the memory. See
+`GblEfiPartitionBufferFlag` for more details.
 
 ### Description
 
@@ -118,11 +120,11 @@ valid for read and write througout the lifetime of the caller app. It's up to
 the caller to interpret and validate the content in the memory before use.
 
 Certain partition images have specific alignment requirement in order to be
-parsed. For example, for DTB/DTBO images, it is required to be loaded to
-8-bytes aligned buffers. Failing to do so may cause the caller to wrongly
-process the image data. Thus firmware should make sure to provide correctly
-aligned memory that matches the requirement of the image and caller's
-expectation. For alignment requirement on common boot images, see
+parsed. For example, for DTB/DTBO images, it is required to be loaded to 8-bytes
+aligned buffers. Failing to do so may cause the caller to wrongly process the
+image data. Thus firmware should make sure to provide correctly aligned memory
+that matches the requirement of the image and caller's expectation. For
+alignment requirement on common boot images, see
 [`GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()`](#gbl_efi_boot_memory_protocolgetbootbuffer).
 
 Note: GBL passes the output of
@@ -147,11 +149,10 @@ typedef uint32_t GBL_EFI_PARTITION_BUFFER_FLAG;
 If set, it indicates the buffer returned by `GetPartitionBuffer()` already
 contains the image loaded by the firwmare.
 
-
 ### Status Codes Returned
 
 | Return Code           | Semantics                                                                          |
-|:----------------------|:-----------------------------------------------------------------------------------|
+| :-------------------- | :--------------------------------------------------------------------------------- |
 | EFI_SUCCESS           | Buffer provided successfully                                                       |
 | EFI_NOT_FOUND         | The platform does not have reserved memory for this image.                         |
 | EFI_INVALID_PARAMETER | `Self` is invalid or any of `ImageType`, `Addr`, `Size` and `IsPreloaded` is NULL. |
@@ -177,8 +178,8 @@ EFI_STATUS
 ### Parameters
 
 **Self** \
-A pointer to the
-[`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol) instance.
+A pointer to the [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol)
+instance.
 
 **SyncPreloaded** \
 Set to true to instruct the firmware to sync preloaded partition data based on
@@ -186,15 +187,14 @@ current device state.
 
 ### Description
 
-Caller calls this interface to allow the firmware to inspect, update or move
-the buffers returned by `GetPartitionBuffer()`. Caller can call this API after
+Caller calls this interface to allow the firmware to inspect, update or move the
+buffers returned by `GetPartitionBuffer()`. Caller can call this API after
 loading new images to the buffers to notify the firmware to process it.
 
 Caller can also call this API with `SyncPreloaded` set to true to request the
-firmware to re-sync preloaded partition data. Firmware should either re-load
-the partitions if supported, or invalidate existing ones by clearing the
-`PRELOADED` bit or returning EFI_NOT_FOUND for future calls of
-`GetPartitionBuffer()`
+firmware to re-sync preloaded partition data. Firmware should either re-load the
+partitions if supported, or invalidate existing ones by clearing the `PRELOADED`
+bit or returning EFI_NOT_FOUND for future calls of `GetPartitionBuffer()`
 
 For the caller, all buffers previously obtained from `GetPartitionBuffer()`
 should not be considered valid anymore.
@@ -202,7 +202,7 @@ should not be considered valid anymore.
 ### Status Codes Returned
 
 | Return Code           | Semantics                   |
-|:----------------------|:----------------------------|
+| :-------------------- | :-------------------------- |
 | EFI_SUCCESS           | Sync completed successfully |
 | EFI_DEVICE_ERROR      | An internal error occurred. |
 | EFI_INVALID_PARAMETER | `Self` is invalid.          |
@@ -251,8 +251,8 @@ EFI_STATUS
 ### Parameters
 
 **Self** \
-A pointer to the
-[`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol) instance.
+A pointer to the [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol)
+instance.
 
 **BootBufferType** \
 A GBL_EFI_BOOT_BUFFER_TYPE value that identifies the type of boot buffer.
@@ -262,24 +262,23 @@ On exit, stores the size of the reserved memory if one is available, or the
 recommended size of the memory for the caller to allocate.
 
 **Addr** \
-On exit, stores the address of the reserved memory if one is available, or
-NULL to indicate that caller can allocate any memory to use.
+On exit, stores the address of the reserved memory if one is available, or NULL
+to indicate that caller can allocate any memory to use.
 
 ### Description
 
-The interface can be used by the firmware to provide designated buffers for
-the bootloader to assemble different boot images such as kernel, ramdisk, fdt
-pvmfw etc, or download data in fastboot.
+The interface can be used by the firmware to provide designated buffers for the
+bootloader to assemble different boot images such as kernel, ramdisk, fdt pvmfw
+etc, or download data in fastboot.
 
 If no memory is provided, it's up to the caller to decide where to find the
 memory needed.
 
-In some cases, the firmware may choose not to reserve a memory for a buffer
-type but instead want the caller to allocate it at run time when it is needed.
-In this case, `Addr` should be set to NULL and `Size` should be set to
-the recommended allocation size. This is useful for buffer types such as
-fastboot download buffer which is only needed on demand and can be deallocated
-when done.
+In some cases, the firmware may choose not to reserve a memory for a buffer type
+but instead want the caller to allocate it at run time when it is needed. In
+this case, `Addr` should be set to NULL and `Size` should be set to the
+recommended allocation size. This is useful for buffer types such as fastboot
+download buffer which is only needed on demand and can be deallocated when done.
 
 ### Related Definitions
 
@@ -300,8 +299,8 @@ typedef uint32_t GBL_EFI_BOOT_BUFFER_TYPE;
 
 ##### GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD
 
-General purpose load buffer. This is typically for cases where firmware
-only want to provide a single piece of memory for the bootloader to load all of
+General purpose load buffer. This is typically for cases where firmware only
+want to provide a single piece of memory for the bootloader to load all of
 kernel/ramdisk/fdt and does not care where each one is.
 
 ##### GBL_EFI_BOOT_BUFFER_TYPE_KERNEL
@@ -328,7 +327,7 @@ Memory for use as download buffer in fastboot mode.
 ### Status Codes Returned
 
 | Return Code           | Semantics                                                                                      |
-|:----------------------|:-----------------------------------------------------------------------------------------------|
+| :-------------------- | :--------------------------------------------------------------------------------------------- |
 | EFI_SUCCESS           | Buffer provided successfully                                                                   |
 | EFI_NOT_FOUND         | The platform does not have reserved memory, or has no suggested allocation size for this type. |
 | EFI_INVALID_PARAMETER | `Self` is invalid or any of `Addr` and `Size` is NULL.                                         |

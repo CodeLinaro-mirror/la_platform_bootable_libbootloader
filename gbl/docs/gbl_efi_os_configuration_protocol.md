@@ -12,9 +12,9 @@
 This protocol provides a mechanism for the EFI firmware to build and update OS
 configuration data:
 
-* device tree (select components to build the final one)
-* bootconfig (append fixups)
-* FIT configuration (select configuration corresponding to the platform)
+- device tree (select components to build the final one)
+- bootconfig (append fixups)
+- FIT configuration (select configuration corresponding to the platform)
 
 GBL will load and verify the data provided by boot partitions, and then call
 these protocol functions to give the firmware a chance to construct and adjust
@@ -142,9 +142,9 @@ return `EFI_UNSUPPORTED`, or leave the buffer unchanged and set
 
 The FW implementation can generate a fixup with the following restrictions:
 
-* on return, the data must be valid bootconfig (trailer is optional)
-* provided data must never exceed the provided `FixupBufferSize`
-* no libavb arguments may be provided (see Security below)
+- on return, the data must be valid bootconfig (trailer is optional)
+- provided data must never exceed the provided `FixupBufferSize`
+- no libavb arguments may be provided (see Security below)
 
 ### Description
 
@@ -162,9 +162,9 @@ To ensure the integrity of verified boot data, this protocol will not be allowed
 to append any bootconfig provided by [libavb][libavb]. If any of these
 parameters are provided, GBL will treat this as a failed boot attempt:
 
-* `androidboot.veritymode*`
-* `androidboot.vbmeta*`
-* `:=` may be only used to re-define `androidboot.mode`
+- `androidboot.veritymode*`
+- `androidboot.vbmeta*`
+- `:=` may be only used to re-define `androidboot.mode`
 
 Additionally, all data used to apply fixups to the bootconfig must be trusted.
 In particular, if the protocol loads any data from non-secure storage, it must

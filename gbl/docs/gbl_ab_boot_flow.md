@@ -1,12 +1,12 @@
 # A/B Boot Flow in GBL
 
-This document explains the A/B boot flows implemented by GBL and its
-interaction with EFI protocol
+This document explains the A/B boot flows implemented by GBL and its interaction
+with EFI protocol
 [GBL_EFI_BOOT_CONTROL_PROTOCOL](./gbl_efi_boot_control_protocol.md).
 
 | **Status**  | Work in progress |
-|:------------|-----------------:|
-| **Created** |        2025-09-04|
+| :---------- | ---------------: |
+| **Created** |       2025-09-04 |
 
 ## Android
 
@@ -21,9 +21,9 @@ This configuration corresponds to the following platform setup.
 
 ![Diagram showing a device that uses A/B slots for GBL and OS partitions](./resources/ab-bl-ab-android.png)
 
-Device has A/B GBL bootloader and A/B Android OS. Vendor firmware makes A/B
-slot decision and boots to the correponding GBL slot. GBL simply continues to
-boot the same Android OS slot.
+Device has A/B GBL bootloader and A/B Android OS. Vendor firmware makes A/B slot
+decision and boots to the correponding GBL slot. GBL simply continues to boot
+the same Android OS slot.
 
 ### Boot Flow
 
@@ -36,11 +36,11 @@ GBL queries the current boot slot by calling
 It also tracks whether
 [`GBL_EFI_BOOT_CONTROL_PROTOCOL.SetActiveSlot()`](./gbl_efi_boot_control_protocol.md#gbl_efi_boot_control_protocol_setactiveslot)
 has been called to change the next active slot to a different slot, i.e. by
-`fastboot set_active`. If it has, GBL considers that the user intends to boot
-to a different slot than the current one and will trigger a reboot. If not, GBL
+`fastboot set_active`. If it has, GBL considers that the user intends to boot to
+a different slot than the current one and will trigger a reboot. If not, GBL
 proceeds to load and verify the same slot Android OS. If all operations are
-successful, GBL boots from it. Otherwise it triggers a reboot. Note that in
-this flow, vendor firmware is responsible for updating slot metadata such as
+successful, GBL boots from it. Otherwise it triggers a reboot. Note that in this
+flow, vendor firmware is responsible for updating slot metadata such as
 decrementing retry counters before booting GBL.
 
 ## Fuchsia

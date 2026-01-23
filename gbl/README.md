@@ -1,8 +1,8 @@
 # Generic Bootloader Library
 
-This directory hosts the Generic Bootloader Library project. A Bazel
-workspace is setup for building the library as well as an EFI executable that
-can be loaded directly from the firmware.
+This directory hosts the Generic Bootloader Library project. A Bazel workspace
+is setup for building the library as well as an EFI executable that can be
+loaded directly from the firmware.
 
 ## Get source tree and build
 
@@ -12,9 +12,9 @@ The GBL build currently only supports Linux x86_64 host machines.
 
 Your machine must have the following dependencies installed:
 
-* `repo` to work with android repositories
+- `repo` to work with android repositories
   (https://source.android.com/docs/setup/reference/repo)
-* `bazel-bootstrap` to build (https://bazel.build/)
+- `bazel-bootstrap` to build (https://bazel.build/)
 
 On Google Linux machines these tools can be installed via:
 
@@ -83,6 +83,7 @@ incorrectly. To fix this, run
 ```
 python3 bootable/libbootloader/gbl/rewrite_rust_project_path.py rust-project.json --arch <arch>
 ```
+
 where `<arch>` is the target architecture of interest and should be one of
 `x86_64`, `aarch64`, `riscv64`. `<arch>` affects intellisense on architecture
 specific code.
@@ -101,11 +102,11 @@ And reload your IDE.
 ## Gemini CLI
 
 This repo can be used with
-[Gemini CLI](https://github.com/google-gemini/gemini-cli). Refer to that
-link for installation instructions.
+[Gemini CLI](https://github.com/google-gemini/gemini-cli). Refer to that link
+for installation instructions.
 
-To use it, run `gemini` from this directory so that it sees the `GEMINI.md`
-file to help specialize it for this codebase.
+To use it, run `gemini` from this directory so that it sees the `GEMINI.md` file
+to help specialize it for this codebase.
 
 ## Run the EFI application
 
@@ -131,10 +132,11 @@ Booting Fuchsia on a Vim3 development board is supported. To run the
 application:
 
 1. Complete all
-[bootstrap steps](https://fuchsia.dev/fuchsia-src/development/hardware/khadas-vim3?hl=en)
-to setup Vim3 as a Fuchsia device.
+   [bootstrap steps](https://fuchsia.dev/fuchsia-src/development/hardware/khadas-vim3?hl=en)
+   to setup Vim3 as a Fuchsia device.
 2. Reboot the device into fastboot mode.
 3. Run fastboot command:
+
 ```
 fastboot stage <path to the EFI binary> && fastboot oem run-staged-efi
 ```
@@ -153,6 +155,7 @@ configurations:
 1. Depending on the target architecture you want to run:
 
    For `x86_64`:
+
    ```
    mkdir -p /tmp/esp/EFI/BOOT && \
    cp <path to EFI image> /tmp/esp/EFI/BOOT/bootx64.efi && \
@@ -162,6 +165,7 @@ configurations:
    ```
 
    For `aarch64`:
+
    ```
    mkdir -p /tmp/esp/EFI/BOOT && \
    cp <path to EFI image> /tmp/esp/EFI/BOOT/bootaa64.efi && \
@@ -171,6 +175,7 @@ configurations:
    ```
 
    For `riscv64`:
+
    ```
    mkdir -p /tmp/esp/EFI/BOOT && \
    cp <path to EFI image> /tmp/esp/EFI/BOOT/bootriscv64.efi && \
@@ -181,36 +186,40 @@ configurations:
 
 ### Debug with GDB on QEMU
 
-[qemu_gdb_example/](./qemu_gdb_example/) provides an example for
-debugging x86_64 GBL EFI app on QEMU using rust-gdb. To try the example:
+[qemu_gdb_example/](./qemu_gdb_example/) provides an example for debugging
+x86_64 GBL EFI app on QEMU using rust-gdb. To try the example:
 
 1. Install necessary dependencies:
+
    ```
    sudo apt-get install qemu-system ovmf
    ```
 
    For aarch64 target debugging, also install:
+
    ```
    sudo apt-get install gdb-multiarch
    ```
 
 2. Runs the following script:
+
    ```
    ./qemu_gdb_example/launch_qemu_gdb.sh
    ```
 
-   The above command builds a debug x86_64 GBL EFI app, launches it in QEMU
-   and starts `rust-gdb` in a separate terminal for debugging.
+   The above command builds a debug x86_64 GBL EFI app, launches it in QEMU and
+   starts `rust-gdb` in a separate terminal for debugging.
 
    For debugging aarch64 target, run:
+
    ```
    ./qemu_gdb_example/launch_qemu_gdb.sh aarch64
    ```
 
 ### Debug with LLDB on Cuttlefish
 
-For x86_64 and aarch64, a pdb file is built along the GBL EFI application.
-The following gives an example of debugging GBL with the pdb file on Cuttlefish.
+For x86_64 and aarch64, a pdb file is built along the GBL EFI application. The
+following gives an example of debugging GBL with the pdb file on Cuttlefish.
 (Currently only aarch64 is supported.)
 
 1. Build GBL with GDB connection listening enabled:
@@ -244,11 +253,14 @@ The following gives an example of debugging GBL with the pdb file on Cuttlefish.
 
 1. Make sure Fuchsia target pass control to GBL.
 
-   Set path to GBL binary here: [fuchsia/src/firmware/gigaboot/cpp/backends.gni : gigaboot_gbl_efi_app](https://cs.opensource.google/fuchsia/fuchsia/+/main:src/firmware/gigaboot/cpp/backends.gni;l=25?q=gigaboot_gbl_efi_app)
+   Set path to GBL binary here:
+   [fuchsia/src/firmware/gigaboot/cpp/backends.gni : gigaboot_gbl_efi_app](https://cs.opensource.google/fuchsia/fuchsia/+/main:src/firmware/gigaboot/cpp/backends.gni;l=25?q=gigaboot_gbl_efi_app)
 
-   Temporarily  need to enable GBL usage in gigaboot: [fuchsia/src/firmware/gigaboot/cpp/backends.gni : gigaboot_use_gbl](https://cs.opensource.google/fuchsia/fuchsia/+/main:src/firmware/gigaboot/cpp/backends.gni;l=25?q=gigaboot_gbl_efi_app#:~:text=to%20use%20GBL.-,gigaboot_use_gbl)
+   Temporarily need to enable GBL usage in gigaboot:
+   [fuchsia/src/firmware/gigaboot/cpp/backends.gni : gigaboot_use_gbl](https://cs.opensource.google/fuchsia/fuchsia/+/main:src/firmware/gigaboot/cpp/backends.gni;l=25?q=gigaboot_gbl_efi_app#:~:text=to%20use%20GBL.-,gigaboot_use_gbl)
 
    E.g. in `fuchsia/src/firmware/gigaboot/cpp/backends.gni`:
+
    ```
    $ cat ./fuchsia/src/firmware/gigaboot/cpp/backends.gni
    ...
@@ -260,6 +272,7 @@ The following gives an example of debugging GBL with the pdb file on Cuttlefish.
    ```
 
    Or in `fx set`:
+
    ```
    fx set core.x64 --args=gigaboot_gbl_efi_app='"<path to EFI image>/gbl_x86_64.efi"' --args=gigaboot_use_gbl=true
    ```
@@ -276,7 +289,8 @@ The following gives an example of debugging GBL with the pdb file on Cuttlefish.
 
 ## EFI Protocols
 
-List of EFI protocols used by GBL and a brief description of each [here](./docs/efi_protocols.md).
+List of EFI protocols used by GBL and a brief description of each
+[here](./docs/efi_protocols.md).
 
 ## Trace Analysis
 
@@ -290,9 +304,9 @@ To enable it, build GBL with the following option:
    --@gbl//toolchain:pause_boot_in_fastboot
 ```
 
-`--@gbl//toolchain:enable_tracing` enables compiler instrumentation for
-tracing. `--@gbl//toolchain:pause_boot_in_fastboot` instructs GBL to always
-stop in fastboot after loading OS and before booting, which will be needed for
+`--@gbl//toolchain:enable_tracing` enables compiler instrumentation for tracing.
+`--@gbl//toolchain:pause_boot_in_fastboot` instructs GBL to always stop in
+fastboot after loading OS and before booting, which will be needed for
 retrieving trace data.
 
 Boots GBL on your device. Waits until GBL finishes loading OS and stops in
@@ -302,12 +316,13 @@ fastboot. Then run the following fastboot commands to retrieve trace.
 fastboot oem gbl-stage trace
 fastboot get_staged <trace file>
 ```
+
 `<trace file>` is the output path for the trace data. The format of the trace
 data is defined in [libtrace/include/gbl_trace.h](libtrace/include/gbl_trace.h)
 
 To visualize the data with perfetto, run
-[tools/gbl-trace-to-perfetto.py](tools/gbl-trace-to-perfetto.py), which
-converts the trace file to trace event format with symbolized addresses:
+[tools/gbl-trace-to-perfetto.py](tools/gbl-trace-to-perfetto.py), which converts
+the trace file to trace event format with symbolized addresses:
 
 ```sh
 python3 tools/gbl-trace-to-perfetto.py \
@@ -315,17 +330,17 @@ python3 tools/gbl-trace-to-perfetto.py \
     <path to GBL binary> \
     <output trace event format file>
 ```
-`<path to GBL binary>` is the path to the GBL binary. The corresponding PDB
-file must be in the same directory. `<output trace event format file>` can then
-be opened with [Perfetto UI](https://ui.perfetto.dev/).
+
+`<path to GBL binary>` is the path to the GBL binary. The corresponding PDB file
+must be in the same directory. `<output trace event format file>` can then be
+opened with [Perfetto UI](https://ui.perfetto.dev/).
 
 By default, GBL allocates 64MB of space from EFI allocation for collecting
 traces. To change the setting, add option
-`--@gbl//toolchain:trace_buffer_size_mb=<size in MB>` when building. If GBL
-runs out of space, additional traces will be truncated.
+`--@gbl//toolchain:trace_buffer_size_mb=<size in MB>` when building. If GBL runs
+out of space, additional traces will be truncated.
 [tools/gbl-trace-to-perfetto.py](tools/gbl-trace-to-perfetto.py) will estimate
 and log potential truncation size.
-
 
 ## Licensing
 

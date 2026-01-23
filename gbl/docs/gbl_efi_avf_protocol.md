@@ -10,8 +10,8 @@ relies on the firmware through this protocol to get certain configuration.
 
 The `GBL_EFI_AVF_PROTOCOL` protocol is optional. When implemented, GBL loads
 pvmfw along with related configuration, and refuses to boot if any error occurs.
-If the protocol is not present, GBL ignores the `pvmfw` partition, and AVF
-will not be available on such devices.
+If the protocol is not present, GBL ignores the `pvmfw` partition, and AVF will
+not be available on such devices.
 
 ### GUID
 
@@ -31,7 +31,9 @@ will not be available on such devices.
 #define GBL_EFI_AVF_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
 ```
 
-See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
+See
+[GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions)
+for details about protocol revisions.
 
 ### Protocol Interface Structure
 
@@ -48,8 +50,8 @@ typedef struct _GBL_EFI_AVF_PROTOCOL {
 #### Revision
 
 The revision to which the `GBL_EFI_AVF_PROTOCOL` adheres. All future revisions
-must be backwards compatible. If a future version is not backwards compatible,
-a different GUID must be used.
+must be backwards compatible. If a future version is not backwards compatible, a
+different GUID must be used.
 
 #### ReadVendorDiceHandover
 
@@ -88,8 +90,9 @@ A pointer to the `GBL_EFI_AVF_PROTOCOL` instance.
 
 #### HandoverSize [in, out]
 
-On function call, this points to the handover buffer size provided by `Handover`.
-The implementation is free to provide vendor handover up to this size.
+On function call, this points to the handover buffer size provided by
+`Handover`. The implementation is free to provide vendor handover up to this
+size.
 
 If the buffer is not large enough to fit the handover, the function should
 update `HandoverSize` with the required size and return `EFI_BUFFER_TOO_SMALL`;
@@ -105,9 +108,9 @@ Pointer to a pre-allocated buffer to store vendor DICE handover provided by FW.
 
 ### Description
 
-The Android Virtualization Framework (AVF) leverages the DICE chain (see
-[Open Profile for DICE][opendice]) to allow protected VMs (pVMs) to securely
-prove their identity to both local and remote entities.
+The Android Virtualization Framework (AVF) leverages the DICE chain (see [Open
+Profile for DICE][opendice]) to allow protected VMs (pVMs) to securely prove
+their identity to both local and remote entities.
 
 GBL constructs the resulting DICE chain handover by wrapping the vendor DICE
 chain, obtained from the firmware via this UEFI call, with the `pvmfw` layer. To
@@ -115,21 +118,21 @@ ensure compliance with AVF security requirements, the provided vendor DICE
 handover must meet the following criteria:
 
 1. Must provide CDIs and Android DICE chain describing the previous boot steps
-   following the [`AndroidDiceHandover`][dice_handover] format defined by
-   the [Open Profile for DICE][opendice] reference implementation.
+   following the [`AndroidDiceHandover`][dice_handover] format defined by the
+   [Open Profile for DICE][opendice] reference implementation.
 2. Must be rooted in the hardware-backed Unique Device Secret (UDS) on devices
    that fully implement DICE.
 3. The FRS (factory reset secret), stored in tamper-evident storage and changed
    during every factory reset, must be used as a hidden input for one of the
    certificates describing a boot stage covered by the vendor DICE chain.
-4. GBL must be the latest boot stage described in the vendor DICE chain. GBL
-   EFI app code segment should be used as the "code input", and the signatures
+4. GBL must be the latest boot stage described in the vendor DICE chain. GBL EFI
+   app code segment should be used as the "code input", and the signatures
    segment as the "authority input" for CDIs calculation.
 
-The resulting DICE chain handover built by GBL is exposed to AVF through
-the `/reserved-memory` HLOS device tree node `pkvm_guest_firmware`, marked as
-`compatible="linux,pkvm-guest-firmware-memory"`, following the [pvmfw][pvmfw_firmware_memory]
-specification.
+The resulting DICE chain handover built by GBL is exposed to AVF through the
+`/reserved-memory` HLOS device tree node `pkvm_guest_firmware`, marked as
+`compatible="linux,pkvm-guest-firmware-memory"`, following the
+[pvmfw][pvmfw_firmware_memory] specification.
 
 GBL relies on the presence of this protocol to determine whether AVF is
 supported or not. If present, GBL will run AVF-related setup (loading pVM
@@ -138,8 +141,8 @@ corresponding bootconfig parameters used by AVF -
 `androidboot.hypervisor.protected_vm.supported`, and
 `androidboot.hypervisor.vm.supported`.
 
-The AVF protocol can be uninstalled at runtime if needed. In that case, GBL
-will skip all the AVF-related work. To uninstall AVF protocol, use the
+The AVF protocol can be uninstalled at runtime if needed. In that case, GBL will
+skip all the AVF-related work. To uninstall AVF protocol, use the
 `UninstallProtocolInterface` function.
 
 TODO(b/391191885): be less specific about AVF DICE requrements once protocol is
@@ -147,11 +150,11 @@ mainly adopted by the ecosystem.
 
 ### Status Codes Returned
 
-|                         |                  |
-| ----------------------- | ---------------- |
-| `EFI_SUCCESS`           | Handover was successfully written.    |
-| `EFI_BUFFER_TOO_SMALL`  | The buffer is too small; `HandoverSize` has been updated with the required size. |
-| Other                   | Error loading vendor DICE handover; GBL will refuse to boot   |
+|                        |                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`          | Handover was successfully written.                                               |
+| `EFI_BUFFER_TOO_SMALL` | The buffer is too small; `HandoverSize` has been updated with the required size. |
+| Other                  | Error loading vendor DICE handover; GBL will refuse to boot                      |
 
 ## GBL_EFI_AVF_PROTOCOL.ReadSecretKeeperPublicKey()
 
@@ -184,11 +187,11 @@ this size.
 
 If the buffer is not large enough to fit the public key, the function should
 update `PublicKeySize` with the required size and return `EFI_BUFFER_TOO_SMALL`;
-GBL will then allocate a larger buffer and repeat the `ReadSecretKeeperPublicKey`
-call.
+GBL will then allocate a larger buffer and repeat the
+`ReadSecretKeeperPublicKey` call.
 
-`PublicKeySize` must be also updated on success to let GBL determine the provided
-handover size.
+`PublicKeySize` must be also updated on success to let GBL determine the
+provided handover size.
 
 #### PublicKey [out]
 
@@ -201,19 +204,23 @@ The Android Virtualization Framework (AVF) relies on reference DT provided as a
 third entry of the PVMFW configuration to enable an additional verification of
 the pVMs.
 
-GBL is responsible for constructing the reference DT configuration following
-the [pvmfw requirements][pvmfw_reference_dt] for Android bootloader. This UEFI
+GBL is responsible for constructing the reference DT configuration following the
+[pvmfw requirements][pvmfw_reference_dt] for Android bootloader. This UEFI
 method is used by GBL to obtain the Secret Keeper public key from the FW.
 
 ### Status Codes Returned
 
-|                         |                  |
-| ----------------------- | ---------------- |
-| `EFI_SUCCESS`           | Secret Keeper public key was successfully written.    |
-| `EFI_BUFFER_TOO_SMALL`  | The buffer is too small; `HandoverSize` has been updated with the required size. |
-| Other                   | Error loading Secret Keeper public key; GBL will refuse to boot   |
+|                        |                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`          | Secret Keeper public key was successfully written.                               |
+| `EFI_BUFFER_TOO_SMALL` | The buffer is too small; `HandoverSize` has been updated with the required size. |
+| Other                  | Error loading Secret Keeper public key; GBL will refuse to boot                  |
 
-[dice_handover]: https://pigweed.googlesource.com/open-dice/+/42ae7760023/src/android.c#212
-[opendice]: https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/specification.md
-[pvmfw_firmware_memory]: https://cs.android.com/android/platform/superproject/main/+/cf9c0b1007e87a58cb18a72d59ab488b72016c74:packages/modules/Virtualization/guest/pvmfw/README.md;l=71
-[pvmfw_reference_dt]: https://cs.android.com/android/platform/superproject/main/+/cf9c0b1007e87a58cb18a72d59ab488b72016c74:packages/modules/Virtualization/guest/pvmfw/README.md;l=227
+[dice_handover]:
+  https://pigweed.googlesource.com/open-dice/+/42ae7760023/src/android.c#212
+[opendice]:
+  https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/specification.md
+[pvmfw_firmware_memory]:
+  https://cs.android.com/android/platform/superproject/main/+/cf9c0b1007e87a58cb18a72d59ab488b72016c74:packages/modules/Virtualization/guest/pvmfw/README.md;l=71
+[pvmfw_reference_dt]:
+  https://cs.android.com/android/platform/superproject/main/+/cf9c0b1007e87a58cb18a72d59ab488b72016c74:packages/modules/Virtualization/guest/pvmfw/README.md;l=227

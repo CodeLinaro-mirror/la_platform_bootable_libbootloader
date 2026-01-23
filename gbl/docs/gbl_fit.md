@@ -11,12 +11,12 @@ the DTB(O)s from all other partitions (including `boot`/`vendor_boot`) will not
 be considered. GBL will refuse to boot up if FIT image is present in both DTBO
 and DTB partitions.
 
-Each devicetree image in the "/images" node should have `flat_dt` type.
-Each image binary is expected to be a payload external to the FIT FDT.
-The sub-node corresponding to each image should have data-offset and data-size
-properties. The data-offset should contain an 8-byte aligned offset to the
-actual image binary from the end of the 8-byte aligned FIT FDT.
-Each image binary should be 8-byte aligned.
+Each devicetree image in the "/images" node should have `flat_dt` type. Each
+image binary is expected to be a payload external to the FIT FDT. The sub-node
+corresponding to each image should have data-offset and data-size properties.
+The data-offset should contain an 8-byte aligned offset to the actual image
+binary from the end of the 8-byte aligned FIT FDT. Each image binary should be
+8-byte aligned.
 
 FIT specification [suggests][suggests] the usage of compatible stringlist for
 selection of correct configuration. In some cases, maintaining a stringlist
@@ -30,6 +30,7 @@ An image of type "metadata" can be added as a sub-node under "/images" node, as
 shown in below example. If present, "metadata" must be the first image present
 in "/images", otherwise it will be ignored by GBL.
 
+```
 / images
   |
   o fdt-0
@@ -50,6 +51,7 @@ in "/images", otherwise it will be ignored by GBL.
     |- align = <0x00000008>
     |...
     |
+```
 
 The metadata binary can contain information for selecting the configuration
 corresponding to the platform on which FIT image is loaded. For e.g., it can
@@ -61,6 +63,7 @@ binary and it can be implementation-defined in accordance with the firmware.
 Below is one sample implementation for storing this information within metadata
 in FDT format. This builds on top of the example shared in FIT specification.
 
+```
 / o Metadata-tree
   |- description = "Image with compressed metadata blob";
     o soc-ID
@@ -80,13 +83,15 @@ in FDT format. This builds on top of the example shared in FIT specification.
     | o sku2
     | |- ID = <sku2 ID>
     |...
+```
 
 Each configuration should contain a `fdt` property containing the node names for
 devicetree images to be loaded for the configuration such that the first node
 name refers to the base devicetree and the remaining names refer to the
-devicetrees which have to be applied as an overlay to the base devicetree.
-All the non-fdt properties are ignored by GBL in the current implementation.
+devicetrees which have to be applied as an overlay to the base devicetree. All
+the non-fdt properties are ignored by GBL in the current implementation.
 
+```
 / o FIT FDT
   |
   o images
@@ -141,12 +146,13 @@ All the non-fdt properties are ignored by GBL in the current implementation.
     | |...
     |
     |...
+```
 
 ## Image preparation
 
-The FIT image can be generated using mkimage tool.
-"-E" flag can be used to keep the payloads outside FIT image.
-"-B 8" flag can be used to make the FIT image 8 byte aligned.
+The FIT image can be generated using mkimage tool. "-E" flag can be used to keep
+the payloads outside FIT image. "-B 8" flag can be used to make the FIT image 8
+byte aligned.
 
 [specification]: https://fitspec.osfw.foundation/
 [suggests]: https://fitspec.osfw.foundation/#select-a-configuration-to-boot

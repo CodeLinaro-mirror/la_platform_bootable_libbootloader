@@ -13,17 +13,17 @@ two schemes of partition:
 1. Entire raw storage as a partition.
 
    This scheme treats the entire storage device as a single partition. For
-   storage devices intended to be used according to this scheme, the device
-   need to provide an instance of device path that ends with the GBL
-   "Vendor-Defined Media Device Path" defined as follows.
+   storage devices intended to be used according to this scheme, the device need
+   to provide an instance of device path that ends with the GBL "Vendor-Defined
+   Media Device Path" defined as follows.
 
-   | Mnemonic | Bytes Offset | Bytes Length | Description |
-   | ----------- | ----------- | ----------- | ----------- |
-   | Type | 0 | 1 | Type 4-Media Device Path. |
-   | Sub-Type | 1 | 1 | Sub-Type 3 - Vendor. |
-   | Length | 2 | 2 | Length of this structure in bytes. Length is 92 bytes. |
-   | Vendor GUID | 4 | 16 | The `GBL_VENDOR_MEDIA_DEVICE_PATH_GUID` GUID defined below. |
-   | Vendor Defined Data | 20 | 72 | Null-terminated ASCII partition name. |
+   | Mnemonic            | Bytes Offset | Bytes Length | Description                                                 |
+   | ------------------- | ------------ | ------------ | ----------------------------------------------------------- |
+   | Type                | 0            | 1            | Type 4-Media Device Path.                                   |
+   | Sub-Type            | 1            | 1            | Sub-Type 3 - Vendor.                                        |
+   | Length              | 2            | 2            | Length of this structure in bytes. Length is 92 bytes.      |
+   | Vendor GUID         | 4            | 16           | The `GBL_VENDOR_MEDIA_DEVICE_PATH_GUID` GUID defined below. |
+   | Vendor Defined Data | 20           | 72           | Null-terminated ASCII partition name.                       |
 
    ```c
    // {a09773e3-0xf027-0x4f33-adb3-bd8dcf4b3854}
@@ -38,7 +38,6 @@ two schemes of partition:
    The partition will be identified using the null-terminated ASCII name from
    the device path in the context of booting and fastboot.
 
-
 2. UEFI GUID Partition Table (GPT)
 
    For all other storage devices that doesn't have an instance of GBL
@@ -49,7 +48,7 @@ two schemes of partition:
 
 GBL fastboot implementation introduces a special syntax
 `<part>/<storage id>/<offset>/<size>` for specifying arbitrary subranges of a
-partition on one of the potentially multiple storage devices. Thus the
-partition name cannot contain character `'/'`. The name `gpt` is reserved for
-flashing GPT partition table and thus should not be used as partition name.
-See this [doc](./gbl_fastboot.md) for more details.
+partition on one of the potentially multiple storage devices. Thus the partition
+name cannot contain character `'/'`. The name `gpt` is reserved for flashing GPT
+partition table and thus should not be used as partition name. See this
+[doc](./gbl_fastboot.md) for more details.

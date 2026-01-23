@@ -1,7 +1,7 @@
 # GBL EFI Android Verified Boot Protocol
 
 |             |                  |
-|:------------|:-----------------|
+| :---------- | :--------------- |
 | **Status**  | Work in progress |
 | **Created** | 2024-11-15       |
 
@@ -14,10 +14,9 @@ integrity of the software running on a device. This protocol allows
 vendor-specific [AVB][avb] logic to be implemented by the firmware, enabling
 device-specific security mechanisms to ensure the integrity of the HLOS.
 
-The `GBL_EFI_AVB_PROTOCOL` is not required for the development GBL flavor,
-which is intended to support basic Android boot functionality on unlocked
-development boards. However, this protocol must be implemented on production
-devices.
+The `GBL_EFI_AVB_PROTOCOL` is not required for the development GBL flavor, which
+is intended to support basic Android boot functionality on unlocked development
+boards. However, this protocol must be implemented on production devices.
 
 ### GUID
 
@@ -37,7 +36,9 @@ devices.
 #define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 4)
 ```
 
-See [GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions) for details about protocol revisions.
+See
+[GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions)
+for details about protocol revisions.
 
 ### Protocol Interface Structure
 
@@ -61,56 +62,56 @@ typedef struct _GBL_EFI_AVB_PROTOCOL {
 #### Revision
 
 The revision to which the `GBL_EFI_AVB_PROTOCOL` adheres. All future revisions
-must be backwards compatible. If a future version is not backwards compatible,
-a different GUID must be used.
+must be backwards compatible. If a future version is not backwards compatible, a
+different GUID must be used.
 
 #### ReadPartitionsToVerify
 
 Retrieves the list of additional partitions to be verified, beyond the standard
-set loaded and verified by GBL.
-See [`ReadPartitionsToVerify()`][readpartitionstoverify] for more information.
+set loaded and verified by GBL. See
+[`ReadPartitionsToVerify()`][readpartitionstoverify] for more information.
 
 #### ReadDeviceStatus
 
 Retrieves the current device status, including its lock state and dm-verity
-error indication.
-See [`ReadDeviceStatus()`][readdevicestatus] for more information.
+error indication. See [`ReadDeviceStatus()`][readdevicestatus] for more
+information.
 
 #### ValidateVbmetaPublicKey
 
-Validates proper public key is used to sign HLOS artifacts.
-See [`ValidateVbmetaPublicKey()`][validatevbmetapublickey] for more information.
+Validates proper public key is used to sign HLOS artifacts. See
+[`ValidateVbmetaPublicKey()`][validatevbmetapublickey] for more information.
 
 #### ReadRollbackIndex
 
-Retrieves the rollback index corresponding to the provided index location.
-See [`ReadRollbackIndex()`][readrollbackindex] for more information.
+Retrieves the rollback index corresponding to the provided index location. See
+[`ReadRollbackIndex()`][readrollbackindex] for more information.
 
 #### WriteRollbackIndex
 
-Writes the rollback index corresponding to the provided index location.
-See [`WriteRollbackIndex()`][writerollbackindex] for more information.
+Writes the rollback index corresponding to the provided index location. See
+[`WriteRollbackIndex()`][writerollbackindex] for more information.
 
 #### ReadPersistentValue
 
-Retrieves the persistent value for the provided name.
-See [`ReadPersistentValue()`][readpersistentvalue] for more information.
+Retrieves the persistent value for the provided name. See
+[`ReadPersistentValue()`][readpersistentvalue] for more information.
 
 #### WritePersistentValue
 
-Writes or clears the persistent value for the provided name.
-See [`WritePersistentValue()`][writepersistentvalue] for more information.
+Writes or clears the persistent value for the provided name. See
+[`WritePersistentValue()`][writepersistentvalue] for more information.
 
 #### HandleVerificationResult
 
 Handles the AVB verification result (e.g., updating the Root of Trust, setting
-device state, displaying UI warnings/errors, handling anti-tampering, etc.).
-See [`HandleVerificationResult()`][handleverificationresult] for more information.
+device state, displaying UI warnings/errors, handling anti-tampering, etc.). See
+[`HandleVerificationResult()`][handleverificationresult] for more information.
 
 #### WriteLockState
 
-Locks or unlocks the device lock or device critical lock.
-See [`WriteLockState()`][writelockstate] for more information.
+Locks or unlocks the device lock or device critical lock. See
+[`WriteLockState()`][writelockstate] for more information.
 
 ## GBL_EFI_AVB_PROTOCOL.ReadPartitionsToVerify()
 
@@ -223,7 +224,7 @@ cannot be verified. GBL will handle this case as follows:
 ### Status Codes Returned
 
 | Return Code            | Semantics                                                                                                                                                          |
-|:-----------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `EFI_SUCCESS`          | Successfully provided additional partitions to verify                                                                                                              |
 | `EFI_UNSUPPORTED`      | No extra partitions need to be verified                                                                                                                            |
 | `EFI_BUFFER_TOO_SMALL` | Provided list of `Partitions` is too small; `NumPartitions` has been updated with the required amount. GBL will call this method again with extended `Partitions`. |
@@ -269,13 +270,13 @@ Flag indicating that the device rebooted due to a dm-verity error.
 
 ##### GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL
 
-Flag indicating that the device is unlocked for critical operations.
-These operations include flashing raw storage devices and modifying partition tables.
+Flag indicating that the device is unlocked for critical operations. These
+operations include flashing raw storage devices and modifying partition tables.
 
 ##### GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE
 
-Flag indicating that the device bootloader can be unlocked.
-Corresponds to the ["OEM unlocking"][oem_unlocking] option in the booted OS.
+Flag indicating that the device bootloader can be unlocked. Corresponds to the
+["OEM unlocking"][oem_unlocking] option in the booted OS.
 
 The `UNLOCKABLE` status applies to both the
 [`DEVICE`](#gbl_efi_avb_device_status_unlocked) lock and the
@@ -301,20 +302,21 @@ status, covering:
 1. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED` - Indicates the device is
    [unlocked][unlocked]. GBL treats unlocked devices as being in the `orange`
    boot state, skipping certain verification enforcements and allowing boot to
-   proceed with reduced security guarantees.
-   See [unlocked_devices][boot_flow_orange].
+   proceed with reduced security guarantees. See
+   [unlocked_devices][boot_flow_orange].
 2. `GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED` - Indicates the device rebooted
    due to a dm-verity hashtree corruption [error][dmv_error]. In this case, GBL
    passes `AVB_SLOT_VERIFY_FLAGS_RESTART_CAUSED_BY_HASHTREE_CORRUPTION` to
    `libavb`. Unless the library detects new OS images, this results in a
    `GBL_EFI_AVB_BOOT_COLOR_RED_EIO` flag, requiring user additional confirmation
    before proceeding in degraded mode.
-3. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL` - Indicates the device is unlocked
-   for critical operations.
-4. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE` - Indicates that the device can be unlocked.
-   If the device is not unlockable, calls to [`WriteLockState()`][writelockstate] with a *State*
-   parameter of value `GBL_EFI_AVB_LOCK_STATE_UNLOCKED` will fail.
-   See [https://source.android.com/docs/core/architecture/bootloader/locking_unlocking].
+3. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL` - Indicates the device is
+   unlocked for critical operations.
+4. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE` - Indicates that the device can be
+   unlocked. If the device is not unlockable, calls to
+   [`WriteLockState()`][writelockstate] with a _State_ parameter of value
+   `GBL_EFI_AVB_LOCK_STATE_UNLOCKED` will fail. See
+   [https://source.android.com/docs/core/architecture/bootloader/locking_unlocking].
 
 GBL may call this method multiple times within a single boot session. If the
 method returns an error, GBL rejects the boot attempt.
@@ -322,7 +324,7 @@ method returns an error, GBL rejects the boot attempt.
 ### Status Codes Returned
 
 | Return Code             | Semantics                                              |
-|:------------------------|:-------------------------------------------------------|
+| :---------------------- | :----------------------------------------------------- |
 | `EFI_SUCCESS`           | A device status is successfully returned.              |
 | `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
@@ -427,7 +429,7 @@ GBL calls this function once per AVB verification session.
 ### Status Codes Returned
 
 | Return Code             | Semantics                                              |
-|:------------------------|:-------------------------------------------------------|
+| :---------------------- | :----------------------------------------------------- |
 | `EFI_SUCCESS`           | Public key validation was successfully completed.      |
 | `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
 
@@ -480,7 +482,7 @@ locked devices.
 ### Status Codes Returned
 
 | Return Code             | Semantics                                                                                 |
-|:------------------------|:------------------------------------------------------------------------------------------|
+| :---------------------- | :---------------------------------------------------------------------------------------- |
 | `EFI_SUCCESS`           | The rollback index value is successfully returned.                                        |
 | `EFI_NOT_FOUND`         | The requested rollback index isn't supported, so cannot be returned. GBL rejects to boot. |
 | `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot.                                    |
@@ -533,7 +535,7 @@ locked devices.
 ### Status Codes Returned
 
 | Return Code             | Semantics                                                                                |
-|:------------------------|:-----------------------------------------------------------------------------------------|
+| :---------------------- | :--------------------------------------------------------------------------------------- |
 | `EFI_SUCCESS`           | The rollback index value is successfully updated.                                        |
 | `EFI_NOT_FOUND`         | The requested rollback index isn't supported, so cannot be updated. GBL rejects to boot. |
 | `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot.                                   |
@@ -588,7 +590,7 @@ handle [dm-verity][dmv_error] errors and EIO mode.
 ### Status Codes Returned
 
 | Return Code             | Semantics                                                                                                                     |
-|:------------------------|:------------------------------------------------------------------------------------------------------------------------------|
+| :---------------------- | :---------------------------------------------------------------------------------------------------------------------------- |
 | `EFI_SUCCESS`           | The requested persistent value is presented and successfully provided in case `Value` buffer isn't NULL.                      |
 | `EFI_NOT_FOUND`         | The requested persistent value is not yet populated or supported. GBL will try to initialize it using `WritePersistentValue`. |
 | `EFI_BUFFER_TOO_SMALL`  | The provided `Value` buffer is too small. GBL rejects to boot.                                                                |
@@ -644,7 +646,7 @@ updates in order to disable EIO mode.
 ### Status Codes Returned
 
 | Return Code             | Semantics                                                                                      |
-|:------------------------|:-----------------------------------------------------------------------------------------------|
+| :---------------------- | :--------------------------------------------------------------------------------------------- |
 | `EFI_SUCCESS`           | The value for `Name` is successfully updated.                                                  |
 | `EFI_NOT_FOUND`         | Updating the value for `Name` isn't supported. GBL rejects to boot.                            |
 | `EFI_INVALID_PARAMETER` | The `ValueSize` is too big or any other unexpected arguments combination. GBL rejects to boot. |
@@ -857,8 +859,8 @@ used for:
 3. Handle data for all partitions loaded by GBL, including device-specific
    partitions requested through
    [`ReadPartitionsToVerify()`][readpartitionstoverify].
-4. Display the appropriate UI and obtaining user confirmation for states
-   that may affect the device's security guarantees.
+4. Display the appropriate UI and obtaining user confirmation for states that
+   may affect the device's security guarantees.
 
 Note: The data pointed to by `Result` (including the loaded partitions and
 properties buffers) is valid only for the duration of this call and becomes
@@ -867,7 +869,7 @@ invalid afterward.
 ### Status Codes Returned
 
 | Return Code             | Semantics                                                                                          |
-|:------------------------|:---------------------------------------------------------------------------------------------------|
+| :---------------------- | :------------------------------------------------------------------------------------------------- |
 | `EFI_SUCCESS`           | Verification result is successfully handled.                                                       |
 | `EFI_INVALID_PARAMETER` | Invalid data is provided by the `Result`. GBL rejects to boot.                                     |
 | `EFI_ACCESS_DENIED`     | Failed to update root of trust or other secure world issues occurred. GBL reject the boot attempt. |
@@ -908,14 +910,14 @@ Describes the _Device_ lock. This lock controls access to flashing partitions.
 
 ##### GBL_EFI_AVB_LOCK_TYPE_CRITICAL
 
-Describes the _Critical_ lock. This lock controls access to flashing raw block devices
-and modifications to partition tables.
+Describes the _Critical_ lock. This lock controls access to flashing raw block
+devices and modifications to partition tables.
 
-Note: the _Critical_ lock is optional. It is an extra safeguard to prevent users from
-modifying their device such that it cannot be recovered via fastboot.
-If a firmware implementation does not support the _Critical_ lock, calls to
-`WriteLockState()` where `Type` is `GBL_EFI_AVB_LOCK_TYPE_CRITICAL` should return
-`EFI_UNSUPPORTED`.
+Note: the _Critical_ lock is optional. It is an extra safeguard to prevent users
+from modifying their device such that it cannot be recovered via fastboot. If a
+firmware implementation does not support the _Critical_ lock, calls to
+`WriteLockState()` where `Type` is `GBL_EFI_AVB_LOCK_TYPE_CRITICAL` should
+return `EFI_UNSUPPORTED`.
 
 #### GBL_EFI_AVB_LOCK_STATE
 
@@ -937,35 +939,35 @@ A lock state indicating that system modifications are prohibited.
 
 ### Description
 
-The *DEVICE* and *CRITICAL* locks mediate access to system modifcations. The *DEVICE*
-lock must be unlocked in order to boot unverified operating systems.
+The _DEVICE_ and _CRITICAL_ locks mediate access to system modifcations. The
+_DEVICE_ lock must be unlocked in order to boot unverified operating systems.
 
-Changing the state of the *DEVICE* lock MUST be preceded by wiping user data. GBL is
-responsible for guaranteeing this order of operations.
+Changing the state of the _DEVICE_ lock MUST be preceded by wiping user data.
+GBL is responsible for guaranteeing this order of operations.
 
-It is the responsibility of the implementation to display a relevant UI dialog and
-obtain user consent before unlocking the device.
+It is the responsibility of the implementation to display a relevant UI dialog
+and obtain user consent before unlocking the device.
 
-The *CRITICAL* lock, if provided by the device firmware, is a user safeguard to
+The _CRITICAL_ lock, if provided by the device firmware, is a user safeguard to
 prevent rendering a device unusable. When this lock is enabled, it prevents
 modifications to raw block devices and partition tables.
 
-Note: Unlocking the *DEVICE* lock changes the boot color to
+Note: Unlocking the _DEVICE_ lock changes the boot color to
 [`ORANGE`](#GBL_EFI_AVB_BOOT_COLOR_ORANGE).
 
-Note: The *DEVICE* and *CRITICAL* locks are independent. Locking or unlocking one
-MUST NOT affect the other. The locks do not gate access for each other either: if the
-*CRITICAL* lock is unlocked but the *DEVICE* lock is locked, attempts to flash custom
-custom kernel images will fail.
+Note: The _DEVICE_ and _CRITICAL_ locks are independent. Locking or unlocking
+one MUST NOT affect the other. The locks do not gate access for each other
+either: if the _CRITICAL_ lock is unlocked but the _DEVICE_ lock is locked,
+attempts to flash custom custom kernel images will fail.
 
 ### Status Codes Returned
 
 | Return Code             | Semantics                                                                                   |
-|:------------------------|:--------------------------------------------------------------------------------------------|
+| :---------------------- | :------------------------------------------------------------------------------------------ |
 | `EFI_SUCCESS`           | The lock state was successfully set.                                                        |
-| `EFI_INVALID_PARAMETER` | One of *Type* or *State* had an invalid value.                                              |
+| `EFI_INVALID_PARAMETER` | One of _Type_ or _State_ had an invalid value.                                              |
 | `EFI_ACCESS_DENIED`     | The device is not unlockable.                                                               |
-| `EFI_UNSUPPORTED`       | *Type* is `GBL_EF_AVB_LOCK_TYPE_CRITICAL` and the firmware does not define a critical lock. |
+| `EFI_UNSUPPORTED`       | _Type_ is `GBL_EF_AVB_LOCK_TYPE_CRITICAL` and the firmware does not define a critical lock. |
 
 ## Status codes returned to `libavb`
 
@@ -973,7 +975,7 @@ Some of the methods across this protocol are initiated by the `libavb`. The
 following UEFI error codes are used to communicate results back to the library:
 
 | Return Code             | Semantics                                                                                                                                               |
-|:------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| :---------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `EFI_SUCCESS`           | Requested operation was successful `libavb::AvbIOResult::AVB_IO_RESULT_OK`                                                                              |
 | `EFI_OUT_OF_RESOURCES`  | Unable to allocate memory `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_OOM`                                                                                |
 | `EFI_DEVICE_ERROR`      | Underlying hardware (disk or other subsystem) encountered an I/O error `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                    |
@@ -996,14 +998,25 @@ following UEFI error codes are used to communicate results back to the library:
 [handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
 [writelockstate]: #gbl_efi_avb_protocolwritelockstate
 [avb]: https://source.android.com/docs/security/features/verifiedboot/avb
-[unlocked]: https://android.googlesource.com/platform/external/avb/+/refs/heads/main/README.md#locked-and-unlocked-mode
-[oem_unlocking]: https://source.android.com/docs/core/architecture/bootloader/locking_unlocking
-[dmv_error]: https://android.googlesource.com/platform/external/avb/+/master/README.md#handling-dm_verity-errors
-[rp]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#rollback-protection
-[update_ri]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes
-[pd]: https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#persistent-digests
-[boot_flow]: https://source.android.com/docs/security/features/verifiedboot/boot-flow
-[boot_flow_red]: https://source.android.com/docs/security/features/verifiedboot/boot-flow#no-valid-os-found
-[boot_flow_orange]: https://source.android.com/docs/security/features/verifiedboot/boot-flow#unlocked-devices
-[boot_flow_yellow]: https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
-[boot_flow_red_eio]: https://source.android.com/docs/security/features/verifiedboot/boot-flow#dm-verity-corruption
+[unlocked]:
+  https://android.googlesource.com/platform/external/avb/+/refs/heads/main/README.md#locked-and-unlocked-mode
+[oem_unlocking]:
+  https://source.android.com/docs/core/architecture/bootloader/locking_unlocking
+[dmv_error]:
+  https://android.googlesource.com/platform/external/avb/+/master/README.md#handling-dm_verity-errors
+[rp]:
+  https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#rollback-protection
+[update_ri]:
+  https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes
+[pd]:
+  https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#persistent-digests
+[boot_flow]:
+  https://source.android.com/docs/security/features/verifiedboot/boot-flow
+[boot_flow_red]:
+  https://source.android.com/docs/security/features/verifiedboot/boot-flow#no-valid-os-found
+[boot_flow_orange]:
+  https://source.android.com/docs/security/features/verifiedboot/boot-flow#unlocked-devices
+[boot_flow_yellow]:
+  https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
+[boot_flow_red_eio]:
+  https://source.android.com/docs/security/features/verifiedboot/boot-flow#dm-verity-corruption
