@@ -65,14 +65,8 @@ typedef struct {
   uint64_t reserved[8];
 } GblEfiLoadedOs;
 
-typedef void (*OsEntryPoint)(size_t descriptor_size,
-                             uint32_t descriptor_version,
-                             size_t num_descriptors,
-                             const EfiMemoryDescriptor* memory_map,
-                             const GblEfiLoadedOs* os);
-
 static const uint64_t GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 2);
+    GBL_PROTOCOL_REVISION(0, 3);
 
 typedef struct GblEfiBootControlProtocol {
   uint64_t revision;
@@ -91,8 +85,7 @@ typedef struct GblEfiBootControlProtocol {
   EfiStatus (*get_one_shot_boot_mode)(struct GblEfiBootControlProtocol* self,
                                       /* out */ GblEfiOneShotBootMode* mode);
   EfiStatus (*handle_loaded_os)(struct GblEfiBootControlProtocol* self,
-                                /* in */ const GblEfiLoadedOs* os,
-                                /* out */ OsEntryPoint* entry_point);
+                                /* in */ const GblEfiLoadedOs* os);
 } GblEfiBootControlProtocol;
 
 #endif  // __GBL_EFI_BOOT_CONTROL_PROTOCOL_H__

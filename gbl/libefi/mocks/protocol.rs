@@ -452,11 +452,6 @@ pub mod gbl_efi_boot_control {
     use efi_types::{GblEfiLoadedOs, GblEfiOneShotBootMode};
 
     mock! {
-        /// Empty mock of [GblEfiOsEntryPoint]
-        pub GblEfiOsEntryPoint {}
-    }
-
-    mock! {
         /// Mock of [GblBootControlProtocol]
         pub GblBootControlProtocol {
             /// Mock of GblBootControlProtocol::get_slot_count.
@@ -478,20 +473,18 @@ pub mod gbl_efi_boot_control {
             pub fn handle_loaded_os(
                 &self,
                 os: &GblEfiLoadedOs
-            ) -> Result<Option<GblEfiOsEntryPoint>>;
+            ) -> Result<()>;
         }
     }
 
     impl Versioned for MockGblBootControlProtocol {
-        const REVISION: Revision = Revision { major: 0, minor: 2 };
+        const REVISION: Revision = Revision { major: 0, minor: 3 };
 
         fn revision(&self) -> Revision {
             Self::REVISION
         }
     }
 
-    /// Map to the libefi name so code under test can just use one name.
-    pub type GblEfiOsEntryPoint = MockGblEfiOsEntryPoint;
     /// Map to the libefi name so code under test can just use one name.
     pub type GblBootControlProtocol = MockGblBootControlProtocol;
 }

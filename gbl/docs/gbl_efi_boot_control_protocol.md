@@ -33,7 +33,7 @@ changing the target boot slot.
 ### Protocol Revision
 
 ```c
-#define GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 2)
+#define GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 3)
 ```
 
 See
@@ -89,7 +89,7 @@ Returns the hardware triggered one-shot boot mode. See
 
 **HandleLoadedOs**
 
-Handles loaded OS images and provides OS entry point. See
+Handles loaded OS images and overrides OS entry point logic. See
 [`GBL_EFI_BOOT_CONTROL_PROTOCOL.HandleLoadedOs()`](#gbl_efi_boot_control_protocol_handleloadedos).
 
 ## GBL_EFI_BOOT_CONTROL_PROTOCOL.GetSlotCount()
@@ -357,15 +357,14 @@ storage.
 
 ### Summary
 
-Handles loaded OS images and provides OS entry point.
+Handles loaded OS images and overrides OS entry point logic.
 
 ### Prototype
 
 ```c
 typedef EFI_STATUS (EFIAPI *GBL_EFI_BOOT_CONTROL_HANDLE_LOADED_OS)(
     IN GBL_EFI_BOOT_CONTROL_PROTOCOL  *Self,
-    IN CONST GBL_EFI_LOADED_OS        *Os,
-    OUT OS_ENTRY_POINT                *EntryPoint
+    IN CONST GBL_EFI_LOADED_OS        *Os
 );
 ```
 
@@ -379,25 +378,10 @@ A pointer to the
 _Os_
 
 A pointer to a `GBL_EFI_LOADED_OS` structure representing the loaded OS images.
-The underlying images are guaranteed to remain at the same physical address
-across `HandleLoadedOs` and `EntryPoint` calls — they are never relocated by
-GBL. However, the `Os` pointer itself is only valid within this call and must
-not be retained.
-
-_EntryPoint_
-
-On exit, contains a function pointer to the firmware-specific hardware
-preparation and kernel jump logic. It may remain untouched if no custom
-implementation is provided, in which case GBL's default handoff logic will be
-used. See `OS_ENTRY_POINT` definition below for more details about the expected
-input.
-
-Note: The provided function is executed after `ExitBootServices()` is called by
-GBL, so provided implementation must not rely on any Boot Services.
-
-Note: The provided function is expected to take over the subsequent boot chain
-steps and must never return to GBL. If control returns to GBL, it is treated as
-a fatal error.
+The underlying images are guaranteed to remain at the same physical addresses
+across `HandleLoadedOs` and the default GBL HLOS hand-off logic, so they are
+never relocated. The `Os` pointer itself is only valid for the duration of this
+call and must not be retained.
 
 ### Related Definitions
 
@@ -446,61 +430,31 @@ _Reserved_
 
 Reserved for future use.
 
-#### OS_ENTRY_POINT
-
-```c
-typedef VOID (*OS_ENTRY_POINT)(
-    IN UINTN                        DescriptorSize,
-    IN UINT32                       DescriptorVersion,
-    IN UINTN                        NumDescriptors,
-    IN CONST EFI_MEMORY_DESCRIPTOR  *MemoryMap,
-    IN CONST GBL_EFI_LOADED_OS      *Os
-);
-```
-
-_DescriptorSize_
-
-The size, in bytes, of an `EFI_MEMORY_DESCRIPTOR` structure.
-
-_DescriptorVersion_
-
-The version number associated with the provided `EFI_MEMORY_DESCRIPTOR` items.
-
-_NumDescriptors_
-
-The number of `EFI_MEMORY_DESCRIPTOR` items provided by `MemoryMap`.
-
-_MemoryMap_
-
-A pointer to the array of `EFI_MEMORY_DESCRIPTOR` representing the memory map
-GBL provided to `ExitBootServices()` prior to entry point call.
-
-_Os_
-
-A pointer to a `GBL_EFI_LOADED_OS` structure representing the loaded OS images.
-The provided physical addresses are meant to be used directly by the kernel
-handoff implementation.
-
 ### Description
 
 This method allows the firmware to handle OS images after they have been loaded
 by GBL. It can be used to inspect the final kernel, ramdisk, and device tree
-images before the kernel handoff to finalize internal state or perform
-additional verification steps beyond those handled by GBL.
+images to finalize internal state or perform additional verification steps
+beyond those handled by GBL.
 
-The `EntryPoint` function pointer output argument allows the firmware to
-override GBL's handoff implementation with device-specific hardware preparation
-and kernel jump logic. See the `EntryPoint` documentation above for details.
+Additionally, the firmware implementation may override the HLOS handoff by
+performing device-specific hardware preparation and kernel jump logic directly,
+without returning control to GBL. In this case, the firmware is responsible for
+executing `ExitBootServices()`. If the method returns, GBL proceeds with the
+default handoff logic.
 
-This method is optional. Returning either `EFI_SUCCESS` or `EFI_UNSUPPORTED` has
-the same effect - GBL continues the boot process.
+GBL guarantees that this method is always executed in the `TPL_APPLICATION`
+context. It is triggered by the main UEFI application flow, not by an event.
+
+Implementation is optional. Returning either `EFI_SUCCESS` or `EFI_UNSUPPORTED`
+has the same effect, the boot process continues.
 
 ### Status Codes Returned
 
-| Return Code              | Semantics                                                                                  |
-| :----------------------- | :----------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`            | OS images are handled successfully.                                                        |
-| `EFI_UNSUPPORTED`        | FW does not need to handle OS images. GBL continues to boot.                               |
-| `EFI_INVALID_PARAMETER`  | One of _Self_, _Os_, or _EntryPoint_ is `NULL` or improperly aligned. GBL rejects to boot. |
-| `EFI_SECURITY_VIOLATION` | Provided OS images fail to meet the device's security requirements. GBL rejects to boot.   |
-| `EFI_DEVICE_ERROR`       | Any other error occurred while handling OS images. GBL rejects to boot.                    |
+| Return Code              | Semantics                                                                                |
+| :----------------------- | :--------------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`            | OS images are handled successfully.                                                      |
+| `EFI_UNSUPPORTED`        | FW does not need to handle OS images. GBL continues to boot.                             |
+| `EFI_INVALID_PARAMETER`  | One of _Self_ or _Os_ is `NULL` or improperly aligned. GBL rejects to boot.              |
+| `EFI_SECURITY_VIOLATION` | Provided OS images fail to meet the device's security requirements. GBL rejects to boot. |
+| `EFI_DEVICE_ERROR`       | Any other error occurred while handling OS images. GBL rejects to boot.                  |

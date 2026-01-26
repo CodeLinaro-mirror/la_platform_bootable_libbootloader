@@ -26,7 +26,7 @@ use efi::{
         dt_fixup::DtFixupProtocol,
         gbl_efi_avb::GblAvbProtocol,
         gbl_efi_avf::GblAvfProtocol,
-        gbl_efi_boot_control::{GblBootControlProtocol, GblEfiOsEntryPoint},
+        gbl_efi_boot_control::GblBootControlProtocol,
         gbl_efi_boot_memory::{gbl_get_partition_buffer, gbl_sync_partition_buffer},
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
@@ -127,8 +127,6 @@ pub struct Ops<'a, 'b> {
     #[cfg(feature = "fuchsia")]
     pub zbi_bootloader_files_buffer: Vec<u8>,
     pub os: Option<Os>,
-    /// Expected to be optionally provided during `handle_loaded_os`.
-    pub os_entry_point: Option<GblEfiOsEntryPoint>,
     pub base_sp: usize,
     pause_fastboot: bool,
 }
@@ -147,7 +145,6 @@ impl<'a, 'b> Ops<'a, 'b> {
             #[cfg(feature = "fuchsia")]
             zbi_bootloader_files_buffer: Default::default(),
             os,
-            os_entry_point: None,
             base_sp,
             pause_fastboot: false,
         }
@@ -1043,20 +1040,15 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         ramdisk: &[u8],
         device_tree: &[u8],
     ) -> Result<()> {
-        // Save provided OS entrypoint to be used by UEFI-specific boot logic once GBL done with
-        // loading an OS.
-        self.os_entry_point =
-            self.open_boot_control_protocol()?.handle_loaded_os(&efi_types::GblEfiLoadedOs {
-                kernel_size: kernel.len(),
-                kernel: kernel.as_ptr() as _,
-                ramdisk_size: ramdisk.len(),
-                ramdisk: ramdisk.as_ptr() as _,
-                device_tree_size: device_tree.len(),
-                device_tree: device_tree.as_ptr() as _,
-                reserved: Default::default(),
-            })?;
-
-        Ok(())
+        self.open_boot_control_protocol()?.handle_loaded_os(&efi_types::GblEfiLoadedOs {
+            kernel_size: kernel.len(),
+            kernel: kernel.as_ptr() as _,
+            ramdisk_size: ramdisk.len(),
+            ramdisk: ramdisk.as_ptr() as _,
+            device_tree_size: device_tree.len(),
+            device_tree: device_tree.as_ptr() as _,
+            reserved: Default::default(),
+        })
     }
 
     fn get_base_sp(&mut self) -> Option<usize> {

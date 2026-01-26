@@ -18,11 +18,11 @@ extern crate libgbl;
 use crate::efi_call;
 use crate::{
     protocol::{Protocol, ProtocolInfo},
-    versioned_protocol, EfiMemoryMap,
+    versioned_protocol,
 };
 use efi_types::{
-    EfiGuid, EfiMemoryDescriptor, GblEfiBootControlProtocol, GblEfiLoadedOs, GblEfiOneShotBootMode,
-    GblEfiSlotInfo, GblEfiUnbootableReason, OsEntryPoint, GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION,
+    EfiGuid, GblEfiBootControlProtocol, GblEfiLoadedOs, GblEfiOneShotBootMode, GblEfiSlotInfo,
+    GblEfiUnbootableReason, GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION,
     GBL_EFI_ONE_SHOT_BOOT_MODE_NONE, GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
     GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE as SYSTEM_UPDATE,
     GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED as USER_REQUESTED,
@@ -78,52 +78,6 @@ impl TryFrom<GblSlot> for libgbl::slots::Slot {
                 (false, t) => Bootability::Retriable(t.into()),
             },
         })
-    }
-}
-
-/// A wrapper for the `OsEntryPoint` function pointer.
-#[derive(Clone, Copy)]
-pub struct GblEfiOsEntryPoint(
-    unsafe extern "efiapi" fn(
-        descriptor_size: usize,
-        descriptor_version: u32,
-        num_descriptors: usize,
-        memory_map_descriptors: *const EfiMemoryDescriptor,
-        os: *const GblEfiLoadedOs,
-    ) -> (),
-);
-
-impl GblEfiOsEntryPoint {
-    /// Calls the provided FW-specific kernel handoff implementation. Once called control
-    /// is never getting back to GBL.
-    pub fn call(&self, mmap: EfiMemoryMap, kernel: &[u8], ramdisk: &[u8], fdt: &[u8]) -> ! {
-        // SAFETY:
-        // The underlying pointed implementation is provided by the firmware and is guaranteed to be
-        // available for GBL to call. Since the implementation never returns control to GBL, the
-        // provided pointers cannot be retained.
-        unsafe {
-            self.0(
-                mmap.descriptor_size(),
-                mmap.descriptor_version(),
-                mmap.len(),
-                mmap.buffer().as_ptr() as _,
-                &GblEfiLoadedOs {
-                    kernel_size: kernel.len(),
-                    kernel: kernel.as_ptr() as _,
-                    ramdisk_size: ramdisk.len(),
-                    ramdisk: ramdisk.as_ptr() as _,
-                    device_tree_size: fdt.len(),
-                    device_tree: fdt.as_ptr() as _,
-                    reserved: Default::default(),
-                },
-            )
-        };
-        unreachable!();
-    }
-
-    /// To obtain the memory offset of OS entry point function pointer.
-    pub fn implementation_offset(&self) -> usize {
-        self.0 as *const () as usize
     }
 }
 
@@ -185,21 +139,11 @@ impl<'a> Protocol<'a, GblBootControlProtocol> {
     }
 
     /// Wrapper of `GBL_EFI_BOOT_CONTROL_PROTOCOL.handle_loaded_os()`
-    pub fn handle_loaded_os(&self, os: &GblEfiLoadedOs) -> Result<Option<GblEfiOsEntryPoint>> {
-        let mut entry_point: OsEntryPoint = None;
+    pub fn handle_loaded_os(&self, os: &GblEfiLoadedOs) -> Result<()> {
         // SAFETY:
         // `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
         // `self.interface_ptr()` is an input parameter and will not be retained. It outlives the call.
         // `os` is an input parameter and will not be retained. It outlives the call.
-        // `entry_point` is an output parameter and will not be retained. It outlives the call.
-        unsafe {
-            efi_call!(
-                self.interface().handle_loaded_os,
-                self.interface_ptr(),
-                os,
-                &mut entry_point
-            )?;
-        }
-        Ok(entry_point.map(|e| GblEfiOsEntryPoint(e)))
+        unsafe { efi_call!(self.interface().handle_loaded_os, self.interface_ptr(), os) }
     }
 }

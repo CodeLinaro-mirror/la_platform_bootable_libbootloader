@@ -13,10 +13,7 @@
 // limitations under the License.
 
 use crate::{fastboot::efi_gbl_fastboot_entry, ops::Ops};
-use efi::{
-    efi_println, exit_boot_services, protocol::gbl_efi_boot_control::GblEfiOsEntryPoint, EfiEntry,
-    EfiMemoryMap,
-};
+use efi::{efi_println, exit_boot_services, EfiEntry};
 use libgbl::{
     android_boot::{android_main, BootBuffer},
     gbl_println, GblOps, Result,
@@ -34,28 +31,9 @@ pub fn efi_android_load<'a>(
     Ok(android_main(ops, load, |fb| efi_gbl_fastboot_entry(entry, fb))?)
 }
 
-/// Helper function to exit boot services and transfer control to the firmware-specific
-/// kernel handoff implementation, if provided. In that case, this function will never
-/// return.
-fn finalize_uefi<'a>(
-    entry: EfiEntry,
-    entry_point: Option<GblEfiOsEntryPoint>,
-    kernel: &[u8],
-    ramdisk: &[u8],
-    fdt: &[u8],
-    remains: &'a mut [u8],
-) -> Result<EfiMemoryMap<'a>> {
-    let efi_mmap = exit_boot_services(entry, remains)?;
-    if let Some(entry_point) = entry_point {
-        entry_point.call(efi_mmap, kernel, ramdisk, fdt);
-    }
-    Ok(efi_mmap)
-}
-
 /// Exits boot services and boots loaded android images.
 pub fn efi_android_boot(
     entry: EfiEntry,
-    entry_point: Option<GblEfiOsEntryPoint>,
     kernel: &[u8],
     ramdisk: &[u8],
     fdt: &[u8],
@@ -69,10 +47,6 @@ pub fn efi_android_boot(
         ramdisk.as_ptr() as usize,
         fdt.as_ptr() as usize
     );
-    if let Some(entry_point) = entry_point {
-        efi_println!(entry, "FW provided entry point @ {:#x}", entry_point.implementation_offset());
-    }
-    efi_println!(entry, "");
 
     #[cfg(target_arch = "aarch64")]
     {
@@ -84,7 +58,7 @@ pub fn efi_android_boot(
             }
             efi_println!(entry, "max stack used: {} bytes", get_peak_stack());
         }
-        let _ = finalize_uefi(entry, entry_point, kernel, ramdisk, fdt, remains)?;
+        let _ = exit_boot_services(entry, remains)?;
         // SAFETY: We currently targets at Cuttlefish emulator where images are provided valid.
         unsafe { boot::aarch64::jump_linux_el2_or_lower(kernel, ramdisk, fdt) };
     }
@@ -96,7 +70,7 @@ pub fn efi_android_boot(
         use libgbl::android_boot::device_tree::PROP_BOOTARGS;
 
         let fdt = Fdt::new(&fdt[..])?;
-        let efi_mmap = finalize_uefi(entry, entry_point, kernel, ramdisk, fdt.as_ref(), remains)?;
+        let efi_mmap = exit_boot_services(entry, remains)?;
         // SAFETY: We currently target at Cuttlefish emulator where images are provided valid.
         unsafe {
             boot::x86::boot_linux_bzimage(
@@ -131,7 +105,7 @@ pub fn efi_android_boot(
             .find_first_and_open::<efi::protocol::riscv::RiscvBootProtocol>()?
             .get_boot_hartid()?;
         efi_println!(entry, "riscv boot_hart_id: {}", boot_hart_id);
-        let _ = finalize_uefi(entry, entry_point, kernel, ramdisk, fdt, remains)?;
+        let _ = exit_boot_services(entry, remains)?;
         // SAFETY: We currently target at Cuttlefish emulator where images are provided valid.
         unsafe { boot::riscv64::jump_linux(kernel, boot_hart_id, fdt) };
     }

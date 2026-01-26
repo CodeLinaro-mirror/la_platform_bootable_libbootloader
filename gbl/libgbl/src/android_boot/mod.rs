@@ -368,16 +368,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
     loader.move_kernel_left();
     let [ramdisk, fdt, kernel, unused] = loader.into_splits();
 
-    let final_ramdisk = &ramdisk[..ramdisk_len];
-    let final_fdt = &fdt[..fdt_sz];
-    let final_kernel = &kernel[..kernel_len];
-    match ops.handle_loaded_os(kernel, ramdisk, fdt) {
-        // Loaded OS handling is optional.
-        Ok(_) | Err(Error::Unsupported) => {}
-        Err(e) => return Err(e.into()),
-    }
-
-    Ok((final_ramdisk, final_fdt, final_kernel, unused))
+    Ok((&ramdisk[..ramdisk_len], &fdt[..fdt_sz], &kernel[..kernel_len], unused))
 }
 
 /// Sets `linux,initrd-start/end` and optionally appending bootconfig as bootarg in FDT.
@@ -735,7 +726,18 @@ pub fn android_main<'a, 'b, G: GblOps<'a>>(
             ops.reboot()?;
         }
     }
-    Ok(split_loaded_android(load_res?, boot_buffer).unwrap())
+
+    let (ramdisk, fdt, kernel, unused) = split_loaded_android(load_res?, boot_buffer).unwrap();
+
+    // Note: handle_loaded_os must be the last call in the boot flow, as the implementation
+    // may take over control flow with firmware-specific HLOS handoff, so never return back.
+    match ops.handle_loaded_os(kernel, ramdisk, fdt) {
+        // Loaded OS handling is optional.
+        Ok(_) | Err(Error::Unsupported) => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    Ok((ramdisk, fdt, kernel, unused))
 }
 
 #[cfg(test)]
