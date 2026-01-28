@@ -1,7 +1,7 @@
 # GBL Licensing Mechanisms
 
-GBL uses mechanisms built into the Bazel build in order to verify licensing
-and generate the combined `LICENSE` output file. As opposed to manually tracking
+GBL uses mechanisms built into the Bazel build in order to verify licensing and
+generate the combined `LICENSE` output file. As opposed to manually tracking
 licenses, this provides automated enforcement that all software has license
 attribution and that we're providing up-to-date license texts.
 
@@ -27,7 +27,6 @@ attribution and that we're providing up-to-date license texts.
    ```
 
 2. The `license()` target used as `applicable_licenses` must provide:
-
    1. `package_name` which is globally unique
 
       Note: a `license()` target is unique to a package - even if two different
@@ -47,8 +46,8 @@ attribution and that we're providing up-to-date license texts.
 ## Procedure
 
 The `merged_license()` Bazel rule produces a single `LICENSE` file containing
-the merged (de-duplicated) license contents of the given target. We run this
-on the GBL UEFI application targets to pick up all licenses of anything that
+the merged (de-duplicated) license contents of the given target. We run this on
+the GBL UEFI application targets to pick up all licenses of anything that
 affects these binaries.
 
 If this rule detects any of the expectations have been violated e.g. missing
