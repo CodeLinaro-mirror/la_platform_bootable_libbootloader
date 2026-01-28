@@ -105,17 +105,19 @@ enum TaskWorkload<'a, 'b, B: BlockIo, P: BufferPool> {
 }
 
 impl<'a, 'b, B: BlockIo, P: BufferPool> TaskWorkload<'a, 'b, B, P> {
-    /// Runs the task and returns the result
-    async fn run(self) -> Result<(), Error> {
-        match self {
-            Self::Flash(mut io, mut data, sz) => io.write(0, &mut data[..sz]).await,
-            Self::FlashSparse(mut io, mut data) => io.write_sparse(0, &mut data).await,
-            Self::Erase(mut io, mut buffer) => match io.erase(&mut buffer).await {
-                Err(Error::Unsupported) => io.zeroize(&mut buffer).await,
+    /// Runs the task and returns the result, task will be reset to None.
+    async fn run(&mut self) -> Result<(), Error> {
+        let res = match self {
+            Self::Flash(io, data, sz) => io.write(0, &mut data[..*sz]).await,
+            Self::FlashSparse(io, data) => io.write_sparse(0, data).await,
+            Self::Erase(io, buffer) => match io.erase(buffer).await {
+                Err(Error::Unsupported) => io.zeroize(buffer).await,
                 v => v,
             },
             _ => Ok(()),
-        }
+        };
+        *self = Self::None;
+        res
     }
 }
 
@@ -137,7 +139,7 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> Task<'a, 'b, B, P> {
     }
 
     /// Runs the task and returns the result.
-    async fn run_checked(self) -> Result<(), Error> {
+    async fn run_checked(&mut self) -> Result<(), Error> {
         self.workload.run().await
     }
 
@@ -145,7 +147,7 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> Task<'a, 'b, B, P> {
     ///
     /// The method is intended for use in the context of parallel/background async task where errors
     /// can't be easily handled by the main routine.
-    async fn run(self) {
+    async fn run(mut self) {
         match self.workload.run().await {
             Err(e) => panic!(
                 "A Fastboot async task failed: {e:?}, context: {}",
@@ -153,6 +155,11 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> Task<'a, 'b, B, P> {
             ),
             _ => {}
         }
+    }
+
+    /// Checks if task is None.
+    fn is_none(&self) -> bool {
+        matches!(self.workload, TaskWorkload::None)
     }
 }
 
@@ -658,16 +665,17 @@ where
     ///   list. Otherwise it simply runs the task.
     async fn schedule_task(
         &mut self,
-        task: Task<'a, 'b, B, P>,
+        task: &mut Task<'a, 'b, B, P>,
         responder: &mut impl InfoSender,
     ) -> CommandResult<()> {
         Ok(match self.enable_async_task {
             true => {
-                let mut t = Some((self.task_mapper)(task));
-                self.tasks.borrow_mut().add_with(|| t.take().unwrap());
-                while t.is_some() {
+                // `add_with` requires that the closure is lazily evaluated. If task cannot be
+                // added, it must not be evaluated.
+                self.tasks.borrow_mut().add_with(|| (self.task_mapper)(take(task)));
+                while !task.is_none() {
                     yield_now().await;
-                    self.tasks.borrow_mut().add_with(|| t.take().unwrap());
+                    self.tasks.borrow_mut().add_with(|| (self.task_mapper)(take(task)));
                 }
                 self.tasks.borrow_mut().poll_all();
                 let info =
@@ -1022,7 +1030,7 @@ where
             _ => TaskWorkload::Flash(part_io.sub(0, sz.try_into().unwrap())?, data, sz),
         });
         task.set_context(|f| write!(f, "flash:{part}"));
-        Ok(self.schedule_task(task, &mut responder).await?)
+        Ok(self.schedule_task(&mut task, &mut responder).await?)
     }
 
     async fn erase(&mut self, part: &str, mut responder: impl InfoSender) -> CommandResult<()> {
@@ -1049,7 +1057,7 @@ where
         self.get_download_buffer().await;
         let mut task = Task::new(TaskWorkload::Erase(part_io, self.take_download().unwrap().0));
         task.set_context(|f| write!(f, "erase:{part}"));
-        Ok(self.schedule_task(task, &mut responder).await?)
+        Ok(self.schedule_task(&mut task, &mut responder).await?)
     }
 
     async fn download(
