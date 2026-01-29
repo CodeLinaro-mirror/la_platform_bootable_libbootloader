@@ -32,7 +32,7 @@
 #include <uefi/types.h>
 
 static const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 4);
+    GBL_PROTOCOL_REVISION(0, 5);
 
 typedef uint64_t GblEfiAvbDeviceStatus;
 
@@ -71,7 +71,13 @@ EFI_ENUM(GblEfiAvbKeyValidationStatus, uint32_t,
          GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID);
 
 typedef uint64_t GblEfiAvbPartitionFlags;
-static const GblEfiAvbPartitionFlags GBL_EFI_AVB_PARTITION_OPTIONAL = 0x1 << 0;
+static const GblEfiAvbPartitionFlags GBL_EFI_AVB_PARTITION_FLAG_VERIFY = 0x1
+                                                                         << 0;
+static const GblEfiAvbPartitionFlags
+    GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS = 0x1 << 1;
+static const GblEfiAvbPartitionFlags GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL =
+    0x1 << 2;
+static const GblEfiAvbPartitionFlags GBL_EFI_AVB_PARTITION_FLAG_FDR = 0x1 << 3;
 
 EFI_ENUM(GblEfiAvbLockType, uint8_t, GBL_EFI_AVB_LOCK_TYPE_DEVICE,
          GBL_EFI_AVB_LOCK_TYPE_CRITICAL);
@@ -85,7 +91,7 @@ typedef struct {
   size_t base_name_len;
   uint8_t* base_name;
   GblEfiAvbPartitionFlags flags;
-} GblEfiAvbPartition;
+} GblEfiAvbPartitionAttributes;
 
 typedef struct {
   // UTF-8, null terminated
@@ -119,10 +125,10 @@ typedef struct {
 typedef struct GblEfiAvbProtocol {
   uint64_t revision;
 
-  EfiStatus (*read_partitions_to_verify)(
+  EfiStatus (*read_partition_attributes)(
       struct GblEfiAvbProtocol* self,
       /* in-out */ size_t* num_partitions,
-      /* in-out */ GblEfiAvbPartition* partitions);
+      /* in-out */ GblEfiAvbPartitionAttributes* partitions);
 
   EfiStatus (*read_device_status)(
       struct GblEfiAvbProtocol* self,
@@ -161,6 +167,8 @@ typedef struct GblEfiAvbProtocol {
   EfiStatus (*write_lock_state)(struct GblEfiAvbProtocol* self,
                                 /* in */ GblEfiAvbLockType type,
                                 /* in */ GblEfiAvbLockState state);
+
+  EfiStatus (*factory_data_reset)(struct GblEfiAvbProtocol* self);
 } GblEfiAvbProtocol;
 
 #endif  //__GBL_AVB_PROTOCOL_H__

@@ -309,7 +309,7 @@ pub trait GblOps<'a> {
     // managed by GBL APIs.
 
     /// Reads the partitions GBL will try to load and verify.
-    fn avb_read_partitions_to_verify(
+    fn avb_read_partition_attributes(
         &mut self,
     ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>>;
 
@@ -763,10 +763,10 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
         self.ops.load_slot_interface(_fnmut, _boot_token)
     }
 
-    fn avb_read_partitions_to_verify(
+    fn avb_read_partition_attributes(
         &mut self,
     ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
-        self.ops.avb_read_partitions_to_verify()
+        self.ops.avb_read_partition_attributes()
     }
 
     fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
@@ -1153,7 +1153,7 @@ pub(crate) mod test {
         /// For return by `Self::get_random_bytes()`
         pub get_random_bytes_error: Option<Error>,
 
-        /// For return by `Self::avb_read_partitions_to_verify`
+        /// For return by `Self::avb_read_partition_attributes`
         pub avb_partitions_to_verify: Option<AvbIoResult<Vec<String>>>,
 
         /// For return by `Self::avb_read_device_status`
@@ -1407,7 +1407,7 @@ pub(crate) mod test {
             unimplemented!();
         }
 
-        fn avb_read_partitions_to_verify(
+        fn avb_read_partition_attributes(
             &mut self,
         ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
             let mut requested_partitions = ArrayMaxRequestedParts::new();
@@ -1871,7 +1871,7 @@ pub(crate) mod test {
             Err(Error::Unsupported.into())
         }
 
-        fn avb_read_partitions_to_verify(
+        fn avb_read_partition_attributes(
             &mut self,
         ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
             Err(AvbIoError::NotImplemented)

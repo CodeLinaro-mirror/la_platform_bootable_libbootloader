@@ -67,9 +67,9 @@ fn cstr_bytes_to_str(data: &[u8]) -> core::result::Result<&str, Error> {
     Ok(CStr::from_bytes_until_nul(data)?.to_str()?)
 }
 
-/// If this list is modified, make sure to update the `ReadPartitionsToVerify` documentation in
-/// `gbl/docs/gbl_efi_avb_protocol.md` accordingly.
+/// The set of partitions we always verify with libavb for Android boot.
 pub const STANDARD_PARTITIONS: &[Partition] = &[
+    // LINT.IfChange(always_verify_partitions)
     Partition::Boot,
     Partition::VendorBoot,
     Partition::VendorKernelBoot,
@@ -77,6 +77,7 @@ pub const STANDARD_PARTITIONS: &[Partition] = &[
     Partition::Dtb,
     Partition::Dtbo,
     Partition::Pvmfw,
+    // LINT.ThenChange(/gbl/docs/gbl_efi_avb_protocol.md:always_verify_partitions)
 ];
 
 /// Loads Android images from the given slot on disk and fixes up bootconfig, commandline, and FDT.
@@ -94,7 +95,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
         ArrayMaxParts::new();
 
     // Requests custom partitions to verify.
-    let requested_partitions = match ops.avb_read_partitions_to_verify() {
+    let requested_partitions = match ops.avb_read_partition_attributes() {
         Ok(requested_partitions) => {
             gbl_println!(
                 ops,
