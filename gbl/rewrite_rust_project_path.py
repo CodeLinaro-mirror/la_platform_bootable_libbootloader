@@ -95,9 +95,8 @@ def main():
   args = _parse_args()
 
   logging.basicConfig(level=logging.INFO)
-  rust_project_json_path = args.file
-  project_root_path = os.path.dirname(rust_project_json_path)
-  logging.info("Using %s as project root path", project_root_path)
+  rust_project_json_path = os.path.abspath(args.file)
+  logging.info("Starting updating %s", rust_project_json_path)
   with open(rust_project_json_path, "r") as fp:
     data = json.load(fp)
     traverse(data, args.arch)
@@ -106,6 +105,7 @@ def main():
     json.dump(data, fp.file, indent=True)
     tmp_path = fp.name
   shutil.move(tmp_path, rust_project_json_path)
+  logging.info("Successfully updated %s", rust_project_json_path)
 
 
 if __name__ == "__main__":
