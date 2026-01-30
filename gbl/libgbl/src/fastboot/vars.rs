@@ -53,6 +53,7 @@ const MAX_FETCH_SIZE_VAL: &'static str = "0x7fffffff";
 const PARTITION_SIZE: &'static str = "partition-size";
 const PARTITION_TYPE: &'static str = "partition-type";
 const PARTITION_GUID: &'static str = "partition-guid";
+const PARTITION_START: &'static str = "partition-start";
 
 const BLOCK_DEVICE: &'static str = "block-device";
 const TOTAL_BLOCKS: &'static str = "total-blocks";
@@ -64,6 +65,8 @@ const DEFAULT_BLOCK: &'static str = "gbl-default-block";
 const UNLOCKED: &'static str = "unlocked";
 const UNLOCKED_CRITICAL: &'static str = "unlocked-critical";
 
+const STREAM_SEGMENT_SIZE: &'static str = "stream-segment-size";
+
 pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     VERSION_BOOTLOADER,
     SLOT_COUNT,
@@ -72,6 +75,7 @@ pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     SLOT_UNBOOTABLE,
     SLOT_RETRY_COUNT,
     HAS_SLOT,
+    PARTITION_START,
     MAX_FETCH_SIZE,
     PARTITION_SIZE,
     PARTITION_TYPE,
@@ -81,6 +85,7 @@ pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
     MAX_DOWNLOAD_SIZE,
     UNLOCKED,
     UNLOCKED_CRITICAL,
+    STREAM_SEGMENT_SIZE,
 ];
 
 #[derive(FromBytes, IntoBytes, Unaligned)]
@@ -196,9 +201,11 @@ where
             }
             HAS_SLOT => self.get_var_has_slot(args_str, out)?,
             MAX_FETCH_SIZE => snprintf!(out, "{}", MAX_FETCH_SIZE_VAL),
+            PARTITION_START => self.get_var_partition_start(args_str, out)?,
             PARTITION_SIZE => self.get_var_partition_size(args_str, out)?,
             PARTITION_TYPE => self.get_var_partition_type(args_str, out)?,
             PARTITION_GUID => self.get_var_partition_guid(args_str, out)?,
+            STREAM_SEGMENT_SIZE => self.get_var_stream_segment_size(out)?,
             BLOCK_DEVICE => self.get_var_block_device(args_str, out)?,
             DEFAULT_BLOCK => self.get_var_default_block(out)?,
             UNLOCKED => self.get_var_unlocked(fastboot::LockType::Device, out)?,
@@ -260,7 +267,10 @@ where
         send.send_var_info(MAX_FETCH_SIZE, [], MAX_FETCH_SIZE_VAL).await?;
         self.get_all_block_device(send).await?;
         send.send_var_info(DEFAULT_BLOCK, [], self.get_var_default_block(&mut buf)?).await?;
-        self.get_all_partition_size_type(send).await?;
+        self.get_all_partition_vars(send).await?;
+
+        send.send_var_info(STREAM_SEGMENT_SIZE, [], self.get_var_stream_segment_size(&mut buf)?)
+            .await?;
 
         for (lock_var, lock_type) in [
             (UNLOCKED, fastboot::LockType::Device),
@@ -375,8 +385,25 @@ where
         }
     }
 
-    /// Gets all "partition-size/partition-type"
-    async fn get_all_partition_size_type(
+    /// "fastboot getvar partition-start"
+    fn get_var_partition_start<'s, 't>(
+        &mut self,
+        mut args: impl Iterator<Item = &'t str> + Clone,
+        out: &'s mut [u8],
+    ) -> CommandResult<&'s str> {
+        let (_, ptn) = args
+            .next()
+            .ok_or(CommandError::from("Missing partition"))
+            .and_then(|arg| self.parse_partition_arg(arg))
+            .and_then(|(part, blk_id, _, _)| {
+                self.find_partition(part, blk_id).map_err(CommandError::from)
+            })?;
+
+        Ok(snprintf!(out, "{:#x}", ptn.absolute_range()?.0))
+    }
+
+    /// Gets all "partition-size/partition-type/partition-guid/partition-start"
+    async fn get_all_partition_vars(
         &mut self,
         responder: &mut impl VarInfoSender,
     ) -> CommandResult<()> {
@@ -384,7 +411,7 @@ where
         // Fastboot, for "getvar all" we only enumerate whole range GPT partitions.
         let disks = self.disks;
         // Allocates 36 bytes to fit partition GUID.
-        let mut size_str = [0u8; 36];
+        let mut str_buf = [0u8; 36];
         for (idx, blk) in disks.iter().enumerate() {
             for ptn_idx in 0..blk.num_partitions().unwrap_or(0) {
                 let ptn = blk.get_partition_by_idx(ptn_idx)?;
@@ -400,15 +427,22 @@ where
                     Err(_) => snprintf!(part_id_buf, "{}/{:x}", part, idx),
                 };
                 responder
-                    .send_var_info(PARTITION_SIZE, [part], snprintf!(size_str, "{:#x}", sz))
+                    .send_var_info(
+                        PARTITION_START,
+                        [part],
+                        snprintf!(str_buf, "{:#x}", ptn.absolute_range()?.0),
+                    )
                     .await?;
                 responder
-                    .send_var_info(PARTITION_TYPE, [part], snprintf!(size_str, "{part_type}"))
+                    .send_var_info(PARTITION_SIZE, [part], snprintf!(str_buf, "{:#x}", sz))
                     .await?;
-                if let Partition::Gpt(gpt_partition) = ptn {
+                responder
+                    .send_var_info(PARTITION_TYPE, [part], snprintf!(str_buf, "{part_type}"))
+                    .await?;
+                if let Partition::Gpt(gpt_partition) = &ptn {
                     let guid = gpt_partition.gpt_entry().guid;
                     responder
-                        .send_var_info(PARTITION_GUID, [part], snprintf!(size_str, "{}", guid))
+                        .send_var_info(PARTITION_GUID, [part], snprintf!(str_buf, "{}", guid))
                         .await?;
                 }
             }
@@ -482,6 +516,20 @@ where
             Some(v) => snprintf!(out, "{:#x}", v),
             None => snprintf!(out, "None"),
         })
+    }
+
+    /// "fastboot getvar stream-segment-size"
+    fn get_var_stream_segment_size<'s>(&mut self, out: &'s mut [u8]) -> CommandResult<&'s str> {
+        const DEFAULT_SEGMENT_SIZE: u64 = 4096;
+        let segment_size_bytes = self
+            .disks
+            .iter()
+            .map(|d| d.block_info().block_size * d.block_info().erase_blocks_num)
+            .chain([DEFAULT_SEGMENT_SIZE].into_iter())
+            .max()
+            .unwrap_or(DEFAULT_SEGMENT_SIZE);
+
+        Ok(snprintf!(out, "{:#x}", segment_size_bytes))
     }
 
     /// "fastboot getvar unlocked" and "fastboot getvar unlocked-critical"

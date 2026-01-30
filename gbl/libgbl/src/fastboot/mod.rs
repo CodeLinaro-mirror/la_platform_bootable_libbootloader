@@ -1914,6 +1914,9 @@ pub(crate) mod test {
         check_var(&mut gbl_fb, "partition-type", "raw_0", "raw");
         check_var(&mut gbl_fb, "partition-type", "userdata", "ext4");
 
+        check_var(&mut gbl_fb, "partition-start", "boot_a", "0x4400");
+        check_var(&mut gbl_fb, "partition-start", "boot_b", "0x6400");
+
         check_var(&mut gbl_fb, "partition-guid", "boot_a", "42aaac2e-37e3-43ba-9930-42dfa96e6334");
         check_var(&mut gbl_fb, "partition-guid", "boot_b", "bdadfeca-879c-43e9-8f0d-8ef7da29b5e7");
 
@@ -1931,6 +1934,31 @@ pub(crate) mod test {
         check_var_failure(&mut gbl_fb, "has-slot", "boot_a");
         check_var_failure(&mut gbl_fb, "has-slot", "boot_b");
         check_var_failure(&mut gbl_fb, "has-slot", "raw");
+    }
+
+    #[test]
+    fn test_stream_vars() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut load_buffer = AlignedBuffer::new(MiB!(8), KERNEL_ALIGNMENT);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin",));
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin",));
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops
+            .partition_type
+            .insert("userdata".to_owned(), FastbootPartitionType::from_slice(b"ext4").unwrap());
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let mut gbl_fb = GblFastboot::new(
+            &mut gbl_ops,
+            parts,
+            Task::run,
+            &tasks,
+            &dl_buffers,
+            GblFbData { boot_buffer: load_buffer.as_mut().into(), ..Default::default() },
+        );
+
+        check_var(&mut gbl_fb, "stream-segment-size", "", "0x1000");
     }
 
     /// `TestVarSender` implements `TestVarSender`. It stores outputs in a vector of string.
@@ -2016,30 +2044,40 @@ pub(crate) mod test {
                 "block-device:5:block-size: 0x1",
                 "block-device:5:status: idle",
                 "gbl-default-block: None",
+                "partition-start:boot_a: 0x4400",
                 "partition-size:boot_a: 0x2000",
                 "partition-type:boot_a: raw",
                 "partition-guid:boot_a: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
+                "partition-start:boot_b: 0x6400",
                 "partition-size:boot_b: 0x3000",
                 "partition-type:boot_b: raw",
                 "partition-guid:boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
+                "partition-start:vendor_boot_a/1: 0x4400",
                 "partition-size:vendor_boot_a/1: 0x1000",
                 "partition-type:vendor_boot_a/1: raw",
                 "partition-guid:vendor_boot_a/1: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
+                "partition-start:vendor_boot_b/1: 0x5400",
                 "partition-size:vendor_boot_b/1: 0x1800",
                 "partition-type:vendor_boot_b/1: raw",
                 "partition-guid:vendor_boot_b/1: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
+                "partition-start:vendor_boot_a/2: 0x4400",
                 "partition-size:vendor_boot_a/2: 0x1000",
                 "partition-type:vendor_boot_a/2: raw",
                 "partition-guid:vendor_boot_a/2: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
+                "partition-start:vendor_boot_b/2: 0x5400",
                 "partition-size:vendor_boot_b/2: 0x1800",
                 "partition-type:vendor_boot_b/2: raw",
                 "partition-guid:vendor_boot_b/2: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
+                "partition-start:raw_0: 0x0",
                 "partition-size:raw_0: 0x1000",
                 "partition-type:raw_0: raw",
+                "partition-start:raw_1/4: 0x0",
                 "partition-size:raw_1/4: 0x2000",
                 "partition-type:raw_1/4: raw",
+                "partition-start:raw_1/5: 0x0",
                 "partition-size:raw_1/5: 0x2000",
                 "partition-type:raw_1/5: raw",
+                "stream-segment-size: 0x1000",
                 "unlocked: no",
                 "unlocked-critical: no",
                 format!("{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -2074,7 +2112,8 @@ pub(crate) mod test {
                 "max-download-size: 0x20000",
                 format!("version-bootloader: {}", expected_version_bootloader()).as_str(),
                 "max-fetch-size: 0x7fffffff",
-                "gbl-default-block: None"
+                "gbl-default-block: None",
+                "stream-segment-size: 0x1000"
             ],
         );
     }
@@ -3330,12 +3369,15 @@ pub(crate) mod test {
                 b"INFOblock-device:1:block-size: 0x200",
                 b"INFOblock-device:1:status: idle",
                 b"INFOgbl-default-block: None",
+                b"INFOpartition-start:vendor_boot_a: 0x4400",
                 b"INFOpartition-size:vendor_boot_a: 0x1000",
                 b"INFOpartition-type:vendor_boot_a: raw",
                 b"INFOpartition-guid:vendor_boot_a: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
+                b"INFOpartition-start:vendor_boot_b: 0x5400",
                 b"INFOpartition-size:vendor_boot_b: 0x1800",
                 b"INFOpartition-type:vendor_boot_b: raw",
                 b"INFOpartition-guid:vendor_boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
+                b"INFOstream-segment-size: 0x1000",
                 b"INFOunlocked: no",
                 b"INFOunlocked-critical: no",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
@@ -3375,18 +3417,23 @@ pub(crate) mod test {
                 b"INFOblock-device:1:block-size: 0x200",
                 b"INFOblock-device:1:status: idle",
                 b"INFOgbl-default-block: None",
+                b"INFOpartition-start:boot_a: 0x4400",
                 b"INFOpartition-size:boot_a: 0x2000",
                 b"INFOpartition-type:boot_a: raw",
                 b"INFOpartition-guid:boot_a: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
+                b"INFOpartition-start:boot_b: 0x6400",
                 b"INFOpartition-size:boot_b: 0x3000",
                 b"INFOpartition-type:boot_b: raw",
                 b"INFOpartition-guid:boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
+                b"INFOpartition-start:vendor_boot_a: 0x4400",
                 b"INFOpartition-size:vendor_boot_a: 0x1000",
                 b"INFOpartition-type:vendor_boot_a: raw",
                 b"INFOpartition-guid:vendor_boot_a: 42aaac2e-37e3-43ba-9930-42dfa96e6334",
+                b"INFOpartition-start:vendor_boot_b: 0x5400",
                 b"INFOpartition-size:vendor_boot_b: 0x1800",
                 b"INFOpartition-type:vendor_boot_b: raw",
                 b"INFOpartition-guid:vendor_boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
+                b"INFOstream-segment-size: 0x1000",
                 b"INFOunlocked: no",
                 b"INFOunlocked-critical: no",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)

@@ -46,7 +46,6 @@ rust_library(
         "@gbl//toolchain:dev": [":libgbl_dev_files"],
         "@gbl//toolchain:prod": [":libgbl_prod_files"],
     }),
-    aliases = {"@itertools_noalloc": "itertools_noalloc"},
     # Used by fake avb flow on dev GBL.
     compile_data = select({
         "@gbl//toolchain:dev": ["@gbl//libgbl/testdata:android/vbmeta_disabled.img"],
@@ -97,7 +96,6 @@ rust_library(
 
 rust_test(
     name = "libgbl_test",
-    aliases = {"@itertools_noalloc": "itertools_noalloc"},
     compile_data = [
         "@gbl//libstorage/test:test_data",
         "@gbl//libdttable/test/data:all",
@@ -118,8 +116,6 @@ rust_test(
         "@gbl//libboringssl:sysdeps",
         "@gbl//libc:libc_deps_posix",
         "@gbl//libutils:libtestutils",
-        "@itertools",
-        "@itertools_noalloc",
         "@spin",
         "@static_assertions",
         "@uuid",
