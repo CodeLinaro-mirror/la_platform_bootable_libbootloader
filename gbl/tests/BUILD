@@ -55,6 +55,7 @@ build_and_run_tests(
         "@gbl//liberror:liberror_test",
         "@gbl//libfastboot:libfastboot_test",
         "@gbl//libfdt:libfdt_test",
+        "@gbl//libfit:libfit_test",
         "@gbl//libgbl:libgbl_test",
         "@gbl//libgbl:libgbl_test_dev",
         "@gbl//libmisc:libmisc_test",

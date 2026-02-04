@@ -1,0 +1,57 @@
+/dts-v1/;
+
+// re-generate and push test artifacts using ./gen_test_fit.sh after change in this file
+/ {
+	description = "FIT Image for libfit test";
+
+	images {
+		fdt-0 {
+			description = "test metadata";
+			data = /incbin/("./data/metadata.dtb");
+			type = "metadata_binary";
+		};
+		fdt-1 {
+			description = "test platform 1";
+			data = /incbin/("./data/platform-1.dtb");
+			type = "flat_dt";
+		};
+		fdt-2 {
+			description = "test platform 2";
+			data = /incbin/("./data/platform-2.dtb");
+			type = "flat_dt";
+		};
+		fdt-3 {
+			description = "test overlay 1";
+			data = /incbin/("./data/overlay-1.dtb");
+			type = "flat_dt";
+		};
+		fdt-4 {
+			description = "test overlay 2";
+			data = /incbin/("./data/overlay-2.dtb");
+			type = "flat_dt";
+		};
+	};
+
+	configurations {
+		config-1 {
+			description = "test config-1";
+			compatible = "test,config-1";
+			fdt = "fdt-1";
+		};
+		config-2 {
+			description = "test config-2";
+			compatible = "test,config-2";
+			fdt = "fdt-1", "fdt-3";
+		};
+		config-3 {
+			description = "test config-3";
+			compatible = "test,config-3";
+			fdt = "fdt-2", "fdt-3";
+		};
+		config-4 {
+			description = "test config-4";
+			compatible = "test,config-4";
+			fdt = "fdt-2", "fdt-4";
+		};
+	};
+};

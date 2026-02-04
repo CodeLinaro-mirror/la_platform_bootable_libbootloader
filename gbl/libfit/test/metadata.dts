@@ -1,0 +1,28 @@
+/dts-v1/;
+
+// re-generate and push test artifacts using ./gen_test_fit.sh after change in this file
+/ {
+	description = "Image with compressed metadata blob";
+
+	soc {
+		soc1 {
+			soc-id = <0x1>;
+		};
+
+		soc2 {
+			soc-id = <0x2>;
+		};
+
+	};
+
+	sku {
+		sku1 {
+			sku-id = <0x1>;
+		};
+
+		sku2 {
+			sku-id = <0x2>;
+		};
+	};
+
+};

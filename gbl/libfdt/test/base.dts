@@ -20,4 +20,8 @@
     };
 
     dev-3 {};
+
+    dev4: dev-4 {
+	    property-1 = "Str1", "Str2", "Str3";
+    };
 };
