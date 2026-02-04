@@ -72,6 +72,7 @@ use core::{
     cmp::min,
     ffi::CStr,
     fmt::{Debug, Display, Formatter, Write},
+    mem::size_of,
     str::{from_utf8, Split},
 };
 use gbl_async::block_on;
@@ -1445,7 +1446,14 @@ impl<'a, P: From<&'a str> + AsRef<str>> TryFrom<&'a str> for StreamCommand<P> {
                 partition,
                 offset,
                 operation: StreamOperation::Fill {
-                    size: FromHexStr::try_parse_next(args)?,
+                    // Attempting to write a partial fill value is an error.
+                    size: FromHexStr::try_parse_next(args).and_then(|s| {
+                        if s % (size_of::<u32>() as u64) == 0 {
+                            Ok(s)
+                        } else {
+                            Err(Error::InvalidInput)
+                        }
+                    })?,
                     payload: FromHexStr::try_parse_next(args)?,
                 },
             },
@@ -2625,9 +2633,13 @@ mod test {
         stream_test_helper("stream-fill:boot_a:400:200:squid", None);
         stream_test_helper("stream-fill:boot_a:400:squid:200", None);
         stream_test_helper("stream-fill:boot_a:squid:400:200", None);
+
         // 68 bit int
         stream_test_helper("stream-fill:boot_a:0xFFFFFFFFFFFFFFFFF:400:200", None);
         stream_test_helper("stream-fill:boot_a:0:0xFFFFFFFFFFFFFFFFF:200", None);
         stream_test_helper("stream-fill:boot_a:0:200:0xFFFFFFFFFFFFFFFFF", None);
+
+        // Size is not a multiple of 4.
+        stream_test_helper("stream-fill:boot_a:400:5:200", None);
     }
 }

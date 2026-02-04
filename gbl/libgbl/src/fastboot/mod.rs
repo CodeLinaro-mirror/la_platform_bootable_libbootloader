@@ -112,10 +112,7 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> TaskWorkload<'a, 'b, B, P> {
             Self::Flash(io, data, size) => io.write(0, &mut data[..*size]).await,
             Self::FlashSparse(io, data) => io.write_sparse(0, data).await,
             Self::Fill(io, buffer, payload) => {
-                let buffer_len = buffer.len();
                 let io_size = io.size_bytes();
-                // Don't fill more than necessary if the write is smaller than the buffer.
-                let buffer = &mut buffer[0..min(buffer_len, io_size as usize)];
 
                 let buffer_start = buffer.as_ref().as_ptr().addr();
                 // New scope to drop &[u32] view of buffer after filling and aligning it.
@@ -125,6 +122,11 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> TaskWorkload<'a, 'b, B, P> {
                     // * Fill buffer is dropped after scope ends.
                     // * All bit values are valid for u32.
                     let (_, fill_buffer, _) = unsafe { buffer.as_mut().align_to_mut::<u32>() };
+                    // Don't fill more than necessary if the write is smaller than the buffer.
+                    let fill_buffer_len = fill_buffer.len();
+                    let fill_buffer = &mut fill_buffer
+                        [0..min(fill_buffer_len, (io_size as usize) / size_of::<u32>())];
+
                     fill_buffer.fill(*payload);
 
                     // This cannot overflow because the start of fill_buffer
@@ -1428,7 +1430,7 @@ mod smash {
     fn smash<'a>(ops: &mut impl GblOps<'a>, caller_sp: usize) {
         let sp = get_sp();
         let stack_size_bytes = caller_sp - sp;
-        let terminus = (stack_size_bytes) / core::mem::size_of::<usize>();
+        let terminus = (stack_size_bytes) / size_of::<usize>();
 
         for i in 0..=terminus {
             // SAFETY: this is NOT SAFE.
@@ -1723,10 +1725,7 @@ pub(crate) mod test {
     use abr::{
         get_and_clear_one_shot_bootloader, get_boot_slot, mark_slot_unbootable, ABR_DATA_SIZE,
     };
-    use core::{
-        mem::size_of,
-        pin::{pin, Pin},
-    };
+    use core::pin::{pin, Pin};
     use fastboot::{test_utils::TestUploadBuilder, CommandExecType, MAX_RESPONSE_SIZE};
     use gbl_async::{block_on, poll, poll_n_times};
     use gbl_storage::GPT_GUID_LEN;
@@ -5238,7 +5237,7 @@ pub(crate) mod test {
             GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &buffers, boot_buffer);
         let resp: TestResponder = Default::default();
 
-        let expected_data = vec![0xF005500Fu32; fill_size / core::mem::size_of::<u32>()];
+        let expected_data = vec![0xF005500Fu32; fill_size / size_of::<u32>()];
         let cmd = format!("stream-fill:boot_b:{:x}:{:x}:0xF005500F", offset, fill_size);
 
         assert!(block_on(gbl_fb.stream(cmd.as_str().try_into().unwrap(), &resp)).is_ok());
@@ -5287,7 +5286,7 @@ pub(crate) mod test {
     #[test]
     fn test_gbl_stream_fill_bad_partition() {
         gbl_stream_fill_error_test_helper(
-            "stream-fill:boot_d:0:4096:0xF005500F".try_into().unwrap(),
+            "stream-fill:boot_d:0:1000:0xF005500F".try_into().unwrap(),
             "NotFound".into(),
         );
     }
