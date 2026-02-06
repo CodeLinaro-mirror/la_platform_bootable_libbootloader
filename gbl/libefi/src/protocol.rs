@@ -455,7 +455,7 @@ impl<T: ProtocolImpl> Drop for Protocol<'_, T> {
 /// ```
 #[macro_export]
 macro_rules! efi_call {
-    ( $method:expr, $($x:expr),*$(,)? ) => {
+    ( $method:expr $(, $x:expr)* $(,)? ) => {
         {
             use liberror::{Error, Result, efi_status_to_result};
             use libutils::{method_basename, func_name};
@@ -471,10 +471,10 @@ macro_rules! efi_call {
             res
         }
     };
-    ( @bufsize $size:expr, $method:expr, $($x:expr),*$(,)? ) => {
+    ( @bufsize $size:expr, $method:expr $(, $x:expr)* $(,)? ) => {
         {
+            use efi_types::{EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_SUCCESS};
             use liberror::{Error, Result, efi_status_to_result};
-            use efi_types::EFI_STATUS_BUFFER_TOO_SMALL;
             use libutils::{method_basename, func_name};
             let res: Result<()> = match $method {
                 None => {
@@ -483,7 +483,17 @@ macro_rules! efi_call {
                                            method_basename(stringify!($method)));
                     Err(Error::NotFound)},
                 Some(f) => {
+                    let capacity = $size;
                     match f($($x,)*) {
+                        EFI_STATUS_SUCCESS => {
+                            // Safety check that the implementation didn't accidentally overflow
+                            // the provided buffer. If they did, memory is likely corrupted and
+                            // we cannot recover, so panicking is the best option.
+                            assert!($size <= capacity,
+                                    "Error: buffer overflow detected in protocol call '{}'",
+                                    method_basename(stringify!($method)));
+                            Ok(())
+                        }
                         EFI_STATUS_BUFFER_TOO_SMALL => Err(Error::BufferTooSmall(Some($size))),
                         r => efi_status_to_result(r),
                     }
@@ -499,7 +509,11 @@ mod test {
     use super::*;
     use crate::test::*;
     use core::ptr::{from_mut, NonNull};
-    use efi_types::defs::EfiBlockIoProtocol;
+    use efi_types::{
+        defs::EfiBlockIoProtocol, EfiStatus, EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_DEVICE_ERROR,
+        EFI_STATUS_SUCCESS,
+    };
+    use liberror::Error;
 
     #[test]
     fn test_dont_close_protocol_without_device_handle() {
@@ -518,5 +532,93 @@ mod test {
                 assert_eq!(traces.borrow_mut().close_protocol_trace.inputs.len(), 0);
             });
         })
+    }
+
+    #[test]
+    fn efi_call_success() {
+        fn test_func(a: u32, b: &str) -> EfiStatus {
+            assert_eq!(a, 100);
+            assert_eq!(b, "foo");
+            EFI_STATUS_SUCCESS
+        }
+
+        assert_eq!(efi_call!(Some(test_func), 100, "foo"), Ok(()));
+    }
+
+    #[test]
+    fn efi_call_error() {
+        fn test_func() -> EfiStatus {
+            EFI_STATUS_DEVICE_ERROR
+        }
+
+        assert_eq!(efi_call!(Some(test_func)), Err(Error::DeviceError));
+    }
+
+    #[test]
+    fn efi_call_method_not_found() {
+        let test_func: Option<fn() -> EfiStatus> = None;
+
+        assert_eq!(efi_call!(test_func), Err(Error::NotFound));
+    }
+
+    #[test]
+    fn efi_call_bufsize_valid() {
+        fn test_func(bufsize: &mut usize) -> EfiStatus {
+            assert_eq!(*bufsize, 10);
+            *bufsize = 5;
+            EFI_STATUS_SUCCESS
+        }
+
+        let mut size = 10;
+        assert_eq!(efi_call!(@bufsize size, Some(test_func), &mut size), Ok(()));
+        assert_eq!(size, 5);
+    }
+
+    #[test]
+    fn efi_call_bufsize_max() {
+        fn test_func(_: &mut usize) -> EfiStatus {
+            // Leave bufsize at the maximum allowed value to make sure our <= logic is right.
+            EFI_STATUS_SUCCESS
+        }
+
+        let mut size = 10;
+        assert_eq!(efi_call!(@bufsize size, Some(test_func), &mut size), Ok(()));
+        assert_eq!(size, 10);
+    }
+
+    #[test]
+    fn efi_call_bufsize_too_small_error() {
+        fn test_func(bufsize: &mut usize) -> EfiStatus {
+            *bufsize = 20;
+            EFI_STATUS_BUFFER_TOO_SMALL
+        }
+
+        let mut size = 10;
+        assert_eq!(
+            efi_call!(@bufsize size, Some(test_func), &mut size),
+            Err(Error::BufferTooSmall(Some(20)))
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn efi_call_bufsize_overflow_panic() {
+        fn test_func(bufsize: &mut usize) -> EfiStatus {
+            // Make it look like we overflowed the buffer but then incorrectly returned SUCCESS.
+            *bufsize += 1;
+            EFI_STATUS_SUCCESS
+        }
+
+        let mut size = 10;
+        // This should panic.
+        let _ = efi_call!(@bufsize size, Some(test_func), &mut size);
+    }
+
+    #[test]
+    fn efi_call_bufsize_method_not_found() {
+        let test_func: Option<fn(&mut usize) -> EfiStatus> = None;
+
+        let mut size = 10;
+        assert_eq!(efi_call!(@bufsize size, test_func, &mut size), Err(Error::NotFound));
     }
 }
