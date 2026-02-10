@@ -37,8 +37,9 @@ use efi::{
 };
 use efi_types::{
     GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbLoadedPartition,
-    GblEfiAvbPartition, GblEfiAvbProperty, GblEfiAvbVerificationResult, GblEfiDeviceTreeMetadata,
-    GblEfiFastbootMessageType, GblEfiVerifiedDeviceTree,
+    GblEfiAvbPartitionAttributes, GblEfiAvbProperty, GblEfiAvbVerificationResult,
+    GblEfiDeviceTreeMetadata, GblEfiFastbootMessageType, GblEfiVerifiedDeviceTree,
+    GBL_EFI_AVB_PARTITION_FLAG_VERIFY, GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
@@ -390,16 +391,21 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         unimplemented!();
     }
 
-    fn avb_read_partitions_to_verify(
+    // TODO(b/470437545) - currently this only handles partitions that ask for verification,
+    // generalize it to be able to provide other partition attributes as well.
+    fn avb_read_partition_attributes(
         &mut self,
     ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
         match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
         {
             Ok(protocol) => {
+                // `partitions_ffi` provides the format necessary for the protocol API, `partitions`
+                // provides the backing storage and the final result we return.
                 let mut partitions_ffi = ArrayMaxRequestedParts::new();
                 let mut partitions = ArrayMaxRequestedParts::new();
                 partitions_ffi.extend(
-                    repeat_with(GblEfiAvbPartition::default).take(partitions_ffi.capacity()),
+                    repeat_with(GblEfiAvbPartitionAttributes::default)
+                        .take(partitions_ffi.capacity()),
                 );
                 partitions
                     .extend(repeat_with(RequestedPartition::default).take(partitions.capacity()));
@@ -407,7 +413,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
                 partitions.iter_mut().zip(partitions_ffi.iter_mut()).for_each(
                     |(partition, partition_ffi)| {
                         let buffer = partition.name_buffer_mut();
-                        // -1 to ensure we can null-terminate after the FW call.
+                        // -1 to ensure we can null-terminate for libavb.
                         partition_ffi.base_name_len = buffer.len() - 1;
                         partition_ffi.base_name = buffer.as_mut_ptr();
                         partition_ffi.flags = 0;
@@ -417,27 +423,73 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
                 // SAFETY:
                 // * Each `partitions_ffi[N].base_name` points to a non-null, writable buffer of at
                 //   least `partitions_ffi[N].base_name_len` bytes guaranteed to be available during
-                //   `read_partitions_to_verify`.
+                //   `read_partition_attributes`.
                 let num_provided =
-                    unsafe { protocol.read_partitions_to_verify(&mut partitions_ffi) }
+                    unsafe { protocol.read_partition_attributes(&mut partitions_ffi) }
                         .map_err(efi_error_to_avb_error)?;
 
-                partitions_ffi.iter().take(num_provided).zip(partitions.iter_mut()).for_each(
-                    |(partition_ffi, partition)| {
-                        let provided_len = partition_ffi.base_name_len;
-                        let buffer = partition.name_buffer_mut();
-
-                        // FW-provided partition name is beyond the partition name buffer, which
-                        // should never happen. This likely indicates memory corruption.
-                        assert!(provided_len < buffer.len(), "Provided partition name is too long");
-
-                        // Add the null terminator.
-                        buffer[provided_len] = 0;
-                        partition.optional =
-                            (partition_ffi.flags & efi_types::GBL_EFI_AVB_PARTITION_OPTIONAL) != 0;
-                    },
-                );
+                // Shrink the arrays to just the used elements.
+                partitions_ffi.truncate(num_provided);
                 partitions.truncate(num_provided);
+
+                // Either of these flags means we should verify the partition.
+                const VERIFY_MASK: u64 =
+                    GBL_EFI_AVB_PARTITION_FLAG_VERIFY | GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS;
+
+                // Tracks whether we've hit an error due to a partition providing both flags which
+                // is ambiguous and an API violation.
+                let mut found_invalid_verify_flags = false;
+
+                // Iterate through the arrays, moving partitions that want verification to the front
+                // so we can drop the others which we don't care about here.
+                let mut dest_index = 0;
+                for source_index in 0..partitions.len() {
+                    let source_ffi = &partitions_ffi[source_index];
+                    if source_ffi.flags & VERIFY_MASK == 0 {
+                        // No verification requested, skip this partition.
+                        continue;
+                    }
+
+                    let source_part = &mut partitions[source_index];
+                    let source_name_buf = source_part.name_buffer_mut();
+                    // FW-provided partition name is beyond the partition name buffer, which
+                    // should never happen. This likely indicates memory corruption.
+                    assert!(
+                        source_ffi.base_name_len < source_name_buf.len(),
+                        "Partition name is too long"
+                    );
+                    // Add the null terminator for libavb and set the `optional` flag.
+                    source_name_buf[source_ffi.base_name_len] = 0;
+                    source_part.optional =
+                        (source_ffi.flags & GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS) != 0;
+
+                    // Providing both VERIFY and VERIFY_IF_EXISTS is an API violation.
+                    // Do this after adding the null terminator so we can easily print the
+                    // partition name, and delay returning until after the loop so we print all
+                    // offenders.
+                    if source_ffi.flags & VERIFY_MASK == VERIFY_MASK {
+                        efi_println!(
+                            self.efi_entry,
+                            "Error: '{}' cannot specify both VERIFY and VERIFY_IF_EXISTS",
+                            source_part.name_cstr().to_str().unwrap_or("<invalid name>")
+                        );
+                        found_invalid_verify_flags = true;
+                    }
+
+                    // Now copy this down to the next open slot in the front of the array.
+                    if dest_index != source_index {
+                        partitions[dest_index] = partitions[source_index];
+                    }
+                    dest_index += 1;
+                }
+
+                if found_invalid_verify_flags {
+                    return Err(AvbIoError::Io);
+                }
+
+                // Drop all the remaining partitions, all that requested verification have been
+                // copied into the first `dest_index` slots.
+                partitions.truncate(dest_index);
 
                 Ok(partitions)
             }
@@ -1162,7 +1214,10 @@ fn avb_error_to_efi_error(error: AvbIoError) -> Error {
 mod test {
     use super::*;
     use efi_mocks::{protocol::gbl_efi_avb::GblAvbProtocol, MockEfi};
-    use efi_types::{defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GBL_EFI_AVB_PARTITION_OPTIONAL};
+    use efi_types::{
+        defs::EFI_DT_FIXUP_PROTOCOL_REVISION, GBL_EFI_AVB_PARTITION_FLAG_FDR,
+        GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL,
+    };
     use mockall::predicate::eq;
     use std::{cell::RefCell, rc::Rc, slice};
 
@@ -1189,24 +1244,20 @@ mod test {
         assert!(write!(&mut ops, "{} {}", "foo", "bar").is_ok());
     }
 
-    /// Helper for testing `avb_read_partitions_to_verify`.
-    fn test_avb_read_partitions_to_verify(
-        call_status: ProtocolCallStatus<&[(&str, bool)]>,
+    /// Helper for testing `avb_read_partition_attributes`.
+    fn test_avb_read_partition_attributes(
+        call_status: ProtocolCallStatus<&[(&str, u64)]>,
     ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
         let mut mock_efi = MockEfi::new();
+        // Just make any writes to the console silently succeed.
+        mock_efi.con_out.expect_write_str().times(..).return_const(Ok(()));
 
         let mut avb = GblAvbProtocol::default();
-        avb.read_partitions_to_verify_result = match call_status {
+        avb.read_partition_attributes_result = match call_status {
             ProtocolCallStatus::Success(data) => Some(Ok(data
                 .iter()
                 .cloned()
-                .map(|(name, optional)| {
-                    let flags = match optional {
-                        true => GBL_EFI_AVB_PARTITION_OPTIONAL,
-                        false => 0,
-                    };
-                    (name.to_owned(), flags)
-                })
+                .map(|(name, flags)| (name.to_owned(), flags))
                 .collect())),
             ProtocolCallStatus::ProtocolCallError(err) => Some(Err(err)),
             _ => None,
@@ -1221,38 +1272,84 @@ mod test {
 
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        ops.avb_read_partitions_to_verify()
+        ops.avb_read_partition_attributes()
+    }
+
+    /// A helper to create a `RequestedPartition` filled with these values.
+    fn make_requested_partition(name: &str, optional: bool) -> RequestedPartition {
+        let mut partition = RequestedPartition::default();
+
+        let name_bytes = name.as_bytes();
+        partition.name_buffer_mut()[..name_bytes.len()].copy_from_slice(name_bytes);
+        partition.optional = optional;
+
+        partition
     }
 
     #[test]
-    fn ops_avb_read_partitions_to_verify_provided() {
-        let partitions_to_verify =
-            &[("boot", false), ("vendor_boot", true), (&"a".repeat(28), false)];
+    fn ops_avb_read_partition_attributes_provided() {
+        let partitions_to_verify = &[
+            ("boot", GBL_EFI_AVB_PARTITION_FLAG_VERIFY),
+            ("vendor_boot", GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS),
+            (&"a".repeat(28), GBL_EFI_AVB_PARTITION_FLAG_VERIFY),
+        ];
 
         let result =
-            test_avb_read_partitions_to_verify(ProtocolCallStatus::Success(partitions_to_verify))
+            test_avb_read_partition_attributes(ProtocolCallStatus::Success(partitions_to_verify))
                 .unwrap();
 
         assert_eq!(
-            result
-                .iter()
-                .map(|p| (p.name_cstr().to_str().unwrap(), p.optional))
-                .collect::<Vec<_>>(),
-            partitions_to_verify
+            &result[..],
+            [
+                make_requested_partition("boot", false),
+                make_requested_partition("vendor_boot", true),
+                make_requested_partition(&"a".repeat(28), false)
+            ]
         );
     }
 
     #[test]
-    fn ops_avb_read_partitions_to_verify_provided_empty() {
-        let result = test_avb_read_partitions_to_verify(ProtocolCallStatus::Success(&[])).unwrap();
+    fn ops_avb_read_partition_attributes_provided_ignore_dontcare_partitions() {
+        let partitions_to_verify = &[
+            ("verify", GBL_EFI_AVB_PARTITION_FLAG_VERIFY),
+            ("critical", GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL),
+            ("if_exists", GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS),
+            ("fdr", GBL_EFI_AVB_PARTITION_FLAG_FDR),
+            (
+                "if_exists_critical",
+                GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS
+                    | GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL,
+            ),
+            ("verify2", GBL_EFI_AVB_PARTITION_FLAG_VERIFY),
+            ("none", 0),
+        ];
+
+        let result =
+            test_avb_read_partition_attributes(ProtocolCallStatus::Success(partitions_to_verify))
+                .unwrap();
+
+        assert_eq!(
+            &result[..],
+            [
+                make_requested_partition("verify", false),
+                make_requested_partition("if_exists", true),
+                make_requested_partition("if_exists_critical", true),
+                make_requested_partition("verify2", false)
+            ]
+        );
+    }
+
+    #[test]
+    fn ops_avb_read_partition_attributes_provided_empty() {
+        let result = test_avb_read_partition_attributes(ProtocolCallStatus::Success(&[])).unwrap();
 
         assert!(result.is_empty());
     }
 
     #[test]
-    fn ops_avb_read_partitions_to_verify_protocol_error() {
+    fn ops_avb_read_partition_attributes_protocol_error() {
         assert_eq!(
-            test_avb_read_partitions_to_verify(ProtocolCallStatus::ProtocolCallError(
+            test_avb_read_partition_attributes(ProtocolCallStatus::ProtocolCallError(
                 Error::InvalidInput
             )),
             Err(AvbIoError::InvalidValueSize)
@@ -1260,12 +1357,29 @@ mod test {
     }
 
     #[test]
-    fn ops_avb_read_partitions_to_verify_protocol_not_found() {
+    fn ops_avb_read_partition_attributes_protocol_not_found() {
         assert_eq!(
-            test_avb_read_partitions_to_verify(ProtocolCallStatus::ProtocolLookupError(
+            test_avb_read_partition_attributes(ProtocolCallStatus::ProtocolLookupError(
                 Error::NotFound
             )),
             Err(AvbIoError::NotImplemented)
+        );
+    }
+
+    #[test]
+    fn ops_avb_read_partition_attributes_protocol_invalid_flags() {
+        const INVALID_FLAGS: u64 =
+            GBL_EFI_AVB_PARTITION_FLAG_VERIFY | GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS;
+
+        let partitions_to_verify = &[
+            ("boot", GBL_EFI_AVB_PARTITION_FLAG_VERIFY),
+            ("invalid_flags", INVALID_FLAGS),
+            (&"a".repeat(28), GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS),
+        ];
+
+        assert_eq!(
+            test_avb_read_partition_attributes(ProtocolCallStatus::Success(partitions_to_verify)),
+            Err(AvbIoError::Io)
         );
     }
 

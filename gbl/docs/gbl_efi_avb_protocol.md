@@ -33,7 +33,7 @@ boards. However, this protocol must be implemented on production devices.
 ### Revision Number
 
 ```c
-#define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 4)
+#define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 5)
 ```
 
 See
@@ -45,7 +45,7 @@ for details about protocol revisions.
 ```c
 typedef struct _GBL_EFI_AVB_PROTOCOL {
   UINT64 Revision;
-  GBL_EFI_AVB_READ_PARTITIONS_TO_VERIFY ReadPartitionsToVerify;
+  GBL_EFI_AVB_READ_PARTITION_ATTRIBUTES ReadPartitionAttributes;
   GBL_EFI_AVB_READ_DEVICE_STATUS ReadDeviceStatus;
   GBL_EFI_AVB_VALIDATE_VBMETA_PUBLIC_KEY ValidateVbmetaPublicKey;
   GBL_EFI_AVB_READ_ROLLBACK_INDEX ReadRollbackIndex;
@@ -54,6 +54,7 @@ typedef struct _GBL_EFI_AVB_PROTOCOL {
   GBL_EFI_AVB_WRITE_PERSISTENT_VALUE WritePersistentValue;
   GBL_EFI_AVB_HANDLE_VERIFICATION_RESULT HandleVerificationResult;
   GBL_EFI_AVB_WRITE_LOCK_STATE WriteLockState;
+  GBL_EFI_AVB_FACTORY_DATA_RESET FactoryDataReset;
 } GBL_EFI_AVB_PROTOCOL;
 ```
 
@@ -65,11 +66,10 @@ The revision to which the `GBL_EFI_AVB_PROTOCOL` adheres. All future revisions
 must be backwards compatible. If a future version is not backwards compatible, a
 different GUID must be used.
 
-#### ReadPartitionsToVerify
+#### ReadPartitionAttributes
 
-Retrieves the list of additional partitions to be verified, beyond the standard
-set loaded and verified by GBL. See
-[`ReadPartitionsToVerify()`][readpartitionstoverify] for more information.
+Retrieves attributes for partitions that require custom handling. See
+[`ReadPartitionAttributes()`][readpartitionattributes] for more information.
 
 #### ReadDeviceStatus
 
@@ -113,64 +113,153 @@ device state, displaying UI warnings/errors, handling anti-tampering, etc.). See
 Locks or unlocks the device lock or device critical lock. See
 [`WriteLockState()`][writelockstate] for more information.
 
-## GBL_EFI_AVB_PROTOCOL.ReadPartitionsToVerify()
+#### FactoryDataReset
+
+Performs a factory data reset (FDR), securely erasing all user data. See
+[`FactoryDataReset()`][factorydatareset] for more information.
+
+## GBL_EFI_AVB_PROTOCOL.ReadPartitionAttributes()
 
 ### Summary
 
-Retrieves the list of additional partitions to be verified, beyond the standard
-set loaded and verified by GBL.
+Provides attributes for any partitions that require special handling. This does
+not need to be an exhaustive list of partitions, only partitions that have
+special behavior indicated by the provided flags need to be provided here.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_READ_PARTITIONS_TO_VERIFY) (
+(EFIAPI *GBL_EFI_AVB_READ_PARTITION_ATTRIBUTES) (
   IN GBL_EFI_AVB_PROTOCOL *Self,
   IN OUT UINTN *NumPartitions,
-  IN OUT GBL_EFI_AVB_PARTITION *Partitions);
+  IN OUT GBL_EFI_AVB_PARTITION_ATTRIBUTES *Partitions);
 ```
 
 ### Related Definitions
+
+#### GBL_EFI_AVB_PARTITION_ATTRIBUTES
+
+```
+typedef struct {
+  UINTN BaseNameLen,
+  CHAR8 *BaseName,
+  GBL_EFI_AVB_PARTITION_FLAGS Flags
+} GBL_EFI_AVB_PARTITION_ATTRIBUTES;
+```
+
+##### BaseNameLen
+
+On input, the length of the `BaseName` buffer. On output, the length of the data
+copied into `BaseName` without termination.
+
+##### BaseName
+
+Points to a buffer of size `BaseNameLen`. On output, the buffer should be filled
+with the base (slotless) partition name as UTF-8, e.g. `boot` rather than
+`boot_a`.
+
+Termination is not required, and no embedded terminators are allowed within the
+output `BaseNameLen`.
+
+##### Flags
+
+The set of flags indicating any special handling required for this partition.
+Must be some combination of defined `GBL_EFI_AVB_PARTITION_FLAG_*` constants,
+with all unused bits set to 0.
 
 #### GBL_EFI_AVB_PARTITION_FLAGS
 
 ```c
 typedef UINT64 GBL_EFI_AVB_PARTITION_FLAGS;
-STATIC CONST GBL_EFI_AVB_PARTITION_FLAGS GBL_EFI_AVB_PARTITION_OPTIONAL = 0x1 << 0;
+STATIC CONST GBL_EFI_AVB_PARTITION_FLAGS GBL_EFI_AVB_PARTITION_FLAG_VERIFY = 0x1 << 0;
+STATIC CONST GBL_EFI_AVB_PARTITION_FLAGS GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS = 0x1 << 1;
+STATIC CONST GBL_EFI_AVB_PARTITION_FLAGS GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL = 0x1 << 2;
+STATIC CONST GBL_EFI_AVB_PARTITION_FLAGS GBL_EFI_AVB_PARTITION_FLAG_FDR = 0x1 << 3;
 ```
 
-##### GBL_EFI_AVB_PARTITION_OPTIONAL
+##### GBL_EFI_AVB_PARTITION_FLAG_VERIFY
 
-Flag indicating the partition is optional for loading/verification. This allows
-firmware to handle its absence at runtime instead of triggering a GBL failure.
-If set, GBL can boot even if the partition is missing or not referenced by the
-`vbmeta` header. Otherwise, the partition is required, and its absence causes
-GBL boot failure in locked mode.
+This partition should be loaded and verified by libavb.
 
-#### GBL_EFI_AVB_PARTITION
+If a partition with this flag doesn't exist or lacks a corresponding hash
+descriptor in `vbmeta` or a chained partition, it cannot be verified. GBL will
+handle this case as follows:
 
-```c
-typedef
-struct GblEfiAvbPartition {
-  UINTN BaseNameLen;
-  UINT8* BaseName;
-  GBL_EFI_AVB_PARTITION_FLAGS Flags;
-} GBL_EFI_AVB_PARTITION;
-```
+1. For a locked device: `RED` boot status color, so fail to boot.
+2. For an unlocked device: `ORANGE` boot status color, still can boot.
 
-##### BaseNameLen
+In addition to enforcing verification, this flag also makes the partition
+available via [`HandleVerificationResult()`][handleverificationresult] once
+verification is complete for backend-specific handling.
 
-On input, specifies the size of the buffer pointed to by `BaseName`. The
-firmware is expected to fill this buffer with the UTF-8 slotless partition name
-(e.g., `boot` for `boot_a`). On output, this value must be updated to reflect
-the number of bytes copied into the buffer pointed by `BaseName`.
+A partition cannot set both this and
+`GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS`.
 
-##### BaseName
+###### Defaults
 
-A pointer to a buffer of `BaseNameLen` bytes available for the implementation to
-copy the UTF-8 slotless partition name (e.g `boot` for `boot_a`). A null
-terminator is not required to be included.
+GBL maintains a set of partitions that will always be verified. If these
+partitions are provided to `ReadPartitionAttributes()` then they should **not**
+specify `GBL_EFI_AVB_PARTITION_FLAG_VERIFY` or
+`GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS`, or these partitions may be
+verified twice which will slow boot and possibly allocate extra memory.
+
+For Android these partitions are:
+
+<!-- LINT.IfChange(always_verify_partitions) -->
+
+- `boot`
+- `dtb`
+- `dtbo`
+- `init_boot`
+- `pvmfw`
+- `vendor_boot`
+- `vendor_kernel_boot`
+
+<!-- LINT.ThenChange(/gbl/libgbl/src/android_boot/mod.rs:always_verify_partitions) -->
+
+##### GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS
+
+Similar to `GBL_EFI_AVB_PARTITION_FLAG_VERIFY`, but if this partition doesn't
+exist or does not have a vbmeta hash descriptor it will be ignored rather than
+causing a boot failure.
+
+A partition cannot set both this and `GBL_EFI_AVB_PARTITION_FLAG_VERIFY`.
+
+##### GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL
+
+This partition should be protected by the critical flashing lock. See
+[`WriteLockState()`][writelockstate] for details.
+
+It is up to the implementation to specify every desired critical partition; GBL
+will not automatically apply the critical lock to any partitions.
+
+##### GBL_EFI_AVB_PARTITION_FLAG_FDR
+
+This partition is tied to Factory Data Reset (FDR). This has two effects:
+
+1. Any fastboot write or erase of this partition will automatically be followed
+   by a call to [`FactoryDataReset()`][factorydatareset].
+2. GBL will use Block I/O protocols to erase all of these partitions (and issue
+   a `FactoryDataReset()`) prior to changing device lock state via
+   [`WriteLockState()`][writelockstate].
+
+This functionality is provided mostly as a developer tool and must not be
+security load-bearing, i.e. FDR must not assume or rely on any particular state
+of non-secure storage. A common use case is to trigger FDR during `fastboot -w`
+so that developers can easily reset their device state.
+
+###### Defaults
+
+By default, GBL will tie `userdata` and `metadata` partitions to FDR if they
+exist. To opt out of this default behavior, the implementation can provide these
+partitions in `ReadPartitionAttributes()` with this flag cleared.
+
+It is recommended that at least one of `userdata`, `metadata`, or `cache`
+partitions have `GBL_EFI_AVB_PARTITION_FLAG_FDR`. As of this writing,
+`fastboot -w` attempts to reset these partitions, which means if none of these
+partitions have the flag then `fastboot -w` will not trigger FDR.
 
 ### Parameters
 
@@ -180,55 +269,46 @@ A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
 
 #### NumPartitions
 
-Number of `Partitions` available to be filled by the FW. Must be updated to the
-number of partitions returned. If there are no extra partitions to be verified,
-`NumPartitions` must be set to 0.
+On input, the number of `Partitions` available to be filled by the FW.
+
+On output, with a return code of:
+
+- `EFI_SUCCESS`: the number of `Partitions` filled by the implementation, less
+  than or equal to the input `NumPartitions`
+- `EFI_BUFFER_TOO_SMALL`: the number of `Partitions` that would be required
+- other: `NumPartitions` will be ignored
 
 #### Partitions
 
-Pointer to an array of [`GBL_EFI_AVB_PARTITION`](#gbl_efi_avb_partition) with
-`NumPartitions` elements, to be filled by the FW with additional partitions that
-GBL will load and verify.
-
-#### Flags
-
-A bitmask of flags providing additional metadata for a partition request. See
-[`GBL_EFI_AVB_PARTITION_FLAGS`](#gbl_efi_avb_partition_flags) for details.
+Pointer to an array of
+[`GBL_EFI_AVB_PARTITION_ATTRIBUTES`](#gbl_efi_avb_partition_attributes) with
+`NumPartitions` elements, to be filled by the implementation.
 
 ### Description
 
-GBL loads and verifies a default set of partitions required to boot the HLOS.
-For example, in case of Android, GBL loads and verifies the following standard
-set of partitions: `boot`, `init_boot`, `vendor_boot`, `vendor_kernel_boot`,
-`dtb`, `dtbo`, and `pvmfw`, which are used to boot the system.
+Provides attributes to indicate custom handling of the given partitions.
 
-This method allows the firmware to specify extra non-standard partitions that
-GBL will also load and verify, both to extend the integrity check and to enable
-the firmware to handle device-specific partitions content via
-[`HandleVerificationResult()`][handleverificationresult] once verification is
-complete.
+GBL provides some standard behaviors, but devices may want to customize which
+behaviors those partitions apply to. This function allows specifying which
+partitions get which behaviors.
 
-For example, to provide N additional partitions, firmware must update the
-`NumPartitions` to N and fill first N elements of `Partitions` following the
-[`GBL_EFI_AVB_PARTITION`](#gbl_efi_avb_partition) format. If no extra partitions
-are requested to be verified, `NumPartitions` must be set to 0 or
-`EFI_UNSUPPORTED` is returned.
+The input is an array of empty partition attributes, and the output should be
+the filled array. For example, to provide N additional partitions, firmware must
+update the `NumPartitions` to N and fill the first N elements of `Partitions`
+following the
+[`GBL_EFI_AVB_PARTITION_ATTRIBUTES`](#gbl_efi_avb_partition_attributes) format.
 
-If a requested partition (excluding those marked as optional) doesn't exist or
-lacks a corresponding hash descriptor in `vbmeta` or a chained partition, it
-cannot be verified. GBL will handle this case as follows:
-
-1. For a locked device: `RED` boot status color, so fail to boot.
-2. For an unlocked device: `ORANGE` boot status color, still can boot.
+If no partition attributes are needed, `NumPartitions` can be set to 0 or
+`EFI_UNSUPPORTED` can be returned - both have the same effect.
 
 ### Status Codes Returned
 
-| Return Code            | Semantics                                                                                                                                                          |
-| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`          | Successfully provided additional partitions to verify                                                                                                              |
-| `EFI_UNSUPPORTED`      | No extra partitions need to be verified                                                                                                                            |
-| `EFI_BUFFER_TOO_SMALL` | Provided list of `Partitions` is too small; `NumPartitions` has been updated with the required amount. GBL will call this method again with extended `Partitions`. |
-| `EFI_BAD_BUFFER_SIZE`  | One of provided `Partition.NameLen` values is not sufficient to hold the partition name. GBL will fail to boot.                                                    |
+| Return Code            | Semantics                                                                                               |
+| :--------------------- | :------------------------------------------------------------------------------------------------------ |
+| `EFI_SUCCESS`          | `NumPartitions` and the corresponding number of `Partitions` structs have been filled                   |
+| `EFI_BUFFER_TOO_SMALL` | `NumPartitions` was not large enough for all the partitions and has been updated with the required size |
+| `EFI_BAD_BUFFER_SIZE`  | One of the provided `Partitions.BaseNameLen` values was too small                                       |
+| `EFI_UNSUPPORTED`      | Use the default partition attributes                                                                    |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadDeviceStatus()
 
@@ -858,7 +938,7 @@ used for:
 2. Handle anti-tampering mechanisms.
 3. Handle data for all partitions loaded by GBL, including device-specific
    partitions requested through
-   [`ReadPartitionsToVerify()`][readpartitionstoverify].
+   [`ReadPartitionAttributes()`][readpartitionattributes].
 4. Display the appropriate UI and obtaining user confirmation for states that
    may affect the device's security guarantees.
 
@@ -906,18 +986,57 @@ typedef uint8_t GBL_EFI_AVB_LOCK_TYPE;
 
 ##### GBL_EFI_AVB_LOCK_TYPE_DEVICE
 
-Describes the _Device_ lock. This lock controls access to flashing partitions.
+The _DEVICE_ lock has the following effects:
+
+| Device lock state | Verification                                   | Boot Color | Fastboot partition read/write/erase |
+| :---------------- | :--------------------------------------------- | ---------- | ----------------------------------- |
+| Locked            | Enforced, verification failures prevent boot   | Green      | Prohibited                          |
+| Unlocked          | Checked, but verification failures are allowed | Orange     | Allowed for non-critical partitions |
+
+Changing the state of the _DEVICE_ lock MUST be preceded by a factory data
+reset. GBL guarantees that changing the _DEVICE_ lock with `WriteLockState()`
+will always be immediately preceded by erasing non-secure partitions and
+performing FDR in this order:
+
+1. Use Block I/O protocols to erase all partitions marked with
+   `GBL_EFI_AVB_PARTITION_FLAG_FDR`
+2. Call `GBL_EFI_AVB_PROTOCOL.FactoryDataReset()`
+3. Call `GBL_EFI_AVB_PROTOCOL.WriteLockState()`
+
+It is security-critical that no user data is allowed to leak across lock state
+modifications in either direction. GBL calls `FactoryDataReset()` and
+`WriteLockState()` back-to-back, but they will be called from `TPL_APPLICATION`
+so are not guaranteed to be atomic if the device could be modifying user data
+concurrently (e.g. at a higher TPL or on another core). If there is any chance
+of user data modification in-between these calls, the implementation is
+responsible for ensuring another FDR is performed atomically with the lock state
+update.
+
+Additionally, it is the responsibility of the implementation to display a
+relevant UI dialog and obtain user consent before unlocking the device.
 
 ##### GBL_EFI_AVB_LOCK_TYPE_CRITICAL
 
-Describes the _Critical_ lock. This lock controls access to flashing raw block
-devices and modifications to partition tables.
+The _CRITICAL_ lock controls read/write/erase access to critical partitions; GBL
+will prohibit any fastboot access to these partitions while the _CRITICAL_ lock
+is set. Unlike the _DEVICE_ lock, the _CRITICAL_ lock is just a development tool
+and has no effect on verification behavior.
 
-Note: the _Critical_ lock is optional. It is an extra safeguard to prevent users
-from modifying their device such that it cannot be recovered via fastboot. If a
-firmware implementation does not support the _Critical_ lock, calls to
-`WriteLockState()` where `Type` is `GBL_EFI_AVB_LOCK_TYPE_CRITICAL` should
-return `EFI_UNSUPPORTED`.
+The intent of the _CRITICAL_ lock is to provide an extra layer of protection
+against unintentionally bricking a device during testing and development. All
+partitions required to boot up to GBL fastboot should be guarded by the
+_CRITICAL_ lock, with the intent that as long as the _CRITICAL_ lock is enabled
+there is no way to permanently brick the device - it can always be recovered by
+rebooting into fastboot and flashing the correct OS images. Once the _CRITICAL_
+lock is off, this protection is removed.
+
+The set of critical partitions is device-specific and must be provided via
+[`ReadPartitionAttributes()`][readpartitionattributes]. If no critical
+partitions are specified, the _CRITICAL_ lock has no effect.
+
+Note: the _CRITICAL_ lock is optional. If a firmware implementation does not
+support the _CRITICAL_ lock, calls to `WriteLockState()` where `Type` is
+`GBL_EFI_AVB_LOCK_TYPE_CRITICAL` should return `EFI_UNSUPPORTED`.
 
 #### GBL_EFI_AVB_LOCK_STATE
 
@@ -931,43 +1050,79 @@ typedef uint8_t GBL_EFI_AVB_LOCK_STATE;
 
 ##### GBL_EFI_AVB_LOCK_STATE_UNLOCKED
 
-A lock state in which it is permitted to boot unverified OS images.
+Unlock the specified lock.
 
 ##### GBL_EFI_AVB_LOCK_STATE_LOCKED
 
-A lock state indicating that system modifications are prohibited.
+Lock the specified lock.
 
 ### Description
 
-The _DEVICE_ and _CRITICAL_ locks mediate access to system modifcations. The
-_DEVICE_ lock must be unlocked in order to boot unverified operating systems.
+Locks or unlocks the _DEVICE_ and _CRITICAL_ locks. See the above definitions
+for a description of each lock.
 
-Changing the state of the _DEVICE_ lock MUST be preceded by wiping user data.
-GBL is responsible for guaranteeing this order of operations.
+In production devices, these lock states must be stored in secure storage e.g.
+RPMB.
 
-It is the responsibility of the implementation to display a relevant UI dialog
-and obtain user consent before unlocking the device.
-
-The _CRITICAL_ lock, if provided by the device firmware, is a user safeguard to
-prevent rendering a device unusable. When this lock is enabled, it prevents
-modifications to raw block devices and partition tables.
-
-Note: Unlocking the _DEVICE_ lock changes the boot color to
-[`ORANGE`](#GBL_EFI_AVB_BOOT_COLOR_ORANGE).
-
-Note: The _DEVICE_ and _CRITICAL_ locks are independent. Locking or unlocking
-one MUST NOT affect the other. The locks do not gate access for each other
-either: if the _CRITICAL_ lock is unlocked but the _DEVICE_ lock is locked,
-attempts to flash custom custom kernel images will fail.
+Note: The _DEVICE_ and _CRITICAL_ locks are independent, i.e. a device does not
+need to prevent (_DEVICE_ == locked, _CRITICAL_ == unlocked). However, the
+_CRITICAL_ lock has no effect in this state since the _DEVICE_ lock prohibits
+fastboot access to all partitions anyway.
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                                                   |
-| :---------------------- | :------------------------------------------------------------------------------------------ |
-| `EFI_SUCCESS`           | The lock state was successfully set.                                                        |
-| `EFI_INVALID_PARAMETER` | One of _Type_ or _State_ had an invalid value.                                              |
-| `EFI_ACCESS_DENIED`     | The device is not unlockable.                                                               |
-| `EFI_UNSUPPORTED`       | _Type_ is `GBL_EF_AVB_LOCK_TYPE_CRITICAL` and the firmware does not define a critical lock. |
+| Return Code             | Semantics                                                                                    |
+| :---------------------- | :------------------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`           | The lock state was successfully set.                                                         |
+| `EFI_INVALID_PARAMETER` | One of _Type_ or _State_ had an invalid value.                                               |
+| `EFI_ACCESS_DENIED`     | The device is not unlockable.                                                                |
+| `EFI_UNSUPPORTED`       | _Type_ is `GBL_EFI_AVB_LOCK_TYPE_CRITICAL` and the firmware does not define a critical lock. |
+
+## GBL_EFI_AVB_PROTOCOL.FactoryDataReset()
+
+### Summary
+
+Performs a factory data reset.
+
+### Prototype
+
+```c
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_AVB_FACTORY_DATA_RESET)(
+    IN GBL_EFI_AVB_PROTOCOL *Self
+);
+```
+
+### Parameters
+
+#### Self
+
+A pointer to the `GBL_EFI_AVB_PROTOCOL` instance.
+
+### Description
+
+Factory Data Reset (FDR) erases all user data from a device, restoring it to a
+fresh out-of-box state.
+
+The implementation is responsible for any secure-world interaction necessary to
+perform a secure FDR. This typically involves rotating keys in secure storage
+such as RPMB to cryptographically erase user data and protect against replay
+attacks.
+
+Implementations may choose to also modify non-secure storage during FDR, but
+this cannot be security load-bearing - user data must be permanently deleted
+regardless of the state of non-secure storage. If GBL erases any non-secure
+partitions itself (via `GBL_EFI_AVB_PARTITION_FLAG_FDR`), these partitions will
+be erased prior to the call to `FactoryDataReset()`, so that implementations may
+re-initialize these partitions with default contents during FDR if desired.
+
+### Status Codes Returned
+
+| Return Code   | Semantics                                             |
+| :------------ | :---------------------------------------------------- |
+| `EFI_SUCCESS` | FDR completed and user data has been securely erased. |
+| Any error     | FDR failed.                                           |
 
 ## Status codes returned to `libavb`
 
@@ -986,7 +1141,7 @@ following UEFI error codes are used to communicate results back to the library:
 | `EFI_UNSUPPORTED`       | Operation isn't implemented / supported                                                                                                                 |
 | Others                  | Treated as `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                                                                                |
 
-[readpartitionstoverify]: #gbl_efi_avb_protocolreadpartitionstoverify
+[readpartitionattributes]: #gbl_efi_avb_protocolreadpartitionattributes
 [readdevicestatus]: #gbl_efi_avb_protocolreaddevicestatus
 [handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
 [protocolwriterollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
@@ -997,6 +1152,7 @@ following UEFI error codes are used to communicate results back to the library:
 [writepersistentvalue]: #gbl_efi_avb_protocolwritepersistentvalue
 [handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
 [writelockstate]: #gbl_efi_avb_protocolwritelockstate
+[factorydatareset]: #gbl_efi_avb_protocolfactorydatareset
 [avb]: https://source.android.com/docs/security/features/verifiedboot/avb
 [unlocked]:
   https://android.googlesource.com/platform/external/avb/+/refs/heads/main/README.md#locked-and-unlocked-mode

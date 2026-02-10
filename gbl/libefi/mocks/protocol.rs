@@ -23,7 +23,7 @@ use core::{ffi::CStr, fmt::Write};
 pub use efi::protocol::{Revision, Versioned};
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
-    GblEfiAvbLockState, GblEfiAvbLockType, GblEfiAvbPartition, GblEfiAvbPartitionFlags,
+    GblEfiAvbLockState, GblEfiAvbLockType, GblEfiAvbPartitionAttributes, GblEfiAvbPartitionFlags,
     GblEfiAvbVerificationResult, GblEfiFastbootCommandExecResult, GblEfiFastbootEraseAction,
     GblEfiFastbootMessageType, GblEfiVerifiedDeviceTree,
 };
@@ -263,8 +263,8 @@ pub mod gbl_efi_avb {
     /// which is not practical for our use case.
     #[derive(Clone, Default)]
     pub struct GblAvbProtocol {
-        /// Expected return value from `read_partitions_to_verify`.
-        pub read_partitions_to_verify_result:
+        /// Expected return value from `read_partition_attributes`.
+        pub read_partition_attributes_result:
             Option<Result<Vec<(String, GblEfiAvbPartitionFlags)>>>,
         /// Expected return value from `read_device_status`
         pub read_device_status_result: Option<Result<GblEfiAvbDeviceStatus>>,
@@ -285,16 +285,16 @@ pub mod gbl_efi_avb {
     }
 
     impl GblAvbProtocol {
-        /// Wraps `GBL_EFI_AVB_PROTOCOL.read_partitions_to_verify()`.
+        /// Wraps `GBL_EFI_AVB_PROTOCOL.read_partition_attributes()`.
         ///
         /// SAFETY:
         /// * Each `partitions[N].base_name` must point to non-null writable buffer of at least
         /// `partitions[N].base_name_len` bytes.
-        pub unsafe fn read_partitions_to_verify(
+        pub unsafe fn read_partition_attributes(
             &self,
-            partitions: &mut [GblEfiAvbPartition],
+            partitions: &mut [GblEfiAvbPartitionAttributes],
         ) -> Result<usize> {
-            match &self.read_partitions_to_verify_result {
+            match &self.read_partition_attributes_result {
                 Some(Ok(names)) => {
                     names.iter().zip(partitions.iter_mut()).for_each(
                         |((name, flags), partition)| {

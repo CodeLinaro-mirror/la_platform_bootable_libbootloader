@@ -55,7 +55,7 @@ use efi::{
     },
     EfiEntry,
 };
-use efi_types::GblEfiAvbPartition;
+use efi_types::GblEfiAvbPartitionAttributes;
 use liberror::{Error, Result};
 use libgbl::{
     android_boot::{device_tree::RNG_SEED_SIZE_BYTES, STANDARD_PARTITIONS},
@@ -214,18 +214,22 @@ fn test_gbl_avb(entry: &EfiEntry) -> Result<()> {
     const PARTITION_MAX_LEN: usize = 29;
     let mut partition_owner = [[0u8; PARTITION_MAX_LEN]; STANDARD_PARTITIONS.len()];
 
-    let mut partitions: Vec<GblEfiAvbPartition> = partition_owner
+    let mut partitions: Vec<GblEfiAvbPartitionAttributes> = partition_owner
         .iter_mut()
-        .map(|p| GblEfiAvbPartition { base_name_len: p.len(), base_name: p.as_mut_ptr(), flags: 0 })
+        .map(|p| GblEfiAvbPartitionAttributes {
+            base_name_len: p.len(),
+            base_name: p.as_mut_ptr(),
+            flags: 0,
+        })
         .collect();
 
     // SAFETY:
     //
     // * Due to initialization above, each `partition.base_name` in `partitions`
     //   points to a non-null writable buffer of size `PARTITION_MAX_LEN`.
-    let mut res = unsafe { protocol.read_partitions_to_verify(partitions.as_mut_slice()) }
+    let mut res = unsafe { protocol.read_partition_attributes(partitions.as_mut_slice()) }
         .map(|_| ())
-        .inspect_err(|_| efi_println!(entry, "Call to 'read_partitions_to_verify' failed"));
+        .inspect_err(|_| efi_println!(entry, "Call to 'read_partition_attributes' failed"));
 
     if let Err(e) = protocol.read_device_status().map(|_| ()) {
         efi_println!(entry, "Call to 'read_device_status' failed");

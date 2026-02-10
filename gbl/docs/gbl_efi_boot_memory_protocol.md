@@ -127,10 +127,9 @@ that matches the requirement of the image and caller's expectation. For
 alignment requirement on common boot images, see
 [`GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()`](#gbl_efi_boot_memory_protocolgetbootbuffer).
 
-Note: GBL passes the output of
-[GBL_EFI_AVB_PROTOCOL.ReadPartitionsToVerify()](./gbl_efi_avb_protocol.md#gbl_efi_image_loading_protocolreadpartitionstoverify)
-to this API to query buffers for vendor specific partitions. Implementation
-should make sure to use consistent partition names for them.
+Note: each device-specific partition that requests verification in
+[GBL_EFI_AVB_PROTOCOL.ReadPartitionsAttributes()](./gbl_efi_avb_protocol.md#gbl_efi_image_loading_protocolreadpartitionsattributes)
+will be able to provide a partition buffer using the same partition name.
 
 ### Related Definitions
 
