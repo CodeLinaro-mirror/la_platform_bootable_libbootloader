@@ -2,11 +2,14 @@
 /plugin/;
 
 / {
-    // add a new node on top of overlay_first_b
     fragment@0 {
-        target-path = "/chosen/first_overlay";
+        target-path = "/chosen";
         __overlay__ {
-            second_overlay_b_property = "second_overlay_b_val";
+            // This is the latest overlay to be applied, so this value must be appended by GBL.
+            bootargs_ext = "fragment_overlay_bootargs_ext";
+            first_overlay {
+                second_overlay_b_property = "second_overlay_b_val";
+            };
         };
     };
 };
