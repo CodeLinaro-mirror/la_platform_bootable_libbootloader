@@ -28,7 +28,7 @@ use crate::{
     },
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message, AndroidBootMode},
-    ops::{CommandExecType, FastbootEraseAction, RambootOps},
+    ops::{CommandExecType, RambootOps},
     partition::{check_part_unique, GblDisk, MultiPartitionIo, Partition, PartitionIo, RawName},
     slots::Slot,
     GblOps, IntegrationError,
@@ -1091,13 +1091,6 @@ where
                 Err(Error::Unsupported) => Err("Block device is not for GPT".into()),
                 v => Ok(v?),
             };
-        }
-
-        // If we are erasing full partition, checks vendor specific erase logic first.
-        if part.find('/').is_none()
-            && matches!(self.gbl_ops.fastboot_vendor_erase(part)?, FastbootEraseAction::Noop)
-        {
-            return Ok(());
         }
 
         let part_io = self.parse_and_get_partition_io(part).await?;
@@ -4565,51 +4558,6 @@ pub(crate) mod test {
                 (LockType::Critical, LockState::Locked),
                 (LockType::Critical, LockState::Unlocked),
             ]
-        )
-    }
-
-    #[test]
-    fn test_vendor_erase() {
-        let storage = FakeGblOpsStorage::default();
-        let buffers = vec![vec![0u8; KiB!(1)]; 1];
-        let mut vendor_erase_handler = |part: &str| {
-            // Skips erasing if partition is "boot_a".
-            Ok(match part {
-                "boot_a" => FastbootEraseAction::Noop,
-                _ => FastbootEraseAction::EraseAsPhysicalPartition,
-            })
-        };
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.vendor_erase_handler = Some(&mut vendor_erase_handler);
-        let listener: SharedTestListener = Default::default();
-        let (transports, tcp) = (&mut [&listener], &listener);
-        // Succeeds due to `vendor_erase_handler` instructing it to skip, even if there is no such
-        // partition.
-        listener.add_transport_input(b"erase:boot_a");
-        // Fails as usual.
-        listener.add_transport_input(b"erase:boot_b");
-        // Fails. vendor_erase only called when erasing full partition with no block/subrange
-        // selection
-        listener.add_transport_input(b"erase:boot_a/0");
-        listener.add_transport_input(b"continue");
-        block_on(run_gbl_fastboot_stack::<3>(
-            &mut gbl_ops,
-            buffers,
-            transports,
-            Some(tcp),
-            Default::default(),
-        ));
-        assert_eq!(
-            listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"OKAY",
-                b"FAILNotFound",
-                b"FAILInvalid block ID",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
-            "\nActual Transport output:\n{}",
-            listener.dump_transport_out_queue()
         )
     }
 

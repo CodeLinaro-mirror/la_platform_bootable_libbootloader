@@ -42,12 +42,10 @@ use efi_types::{
     GBL_EFI_AVB_PARTITION_FLAG_VERIFY, GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL,
     GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
-    GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
-    GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION, GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP,
-    GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL, GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO,
-    GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN,
-    GBL_EFI_ONE_SHOT_BOOT_MODE_BOOTLOADER, GBL_EFI_ONE_SHOT_BOOT_MODE_NONE,
-    GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY, PARTITION_NAME_LEN_U16,
+    GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED, GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL,
+    GBL_EFI_FASTBOOT_MESSAGE_TYPE_INFO, GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY,
+    GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN, GBL_EFI_ONE_SHOT_BOOT_MODE_BOOTLOADER,
+    GBL_EFI_ONE_SHOT_BOOT_MODE_NONE, GBL_EFI_ONE_SHOT_BOOT_MODE_RECOVERY, PARTITION_NAME_LEN_U16,
 };
 use fastboot::{CommandExecType, Unlockability};
 use fdt::Fdt;
@@ -67,9 +65,9 @@ use libgbl::{
     },
     gbl_println,
     ops::{
-        AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootEraseAction,
-        FastbootPartitionType, InfoSender, LockState, LockType, OkaySender, OneShotBootMode,
-        Partition, PartitionBuffer, RngAlgorithm as GblRngAlgorithm, Slot, SHA256_DIGEST_SIZE,
+        AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootPartitionType,
+        InfoSender, LockState, LockType, OkaySender, OneShotBootMode, Partition, PartitionBuffer,
+        RngAlgorithm as GblRngAlgorithm, Slot, SHA256_DIGEST_SIZE,
     },
     partition::{GblDisk, RawName},
     slots::{BootToken, Cursor},
@@ -940,25 +938,6 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         {
             Ok(v) => v.get_staged(out),
             Err(Error::NotFound) => Ok((0, 0)),
-            Err(e) => Err(e),
-        }
-    }
-
-    fn fastboot_vendor_erase(&mut self, part: &str) -> Result<FastbootEraseAction> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()
-        {
-            Ok(v) => match v.vendor_erase(RawName::try_from(part)?.to_cstr()) {
-                Ok(GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION)
-                | Err(Error::NotFound) => Ok(FastbootEraseAction::EraseAsPhysicalPartition),
-                Ok(GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP) => Ok(FastbootEraseAction::Noop),
-                Ok(_) => Err(Error::InvalidState),
-                Err(e) => Err(e),
-            },
-            Err(Error::NotFound) => Ok(FastbootEraseAction::EraseAsPhysicalPartition),
             Err(e) => Err(e),
         }
     }

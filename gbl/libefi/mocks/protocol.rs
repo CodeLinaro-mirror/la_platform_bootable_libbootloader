@@ -24,8 +24,8 @@ pub use efi::protocol::{Revision, Versioned};
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
     GblEfiAvbLockState, GblEfiAvbLockType, GblEfiAvbPartitionAttributes, GblEfiAvbPartitionFlags,
-    GblEfiAvbVerificationResult, GblEfiFastbootCommandExecResult, GblEfiFastbootEraseAction,
-    GblEfiFastbootMessageType, GblEfiVerifiedDeviceTree,
+    GblEfiAvbVerificationResult, GblEfiFastbootCommandExecResult, GblEfiFastbootMessageType,
+    GblEfiVerifiedDeviceTree,
 };
 use liberror::{Error, Result};
 use mockall::mock;
@@ -416,11 +416,6 @@ pub mod gbl_efi_fastboot {
 
         /// Protocol<'_, GblFastbootProtocol>::get_staged.
         pub fn get_staged(&self, _: &mut [u8]) -> Result<(usize, usize)> {
-            unimplemented!()
-        }
-
-        /// Protocol<'_, GblFastbootProtocol>::vendor_erase()`
-        pub fn vendor_erase(&self, _: &CStr) -> Result<GblEfiFastbootEraseAction> {
             unimplemented!()
         }
 

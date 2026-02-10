@@ -51,7 +51,6 @@ typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
   GBL_EFI_FASTBOOT_GET_VAR                      GetVar;
   GBL_EFI_FASTBOOT_GET_VAR_ALL                  GetVarAll;
   GBL_EFI_FASTBOOT_GET_STAGED                   GetStaged;
-  GBL_EFI_FASTBOOT_VENDOR_ERASE                 VendorErase;
   GBL_EFI_FASTBOOT_COMMAND_EXEC                 CommandExec;
   GBL_EFI_FASTBOOT_GET_PARTITION_TYPE           GetPartitionType;
 } GBL_EFI_FASTBOOT_PROTOCOL;
@@ -87,12 +86,6 @@ See
 Read OEM provided payload for uploading to fastboot host by command
 `fastboot get_staged`. See
 [`GBL_EFI_FASTBOOT_PROTOCOL.GetStaged()`](#gbl_efi_fastboot_protocolgetstaged).
-
-**VendorErase**
-
-Performs vendor specific erase for a partition during handling of
-`fastboot erase <partition>` See
-[`GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`](#gbl_efi_fastboot_protocolvendorerase).
 
 **CommandExec**
 
@@ -325,74 +318,6 @@ payload and then retrieve the payload via `fastboot get_staged` from the host.
 | `EFI_SUCCESS`           | The call completed successfully.                          |
 | `EFI_INVALID_PARAMETER` | Any of _Out_, _OutLen_, _RemainingSize_ is `NULL`.        |
 | `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state. |
-
-## `GBL_EFI_FASTBOOT_PROTOCOL.VendorErase()`
-
-### Summary
-
-Performs vendor specific erase for a partition.
-
-### Prototype
-
-```c
-typedef
-EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_VENDOR_ERASE)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL*       Self,
-    IN CHAR8*                           PartName,
-    OUT GBL_EFI_FASTBOOT_ERASE_ACTION*  Action
-);
-```
-
-### Parameters
-
-_Self_
-
-A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
-instance.
-
-_PartName_
-
-The name of the partition to query as a UTF-8 encoded, Null-terminated string.
-This should be the same partition name passed from `fastboot erase <partition>`.
-
-_Action_
-
-On exit, stores the action for the caller to perform. See definition of
-`GBL_EFI_FASTBOOT_ERASE_ACTION`.
-
-### Description
-
-The API is for firmware to implement vendor specific erase logic during handling
-of `fastboot erase <partition>`. This can be used for partiitons that are
-virtual (i.e. metadata, cache) and partitions whose erase requires side effect
-such as resetting of metadata stored somewhere else.
-
-On exit, the API can suggest actions caller should take. If firmware wants the
-caller to treat the partition as a regular on-disk partition and perform a
-normal erase, `Action` should be set to `ERASE_AS_PHYSICAL_PARTITION`. If
-firmware has performed all necessary erase work and caller doesn't need to do
-anything, `Action` should be set to `NOOP`.
-
-### Related Definitions
-
-```c
-enum {
-  // Treats the partition as a physical partition on disk and erases it.
-  GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION,
-  // Ignores the partition.
-  GBL_EFI_FASTBOOT_ERASE_ACTION_NOOP,
-};
-typedef uint32_t GBL_EFI_FASTBOOT_ERASE_ACTION;
-```
-
-### Status Codes
-
-| Return Code             | Semantics                                                     |
-| :---------------------- | :------------------------------------------------------------ |
-| `EFI_SUCCESS`           | The partition permision information was successfully queried. |
-| `EFI_INVALID_PARAMETER` | _PartName_ or _Action_ is `NULL`.                             |
-| `EFI_DEVICE_ERROR`      | An internal device error occurred.                            |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.CommandExec()`
 

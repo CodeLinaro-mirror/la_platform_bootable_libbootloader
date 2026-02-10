@@ -83,14 +83,6 @@ pub enum PartitionBuffer<T> {
     Designated(T),
 }
 
-/// Represents the action returned by `Self::fastboot_vendor_erase()` for the caller to take.
-pub enum FastbootEraseAction {
-    /// Nothing needs to be done.
-    Noop,
-    /// Erase as a physical partition.
-    EraseAsPhysicalPartition,
-}
-
 /// Requested random number generator algorithm.
 pub enum RngAlgorithm {
     /// No specific algorithm is required. Up to implementation to decide.
@@ -546,11 +538,6 @@ pub trait GblOps<'a> {
     /// * On success, returns the size of the actual read data and size of remaining data.
     fn fastboot_get_staged(&mut self, _out: &mut [u8]) -> Result<(usize, usize), Error>;
 
-    /// Performs vendor specific erase for the given partition `part`.
-    ///
-    /// On success returns Ok(action), where `action` represents the action the caller should take
-    fn fastboot_vendor_erase(&mut self, _part: &str) -> Result<FastbootEraseAction, Error>;
-
     /// Checks if the given fastboot command is allowed.
     ///
     /// # Args:
@@ -998,11 +985,6 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
         unreachable!();
     }
 
-    fn fastboot_vendor_erase(&mut self, _part: &str) -> Result<FastbootEraseAction, Error> {
-        // Ramboot should not need this.
-        unreachable!();
-    }
-
     fn fastboot_command_exec<'arg, Sender: InfoSender + OkaySender + FailSender>(
         &mut self,
         _: impl Iterator<Item = &'arg CStr> + Clone,
@@ -1234,10 +1216,6 @@ pub(crate) mod test {
 
         /// Number of times `Self::fixup_bootconfig()` is called.
         fixup_bootconfig_calls: u8,
-
-        /// Handler for `Self::vendor_erase`
-        pub vendor_erase_handler:
-            Option<&'a mut dyn FnMut(&str) -> Result<FastbootEraseAction, Error>>,
 
         /// Handler for `Self::fastboot_command_exec`.
         pub fastboot_command_exec_handler: Option<
@@ -1699,13 +1677,6 @@ pub(crate) mod test {
                 .unwrap())
         }
 
-        fn fastboot_vendor_erase(&mut self, part: &str) -> Result<FastbootEraseAction, Error> {
-            self.vendor_erase_handler
-                .as_mut()
-                .map(|v| v(part))
-                .unwrap_or(Ok(FastbootEraseAction::EraseAsPhysicalPartition))
-        }
-
         fn fastboot_command_exec<'arg, Sender: InfoSender + OkaySender + FailSender>(
             &mut self,
             args: impl Iterator<Item = &'arg CStr> + Clone,
@@ -2067,10 +2038,6 @@ pub(crate) mod test {
         }
 
         fn fastboot_get_unlock_ability(&mut self) -> Result<Unlockability, Error> {
-            Err(Error::Unsupported)
-        }
-
-        fn fastboot_vendor_erase(&mut self, _part: &str) -> Result<FastbootEraseAction, Error> {
             Err(Error::Unsupported)
         }
 

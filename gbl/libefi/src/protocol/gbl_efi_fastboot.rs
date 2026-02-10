@@ -26,10 +26,9 @@ use core::{
     str::from_utf8,
 };
 use efi_types::{
-    EfiGuid, EfiStatus, GblEfiFastbootCommandExecResult, GblEfiFastbootEraseAction,
-    GblEfiFastbootMessageType, GblEfiFastbootProtocol,
-    GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
-    GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION, GBL_EFI_FASTBOOT_PROTOCOL_REVISION,
+    EfiGuid, EfiStatus, GblEfiFastbootCommandExecResult, GblEfiFastbootMessageType,
+    GblEfiFastbootProtocol, GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
+    GBL_EFI_FASTBOOT_PROTOCOL_REVISION,
 };
 use liberror::{result_to_efi_status, Error, Result};
 
@@ -226,25 +225,6 @@ impl Protocol<'_, GblFastbootProtocol> {
             )?;
         }
         Ok(out_impl)
-    }
-
-    /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.vendor_erase()`.
-    pub fn vendor_erase(&self, part_name: &CStr) -> Result<GblEfiFastbootEraseAction> {
-        let mut out_action: GblEfiFastbootEraseAction =
-            GBL_EFI_FASTBOOT_ERASE_ACTION_ERASE_AS_PHYSICAL_PARTITION;
-        // SAFETY:
-        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // * `part_name.as_ptr()` points to a null-terminated string and outlives the call.
-        // * `out_action` is for output only and outlives the call.
-        unsafe {
-            efi_call!(
-                self.interface().vendor_erase,
-                self.interface_ptr(),
-                part_name.as_ptr() as _,
-                &mut out_action
-            )?
-        };
-        Ok(out_action)
     }
 
     /// Wrapper of `GBL_EFI_FASTBOOT_PROTOCOL.get_partition_type()`.
