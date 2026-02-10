@@ -1703,14 +1703,14 @@ pub(crate) mod test {
             default_test_gbl_ops, read_test_data,
         },
         constants::{KiB, MiB, KERNEL_ALIGNMENT},
-        gbl_avb::AvbDeviceStatus,
+        gbl_avb::{AvbDeviceStatus, LoadPartition},
         misc::test::read_bootloader_message,
         ops::{
             test::{
                 into_refmut_bytes, slot, slot_successful, slot_unbootable, FakeGblOps,
                 FakeGblOpsStorage, SenderMessage,
             },
-            FastbootPartitionType, Partition, PartitionBuffer,
+            FastbootPartitionType, PartitionBuffer,
         },
         Os,
     };
@@ -4208,16 +4208,16 @@ pub(crate) mod test {
         // Use preloaded buffers so that we can test that `GblOps::get_partition_buffer()` allows
         // backend to handle buffer acquire and release.
         let preloaded = vec![
-            (Partition::VendorKernelBoot, "vendor_kernel_boot_a.img"),
-            (Partition::VendorBoot, "vendor_boot_v4_a.img"),
-            (Partition::InitBoot, "init_boot_a.img"),
+            (LoadPartition::VendorKernelBoot, "vendor_kernel_boot_a.img"),
+            (LoadPartition::VendorBoot, "vendor_boot_v4_a.img"),
+            (LoadPartition::InitBoot, "init_boot_a.img"),
         ];
-        let buffers = HashMap::<Partition, RefCell<Vec<u8>>>::from_iter(
-            preloaded.iter().map(|(p, f)| (p.clone(), read_test_data(f).into())),
+        let buffers = HashMap::<String, RefCell<Vec<u8>>>::from_iter(
+            preloaded.iter().map(|(p, f)| (p.name().to_owned(), read_test_data(f).into())),
         );
-        let get_partition_buffer_handler = |n: &Partition| {
+        let get_partition_buffer_handler = |n: LoadPartition| {
             Ok(PartitionBuffer::Preloaded(into_refmut_bytes(
-                buffers.get(n).ok_or(Error::NotFound)?.borrow_mut(),
+                buffers.get(n.name()).ok_or(Error::NotFound)?.borrow_mut(),
             )))
         };
 

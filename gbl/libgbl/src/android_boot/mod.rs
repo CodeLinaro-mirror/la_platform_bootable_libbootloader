@@ -15,7 +15,7 @@
 //! Android boot support.
 
 use crate::{
-    constants::{Partition, FDT_ALIGNMENT},
+    constants::FDT_ALIGNMENT,
     device_tree::{
         DeviceTreeComponentSource, DeviceTreeComponentType, DeviceTreeComponentsRegistry,
     },
@@ -25,7 +25,7 @@ use crate::{
         GblFastbootResult, GblFbData, GblGenericTransport, GblTcpStream, LoadedImageInfo,
         PinFutContainer, Shared,
     },
-    gbl_avb::{ArrayMaxParts, ArrayMaxRequestedParts},
+    gbl_avb::{ArrayMaxParts, ArrayMaxRequestedParts, LoadPartition, Verification},
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message},
     ops::{OneShotBootMode, PartitionBuffer},
@@ -68,15 +68,15 @@ fn cstr_bytes_to_str(data: &[u8]) -> core::result::Result<&str, Error> {
 }
 
 /// The set of partitions we always verify with libavb for Android boot.
-pub const STANDARD_PARTITIONS: &[Partition] = &[
+pub const STANDARD_PARTITIONS: &[LoadPartition] = &[
     // LINT.IfChange(always_verify_partitions)
-    Partition::Boot,
-    Partition::VendorBoot,
-    Partition::VendorKernelBoot,
-    Partition::InitBoot,
-    Partition::Dtb,
-    Partition::Dtbo,
-    Partition::Pvmfw,
+    LoadPartition::Boot,
+    LoadPartition::VendorBoot,
+    LoadPartition::VendorKernelBoot,
+    LoadPartition::InitBoot,
+    LoadPartition::Dtb,
+    LoadPartition::Dtbo,
+    LoadPartition::Pvmfw,
     // LINT.ThenChange(/gbl/docs/gbl_efi_avb_protocol.md:always_verify_partitions)
 ];
 
@@ -90,9 +90,6 @@ pub fn android_load_verify_fixup<'a, 'b>(
     boot_buffer: BootBuffer<'a>,
 ) -> Result<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
     let mut loader = BootBufferLoader::new(boot_buffer);
-
-    let mut partitions: ArrayMaxParts<(Partition, Option<PartitionBuffer<_>>)> =
-        ArrayMaxParts::new();
 
     // Requests custom partitions to verify.
     let requested_partitions = match ops.avb_read_partition_attributes() {
@@ -109,14 +106,17 @@ pub fn android_load_verify_fixup<'a, 'b>(
         Err(e) => return Err(e.into()),
     };
 
+    let mut partitions: ArrayMaxParts<(LoadPartition, Option<PartitionBuffer<_>>)> =
+        ArrayMaxParts::new();
+
     // We need to first store all buffers and then create slices from them. Because they are
     // opaque objects that need to be dereferenced to yield slices.
     for partition in STANDARD_PARTITIONS
         .iter()
-        .cloned()
-        .chain(requested_partitions.iter().map(|p| Partition::PlatformSpecific(p.clone())))
+        .copied()
+        .chain(requested_partitions.iter().map(|p| LoadPartition::PlatformSpecific(&p)))
     {
-        let b = match ops.get_partition_buffer(&partition) {
+        let b = match ops.get_partition_buffer(partition) {
             Ok(b) => {
                 let info = match b {
                     PartitionBuffer::Preloaded(_) => "preloaded",
@@ -139,15 +139,15 @@ pub fn android_load_verify_fixup<'a, 'b>(
     // failure on locked devices.
     for (partition, buffer) in partitions.iter_mut() {
         match buffer {
-            Some(buffer) => partitions_to_verify.try_push_preloaded(partition, buffer)?,
+            Some(buffer) => partitions_to_verify.try_push_preloaded(*partition, buffer)?,
             None => {
                 // TODO(b/337846185): Android partitions listed in vbmeta must be loaded or boot
                 // fails, so this size check should be removed. For now, it's kept to allow reusing
                 // the same vbmeta in unit tests without providing all partitions.
-                if !partition.optional()
+                if partition.verification() == Verification::Required
                     || ops.partition_size(&slotted_part(partition.name(), slot))?.is_some()
                 {
-                    partitions_to_verify.try_push(partition)?
+                    partitions_to_verify.try_push(*partition)?
                 }
             }
         }
@@ -766,7 +766,7 @@ pub(crate) mod tests {
         fastboot::test::{make_expected_transport_out, SharedTestListener},
         gbl_avb::{
             state::{BootStateColor, KeyValidationStatus},
-            AvbPartition, AvbProperty,
+            AvbPartition, AvbProperty, SpecializedPartition,
         },
         misc::test::read_bootloader_message,
         ops::{
@@ -1054,8 +1054,9 @@ androidboot.veritymode.managed=yes
     /// # Args
     ///
     /// * `slot`: Slot.
-    /// * `partitions`: Partition data for disk.
-    /// * `extra_partitions`: FW-specific partition requested to load/verify.
+    /// * `partitions`: LoadPartition data for disk.
+    /// * `extra_partitions`: FW-specific partition requested to load/verify. For now these are
+    ///                       always given `Verification::Required`.
     /// * `unlock`: Unlock state.
     /// * `rollback_idx`: Rollback index at location TEST_ROLLBACK_INDEX_LOCATION.
     /// * `load`: A BootBuffer.
@@ -1106,11 +1107,16 @@ androidboot.veritymode.managed=yes
         };
         ops.avb_handle_verification_result = Some(&mut handler);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
-        ops.avb_partitions_to_verify = Some(Ok(extra_partitions
+        ops.avb_partition_attributes = Some(Ok(extra_partitions
             .into_iter()
-            .cloned()
-            .map(|p| p.to_owned())
-            .collect::<Vec<String>>()));
+            .map(|name| {
+                let mut part = SpecializedPartition::default();
+                let name_bytes = name.as_bytes();
+                part.name_buffer_mut()[..name_bytes.len()].copy_from_slice(name_bytes);
+                part.verification = Some(Verification::Required);
+                part
+            })
+            .collect::<Vec<SpecializedPartition>>()));
 
         let designated_ramdisk = boot_buffer.ramdisk.as_ref().map(|v| v.as_ptr());
         let designated_fdt = boot_buffer.fdt.as_ref().map(|v| v.as_ptr());
@@ -1932,24 +1938,31 @@ androidboot.veritymode.managed=yes
         storage.add_raw_device(c"init_boot_a", read_test_data("init_boot_a.img"));
         storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v4_v4_init_boot_a.img"));
 
-        let image_buffers: Vec<(Partition, RefCell<Vec<u8>>, bool)> = vec![
+        let image_buffers: Vec<(LoadPartition, RefCell<Vec<u8>>, bool)> = vec![
             // Preloaded.
-            (Partition::Boot, read_test_data("boot_no_ramdisk_v4_a.img").into(), true),
-            (Partition::VendorKernelBoot, read_test_data("vendor_kernel_boot_a.img").into(), true),
+            (LoadPartition::Boot, read_test_data("boot_no_ramdisk_v4_a.img").into(), true),
+            (
+                LoadPartition::VendorKernelBoot,
+                read_test_data("vendor_kernel_boot_a.img").into(),
+                true,
+            ),
             // Designated load
             (
-                Partition::VendorBoot,
+                LoadPartition::VendorBoot,
                 vec![0u8; read_test_data("vendor_boot_v4_a.img").len()].into(),
                 false,
             ),
-            (Partition::InitBoot, vec![0u8; read_test_data("init_boot_a.img").len()].into(), false),
+            (
+                LoadPartition::InitBoot,
+                vec![0u8; read_test_data("init_boot_a.img").len()].into(),
+                false,
+            ),
         ];
         let vendor_boot_addr = image_buffers[2].1.borrow_mut().as_ptr_range();
         let init_boot_addr = image_buffers[3].1.borrow_mut().as_ptr_range();
 
-        let get_partition_buffer_handler = |img: &Partition| {
-            let (_, buf, pre) =
-                image_buffers.iter().find(|v| &v.0 == img).ok_or(Error::NotFound)?;
+        let get_partition_buffer_handler = |img: LoadPartition| {
+            let (_, buf, pre) = image_buffers.iter().find(|v| v.0 == img).ok_or(Error::NotFound)?;
             match pre {
                 true => Ok(PartitionBuffer::Preloaded(into_refmut_bytes(buf.borrow_mut()))),
                 _ => Ok(PartitionBuffer::Designated(into_refmut_bytes(buf.borrow_mut()))),
@@ -2466,8 +2479,10 @@ androidboot.veritymode.managed=yes
         // Set up designated load buffer for boot_a image
         let img_len = read_test_data("boot_v2_a.img").len();
         let buf = RefCell::new(vec![0u8; img_len]);
-        let get_partition_buffer_handler = |img: &Partition| match img {
-            Partition::Boot => Ok(PartitionBuffer::Designated(into_refmut_bytes(buf.borrow_mut()))),
+        let get_partition_buffer_handler = |img: LoadPartition| match img {
+            LoadPartition::Boot => {
+                Ok(PartitionBuffer::Designated(into_refmut_bytes(buf.borrow_mut())))
+            }
             _ => Err(Error::NotFound),
         };
 
@@ -2521,8 +2536,10 @@ androidboot.veritymode.managed=yes
         // Set up designated load buffer for boot_a image
         let img_len = read_test_data("boot_v2_a.img").len();
         let buf = RefCell::new(vec![0u8; img_len]);
-        let get_partition_buffer_handler = |img: &Partition| match img {
-            Partition::Boot => Ok(PartitionBuffer::Designated(into_refmut_bytes(buf.borrow_mut()))),
+        let get_partition_buffer_handler = |img: LoadPartition| match img {
+            LoadPartition::Boot => {
+                Ok(PartitionBuffer::Designated(into_refmut_bytes(buf.borrow_mut())))
+            }
             _ => Err(Error::NotFound),
         };
 

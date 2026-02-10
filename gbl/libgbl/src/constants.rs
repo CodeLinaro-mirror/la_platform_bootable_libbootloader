@@ -16,12 +16,8 @@
 
 // TODO(b/380392958) Cleanup other used of the constants. Move them here as well.
 
-use crate::gbl_avb::RequestedPartition;
 use arrayvec::ArrayString;
-use core::{
-    ffi::CStr,
-    fmt::{Debug, Display, Formatter},
-};
+use core::fmt::{Debug, Display, Formatter};
 use static_assertions::const_assert_eq;
 #[cfg(feature = "fuchsia")]
 use zbi::ZBI_ALIGNMENT_USIZE;
@@ -135,59 +131,5 @@ impl ImageType {
 impl Display for ImageType {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.name())
-    }
-}
-
-/// Represents a standard boot partition.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum Partition {
-    /// boot
-    Boot,
-    /// vendor_boot
-    VendorBoot,
-    /// vendor_kernel_boot
-    VendorKernelBoot,
-    /// init_boot,
-    InitBoot,
-    /// dtb
-    Dtb,
-    /// dtbo
-    Dtbo,
-    /// pVM firmware data
-    Pvmfw,
-    /// Platform specific partition.
-    // Use `RequestedPartition` to be compatible with FW-specific partitions and libavb partition
-    // name size limitations.
-    PlatformSpecific(RequestedPartition),
-}
-
-impl Partition {
-    /// Returns slotless partition name as &str.
-    pub fn name(&self) -> &str {
-        self.name_cstr().to_str().unwrap()
-    }
-
-    /// Returns slotless partition name as &CStr.
-    pub fn name_cstr(&self) -> &CStr {
-        match self {
-            Self::Boot => c"boot",
-            Self::VendorBoot => c"vendor_boot",
-            Self::VendorKernelBoot => c"vendor_kernel_boot",
-            Self::InitBoot => c"init_boot",
-            Self::Dtb => c"dtb",
-            Self::Dtbo => c"dtbo",
-            Self::Pvmfw => c"pvmfw",
-            Self::PlatformSpecific(v) => v.name_cstr(),
-        }
-    }
-
-    /// Returns flag indecating partition is optional to be loaded/verified.
-    pub fn optional(&self) -> bool {
-        match self {
-            Self::PlatformSpecific(v) => v.optional,
-            // Treat all standard partitions as optional. The loading logic will decide which ones
-            // are actually required.
-            _ => true,
-        }
     }
 }

@@ -14,13 +14,14 @@
 
 //! GblOps trait that defines GBL callbacks.
 
-pub use crate::{constants::Partition, slots::BootToken};
+pub use crate::slots::BootToken;
 use crate::{
     constants::FASTBOOT_PARTITION_TYPE_LEN,
     error::Result as GblResult,
     gbl_avb::{
         state::{KeyValidationStatus, VerificationStatus},
-        ArrayMaxRequestedParts, AvbDeviceStatus, AvbPartition, AvbProperty, RequestedPartition,
+        ArrayMaxRequestedParts, AvbDeviceStatus, AvbPartition, AvbProperty, LoadPartition,
+        SpecializedPartition,
     },
     gbl_println,
     partition::{
@@ -303,7 +304,7 @@ pub trait GblOps<'a> {
     /// Reads the partitions GBL will try to load and verify.
     fn avb_read_partition_attributes(
         &mut self,
-    ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>>;
+    ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>>;
 
     /// Reads the AVB device status.
     fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus>;
@@ -405,7 +406,7 @@ pub trait GblOps<'a> {
     /// data.
     fn get_partition_buffer(
         &self,
-        img: &Partition,
+        img: LoadPartition,
     ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error>;
 
     /// Notifies the firmware to inspect or update buffer for return by `get_partition_buffer()`.
@@ -752,7 +753,7 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
 
     fn avb_read_partition_attributes(
         &mut self,
-    ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
+    ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>> {
         self.ops.avb_read_partition_attributes()
     }
 
@@ -796,7 +797,7 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
 
     fn get_partition_buffer(
         &self,
-        img: &Partition,
+        img: LoadPartition,
     ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
         self.ops.get_partition_buffer(img)
     }
@@ -1010,7 +1011,6 @@ pub(crate) mod test {
     use super::*;
     use crate::{
         android_boot::device_tree::{PROP_BOOTARGS, RNG_SEED_SIZE_BYTES},
-        constants::Partition,
         device_tree::DeviceTreeComponentType,
         partition::GblDisk,
         slots::Bootability,
@@ -1135,8 +1135,8 @@ pub(crate) mod test {
         /// For return by `Self::get_random_bytes()`
         pub get_random_bytes_error: Option<Error>,
 
-        /// For return by `Self::avb_read_partition_attributes`
-        pub avb_partitions_to_verify: Option<AvbIoResult<Vec<String>>>,
+        /// For return by `Self::avb_read_partition_attributes()`
+        pub avb_partition_attributes: Option<AvbIoResult<Vec<SpecializedPartition>>>,
 
         /// For return by `Self::avb_read_device_status`
         pub avb_device_status_error: Option<AvbIoError>,
@@ -1202,7 +1202,7 @@ pub(crate) mod test {
 
         /// Handler for `get_partition_buffer`
         pub get_partition_buffer_handler:
-            Option<&'a dyn Fn(&Partition) -> Result<PartitionBuffer<RefMut<'a, [u8]>>, Error>>,
+            Option<&'a dyn Fn(LoadPartition) -> Result<PartitionBuffer<RefMut<'a, [u8]>>, Error>>,
 
         /// Handler for `sync_partition_buffer`
         pub sync_partition_buffer_handler:
@@ -1387,18 +1387,13 @@ pub(crate) mod test {
 
         fn avb_read_partition_attributes(
             &mut self,
-        ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
-            let mut requested_partitions = ArrayMaxRequestedParts::new();
-            let names =
-                self.avb_partitions_to_verify.clone().unwrap_or(Err(AvbIoError::NotImplemented))?;
-
-            names.iter().for_each(|n| {
-                let mut requested_partition = RequestedPartition::default();
-                requested_partition.name_buffer_mut()[..n.len()].copy_from_slice(n.as_bytes());
-                requested_partitions.push(requested_partition.clone());
-            });
-
-            Ok(requested_partitions)
+        ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>> {
+            Ok(self
+                .avb_partition_attributes
+                .clone()
+                .unwrap_or(Err(AvbIoError::NotImplemented))?
+                .into_iter()
+                .collect())
         }
 
         fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
@@ -1518,7 +1513,7 @@ pub(crate) mod test {
 
         fn get_partition_buffer(
             &self,
-            img: &Partition,
+            img: LoadPartition,
         ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
             self.get_partition_buffer_handler.as_ref().ok_or(Error::NotFound)?(img)
         }
@@ -1844,7 +1839,7 @@ pub(crate) mod test {
 
         fn avb_read_partition_attributes(
             &mut self,
-        ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
+        ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>> {
             Err(AvbIoError::NotImplemented)
         }
 
@@ -1887,7 +1882,7 @@ pub(crate) mod test {
 
         fn get_partition_buffer(
             &self,
-            _: &Partition,
+            _: LoadPartition,
         ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'a>, Error> {
             Err::<PartitionBuffer<&mut [u8]>, _>(Error::Unsupported)
         }

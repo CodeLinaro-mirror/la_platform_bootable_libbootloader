@@ -85,16 +85,29 @@ pub struct AvbPartition<'a> {
     pub data: &'a [u8],
 }
 
-/// Partition requested by FW for loading and verification. Contains a name buffer and a
-/// flag indicating whether the partition is optional.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct RequestedPartition {
-    name_buffer: [u8; PARTITION_NAME_MAX_SIZE],
-    /// Indicates the partition is optional to be loaded/verified.
-    pub optional: bool,
+/// The different kinds of verification that can be requested for `SpecializedPartition`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Verification {
+    /// The partition must exist and must be successfully verified by vbmeta.
+    Required,
+    /// Only verify the partition if it exists and has a hash descriptor in the vbmeta blob.
+    IfExists,
 }
 
-impl RequestedPartition {
+/// A partition which has specialized handling requirements.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SpecializedPartition {
+    name_buffer: [u8; PARTITION_NAME_MAX_SIZE],
+    /// How to verify this partition, or `None` if this partition does not need to be verified.
+    pub verification: Option<Verification>,
+    /// Whether this partition is linked to FDR.
+    pub fdr: bool,
+    /// Whether this partition should be critically-locked. Critically-locked partitions must
+    /// not be modifiable from fastboot while the critical lock is set.
+    pub critical: bool,
+}
+
+impl SpecializedPartition {
     /// Returns a mutable byte slice for the partition name. It is the caller's responsibility
     /// to ensure that only UTF-8 characters are copied into the returned buffer. Otherwise,
     /// the subsequent `name_cstr()` call will cause a panic.
@@ -112,26 +125,86 @@ impl RequestedPartition {
     }
 }
 
+/// Represents a partition to load and verify during boot.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum LoadPartition<'a> {
+    /// boot
+    Boot,
+    /// vendor_boot
+    VendorBoot,
+    /// vendor_kernel_boot
+    VendorKernelBoot,
+    /// init_boot,
+    InitBoot,
+    /// dtb
+    Dtb,
+    /// dtbo
+    Dtbo,
+    /// pVM firmware data
+    Pvmfw,
+    /// Platform specific partition.
+    ///
+    /// It's up to the caller to ensure that:
+    /// * `SpecializedPartition.name_buffer` is valid nul-terminated UTF-8
+    /// * `SpecializedPartition.verification` is `Some`
+    /// or else trying to use this partition later will panic.
+    PlatformSpecific(&'a SpecializedPartition),
+}
+
+impl<'a> LoadPartition<'a> {
+    /// Returns slotless partition name as &str.
+    /// Panics if a `PlatformSpecific` partition has an invalid `name`.
+    pub fn name(&self) -> &'a str {
+        self.name_cstr().to_str().unwrap()
+    }
+
+    /// Returns slotless partition name as &CStr.
+    /// Panics if a `PlatformSpecific` partition has an invalid `name`.
+    pub fn name_cstr(&self) -> &'a CStr {
+        match self {
+            Self::Boot => c"boot",
+            Self::VendorBoot => c"vendor_boot",
+            Self::VendorKernelBoot => c"vendor_kernel_boot",
+            Self::InitBoot => c"init_boot",
+            Self::Dtb => c"dtb",
+            Self::Dtbo => c"dtbo",
+            Self::Pvmfw => c"pvmfw",
+            Self::PlatformSpecific(part) => part.name_cstr(),
+        }
+    }
+
+    /// Returns verification type.
+    /// Panics if a `PlatformSpecific` partition is not requesting verification.
+    pub fn verification(&self) -> Verification {
+        match self {
+            Self::PlatformSpecific(part) => part.verification.unwrap(),
+            // Treat all standard partitions as optional. The loading logic will decide which ones
+            // are actually required.
+            _ => Verification::IfExists,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     #[test]
     fn test_requested_partition_default_is_empty() {
-        assert_eq!(RequestedPartition::default().name_cstr(), c"");
+        assert_eq!(SpecializedPartition::default().name_cstr(), c"");
     }
 
     #[test]
     fn test_requested_partition_exposed_buffer_len() {
         assert_eq!(
-            RequestedPartition::default().name_buffer_mut().len(),
+            SpecializedPartition::default().name_buffer_mut().len(),
             PARTITION_NAME_MAX_SIZE - 3
         );
     }
 
     #[test]
     fn test_requested_partition_form_partition_name() {
-        let mut partition = RequestedPartition::default();
+        let mut partition = SpecializedPartition::default();
         let partition_name = b"boot";
 
         let slice = partition.name_buffer_mut();

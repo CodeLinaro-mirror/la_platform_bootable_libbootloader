@@ -61,12 +61,12 @@ use libgbl::{
     gbl_avb::{
         state::{BootStateColor, KeyValidationStatus, VerificationStatus},
         ArrayMaxParts, ArrayMaxRequestedParts, AvbDeviceStatus, AvbPartition, AvbProperty,
-        RequestedPartition,
+        LoadPartition, SpecializedPartition, Verification,
     },
     gbl_println,
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootPartitionType,
-        InfoSender, LockState, LockType, OkaySender, OneShotBootMode, Partition, PartitionBuffer,
+        InfoSender, LockState, LockType, OkaySender, OneShotBootMode, PartitionBuffer,
         RngAlgorithm as GblRngAlgorithm, Slot, SHA256_DIGEST_SIZE,
     },
     partition::{GblDisk, RawName},
@@ -393,7 +393,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     // generalize it to be able to provide other partition attributes as well.
     fn avb_read_partition_attributes(
         &mut self,
-    ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
+    ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>> {
         match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
         {
             Ok(protocol) => {
@@ -406,7 +406,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
                         .take(partitions_ffi.capacity()),
                 );
                 partitions
-                    .extend(repeat_with(RequestedPartition::default).take(partitions.capacity()));
+                    .extend(repeat_with(SpecializedPartition::default).take(partitions.capacity()));
 
                 partitions.iter_mut().zip(partitions_ffi.iter_mut()).for_each(
                     |(partition, partition_ffi)| {
@@ -456,27 +456,32 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
                         source_ffi.base_name_len < source_name_buf.len(),
                         "Partition name is too long"
                     );
-                    // Add the null terminator for libavb and set the `optional` flag.
+                    // Add the null terminator for libavb.
                     source_name_buf[source_ffi.base_name_len] = 0;
-                    source_part.optional =
-                        (source_ffi.flags & GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS) != 0;
 
-                    // Providing both VERIFY and VERIFY_IF_EXISTS is an API violation.
-                    // Do this after adding the null terminator so we can easily print the
-                    // partition name, and delay returning until after the loop so we print all
-                    // offenders.
-                    if source_ffi.flags & VERIFY_MASK == VERIFY_MASK {
-                        efi_println!(
-                            self.efi_entry,
-                            "Error: '{}' cannot specify both VERIFY and VERIFY_IF_EXISTS",
-                            source_part.name_cstr().to_str().unwrap_or("<invalid name>")
-                        );
-                        found_invalid_verify_flags = true;
-                    }
+                    source_part.verification = match source_ffi.flags & VERIFY_MASK {
+                        0 => None,
+                        GBL_EFI_AVB_PARTITION_FLAG_VERIFY => Some(Verification::Required),
+                        GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS => Some(Verification::IfExists),
+                        VERIFY_MASK => {
+                            // Providing both VERIFY and VERIFY_IF_EXISTS is an API violation.
+                            // Delay returning until after the loop so we print all offenders.
+                            efi_println!(
+                                self.efi_entry,
+                                "Error: '{}' cannot specify both VERIFY and VERIFY_IF_EXISTS",
+                                source_part.name_cstr().to_str().unwrap_or("<invalid name>")
+                            );
+                            found_invalid_verify_flags = true;
+                            None
+                        }
+                        // The compiler doesn't take bitmasks into account for `match` so it
+                        // still requires us to provide a catch-all arm.
+                        _ => unreachable!(),
+                    };
 
                     // Now copy this down to the next open slot in the front of the array.
                     if dest_index != source_index {
-                        partitions[dest_index] = partitions[source_index];
+                        partitions[dest_index] = partitions[source_index].clone();
                     }
                     dest_index += 1;
                 }
@@ -731,7 +736,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
 
     fn get_partition_buffer(
         &self,
-        part: &Partition,
+        part: LoadPartition,
     ) -> Result<PartitionBuffer<impl DerefMut<Target = [u8]> + 'b>> {
         Ok(match gbl_get_partition_buffer(self.efi_entry, part.name())? {
             v if v.is_preloaded() => PartitionBuffer::Preloaded(v),
@@ -1226,7 +1231,7 @@ mod test {
     /// Helper for testing `avb_read_partition_attributes`.
     fn test_avb_read_partition_attributes(
         call_status: ProtocolCallStatus<&[(&str, u64)]>,
-    ) -> AvbIoResult<ArrayMaxRequestedParts<RequestedPartition>> {
+    ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>> {
         let mut mock_efi = MockEfi::new();
         // Just make any writes to the console silently succeed.
         mock_efi.con_out.expect_write_str().times(..).return_const(Ok(()));
@@ -1254,13 +1259,13 @@ mod test {
         ops.avb_read_partition_attributes()
     }
 
-    /// A helper to create a `RequestedPartition` filled with these values.
-    fn make_requested_partition(name: &str, optional: bool) -> RequestedPartition {
-        let mut partition = RequestedPartition::default();
+    /// A helper to create a `SpecializedPartition` filled with these values.
+    fn make_requested_partition(name: &str, verification: Verification) -> SpecializedPartition {
+        let mut partition = SpecializedPartition::default();
 
         let name_bytes = name.as_bytes();
         partition.name_buffer_mut()[..name_bytes.len()].copy_from_slice(name_bytes);
-        partition.optional = optional;
+        partition.verification = Some(verification);
 
         partition
     }
@@ -1280,9 +1285,9 @@ mod test {
         assert_eq!(
             &result[..],
             [
-                make_requested_partition("boot", false),
-                make_requested_partition("vendor_boot", true),
-                make_requested_partition(&"a".repeat(28), false)
+                make_requested_partition("boot", Verification::Required),
+                make_requested_partition("vendor_boot", Verification::IfExists),
+                make_requested_partition(&"a".repeat(28), Verification::Required)
             ]
         );
     }
@@ -1310,10 +1315,10 @@ mod test {
         assert_eq!(
             &result[..],
             [
-                make_requested_partition("verify", false),
-                make_requested_partition("if_exists", true),
-                make_requested_partition("if_exists_critical", true),
-                make_requested_partition("verify2", false)
+                make_requested_partition("verify", Verification::Required),
+                make_requested_partition("if_exists", Verification::IfExists),
+                make_requested_partition("if_exists_critical", Verification::IfExists),
+                make_requested_partition("verify2", Verification::Required)
             ]
         );
     }

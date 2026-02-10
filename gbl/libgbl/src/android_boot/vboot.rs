@@ -15,11 +15,10 @@
 //! Contains APIs for performaing android verified boot.
 
 use crate::{
-    constants::Partition,
     gbl_avb::{
         ops::{GblAvbOps, PreloadBufferState, AVB_DIGEST_KEY},
         state::{BootStateColor, KeyValidationStatus, VerificationStatus},
-        ArrayMaxParts, MAX_PARTITIONS_TO_VERIFY,
+        ArrayMaxParts, LoadPartition, Verification, MAX_PARTITIONS_TO_VERIFY,
     },
     gbl_println,
     ops::{PartitionBuffer, Slot},
@@ -37,13 +36,13 @@ use liberror::Error;
 
 /// A container holding partitions for libavb verification
 pub struct PartitionsToVerify<'a> {
-    partitions: ArrayMaxParts<&'a Partition>,
+    partitions: ArrayMaxParts<LoadPartition<'a>>,
     preloaded: ArrayMaxParts<(&'a str, PreloadBufferState<'a>)>,
 }
 
 impl<'a> PartitionsToVerify<'a> {
     /// Appends a partition to verify
-    pub fn try_push(&mut self, partition: &'a Partition) -> Result<()> {
+    pub fn try_push(&mut self, partition: LoadPartition<'a>) -> Result<()> {
         self.partitions
             .try_push(partition)
             .or(Err(Error::TooManyPartitions(MAX_PARTITIONS_TO_VERIFY)))?;
@@ -53,7 +52,7 @@ impl<'a> PartitionsToVerify<'a> {
     /// Appends a preloaded partition buffer.
     pub fn try_push_preloaded(
         &mut self,
-        partition: &'a Partition,
+        partition: LoadPartition<'a>,
         buf: &'a mut PartitionBuffer<impl DerefMut<Target = [u8]>>,
     ) -> Result<()> {
         let buf = match buf {
@@ -138,9 +137,13 @@ pub fn avb_verify_slot<'a, 'b: 'c, 'c>(
             names.clear();
             // Look for not verified required partitions.
             names.extend(
-                partitions.iter().filter(|p| !p.optional()).map(|p| p.name_cstr()).filter(|name| {
-                    !verify_data.partition_data().iter().any(|v| v.partition_name() == *name)
-                }),
+                partitions
+                    .iter()
+                    .filter(|p| p.verification() == Verification::Required)
+                    .map(|p| p.name_cstr())
+                    .filter(|name| {
+                        !verify_data.partition_data().iter().any(|v| v.partition_name() == *name)
+                    }),
             );
             let have_missed_partitions = !names.is_empty();
             if have_missed_partitions {
@@ -330,7 +333,7 @@ mod test {
         android_boot::tests::{
             read_test_data, EXPECTED_AVB_PROPS, TEST_ROLLBACK_INDEX, TEST_ROLLBACK_INDEX_LOCATION,
         },
-        gbl_avb::{AvbDeviceStatus, AvbPartition, AvbProperty, RequestedPartition},
+        gbl_avb::{AvbDeviceStatus, AvbPartition, AvbProperty, SpecializedPartition},
         ops::{
             test::{slot, slot_successful, FakeGblOps, FakeGblOpsStorage},
             Slot,
@@ -422,21 +425,21 @@ mod test {
         Ok(())
     }
 
-    fn custom_partition(name: &CStr, optional: bool) -> Partition {
-        let mut requested = RequestedPartition::default();
-        requested.name_buffer_mut()[..name.to_bytes().len()].copy_from_slice(name.to_bytes());
-        requested.optional = optional;
-        Partition::PlatformSpecific(requested.clone())
+    fn custom_partition(name: &CStr, verification: Verification) -> SpecializedPartition {
+        let mut partition = SpecializedPartition::default();
+        partition.name_buffer_mut()[..name.to_bytes().len()].copy_from_slice(name.to_bytes());
+        partition.verification = Some(verification);
+        partition
     }
 
     #[test]
     fn test_avb_verify_slot_success() {
-        let fw = custom_partition(c"fw", false);
+        let fw = custom_partition(c"fw", Verification::Required);
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
-        partitions_to_verify.try_push(&fw).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&fw)).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -471,12 +474,12 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_success_required_partition_missed() {
-        let not_presented = custom_partition(c"not_presented", false);
+        let not_presented = custom_partition(c"not_presented", Verification::Required);
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
-        partitions_to_verify.try_push(&not_presented).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&not_presented)).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -509,12 +512,12 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_success_optional_partition_missed() {
-        let not_presented = custom_partition(c"not_presented", true);
+        let not_presented = custom_partition(c"not_presented", Verification::IfExists);
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
-        partitions_to_verify.try_push(&not_presented).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&not_presented)).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -548,9 +551,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_success_custom_key() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -589,13 +592,13 @@ mod test {
         let mut vendor_boot = read_test_data("vendor_boot_v4_a.img");
 
         let mut preloaded = [
-            (&Partition::Boot, PartitionBuffer::Preloaded(&mut boot[..])),
-            (&Partition::InitBoot, PartitionBuffer::Preloaded(&mut init_boot[..])),
-            (&Partition::VendorBoot, PartitionBuffer::Preloaded(&mut vendor_boot[..])),
+            (LoadPartition::Boot, PartitionBuffer::Preloaded(&mut boot[..])),
+            (LoadPartition::InitBoot, PartitionBuffer::Preloaded(&mut init_boot[..])),
+            (LoadPartition::VendorBoot, PartitionBuffer::Preloaded(&mut vendor_boot[..])),
         ];
         let mut partitions_to_verify = PartitionsToVerify::default();
         for (p, v) in &mut preloaded {
-            partitions_to_verify.try_push_preloaded(p, v).unwrap();
+            partitions_to_verify.try_push_preloaded(*p, v).unwrap();
         }
         let partitions_data = [
             // Required images aren't presented. Have to rely on preloaded.
@@ -626,12 +629,12 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_success_unlocked() {
-        let fw = custom_partition(c"fw", false);
+        let fw = custom_partition(c"fw", Verification::Required);
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
-        partitions_to_verify.try_push(&fw).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&fw)).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -664,14 +667,14 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_success_unlocked_required_partition_missed() {
-        let fw = custom_partition(c"fw", false);
-        let not_presented = custom_partition(c"not_presented", false);
+        let fw = custom_partition(c"fw", Verification::Required);
+        let not_presented = custom_partition(c"not_presented", Verification::Required);
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
-        partitions_to_verify.try_push(&fw).unwrap();
-        partitions_to_verify.try_push(&not_presented).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&fw)).unwrap();
+        partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&not_presented)).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -705,9 +708,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_verification_failed_unlocked() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
             // Wrong boot image, expect verification to fail.
             (c"boot_a", "boot_v0_a.img"),
@@ -742,9 +745,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_verification_fatal_failed_unlocked() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -777,9 +780,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_verification_failed_locked() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
             // Wrong boot image, expect verification to fail.
             (c"boot_a", "boot_v0_a.img"),
@@ -815,9 +818,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_success_eio_mode() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
@@ -878,9 +881,9 @@ mod test {
     #[test]
     fn test_avb_verify_slot_avb_not_implemented_dev_gbl() {
         let mut partitions_to_verify = PartitionsToVerify::default();
-        partitions_to_verify.try_push(&Partition::Boot).unwrap();
-        partitions_to_verify.try_push(&Partition::InitBoot).unwrap();
-        partitions_to_verify.try_push(&Partition::VendorBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
+        partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
             (c"boot_a", "boot_no_ramdisk_v4_a.img"),
             (c"init_boot_a", "init_boot_a.img"),
