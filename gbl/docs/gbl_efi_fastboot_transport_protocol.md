@@ -4,10 +4,10 @@ This document describes the GBL Fastboot Transport protocol. The protocol
 defines interfaces that can be used by EFI applications to implement Fastboot
 device side logic.
 
-|             |                  |
-| ----------- | ---------------- |
-| **Status**  | Work in progress |
-| **Created** | 2024-3-21        |
+|             |            |
+| ----------- | ---------- |
+| **Status**  | Pre-frozen |
+| **Created** | 2024-3-21  |
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL
 
@@ -31,7 +31,7 @@ implementation such as USB/TCP or other custom channels.
 ### Revision Number
 
 ```c
-#define GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
+#define GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
 See

@@ -35,7 +35,7 @@ EFI_ENUM(GblEfiFastbootRxMode, uint32_t, GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
          GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH);
 
 static const uint64_t GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 1);
+    GBL_PROTOCOL_REVISION(0, 256);
 
 typedef struct GblEfiFastbootTransportProtocol {
   uint64_t revision;
@@ -43,10 +43,11 @@ typedef struct GblEfiFastbootTransportProtocol {
   EfiStatus (*start)(struct GblEfiFastbootTransportProtocol* self);
   EfiStatus (*stop)(struct GblEfiFastbootTransportProtocol* self);
   EfiStatus (*receive)(struct GblEfiFastbootTransportProtocol* self,
-                       size_t* buffer_size, void* buffer,
-                       GblEfiFastbootRxMode mode);
+                       /* in-out */ size_t* buffer_size, /* out */ void* buffer,
+                       /* in */ GblEfiFastbootRxMode mode);
   EfiStatus (*send)(struct GblEfiFastbootTransportProtocol* self,
-                    size_t* buffer_size, const void* buffer);
+                    /* in-out */ size_t* buffer_size,
+                    /* in */ const void* buffer);
   EfiStatus (*flush)(struct GblEfiFastbootTransportProtocol* self);
 } GblEfiFastbootTransportProtocol;
 
