@@ -236,6 +236,11 @@ bites are reserved for future use.
 Note: Major revisions of `0` indicate that the protocol is not yet stable, and
 backwards compatibility is not guaranteed.
 
+Note: A major revision of `0` and a minor revision of `256+` (`0x00000100+`)
+indicate that the protocol is in a pre-frozen state. While backward
+compatibility is guaranteed across all pre-release revisions, a final breaking
+change may occur upon the official `1.0` release to finalize the specification.
+
 ### GblFastbootProtocol
 
 - [`GBL_EFI_FASTBOOT_PROTOCOL`](./gbl_efi_fastboot_protocol.md)
