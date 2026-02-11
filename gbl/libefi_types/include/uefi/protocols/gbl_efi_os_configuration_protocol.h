@@ -70,7 +70,7 @@ typedef struct {
 } GblEfiVerifiedDeviceTree;
 
 static const uint64_t GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 2);
+    GBL_PROTOCOL_REVISION(0, 256);
 
 typedef struct GblEfiOsConfigurationProtocol {
   uint64_t revision;

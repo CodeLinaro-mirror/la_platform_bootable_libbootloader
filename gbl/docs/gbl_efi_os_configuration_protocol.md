@@ -1,9 +1,9 @@
 # GBL OS Configuration EFI Protocol
 
-|             |                  |
-| :---------- | :--------------- |
-| **Status**  | Work in progress |
-| **Created** | 2024-07-17       |
+|             |            |
+| :---------- | :--------- |
+| **Status**  | Pre-frozen |
+| **Created** | 2024-07-17 |
 
 ## GBL_EFI_OS_CONFIGURATION_PROTOCOL
 
@@ -40,7 +40,7 @@ unimplemented, so GBL autoselection logic will be used. Refer to
 ### Revision Number
 
 ```c
-#define GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 2)
+#define GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
 See
