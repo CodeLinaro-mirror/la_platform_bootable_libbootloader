@@ -56,6 +56,19 @@ Run this command from the repo root directory (`gbl` in the example above):
 ./tools/bazel test @gbl//tests
 ```
 
+### Troubleshooting
+
+The Bazel build can sometimes get into a state where it has cached some
+incorrect build files which causes errors on re-build, one example failure
+message in this case is `Inconsistent filesystem operations`.
+
+If you run into this, clean the build with the `--expunge` flag to reset your
+Bazel state:
+
+```shell
+./tools/bazel clean --expunge
+```
+
 ## IDE Setup
 
 For rust development, we recommend use VSCode + rust-analyzer plugin.
