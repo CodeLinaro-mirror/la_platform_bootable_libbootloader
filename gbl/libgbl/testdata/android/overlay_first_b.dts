@@ -4,13 +4,14 @@
 / {
     chosen {
         // To be appended by GBL.
-        bootargs_ext = "overlay_bootargs_ext";
+        bootargs_ext = "top_level_overlay_bootargs_ext";
     };
 
-    // add a new node at the root level
     fragment@0 {
         target-path = "/chosen";
         __overlay__ {
+            // Overridden by bootargs_ext in the second overlay, so this value should be ignored.
+            bootargs_ext = "fragment_overlay_bootargs_ext_ignored";
             first_overlay {
                 overlay_b_property = "overlay_b_val";
             };

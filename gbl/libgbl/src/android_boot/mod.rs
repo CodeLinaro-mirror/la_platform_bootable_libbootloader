@@ -393,7 +393,7 @@ fn finalize_dt<'b>(
     gbl_println!(ops, "linux,initrd-start: {:#x}", ramdisk_addr);
     gbl_println!(ops, "linux,initrd-end: {:#x}", ramdisk_end);
     if append_bootconfig {
-        fdt_append_bootargs(ops, &mut fdt, extract_bootconfig(ramdisk)?.split('\n'), 0)?;
+        fdt_append_bootargs(ops, &mut fdt, extract_bootconfig(ramdisk)?.split('\n'))?;
     }
     // Print the final commandline. If the bootargs were changed by the firmware during fdt fixup,
     // then the firmware must ensure the bootargs end with '\0'.
@@ -1257,7 +1257,8 @@ androidboot.veritymode.managed=yes
             let mut expected_bootargs = String::from(expected_bootargs);
             // Appended via dtbo/bootargs_ext.
             if has_dtbo {
-                expected_bootargs.push_str(" overlay_bootargs_ext");
+                expected_bootargs
+                    .push_str(" top_level_overlay_bootargs_ext fragment_overlay_bootargs_ext");
             }
             // Appended via fixup.
             expected_bootargs.push_str(" fixup");
