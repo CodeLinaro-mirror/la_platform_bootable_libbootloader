@@ -1,5 +1,10 @@
 # GBL EFI Debug Protocol
 
+|             |            |
+| :---------- | :--------- |
+| **Status**  | Pre-frozen |
+| **Created** | 2025-09-11 |
+
 ## GBL_EFI_DEBUG_PROTOCOL
 
 ### Summary
@@ -22,7 +27,7 @@ firmware.
 ### Revision Number
 
 ```c
-#define GBL_EFI_DEBUG_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
+#define GBL_EFI_DEBUG_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
 See
