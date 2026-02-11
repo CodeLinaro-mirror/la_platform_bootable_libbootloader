@@ -1,9 +1,9 @@
 # GBL EFI Boot Memory Protocol
 
-|             |                  |
-| :---------- | :--------------- |
-| **Status**  | Work in progress |
-| **Created** | 2025-07-13       |
+|             |            |
+| :---------- | :--------- |
+| **Status**  | Pre-frozen |
+| **Created** | 2025-07-13 |
 
 ## GBL_EFI_BOOT_MEMORY_PROTOCOL
 
@@ -29,7 +29,7 @@ assemble kernel/ramdisk/fdt images, and download data in fastboot mode etc.
 ### Revision Number
 
 ```c
-#define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 1)
+#define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
 See
