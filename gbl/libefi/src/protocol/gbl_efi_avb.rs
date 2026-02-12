@@ -14,19 +14,22 @@
 
 //! Rust wrapper for `GBL_EFI_AVB_PROTOCOL`.
 
-use crate::efi_call;
 use crate::{
+    efi_call, efi_println,
     protocol::{Protocol, ProtocolInfo},
     versioned_protocol,
 };
-use core::ffi::CStr;
-use core::ptr::null;
+use arrayvec::ArrayVec;
+use core::{ffi::CStr, iter, ptr::null};
 use efi_types::{
     EfiGuid, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbLockState,
     GblEfiAvbLockType, GblEfiAvbPartitionAttributes, GblEfiAvbProtocol,
-    GblEfiAvbVerificationResult, GBL_EFI_AVB_PROTOCOL_REVISION,
+    GblEfiAvbVerificationResult, GBL_EFI_AVB_PARTITION_FLAG_FDR,
+    GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL, GBL_EFI_AVB_PARTITION_FLAG_VERIFY,
+    GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS, GBL_EFI_AVB_PROTOCOL_REVISION,
 };
-use liberror::Result;
+use liberror::{Error, Result};
+use libgbl::gbl_avb::{SpecializedPartition, Verification};
 
 /// `GBL_EFI_AVB_PROTOCOL` implementation.
 pub struct GblAvbProtocol;
@@ -42,45 +45,102 @@ impl ProtocolInfo for GblAvbProtocol {
 
 // Protocol interface wrappers.
 impl Protocol<'_, GblAvbProtocol> {
-    /// Wrapper of `GBL_EFI_AVB_PROTOCOL.read_partition_attributes()`.
+    /// Wraps `GBL_EFI_AVB_PROTOCOL.read_partition_attributes()`.
     ///
-    /// # Result
-    /// Err(BufferTooSmall(Some(size))) - when provided `partitions` is less than expected `size`.
-    /// Err(err) - if error occurred.
-    /// Ok(len) - will return number of `GblEfiAvbPartitionAttributes`s copied to `partitions` slice.
+    /// The returned `ArrayVec` will contain the number of provided partitions, each with a
+    /// nul-terminated name in its `name_buffer`.
     ///
-    /// # Safety
-    /// * Each `partitions[N].base_name` must point to non-null writable buffer of at least
-    /// `partitions[N].base_name_len` bytes.
+    /// # Errors
+    ///
+    /// * `BufferTooSmall(Some(size))` - `N` is not large enough to hold all partitions.
+    /// * other - implementation reported a different error.
     ///
     /// # Panics
-    /// Panics if the protocol filled more partitions than we provided space for. This is an API
-    /// violation and likely indicates memory corruption so is not recoverable.
-    pub unsafe fn read_partition_attributes(
+    ///
+    /// Panics if the protocol overflowed the partition array or any of the partition name buffers.
+    /// This is an API violation and likely indicates memory corruption so is not recoverable.
+    pub fn read_partition_attributes<const N: usize>(
         &self,
-        partitions: &mut [GblEfiAvbPartitionAttributes],
-    ) -> Result<usize> {
-        let mut num_partitions = partitions.len();
+    ) -> Result<ArrayVec<SpecializedPartition, N>> {
+        // Our Rust objects which contain the backing storage for the partition names.
+        // Start at capacity, we will later shrink it to the elements that were actually filled.
+        // `SpecializedPartition` is not `Copy` so we need to iterate to initialize it.
+        let mut partitions: ArrayVec<SpecializedPartition, N> =
+            iter::repeat_n(SpecializedPartition::default(), N).collect();
+
+        // The protocol partition format backed by `partitions`.
+        let mut partitions_ffi = ArrayVec::from([GblEfiAvbPartitionAttributes::default(); N]);
+
+        // Initialize the FFI name buffers to point to the Rust backing storage.
+        partitions.iter_mut().zip(partitions_ffi.iter_mut()).for_each(
+            |(partition, partition_ffi)| {
+                // Capacity -1 to ensure we can null-terminate for libavb.
+                partition_ffi.base_name_len = partition.name_buffer.len() - 1;
+                partition_ffi.base_name = partition.name_buffer.as_mut_ptr();
+            },
+        );
+
+        let mut num_partitions = partitions_ffi.len();
 
         // SAFETY:
-        // * `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
-        // * `self.interface_ptr()` is input parameter, outlives the call, and will not be retained.
-        // * `num_partitions` is input/output parameter, non-null and points to a valid writtable
-        //   usize buffer.
-        // * `partitions` is input/output parameter, non-null and points to `partitions.len()`
-        //   consecutive `GblEfiAvbPartitionAttributes`. Each `partitions[N].base_name` points to
-        //   a writable buffer of at least `partitions[N].base_name_len` bytes.
+        // * `self.interface_ptr()` (in) points to a valid object established by `Protocol::new()`.
+        // * `num_partitions` (in/out) points to a writeable usize.
+        // * `partitions_ffi` (in/out) points to `num_partitions` consecutive writable
+        //   `GblEfiAvbPartitionAttributes`.
+        // * Each `partitions_ffi[i].base_name` points to a writable buffer of at least
+        //   `partitions_ffi[i].base_name_len` bytes.
+        //
+        // All parameters are only borrowed for the duration of the function.
         unsafe {
             efi_call!(
                 @bufsize num_partitions,
                 self.interface().read_partition_attributes,
                 self.interface_ptr(),
                 &mut num_partitions,
-                partitions.as_mut_ptr(),
+                partitions_ffi.as_mut_ptr(),
             )?;
         }
 
-        Ok(num_partitions)
+        // Shrink the arrays to just the used elements.
+        partitions_ffi.truncate(num_partitions);
+        partitions.truncate(num_partitions);
+
+        // Copy the results back to the Rust objects.
+        for (partition, partition_ffi) in partitions.iter_mut().zip(partitions_ffi.iter()) {
+            // Ensure we still have the null terminator for libavb, in case the protocol overwrote
+            // it at some point. This also serves as a safety check that the protocol didn't
+            // overflow the name buffer, since this will panic if `base_name_len` was set past the
+            // allotted buffer length.
+            partition.name_buffer[partition_ffi.base_name_len] = 0;
+
+            // Translate the verification bitmask.
+            const VERIFY_MASK: u64 =
+                GBL_EFI_AVB_PARTITION_FLAG_VERIFY | GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS;
+            partition.verification = match partition_ffi.flags & VERIFY_MASK {
+                0 => None,
+                GBL_EFI_AVB_PARTITION_FLAG_VERIFY => Some(Verification::Required),
+                GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS => Some(Verification::IfExists),
+                VERIFY_MASK => {
+                    // Providing both VERIFY and VERIFY_IF_EXISTS is an API violation.
+                    efi_println!(
+                        self.efi_entry,
+                        "Error: '{:?}' cannot specify both VERIFY and VERIFY_IF_EXISTS",
+                        partition.name_cstr()
+                    );
+                    return Err(Error::InvalidInput);
+                }
+                // The compiler doesn't take bitmasks into account for `match` so it
+                // still requires us to provide a catch-all arm.
+                _ => unreachable!(),
+            };
+
+            // Translate the other bitflags.
+            partition.fdr = (partition_ffi.flags & GBL_EFI_AVB_PARTITION_FLAG_FDR) != 0;
+            partition.critical =
+                (partition_ffi.flags & GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL) != 0;
+        }
+
+        Ok(partitions)
     }
 
     /// Wraps `GBL_EFI_AVB_PROTOCOL.read_device_status()`.
@@ -259,158 +319,233 @@ mod test {
     use crate::{test::run_test_with_mock_protocol, Error};
     use efi_types::defs::{
         EfiStatus, GblEfiAvbBootColorFlags, GblEfiAvbDeviceStatus, EFI_STATUS_BUFFER_TOO_SMALL,
-        EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_SUCCESS, GBL_EFI_AVB_BOOT_COLOR_RED,
+        EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_OUT_OF_RESOURCES, EFI_STATUS_SUCCESS,
+        GBL_EFI_AVB_BOOT_COLOR_RED,
     };
-    use std::{ptr, slice};
+    use libutils::cstr_buffer;
+    use std::{
+        cell::Cell,
+        cmp::min,
+        ptr,
+        slice::{from_raw_parts, from_raw_parts_mut},
+    };
 
-    #[test]
-    fn read_partition_attributes_partitions_provided() {
-        const PARTITIONS_NUM: usize = 3;
-        const PARTITION_MAX_LEN: usize = 29;
-        const FIRST_PROVIDED_PARTITION: &[u8] = b"first_partition";
-        const SECOND_PROVIDED_PARTITION: &[u8] = b"second_partition";
+    /// Test helper for `read_partition_attributes()`.
+    ///
+    /// Sets up a fake C backend for the UEFI protocol API which will populate the partition
+    /// attributes, calls it using our Rust wrapper, and then returns the result.
+    ///
+    /// If the provided partition information cannot fit in the buffers, this function will not
+    /// overflow but will update the length fields as if it had. This can be used to test that
+    /// our Rust wrapper is properly panicking if it detects memory corruption.
+    ///
+    /// # Arguments
+    ///
+    /// * `names_and_flags` - the list of partition names and flags to populate.
+    /// * `return_value` - the EFI status value to return from the fake C backend.
+    fn read_partition_attributes_test<const N: usize>(
+        names_and_flags: &[(&'static str, u64)],
+        return_value: EfiStatus,
+    ) -> Result<ArrayVec<SpecializedPartition, N>> {
+        // The UEFI protocol API is just a C function pointer so can't see any local state.
+        // Stash the partition information in static thread storage so we can access it there.
+        thread_local! {
+            static NAMES_AND_FLAGS: Cell<Vec<(&'static str, u64)>> = Default::default();
+            static RETURN_VALUE: Cell<EfiStatus> = Cell::new(EFI_STATUS_SUCCESS);
+        }
+        NAMES_AND_FLAGS.set(names_and_flags.to_vec());
+        RETURN_VALUE.set(return_value);
 
-        const EXPECTED_PROVIDED_PARTITIONS_NUM: usize = 2;
-
-        /// C callback implementation that provides EXPECTED_PROVIDED_PARTITIONS_NUM partitions.
+        /// UEFI protocol backend implementation.
         unsafe extern "efiapi" fn read_partition_attributes(
             _: *mut GblEfiAvbProtocol,
             num_partitions: *mut usize,
             partitions: *mut GblEfiAvbPartitionAttributes,
         ) -> EfiStatus {
-            // SAFETY:
-            // * `num_partitions` points to non-null writtable usize buffer.
-            // * `partitions` points to writtable buffer with `num_partitions` amount of
-            //   `GblEfiAvbPartitionAttributes`.
-            // * Each `partitions[N].base_name` points to writable buffer of at least
-            //   `partitions[N].base_name_len` bytes.
-            unsafe {
-                let partitions = core::slice::from_raw_parts_mut(partitions, *num_partitions);
-                let first = core::slice::from_raw_parts_mut(
-                    partitions[0].base_name,
-                    partitions[0].base_name_len,
-                );
-                let second = core::slice::from_raw_parts_mut(
-                    partitions[1].base_name,
-                    partitions[1].base_name_len,
-                );
+            // Fetch our stashed arguments from thread-local storage.
+            let names_and_flags = NAMES_AND_FLAGS.take();
+            let return_value = RETURN_VALUE.replace(EFI_STATUS_SUCCESS);
 
-                first[..FIRST_PROVIDED_PARTITION.len()].copy_from_slice(FIRST_PROVIDED_PARTITION);
-                second[..SECOND_PROVIDED_PARTITION.len()]
-                    .copy_from_slice(SECOND_PROVIDED_PARTITION);
+            // SAFETY: API guarantees `num_partitions` points to a writeable usize.
+            let num_partitions = unsafe { num_partitions.as_mut().unwrap() };
 
-                partitions[0].base_name_len = FIRST_PROVIDED_PARTITION.len();
-                partitions[1].base_name_len = SECOND_PROVIDED_PARTITION.len();
+            // SAFETY: API guarantees `partitions` points to a writeable array of `num_partitions`.
+            let partitions = unsafe { from_raw_parts_mut(partitions, *num_partitions) };
 
-                *num_partitions = EXPECTED_PROVIDED_PARTITIONS_NUM
+            for ((name, flags), partition) in names_and_flags.iter().zip(partitions.iter_mut()) {
+                // Copy the name.
+                let name_bytes = name.as_bytes();
+                // SAFETY: API guarantees each partition `base_name` points to writeable array
+                // of `base_name_len` bytes. We use `min()` to ensure we stay inside this buffer.
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        name_bytes.as_ptr(),
+                        partition.base_name,
+                        min(partition.base_name_len, name_bytes.len()),
+                    )
+                };
+
+                // Update the length field to indicate how much we wrote.
+                // If the input name was too large, this value will indicate we overflowed the name
+                // buffer (even though we didn't actually).
+                partition.base_name_len = name_bytes.len();
+
+                // Copy the flags.
+                partition.flags = *flags;
             }
 
-            EFI_STATUS_SUCCESS
+            // Update `num_partition` to indicate how many we filled, or would have filled if there
+            // was enough room.
+            *num_partitions = names_and_flags.len();
+
+            return_value
         }
 
+        // Create the protocol struct with our test function populated.
         let c_interface = GblEfiAvbProtocol {
             read_partition_attributes: Some(read_partition_attributes),
             ..Default::default()
         };
 
+        // Create our Rust wrapper around the test protocol and call it.
+        let mut result = None;
         run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            let mut partitions = [GblEfiAvbPartitionAttributes::default(); PARTITIONS_NUM];
-
-            let first_name = &mut [0u8; PARTITION_MAX_LEN];
-            let second_name = &mut [0u8; PARTITION_MAX_LEN];
-            let third_name = &mut [0u8; PARTITION_MAX_LEN];
-
-            partitions[0].base_name_len = PARTITION_MAX_LEN;
-            partitions[0].base_name = first_name.as_mut_ptr();
-            partitions[1].base_name_len = PARTITION_MAX_LEN;
-            partitions[1].base_name = second_name.as_mut_ptr();
-            partitions[2].base_name_len = PARTITION_MAX_LEN;
-            partitions[2].base_name = third_name.as_mut_ptr();
-
-            // SAFETY:
-            // * Each `partitions[N].base_name` points to writable buffer of at least
-            // `partitions[N].base_name_len` bytes.
-            let result = unsafe { avb_protocol.read_partition_attributes(&mut partitions) };
-            assert_eq!(result, Ok(EXPECTED_PROVIDED_PARTITIONS_NUM));
-
-            // SAFETY:
-            // * Each `partitions[N].base_name` points to writable buffer of at least
-            // `partitions[N].base_name_len` bytes.
-            let (first_name, second_name) = unsafe {
-                (
-                    core::slice::from_raw_parts(
-                        partitions[0].base_name,
-                        partitions[0].base_name_len,
-                    ),
-                    core::slice::from_raw_parts(
-                        partitions[1].base_name,
-                        partitions[1].base_name_len,
-                    ),
-                )
-            };
-            assert_eq!(
-                [first_name, second_name],
-                [FIRST_PROVIDED_PARTITION, SECOND_PROVIDED_PARTITION],
-            );
+            result = Some(avb_protocol.read_partition_attributes::<N>());
         });
+        result.unwrap()
+    }
+
+    #[test]
+    fn read_partition_attributes_success() {
+        let result = read_partition_attributes_test::<16>(
+            &[
+                ("no_flags", 0),
+                ("verify", GBL_EFI_AVB_PARTITION_FLAG_VERIFY),
+                ("verify_if_exists", GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS),
+                ("fdr", GBL_EFI_AVB_PARTITION_FLAG_FDR),
+                ("critical", GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL),
+            ],
+            EFI_STATUS_SUCCESS,
+        );
+
+        assert_eq!(
+            &result.unwrap()[..],
+            [
+                SpecializedPartition { name_buffer: cstr_buffer("no_flags"), ..Default::default() },
+                SpecializedPartition {
+                    name_buffer: cstr_buffer("verify"),
+                    verification: Some(Verification::Required),
+                    ..Default::default()
+                },
+                SpecializedPartition {
+                    name_buffer: cstr_buffer("verify_if_exists"),
+                    verification: Some(Verification::IfExists),
+                    ..Default::default()
+                },
+                SpecializedPartition {
+                    name_buffer: cstr_buffer("fdr"),
+                    fdr: true,
+                    ..Default::default()
+                },
+                SpecializedPartition {
+                    name_buffer: cstr_buffer("critical"),
+                    critical: true,
+                    ..Default::default()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn read_partition_attributes_multiple_flags() {
+        let result = read_partition_attributes_test::<16>(
+            &[
+                (
+                    "fdr_and_critical",
+                    GBL_EFI_AVB_PARTITION_FLAG_FDR | GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL,
+                ),
+                (
+                    "verify_and_critical",
+                    GBL_EFI_AVB_PARTITION_FLAG_VERIFY | GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL,
+                ),
+            ],
+            EFI_STATUS_SUCCESS,
+        );
+
+        assert_eq!(
+            &result.unwrap()[..],
+            [
+                SpecializedPartition {
+                    name_buffer: cstr_buffer("fdr_and_critical"),
+                    fdr: true,
+                    critical: true,
+                    ..Default::default()
+                },
+                SpecializedPartition {
+                    name_buffer: cstr_buffer("verify_and_critical"),
+                    verification: Some(Verification::Required),
+                    critical: true,
+                    ..Default::default()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn read_partition_attributes_invalid_flags() {
+        // Specifying both VERIFY flags is ambiguous and breaks API requirements, should error.
+        let result = read_partition_attributes_test::<16>(
+            &[(
+                "verify_and_if_exists",
+                GBL_EFI_AVB_PARTITION_FLAG_VERIFY | GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS,
+            )],
+            EFI_STATUS_SUCCESS,
+        );
+
+        assert_eq!(result, Err(Error::InvalidInput));
     }
 
     #[test]
     fn read_partition_attributes_buffer_too_small() {
-        const EXPECTED_PARTITIONS_NUM: usize = 2;
+        // Only allocate space for 2 partitions but the backend needs 3.
+        let result = read_partition_attributes_test::<2>(
+            &[("1", 0), ("2", 0), ("3", 0)],
+            EFI_STATUS_BUFFER_TOO_SMALL,
+        );
 
-        /// C callback implementation that requests a larger buffer.
-        unsafe extern "efiapi" fn read_partition_attributes(
-            _: *mut GblEfiAvbProtocol,
-            num_partitions: *mut usize,
-            _: *mut GblEfiAvbPartitionAttributes,
-        ) -> EfiStatus {
-            // SAFETY: `num_partitions` is non-null pointer to writable usize buffer.
-            unsafe { *num_partitions = EXPECTED_PARTITIONS_NUM };
-            EFI_STATUS_BUFFER_TOO_SMALL
-        }
-
-        let c_interface = GblEfiAvbProtocol {
-            read_partition_attributes: Some(read_partition_attributes),
-            ..Default::default()
-        };
-
-        run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            let mut partitions: [GblEfiAvbPartitionAttributes; 0] = [];
-
-            // SAFETY:
-            // * Each `partitions[N].base_name` points to writable buffer of at least
-            // `partitions[N].base_name_len` bytes.
-            let result = unsafe { avb_protocol.read_partition_attributes(&mut partitions) };
-            assert_eq!(result, Err(Error::BufferTooSmall(Some(EXPECTED_PARTITIONS_NUM))));
-        });
+        assert_eq!(result, Err(Error::BufferTooSmall(Some(3))));
     }
 
     #[test]
     fn read_partition_attributes_error() {
-        /// C callback implementation that returns an error.
-        unsafe extern "efiapi" fn read_partition_attributes(
-            _: *mut GblEfiAvbProtocol,
-            _: *mut usize,
-            _: *mut GblEfiAvbPartitionAttributes,
-        ) -> EfiStatus {
-            EFI_STATUS_INVALID_PARAMETER
-        }
+        // Backend reports some other error.
+        let result = read_partition_attributes_test::<16>(&[], EFI_STATUS_OUT_OF_RESOURCES);
 
-        let c_interface = GblEfiAvbProtocol {
-            read_partition_attributes: Some(read_partition_attributes),
-            ..Default::default()
-        };
+        assert_eq!(result, Err(Error::OutOfResources));
+    }
 
-        run_test_with_mock_protocol(c_interface, |avb_protocol| {
-            let mut partitions: [GblEfiAvbPartitionAttributes; 0] = [];
+    #[test]
+    #[should_panic]
+    fn read_partition_attributes_name_buffer_overflow() {
+        // Fake a buffer overflow in a partition name buffer by "writing" too long of a name but
+        // returning SUCCESS.
+        // This should panic since it looks like memory has been corrupted.
+        let _ = read_partition_attributes_test::<16>(
+            &[("this_name_is_36_characters_long_____", 0)],
+            EFI_STATUS_SUCCESS,
+        );
+    }
 
-            // SAFETY:
-            // * Each `partitions[N].base_name` points to writable buffer of at least
-            // `partitions[N].base_name_len` bytes.
-            let result = unsafe { avb_protocol.read_partition_attributes(&mut partitions) };
-            assert_eq!(result, Err(Error::InvalidInput));
-        });
+    #[test]
+    #[should_panic]
+    fn read_partition_attributes_partitions_buffer_overflow() {
+        // Fake a buffer overflow in a partitions buffer by "writing" too many partitions but
+        // returning SUCCESS.
+        // This should panic since it looks like memory has been corrupted.
+        let _ = read_partition_attributes_test::<2>(
+            &[("1", 0), ("2", 0), ("3", 0)],
+            EFI_STATUS_SUCCESS,
+        );
     }
 
     #[test]
@@ -472,8 +607,7 @@ mod test {
             // SAFETY:
             // * `public_key_ptr` is a non-null pointer to the buffer at least `public_key_len`
             // size.
-            let public_key_buffer =
-                unsafe { slice::from_raw_parts(public_key_ptr, public_key_len) };
+            let public_key_buffer = unsafe { from_raw_parts(public_key_ptr, public_key_len) };
 
             assert_eq!(public_key_buffer, EXPECTED_PUBLIC_KEY);
 
@@ -706,7 +840,7 @@ mod test {
 
             // SAFETY:
             // * `value` is non-null pointer available for write.
-            let value_buffer = unsafe { slice::from_raw_parts_mut(value, EXPECTED_VALUE.len()) };
+            let value_buffer = unsafe { from_raw_parts_mut(value, EXPECTED_VALUE.len()) };
             value_buffer.copy_from_slice(EXPECTED_VALUE);
 
             return EFI_STATUS_SUCCESS;
@@ -791,7 +925,7 @@ mod test {
 
             // SAFETY:
             // * `value` is a valid pointer to `value_size` bytes.
-            let value_buffer = unsafe { slice::from_raw_parts(value, value_size) };
+            let value_buffer = unsafe { from_raw_parts(value, value_size) };
             assert_eq!(value_buffer, EXPECTED_VALUE);
 
             return EFI_STATUS_SUCCESS;

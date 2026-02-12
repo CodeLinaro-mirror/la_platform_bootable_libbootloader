@@ -341,6 +341,7 @@ mod test {
         IntegrationError::AvbIoError,
     };
     use avb::{IoError, SlotVerifyError};
+    use libutils::cstr_buffer;
     use std::{
         collections::{HashMap, HashSet},
         ffi::CStr,
@@ -425,16 +426,14 @@ mod test {
         Ok(())
     }
 
-    fn custom_partition(name: &CStr, verification: Verification) -> SpecializedPartition {
-        let mut partition = SpecializedPartition::default();
-        partition.name_buffer_mut()[..name.to_bytes().len()].copy_from_slice(name.to_bytes());
-        partition.verification = Some(verification);
-        partition
-    }
-
     #[test]
     fn test_avb_verify_slot_success() {
-        let fw = custom_partition(c"fw", Verification::Required);
+        let fw = SpecializedPartition {
+            name_buffer: cstr_buffer("fw"),
+            verification: Some(Verification::Required),
+            fdr: false,
+            critical: false,
+        };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
         partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
@@ -474,7 +473,12 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_success_required_partition_missed() {
-        let not_presented = custom_partition(c"not_presented", Verification::Required);
+        let not_presented = SpecializedPartition {
+            name_buffer: cstr_buffer("not_presented"),
+            verification: Some(Verification::Required),
+            fdr: false,
+            critical: false,
+        };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
         partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
@@ -512,7 +516,12 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_success_optional_partition_missed() {
-        let not_presented = custom_partition(c"not_presented", Verification::IfExists);
+        let not_presented = SpecializedPartition {
+            name_buffer: cstr_buffer("not_presented"),
+            verification: Some(Verification::IfExists),
+            fdr: false,
+            critical: false,
+        };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
         partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
@@ -629,7 +638,12 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_success_unlocked() {
-        let fw = custom_partition(c"fw", Verification::Required);
+        let fw = SpecializedPartition {
+            name_buffer: cstr_buffer("fw"),
+            verification: Some(Verification::Required),
+            fdr: false,
+            critical: false,
+        };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
         partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
@@ -667,8 +681,18 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_success_unlocked_required_partition_missed() {
-        let fw = custom_partition(c"fw", Verification::Required);
-        let not_presented = custom_partition(c"not_presented", Verification::Required);
+        let fw = SpecializedPartition {
+            name_buffer: cstr_buffer("fw"),
+            verification: Some(Verification::Required),
+            fdr: false,
+            critical: false,
+        };
+        let not_presented = SpecializedPartition {
+            name_buffer: cstr_buffer("not_presented"),
+            verification: Some(Verification::Required),
+            fdr: false,
+            critical: false,
+        };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
         partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();

@@ -19,17 +19,17 @@
 
 use crate::{DeviceHandle, MOCK_EFI};
 use alloc::vec::Vec;
+use arrayvec::ArrayVec;
 use core::{ffi::CStr, fmt::Write};
 pub use efi::protocol::{Revision, Versioned};
 use efi_types::{
     EfiInputKey, EfiTimestampProperties, GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus,
-    GblEfiAvbLockState, GblEfiAvbLockType, GblEfiAvbPartitionAttributes, GblEfiAvbPartitionFlags,
-    GblEfiAvbVerificationResult, GblEfiFastbootCommandExecResult, GblEfiFastbootMessageType,
-    GblEfiVerifiedDeviceTree,
+    GblEfiAvbLockState, GblEfiAvbLockType, GblEfiAvbVerificationResult,
+    GblEfiFastbootCommandExecResult, GblEfiFastbootMessageType, GblEfiVerifiedDeviceTree,
 };
 use liberror::{Error, Result};
+use libgbl::gbl_avb::SpecializedPartition;
 use mockall::mock;
-use std::{ptr, string::String};
 
 /// Mock `Protocol` type.
 pub type Protocol<'a, T> = T;
@@ -264,8 +264,7 @@ pub mod gbl_efi_avb {
     #[derive(Clone, Default)]
     pub struct GblAvbProtocol {
         /// Expected return value from `read_partition_attributes`.
-        pub read_partition_attributes_result:
-            Option<Result<Vec<(String, GblEfiAvbPartitionFlags)>>>,
+        pub read_partition_attributes_result: Option<Result<Vec<SpecializedPartition>>>,
         /// Expected return value from `read_device_status`
         pub read_device_status_result: Option<Result<GblEfiAvbDeviceStatus>>,
         /// Expected return value from `validate_vbmeta_public_key`.
@@ -286,40 +285,11 @@ pub mod gbl_efi_avb {
 
     impl GblAvbProtocol {
         /// Wraps `GBL_EFI_AVB_PROTOCOL.read_partition_attributes()`.
-        ///
-        /// SAFETY:
-        /// * Each `partitions[N].base_name` must point to non-null writable buffer of at least
-        /// `partitions[N].base_name_len` bytes.
-        pub unsafe fn read_partition_attributes(
+        pub fn read_partition_attributes<const N: usize>(
             &self,
-            partitions: &mut [GblEfiAvbPartitionAttributes],
-        ) -> Result<usize> {
+        ) -> Result<ArrayVec<SpecializedPartition, N>> {
             match &self.read_partition_attributes_result {
-                Some(Ok(names)) => {
-                    names.iter().zip(partitions.iter_mut()).for_each(
-                        |((name, flags), partition)| {
-                            let name_bytes = name.as_bytes();
-                            let name_len = name_bytes.len();
-
-                            assert!(name_len <= partition.base_name_len);
-                            // SAFETY:
-                            // * `name_bytes.as_ptr()` points to `name_len` valid bytes.
-                            // * `partition.base_name` points to unique writable buffer of at least
-                            //   `name_len` bytes (per contract, assert, and `iter_mut()`).
-                            unsafe {
-                                ptr::copy_nonoverlapping(
-                                    name_bytes.as_ptr(),
-                                    partition.base_name,
-                                    name_len,
-                                );
-                            }
-                            partition.base_name_len = name_len;
-                            partition.flags = *flags;
-                        },
-                    );
-
-                    Ok(names.len())
-                }
+                Some(Ok(parts)) => Ok(parts.iter().cloned().collect()),
                 Some(Err(e)) => Err(*e),
                 None => Err(Error::Unsupported),
             }

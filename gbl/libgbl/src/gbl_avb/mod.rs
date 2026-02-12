@@ -14,29 +14,39 @@
 
 //! GBL AVB implementation.
 
+use crate::android_boot::STANDARD_PARTITIONS;
 use arrayvec::ArrayVec;
-use avb_bindgen::{AVB_MAX_NUMBER_OF_LOADED_PARTITIONS, AVB_PART_NAME_MAX_SIZE};
+use avb_bindgen::AVB_MAX_NUMBER_OF_LOADED_PARTITIONS;
 use core::ffi::CStr;
 use fastboot::{LockState, LockType};
 
 pub(crate) mod ops;
 pub mod state;
 
-/// Maximum partition name length supported by libavb.
-pub(crate) const PARTITION_NAME_MAX_SIZE: usize = AVB_PART_NAME_MAX_SIZE as _;
+/// Maximum name length for specialized partitions (including nul terminator).
+///
+/// Use 36 to match GPT; some use cases might further limit size (e.g. libavb has a 32-byte limit)
+/// but those limits should be enforced closer to the usage, in general specialized partitions
+/// should support any possible GPT name.
+const SPECIALIZED_PARTITION_NAME_MAX_SIZE: usize = 36;
 
 /// Maximum number of partitions that libavb and GBL can verify.
 pub(crate) const MAX_PARTITIONS_TO_VERIFY: usize = AVB_MAX_NUMBER_OF_LOADED_PARTITIONS as _;
 
-/// Half of the partitions are reserved for FW-provided entries.
-pub(crate) const MAX_REQUESTED_PARTITIONS_TO_VERIFY: usize = MAX_PARTITIONS_TO_VERIFY / 2;
+/// The maximum number of specialized partitions we can support.
+///
+/// For now we assign this value such that even if all specialized partitions request verification
+/// libavb can still handle them all. If we end up having a lot of specialized partitions which
+/// don't require verification we could increase this value at the cost of more stack usage; the
+/// only hard limit is that the total number of partitions to verify cannot exceed
+/// `MAX_PARTITIONS_TO_VERIFY`.
+pub const MAX_SPECIALIZED_PARTITIONS: usize = MAX_PARTITIONS_TO_VERIFY - STANDARD_PARTITIONS.len();
 
 /// Array vector capable of storing up to `MAX_PARTITIONS_TO_VERIFY` items.
 pub type ArrayMaxParts<T> = ArrayVec<T, MAX_PARTITIONS_TO_VERIFY>;
 
-/// Array vector capable of storing up to `MAX_REQUESTED_PARTITIONS_TO_VERIFY`
-/// items.
-pub type ArrayMaxRequestedParts<T> = ArrayVec<T, MAX_REQUESTED_PARTITIONS_TO_VERIFY>;
+/// Array vector capable of storing up to `MAX_SPECIALIZED_PARTITIONS` items.
+pub type ArrayMaxSpecializedParts<T> = ArrayVec<T, MAX_SPECIALIZED_PARTITIONS>;
 
 /// Represents AVB (Android Verified Boot) device status information.
 #[derive(Clone, Debug, PartialEq)]
@@ -95,33 +105,45 @@ pub enum Verification {
 }
 
 /// A partition which has specialized handling requirements.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SpecializedPartition {
-    name_buffer: [u8; PARTITION_NAME_MAX_SIZE],
+    /// Buffer to hold the partition name as nul-terminated UTF-8.
+    /// For slotted partitions this will be the base name without any slot suffix.
+    //
+    // TODO(b/483148175): exposing this field directly makes this struct a lot easier to
+    // work with, but also makes it possible to violate the UTF-8 and/or termination requirements.
+    // This can't cause UB in safe code still, it could only panic, but some sort of helper struct
+    // might make it a bit easier to enforce these requirements.
+    pub name_buffer: [u8; SPECIALIZED_PARTITION_NAME_MAX_SIZE],
     /// How to verify this partition, or `None` if this partition does not need to be verified.
     pub verification: Option<Verification>,
     /// Whether this partition is linked to FDR.
     pub fdr: bool,
-    /// Whether this partition should be critically-locked. Critically-locked partitions must
-    /// not be modifiable from fastboot while the critical lock is set.
+    /// Whether this partition should be critically-locked.
+    /// Critical partitions must not be modifiable from fastboot while the critical lock is set.
     pub critical: bool,
 }
 
 impl SpecializedPartition {
-    /// Returns a mutable byte slice for the partition name. It is the caller's responsibility
-    /// to ensure that only UTF-8 characters are copied into the returned buffer. Otherwise,
-    /// the subsequent `name_cstr()` call will cause a panic.
-    pub fn name_buffer_mut(&mut self) -> &mut [u8] {
-        // Leaving 2 bytes for libavb to append the slot suffix and 1 byte for null termination.
-        const RESERVED_SUFFIX_LEN: usize = 3;
-
-        let name_buffer_len = self.name_buffer.len() - RESERVED_SUFFIX_LEN;
-        &mut self.name_buffer[..name_buffer_len]
-    }
-
     /// Returns the partition name as a C-style string.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name_buffer` does not contain a valid nul-terminated UTF-8 string.
     pub fn name_cstr(&self) -> &CStr {
         CStr::from_bytes_until_nul(&self.name_buffer).unwrap()
+    }
+}
+
+// Arrays only provide `Default` up to 32 so we have to manually implement this for `name_buffer`.
+impl Default for SpecializedPartition {
+    fn default() -> Self {
+        SpecializedPartition {
+            name_buffer: [0; SPECIALIZED_PARTITION_NAME_MAX_SIZE],
+            verification: None,
+            fdr: false,
+            critical: false,
+        }
     }
 }
 
@@ -191,26 +213,19 @@ mod test {
 
     #[test]
     fn test_requested_partition_default_is_empty() {
-        assert_eq!(SpecializedPartition::default().name_cstr(), c"");
-    }
+        let default = SpecializedPartition::default();
 
-    #[test]
-    fn test_requested_partition_exposed_buffer_len() {
-        assert_eq!(
-            SpecializedPartition::default().name_buffer_mut().len(),
-            PARTITION_NAME_MAX_SIZE - 3
-        );
+        assert_eq!(default.name_cstr(), c"");
+        assert_eq!(default.name_buffer, [b'\0'; SPECIALIZED_PARTITION_NAME_MAX_SIZE]);
     }
 
     #[test]
     fn test_requested_partition_form_partition_name() {
         let mut partition = SpecializedPartition::default();
-        let partition_name = b"boot";
 
-        let slice = partition.name_buffer_mut();
-        slice[..partition_name.len()].copy_from_slice(partition_name);
-        // Null terminate.
-        slice[partition_name.len()] = 0;
+        partition.name_buffer[..4].copy_from_slice(b"boot");
+        // `SpecializedPartition::default()` should initialize as all zeros so we shouldn't
+        // have to explicitly nul-terminate here.
 
         assert_eq!(partition.name_cstr(), c"boot");
     }

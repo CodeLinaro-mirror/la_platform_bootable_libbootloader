@@ -20,7 +20,7 @@ use crate::{
     error::Result as GblResult,
     gbl_avb::{
         state::{KeyValidationStatus, VerificationStatus},
-        ArrayMaxRequestedParts, AvbDeviceStatus, AvbPartition, AvbProperty, LoadPartition,
+        ArrayMaxSpecializedParts, AvbDeviceStatus, AvbPartition, AvbProperty, LoadPartition,
         SpecializedPartition,
     },
     gbl_println,
@@ -301,10 +301,10 @@ pub trait GblOps<'a> {
     // by GBL's usage of AVB. The rest of the APIs are either not relevant to or are implemented and
     // managed by GBL APIs.
 
-    /// Reads the partitions GBL will try to load and verify.
+    /// Returns the set of specialized partitions and their requested handling attributes.
     fn avb_read_partition_attributes(
         &mut self,
-    ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>>;
+    ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>>;
 
     /// Reads the AVB device status.
     fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus>;
@@ -753,7 +753,7 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
 
     fn avb_read_partition_attributes(
         &mut self,
-    ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>> {
+    ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>> {
         self.ops.avb_read_partition_attributes()
     }
 
@@ -1387,7 +1387,7 @@ pub(crate) mod test {
 
         fn avb_read_partition_attributes(
             &mut self,
-        ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>> {
+        ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>> {
             Ok(self
                 .avb_partition_attributes
                 .clone()
@@ -1839,7 +1839,7 @@ pub(crate) mod test {
 
         fn avb_read_partition_attributes(
             &mut self,
-        ) -> AvbIoResult<ArrayMaxRequestedParts<SpecializedPartition>> {
+        ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>> {
             Err(AvbIoError::NotImplemented)
         }
 

@@ -25,7 +25,7 @@ use crate::{
         GblFastbootResult, GblFbData, GblGenericTransport, GblTcpStream, LoadedImageInfo,
         PinFutContainer, Shared,
     },
-    gbl_avb::{ArrayMaxParts, ArrayMaxRequestedParts, LoadPartition, Verification},
+    gbl_avb::{ArrayMaxParts, ArrayMaxSpecializedParts, LoadPartition, Verification},
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message},
     ops::{OneShotBootMode, PartitionBuffer},
@@ -93,16 +93,22 @@ pub fn android_load_verify_fixup<'a, 'b>(
 
     // Requests custom partitions to verify.
     let requested_partitions = match ops.avb_read_partition_attributes() {
-        Ok(requested_partitions) => {
+        Ok(mut requested_partitions) => {
+            // Here we only care about the partitions that are requesting verification.
+            // Failing to do this would panic later since it's an error to create `LoadPartition`
+            // from a non-verifying `SpecializedPartition`.
+            requested_partitions.retain(|p| p.verification.is_some());
             gbl_println!(
                 ops,
                 "FW requested {} extra partitions to be loaded/verified",
                 requested_partitions.len()
             );
+            // Note: some of `requested_partitions` could potentially have names too long for
+            // libavb to support, but we should let libavb handle that itself.
             requested_partitions
         }
         // Providing custom partitions is optional for FW.
-        Err(IoError::NotImplemented) => ArrayMaxRequestedParts::new(),
+        Err(IoError::NotImplemented) => ArrayMaxSpecializedParts::new(),
         Err(e) => return Err(e.into()),
     };
 
@@ -778,6 +784,7 @@ pub(crate) mod tests {
     use fdt::std_props;
     use libbuild_number::BUILD_NUMBER;
     use libtestutils::AlignedBuffer;
+    use libutils::cstr_buffer;
     use std::{
         ascii::escape_default,
         cell::RefCell,
@@ -1053,8 +1060,7 @@ androidboot.veritymode.managed=yes
     ///
     /// * `slot`: Slot.
     /// * `partitions`: LoadPartition data for disk.
-    /// * `extra_partitions`: FW-specific partition requested to load/verify. For now these are
-    ///                       always given `Verification::Required`.
+    /// * `specialized_partitions`: `SpecializedPartition`s to process.
     /// * `unlock`: Unlock state.
     /// * `rollback_idx`: Rollback index at location TEST_ROLLBACK_INDEX_LOCATION.
     /// * `load`: A BootBuffer.
@@ -1066,7 +1072,7 @@ androidboot.veritymode.managed=yes
     fn test_android_load_verify_fixup_internal<'a>(
         slot: Slot,
         partitions: &[(String, String)],
-        extra_partitions: &[&str],
+        specialized_partitions: &[SpecializedPartition],
         unlock: bool,
         rollback_idx: u64,
         boot_buffer: BootBuffer<'_>,
@@ -1089,14 +1095,20 @@ androidboot.veritymode.managed=yes
                            _: Option<&CStr>,
                            _: Option<Vec<AvbProperty<'_>>>,
                            partitions: Option<Vec<AvbPartition<'_>>>| {
-            // Checks presence of each `extra_partitions` in reported partitions
+            // Checks presence of each `specialized_partitions` that requested verification.
+            //
+            // This currently only looks for `Required` verification, `IfExists` is a bit tricky to
+            // handle correctly because it depends on whether the partition exists and has a hash
+            // descriptor in the vbmeta image.
             if let Some(partitions) = partitions {
-                for &extra_part_name in extra_partitions {
-                    let extra_part_name_cstr = CString::new(extra_part_name).unwrap();
+                for specialized_part in specialized_partitions
+                    .iter()
+                    .filter(|p| p.verification == Some(Verification::Required))
+                {
                     assert!(
-                        partitions.iter().any(|p| p.name == extra_part_name_cstr.as_c_str()),
-                        "Requested partition: {} isn't reported by handle_verification_result",
-                        extra_part_name
+                        partitions.iter().any(|p| p.name == specialized_part.name_cstr()),
+                        "Requested partition: {:?} isn't reported by handle_verification_result",
+                        specialized_part
                     );
                 }
             }
@@ -1105,16 +1117,7 @@ androidboot.veritymode.managed=yes
         };
         ops.avb_handle_verification_result = Some(&mut handler);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
-        ops.avb_partition_attributes = Some(Ok(extra_partitions
-            .into_iter()
-            .map(|name| {
-                let mut part = SpecializedPartition::default();
-                let name_bytes = name.as_bytes();
-                part.name_buffer_mut()[..name_bytes.len()].copy_from_slice(name_bytes);
-                part.verification = Some(Verification::Required);
-                part
-            })
-            .collect::<Vec<SpecializedPartition>>()));
+        ops.avb_partition_attributes = Some(Ok(specialized_partitions.to_vec()));
 
         let designated_ramdisk = boot_buffer.ramdisk.as_ref().map(|v| v.as_ptr());
         let designated_fdt = boot_buffer.fdt.as_ref().map(|v| v.as_ptr());
@@ -1187,7 +1190,7 @@ androidboot.veritymode.managed=yes
     fn test_android_load_verify_fixup(
         slot: Slot,
         partitions: &[(String, String)],
-        extra_partitions: &[&str],
+        specialized_partitions: &[SpecializedPartition],
         unlock: bool,
         rollback_idx: u64,
         expected_kernel: &[u8],
@@ -1215,7 +1218,7 @@ androidboot.veritymode.managed=yes
             test_android_load_verify_fixup_internal(
                 slot,
                 partitions,
-                extra_partitions,
+                specialized_partitions,
                 unlock,
                 rollback_idx,
                 buffers,
@@ -1275,7 +1278,34 @@ androidboot.veritymode.managed=yes
             test_android_load_verify_fixup(
                 slot(slot_name),
                 &partitions,
-                &["fw"],
+                &[
+                    SpecializedPartition {
+                        name_buffer: cstr_buffer("fw"),
+                        verification: Some(Verification::Required),
+                        ..Default::default()
+                    },
+                    // Add a set of specialized partitions that should be ignored by verification.
+                    //
+                    // Putting these in every test case that calls this function is a bit of
+                    // overkill, it might be better to have separate focused tests, but setting up
+                    // separate tests just for this would require more boilerplate than it's worth
+                    // so just leave it here for now.
+                    SpecializedPartition {
+                        name_buffer: cstr_buffer("optional_and_not_present"),
+                        verification: Some(Verification::IfExists),
+                        ..Default::default()
+                    },
+                    SpecializedPartition {
+                        name_buffer: cstr_buffer("fdr"),
+                        fdr: true,
+                        ..Default::default()
+                    },
+                    SpecializedPartition {
+                        name_buffer: cstr_buffer("critical"),
+                        critical: true,
+                        ..Default::default()
+                    },
+                ],
                 unlock,
                 rollback_idx,
                 expected_kernel,

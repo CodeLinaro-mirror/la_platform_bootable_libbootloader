@@ -55,10 +55,9 @@ use efi::{
     },
     EfiEntry,
 };
-use efi_types::GblEfiAvbPartitionAttributes;
 use liberror::{Error, Result};
 use libgbl::{
-    android_boot::{device_tree::RNG_SEED_SIZE_BYTES, STANDARD_PARTITIONS},
+    android_boot::device_tree::RNG_SEED_SIZE_BYTES, gbl_avb::MAX_SPECIALIZED_PARTITIONS,
     random::should_fallback_to_default_rng,
 };
 use libutils::base_type_name;
@@ -211,23 +210,8 @@ fn test_riscv_boot_protocol(entry: &EfiEntry) -> Result<()> {
 fn test_gbl_avb(entry: &EfiEntry) -> Result<()> {
     let protocol = expect_one_handle_for_protocol::<GblAvbProtocol>(entry)?;
 
-    const PARTITION_MAX_LEN: usize = 29;
-    let mut partition_owner = [[0u8; PARTITION_MAX_LEN]; STANDARD_PARTITIONS.len()];
-
-    let mut partitions: Vec<GblEfiAvbPartitionAttributes> = partition_owner
-        .iter_mut()
-        .map(|p| GblEfiAvbPartitionAttributes {
-            base_name_len: p.len(),
-            base_name: p.as_mut_ptr(),
-            flags: 0,
-        })
-        .collect();
-
-    // SAFETY:
-    //
-    // * Due to initialization above, each `partition.base_name` in `partitions`
-    //   points to a non-null writable buffer of size `PARTITION_MAX_LEN`.
-    let mut res = unsafe { protocol.read_partition_attributes(partitions.as_mut_slice()) }
+    let mut res = protocol
+        .read_partition_attributes::<MAX_SPECIALIZED_PARTITIONS>()
         .map(|_| ())
         .inspect_err(|_| efi_println!(entry, "Call to 'read_partition_attributes' failed"));
 
