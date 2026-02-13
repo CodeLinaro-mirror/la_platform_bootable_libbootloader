@@ -442,18 +442,14 @@ fn finalize_bootconfig<'a, 'b, 'c>(
 }
 
 /// Gets the target slot to boot.
-///
-/// Defaults to `a` slot if slotting backend is not implemented on the platform.
 pub(crate) fn get_boot_slot<'a>(ops: &mut impl GblOps<'a>) -> Result<Slot> {
     match ops.get_current_slot() {
         Ok(slot) => Ok(slot),
+        #[cfg(feature = "gbl_dev")]
         Err(Error::Unsupported | Error::NotFound) => {
-            // TODO(b/442975038): Make this an error in production, allow fallback only for
-            // #[cfg(feature = "gbl_dev")]
             gbl_println!(
                 ops,
-                "Slotting is not supported. Default to 'a' slot. This would not be allowed for \
-                production in the near future when slotting becomes mandatory."
+                "Slotting is not supported. Default to 'a' slot. This is only supported on dev GBL"
             );
             Ok(Slot { suffix: 'a'.try_into().unwrap(), ..Default::default() })
         }
@@ -749,6 +745,8 @@ pub fn android_main<'a, 'b, G: GblOps<'a>>(
     match ops.handle_loaded_os(kernel, ramdisk, fdt) {
         // Loaded OS handling is optional.
         Ok(_) | Err(Error::Unsupported) => {}
+        #[cfg(feature = "gbl_dev")]
+        Err(Error::NotFound) => {}
         Err(e) => return Err(e.into()),
     }
 
@@ -2234,6 +2232,7 @@ androidboot.veritymode.managed=yes
     }
 
     #[test]
+    #[cfg(feature = "gbl_dev")]
     fn test_android_main_unsupported_slot_default_to_a() {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));

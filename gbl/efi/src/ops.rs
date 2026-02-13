@@ -156,8 +156,6 @@ impl<'a, 'b> Ops<'a, 'b> {
     }
 
     /// Helper for opening GblBootControlProtocol protocol.
-    /// Maps `Error::NotFound` to `Error::Unsupported`
-    /// TODO(b/442975038): Don't map `Error::NotFound` as this protocol is required.
     fn open_boot_control_protocol(&mut self) -> Result<Protocol<'a, GblBootControlProtocol>> {
         match self
             .efi_entry
@@ -179,7 +177,6 @@ impl<'a, 'b> Ops<'a, 'b> {
                 );
                 Err(Error::UnsupportedVersion)
             }
-            Err(Error::NotFound) => Err(Error::Unsupported),
             Err(e) => Err(e),
         }
     }

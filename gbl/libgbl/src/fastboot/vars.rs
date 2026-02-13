@@ -218,6 +218,8 @@ where
     }
 
     /// Entry point for "fastboot getvar all..."
+    ///
+    /// TODO(b/465769208): Reuse code between `getvar` and `getvar all`.
     pub(crate) async fn get_var_all_internal(
         &mut self,
         send: &mut impl VarInfoSender,
@@ -253,16 +255,11 @@ where
                 }
                 self.get_all_partition_has_slot(send).await?;
             }
-            Err(Error::Unsupported | Error::NotFound) => {
-                // TODO(b/442975038): Make this an error in production, allow fallback only for
-                // #[cfg(feature = "gbl_dev")]
-                gbl_println!(
-                    self.gbl_ops,
-                    "Slotting is not supported, so failed to get {SLOT_COUNT}. This will \
-                    not be allowed by prod GBL soon."
-                );
-            }
-            Err(e) => return Err(e.into()),
+            Err(e) => gbl_println!(
+                self.gbl_ops,
+                "Slotting is not supported, failed to get {SLOT_COUNT}: {e}. Slot-related \
+                fastboot variables cannot be provided."
+            ),
         }
         send.send_var_info(MAX_FETCH_SIZE, [], MAX_FETCH_SIZE_VAL).await?;
         self.get_all_block_device(send).await?;
