@@ -1,9 +1,9 @@
 # GBL EFI Android Verified Boot Protocol
 
-|             |                  |
-| :---------- | :--------------- |
-| **Status**  | Work in progress |
-| **Created** | 2024-11-15       |
+|             |            |
+| :---------- | :--------- |
+| **Status**  | Pre-frozen |
+| **Created** | 2024-11-15 |
 
 ## GBL_EFI_AVB_PROTOCOL
 
@@ -33,7 +33,7 @@ boards. However, this protocol must be implemented on production devices.
 ### Revision Number
 
 ```c
-#define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 5)
+#define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
 See

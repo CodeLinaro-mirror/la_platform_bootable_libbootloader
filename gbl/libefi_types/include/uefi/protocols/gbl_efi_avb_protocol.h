@@ -32,22 +32,19 @@
 #include <uefi/types.h>
 
 static const uint64_t GBL_EFI_AVB_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 5);
+    GBL_PROTOCOL_REVISION(0, 256);
 
 typedef uint64_t GblEfiAvbDeviceStatus;
 
 // Indicates device is unlocked.
 static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED = 0x1
                                                                         << 0;
-
 // Indicates a dm-verity error has occurred.
 static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED =
     0x1 << 1;
-
 // Indicates device is unlocked for critical operations.
 static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL =
     0x1 << 2;
-
 // Indicates the device bootloader can be unlocked.
 static const GblEfiAvbDeviceStatus GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE = 0x1
                                                                           << 3;
