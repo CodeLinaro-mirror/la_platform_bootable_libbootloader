@@ -1,14 +1,15 @@
 # GBL EFI Boot Control Protocol
 
+|             |            |
+| :---------- | :--------- |
+| **Status**  | Pre-frozen |
+| **Created** | 2024-9-17  |
+
 The protocol defines interfaces that can be used by EFI applications to query
 and manipulate boot targets.
 
 See this [document](./gbl_ab_boot_flow.md) for details on how GBL uses this
 protocol to implement A/B boot flows.
-
-| **Status**  | Work in progress |
-| :---------- | ---------------: |
-| **Created** |        2024-9-17 |
 
 ## GBL_EFI_BOOT_CONTROL_PROTOCOL
 
@@ -33,7 +34,7 @@ changing the target boot slot.
 ### Protocol Revision
 
 ```c
-#define GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 3)
+#define GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
 See

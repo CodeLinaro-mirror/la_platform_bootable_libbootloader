@@ -30,6 +30,9 @@
 #include <uefi/system_table.h>
 #include <uefi/types.h>
 
+static const uint64_t GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION =
+    GBL_PROTOCOL_REVISION(0, 256);
+
 EFI_ENUM(GblEfiUnbootableReason, uint8_t,
          GBL_EFI_UNBOOTABLE_REASON_UNKNOWN_REASON,
          GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES,
@@ -63,9 +66,6 @@ typedef struct {
   EfiPhysicalAddr device_tree;
   uint64_t reserved[8];
 } GblEfiLoadedOs;
-
-static const uint64_t GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 3);
 
 typedef struct GblEfiBootControlProtocol {
   uint64_t revision;
