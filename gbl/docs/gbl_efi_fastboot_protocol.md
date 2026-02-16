@@ -1,14 +1,14 @@
 # GBL EFI Fastboot Protocol
 
+|             |            |
+| :---------- | :--------- |
+| **Status**  | Pre-frozen |
+| **Created** | 2024-9-11  |
+
 This document describes the GBL Fastboot protocol. The protocol defines
 interfaces that can be used by EFI applications to query and modify
 vendor-specific information on a device that may be desired in the context of a
 fastboot environment.
-
-|             |                    |
-| :---------- | -----------------: |
-| **Status**  | _Work in progress_ |
-| **Created** |          2024-9-11 |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL`
 
@@ -33,7 +33,7 @@ whose query requires cooperation with vendor firmware, OEM commands,
 ### Revision Number
 
 ```c
-#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 8)
+#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
 See
