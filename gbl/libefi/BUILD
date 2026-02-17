@@ -132,6 +132,7 @@ rust_library(
     crate_name = "efi_mocks",
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
+        "@arrayvec",
         "@gbl//libefi",
         "@gbl//libefi_types",
         "@gbl//liberror",
