@@ -20,7 +20,7 @@ use crate::{
     versioned_protocol,
 };
 use core::{
-    ffi::{c_char, c_void, CStr},
+    ffi::{c_void, CStr},
     ptr::null,
     slice::from_raw_parts,
     str::from_utf8,
@@ -73,10 +73,10 @@ impl Protocol<'_, GblFastbootProtocol> {
                 @bufsize bufsize,
                 self.interface().get_var,
                 self.interface_ptr(),
-                args_arr.as_ptr(),
                 args_arr.len(),
+                args_arr.as_ptr() as _,
+                &mut bufsize,
                 out.as_mut_ptr(),
-                &mut bufsize
             )?
         };
         Ok(bufsize)
@@ -93,29 +93,30 @@ impl Protocol<'_, GblFastbootProtocol> {
         /// * Caller must guarantee that `ctx` points to a valid instance of `Callback`, outlives
         ///   the call, and not being referenced elsewhere.
         /// * Caller must guarantee that `args` points to an array of NULL-terminated strings with
-        ///   size `len` and outlives the call.
+        ///   size `num_args` and outlives the call.
         /// * Caller must guarantee that `val` points to valid NULL-terminated strings and outlives
         ///   the call.
         unsafe extern "efiapi" fn get_var_all_cb(
             ctx: *mut c_void,
-            args: *const *const c_char,
-            len: usize,
-            val: *const c_char,
+            num_args: usize,
+            args: *const *const u8,
+            val: *const u8,
         ) {
             // SAFETY: By safety requirement of this function, `args` points to an array of
-            // NULL-terminated strings of length `len`.
-            let args =
-                unsafe { from_raw_parts(args, len) }.iter().map(|v| unsafe { CStr::from_ptr(*v) });
+            // NULL-terminated strings of length `num_args`.
+            let args = unsafe { from_raw_parts(args, num_args) }
+                .iter()
+                .map(|v| unsafe { CStr::from_ptr(*v as _) });
             // SAFETY: By requirement of this function, `ctx` points to a `Callback`.
             let cb = unsafe { (ctx as *mut Callback).as_mut() }.unwrap();
             // Checks number of arguments and stores them in an array.
             let mut args_arr = [c""; MAX_ARGS];
-            match args_arr.get_mut(..len) {
+            match args_arr.get_mut(..num_args) {
                 Some(v) => {
                     v.iter_mut().zip(args).for_each(|(l, r)| *l = r);
                     // SAFETY: By safety requirement of this function `val` points to a
                     // NULL-terminated string.
-                    (cb.0)(&v, unsafe { CStr::from_ptr(val) })
+                    (cb.0)(&v, unsafe { CStr::from_ptr(val as _) })
                 }
                 _ => (cb.0)(&[c"<Number of arguments exceeds limit>"], c""),
             }
@@ -154,9 +155,9 @@ impl Protocol<'_, GblFastbootProtocol> {
             efi_call!(
                 self.interface().get_staged,
                 self.interface_ptr(),
-                out.as_mut_ptr(),
                 &mut out_size,
                 &mut out_remains,
+                out.as_mut_ptr(),
             )?;
         }
         Ok((out_size, out_remains))
@@ -188,8 +189,8 @@ impl Protocol<'_, GblFastbootProtocol> {
         unsafe extern "efiapi" fn message_sender(
             context: *mut core::ffi::c_void,
             msg_type: GblEfiFastbootMessageType,
-            msg: *const core::ffi::c_char,
             msg_len: usize,
+            msg: *const u8,
         ) -> EfiStatus {
             // SAFETY: By safety requirement of this function, `ctx` points to a `SenderCtx`.
             let cb = unsafe { (context as *mut SenderCtx).as_mut() }.unwrap();
@@ -216,9 +217,9 @@ impl Protocol<'_, GblFastbootProtocol> {
                 self.interface_ptr(),
                 args_arr.len(),
                 args_arr.as_ptr() as _,
+                download.len(),
                 download_used,
                 download.as_mut_ptr(),
-                download.len(),
                 &mut out_impl,
                 Some(message_sender),
                 &mut SenderCtx(&mut sender) as *mut _ as _,
@@ -239,8 +240,8 @@ impl Protocol<'_, GblFastbootProtocol> {
                 self.interface().get_partition_type,
                 self.interface_ptr(),
                 part_name.as_ptr() as _,
-                part_type.as_mut_ptr(),
                 &mut part_type_len,
+                part_type.as_mut_ptr(),
             )?
         };
         Ok(part_type_len)
@@ -316,20 +317,20 @@ mod test {
         ///
         /// * Caller must guarantee that `args` points to an array of NULL-terminated strings with
         ///   size `num_args`.
-        /// * Caller must guarantee that `out` points to a `[u8]`
         /// * Caller must guarantee that `out_size` points to a `usize`
+        /// * Caller must guarantee that `out` points to a `[u8]`
         unsafe extern "efiapi" fn get_var_test(
             _: *mut GblEfiFastbootProtocol,
-            args: *const *const c_char,
             num_args: usize,
-            out: *mut u8,
+            args: *const *const u8,
             out_size: *mut usize,
+            out: *mut u8,
         ) -> EfiStatus {
             // SAFETY: By safety requirement of this function, `args` points to an array of
             // NULL-terminated strings with length `num_args`.
             let args = unsafe { from_raw_parts(args, num_args) }
                 .iter()
-                .map(|v| unsafe { CStr::from_ptr(*v) })
+                .map(|v| unsafe { CStr::from_ptr(*v as _) })
                 .collect::<Vec<_>>();
             assert_eq!(args, [c"var", c"arg1", c"arg2"]);
             // SAFETY: By safety requirement of this function, `out_size` points to a `usize`;
@@ -373,7 +374,7 @@ mod test {
                 //   string.
                 // * By safety requirement of this function, `ctx` points to a valid type of data
                 //   needed by `cb`.
-                unsafe { (cb.unwrap())(ctx, args.as_ptr(), args.len(), val.as_ptr()) };
+                unsafe { (cb.unwrap())(ctx, args.len(), args.as_ptr() as _, val.as_ptr() as _) };
             }
             EFI_STATUS_SUCCESS
         }
@@ -412,7 +413,7 @@ mod test {
             //   string.
             // * By safety requirement of this function, `ctx` points to a valid type of data
             //   needed by `cb`.
-            unsafe { (cb.unwrap())(ctx, args.as_ptr(), args.len(), c"".as_ptr()) };
+            unsafe { (cb.unwrap())(ctx, args.len(), args.as_ptr() as _, c"".as_ptr() as _) };
             EFI_STATUS_SUCCESS
         }
         run_test(|image_handle, systab_ptr| {

@@ -33,7 +33,7 @@ whose query requires cooperation with vendor firmware, OEM commands,
 ### Revision Number
 
 ```c
-#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 6)
+#define GBL_EFI_FASTBOOT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 8)
 ```
 
 See
@@ -46,7 +46,7 @@ for details about protocol revisions.
 #define GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8 32
 
 typedef struct _GBL_EFI_FASTBOOT_PROTOCOL {
-  UINT64                                        Revision
+  UINT64                                        Revision;
   CHAR8                                         SerialNumber[GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8];
   GBL_EFI_FASTBOOT_GET_VAR                      GetVar;
   GBL_EFI_FASTBOOT_GET_VAR_ALL                  GetVarAll;
@@ -110,10 +110,10 @@ typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_GET_VAR)(
     IN GBL_EFI_FASTBOOT_PROTOCOL*         Self,
-    IN CONST CHAR8* CONST*                Args,
     IN UINTN                              NumArgs,
-    OUT CHAR8*                            Buf,
-    IN OUT UINTN*                         BufSize,
+    IN CONST CHAR8* CONST*                Args,
+    IN OUT UINTN*                         BufferSize,
+    OUT CHAR8*                            Buffer
 );
 ```
 
@@ -124,24 +124,24 @@ _Self_
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
+_NumArgs_
+
+The number of elements in the `Args` array.
+
 _Args_
 
 A pointer to an array of NULL-terminated strings that contains the name of the
 variable followed by additional arguments.
 
-_NumArgs_
+_BufferSize_
 
-The number of elements in the _Args_ array.
+On entry, the size in bytes of `Buffer`. On exit, the size in bytes of the UTF-8
+encoded string describing the value, excluding any Null-terminator.
 
-_Buf_
+_Buffer_
 
 A pointer to the data buffer to store the value of the variable as a UTF-8
 encoded string.
-
-_BufSize_
-
-On entry, the size in bytes of _Buf_. On exit, the size in bytes of the UTF-8
-encoded string describing the value, excluding any Null-terminator.
 
 ### Description
 
@@ -164,13 +164,13 @@ OKAY0x800000000000
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                                                                                                                                |
-| :---------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`           | The variable was found and its value successfully serialized.                                                                                                            |
-| `EFI_INVALID_PARAMETER` | One of _Self_, _Args_, _Buf_, or _BufSize_ is `NULL`                                                                                                                     |
-| `EFI_NOT_FOUND`         | The first element of _Args_ does not contain a known variable.                                                                                                           |
-| `EFI_UNSUPPORTED`       | The contents of _Args_ do not contain a known variable with valid aruments. Any of the subarguments may be unknown, or too many or too few subarguments may be provided. |
-| `EFI_BUFFER_TOO_SMALL`  | _Buf_ is too small to store the serialized variable string. The value of _BufSize_ is modified to contain the minimum necessary buffer size.                             |
+| Return Code             | Semantics                                                                                                                                                                 |
+| :---------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `EFI_SUCCESS`           | The variable was found and its value successfully serialized.                                                                                                             |
+| `EFI_INVALID_PARAMETER` | One of `Self`, `Args`, `BufferSize` or `Buffer` is `NULL`.                                                                                                                |
+| `EFI_NOT_FOUND`         | The first element of `Args` does not contain a known variable.                                                                                                            |
+| `EFI_UNSUPPORTED`       | The contents of `Args` do not contain a known variable with valid arguments. Any of the subarguments may be unknown, or too many or too few subarguments may be provided. |
+| `EFI_BUFFER_TOO_SMALL`  | `Buffer` is too small to store the serialized variable string. The value of `BufferSize` is modified to contain the minimum necessary buffer size.                        |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.GetVarAll()`
 
@@ -185,8 +185,8 @@ typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_GET_VAR_ALL)(
     IN GBL_EFI_FASTBOOT_PROTOCOL*         Self,
-    IN VOID*                              Context
-    IN GBL_EFI_GET_VAR_ALL_CALLBACK       GetVarAllCallback,
+    IN VOID*                              Context,
+    IN GBL_EFI_GET_VAR_ALL_CALLBACK       GetVarAllCallback
 );
 ```
 
@@ -204,25 +204,29 @@ A pointer to the context data for `GetVarAllCallback`.
 _GetVarAllCallback_
 
 A pointer to a function of type `GBL_EFI_GET_VAR_ALL_CALLBACK`. It receives as
-parameter the `Context` pointer passed to this function, an array of
-NULL-terminated UTF8 strings containing variable name and additional arguments,
-the array length, and a NULL-terminated string representing the value.
+parameter the `Context` pointer passed to this function, the array length, an
+array of NULL-terminated UTF8 strings containing variable name and additional
+arguments, and a NULL-terminated string representing the value.
 
 ### Related Definitions
 
 ```c
 typedef
 VOID (*GBL_EFI_GET_VAR_ALL_CALLBACK) (
-    IN VOID*                              Context
-    IN CONST CHAR8* CONST*                Args,
+    IN VOID*                              Context,
     IN UINTN                              NumArgs,
-    IN CONST CHAR8*                       Value,
+    IN CONST CHAR8* CONST*                Args,
+    IN CONST CHAR8*                       Value
 );
 ```
 
 _Context_
 
 The pointer to the context passed to `GetVarAll()`.
+
+_NumArgs_
+
+The number of elements in the `Args` array.
 
 _Args_
 
@@ -233,10 +237,6 @@ The name and arguments correspond to the `:` separated variable format by the
 fastboot protocol, i.e. `fastboot getvar <name>:<arg1>:<arg2>..`. However
 firmware may also choose to pass the entire `"<name>:<arg1>:<arg2>.."` string as
 a 1-size array if preferred. Caller should expect both cases.
-
-_NumArgs_
-
-The number of elements in the _Args_ array.
 
 _Value_
 
@@ -253,7 +253,7 @@ callback `GetVarAllCallback()` and passes the context, arguments and value.
 | Return Code             | Semantics                                       |
 | :---------------------- | :---------------------------------------------- |
 | `EFI_SUCCESS`           | Operation is successful.                        |
-| `EFI_INVALID_PARAMETER` | One of _Self_ or _GetVarAllCallback_ is `NULL`. |
+| `EFI_INVALID_PARAMETER` | One of `Self` or `GetVarAllCallback` is `NULL`. |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.GetStaged()`
 
@@ -269,9 +269,9 @@ typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_GET_STAGED)(
     IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
-    OUT UINT8*                    Out,
-    IN OUT UINTN*                 OutLen,
-    OUT UINTN*                    RemainingSize
+    IN OUT UINTN*                 BufferSize,
+    OUT UINTN*                    BufferRemains,
+    OUT UINT8*                    Buffer
 );
 ```
 
@@ -282,18 +282,18 @@ _Self_
 A pointer to the [`GBL_EFI_FASTBOOT_PROTOCOL`](#protocol-interface-structure)
 instance.
 
-_Out_
+_BufferSize_
 
-Pointer to the output buffer.
+On input, stores the size of the output buffer `Buffer`. On output, stores the
+actual number of bytes read to `Buffer`.
 
-_OutLen_
-
-On input, stores the size of the output buffer `Out`. On output, stores the
-actual number of bytes read to `Out`.
-
-_RemainingSize_
+_BufferRemains_
 
 On output, stores the number of remaining bytes left to read.
+
+_Buffer_
+
+Pointer to the output buffer.
 
 ### Description
 
@@ -302,11 +302,11 @@ command `fastboot get_staged`. The function may be called multiple times to read
 out the whole payload in chunks to accommodate callers with limited buffer.
 Implementation should internally track read progress and avoid changing the
 backing data when caller starts reading. However, outside the session of
-`fastboot get_staged`, i.e. when in `RunOemFunction`, implementation can change
-or update the backing data.
+`fastboot get_staged`, i.e. when in `CommandExec`, implementation can change or
+update the backing data.
 
 Caller may pass a 0-length input buffer for peeking the total via
-`RemainingSize`. This should be expected by the implementation.
+`BufferRemains`. This should be expected by the implementation.
 
 The typical usage is to for vendor to provide an OEM command that sets up the
 payload and then retrieve the payload via `fastboot get_staged` from the host.
@@ -316,7 +316,7 @@ payload and then retrieve the payload via `fastboot get_staged` from the host.
 | Return Code             | Semantics                                                 |
 | :---------------------- | :-------------------------------------------------------- |
 | `EFI_SUCCESS`           | The call completed successfully.                          |
-| `EFI_INVALID_PARAMETER` | Any of _Out_, _OutLen_, _RemainingSize_ is `NULL`.        |
+| `EFI_INVALID_PARAMETER` | Any of `BufferSize`, `BufferRemains`, `Buffer` is `NULL`. |
 | `EFI_ACCESS_DENIED`     | The operation is not permitted in the current lock state. |
 
 ## `GBL_EFI_FASTBOOT_PROTOCOL.CommandExec()`
@@ -331,15 +331,15 @@ Allows for command filtering and implementation override.
 typedef
 EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_COMMAND_EXEC)(
-    IN GBL_EFI_FASTBOOT_PROTOCOL* Self,
+    IN GBL_EFI_FASTBOOT_PROTOCOL*             Self,
     IN UINTN                                  NumArgs,
     IN CONST CHAR8* CONST*                    Args,
-    IN UINTN                                  DownloadDataLen,
-    IN UINT8*                                 DownloadData,
-    IN UINTN                                  DownloadDataFullSize,
+    IN UINTN                                  DownloadBufferSize,
+    IN UINTN                                  DownloadBufferUsedSize,
+    IN UINT8*                                 DownloadBuffer,
     OUT GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT* Implementation,
     IN FASTBOOT_MESSAGE_SENDER                Sender,
-    IN VOID*                                  SenderContext,
+    IN VOID*                                  Context
 );
 ```
 
@@ -352,28 +352,28 @@ instance.
 
 _NumArgs_
 
-The number of elements in the _Args_ array.
+The number of elements in the `Args` array.
 
 _Args_
 
 A pointer to an array of NULL-terminated UTF-8 strings that contains the
 fastboot command followed by additional arguments.
 
-_DownloadData_
+_DownloadBufferSize_
+
+Full size of the download data buffer `DownloadBuffer`. It can be bigger than
+`DownloadBufferUsedSize` for custom implementation use.
+
+_DownloadBufferUsedSize_
+
+The size of the download data in `DownloadBuffer`.
+
+_DownloadBuffer_
 
 A pointer to the most recent downloaded data.
 
-_DownloadDataLen_
-
-The size of the download data in `DownloadData`.
-
-`DownloadData` and `DownloadDataLen` provide additional context for commands
-such as `fastboot flash`.
-
-_DownloadDataFullSize_
-
-Full size of the download data buffer `DownloadData`. It can be bigger than
-`DownloadDataLen` for custom implementation use.
+`DownloadBuffer` along with `DownloadBufferSize` and `DownloadBufferUsedSize`
+provide additional context for commands such as `fastboot flash`.
 
 _Implementation_
 
@@ -391,8 +391,8 @@ _Sender_
 
 A pointer to a function of type `FASTBOOT_MESSAGE_SENDER`. The function is used
 by the implementation to send custom fastboot OKAY/FAIL/INFO messages. For input
-arguments, it takes the `SenderContext` pointer passed to this function, the
-message type, a pointer to a UTF8 string and the string length.
+arguments, it takes the `Context` pointer passed to this function, the message
+type, the string length and a pointer to a UTF8 string.
 
 Warning: The `Sender` parameter should only be used for commands that are
 `CUSTOM_IMPL`. Using Sender to send messages for commands that are `PROHIBITED`
@@ -408,15 +408,14 @@ violates this requirement.
 Likewise if implementation returns without sending any OKAY/FAIL message, caller
 should send either an OKAY or a FAIL based on the return value of this API.
 
-_SenderContext_
+_Context_
 
 A pointer to the context data for `Sender`.
 
 ### Description
 
 `CommandExec()` queries whether a fastboot command is allowed and what
-implementation to use. If command is not allowed, firmware can output an
-optional NULL-terminated message in `MsgBuf`.
+implementation to use.
 
 It's up to the caller to decide how to proceed in the case of error, i.e base on
 the level of security requirement.
@@ -445,11 +444,11 @@ Following commands can not be overridden:
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                                                                    |
-| :---------------------- | :----------------------------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`           | The call completed successfully.                                                                             |
-| `EFI_INVALID_PARAMETER` | `Command` or `Implementation` or `MsgBuf` is NULL. `DownloadDataLen` is non-zero but `DownloadData` is NULL. |
-| `EFI_DEVICE_ERROR`      | An internal error occurred.                                                                                  |
+| Return Code             | Semantics                                                                                                                                  |
+| :---------------------- | :----------------------------------------------------------------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`           | The call completed successfully.                                                                                                           |
+| `EFI_INVALID_PARAMETER` | One of `Args`, `Implementation` is `NULL`. Or `DownloadBuffer` is `NULL` but `DownloadBufferSize` or `DownloadBufferUsedSize` is non-zero. |
+| `EFI_DEVICE_ERROR`      | An internal error occurred.                                                                                                                |
 
 ### Related Definitions
 
@@ -470,42 +469,42 @@ typedef uint32_t GBL_EFI_FASTBOOT_MESSAGE_TYPE;
 
 typedef
 EFI_STATUS (*FASTBOOT_MESSAGE_SENDER) (
-    IN VOID*                      Context,
-    IN EFI_FASTBOOT_MESSAGE_TYPE  MsgType
-    IN CONST CHAR8*               Msg,
-    IN UINTN                      Len,
+    IN VOID*                          Context,
+    IN GBL_EFI_FASTBOOT_MESSAGE_TYPE  MsgType,
+    IN UINTN                          MsgLen,
+    IN CONST CHAR8*                   Msg
 );
 ```
 
-_GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED_ - indicates that command is
+`GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED` - indicates that command is
 not allowed. GBL is responsible for communicating the prohibition to the user.
 This is a convenience common case and GBL will send a generic error message. A
 custom error message can be sent if the exec result is
 `GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL`.
 
-_GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL_ - GBL will use its own
+`GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL` - GBL will use its own
 default implementation to handle the command.
 
-_GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL_ - command is handled by
+`GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL` - command is handled by
 running custom implementation. Vendor firmware is responsible for guaranteeing
 that the implementation has run to completion before returning this value. GBL
 will ignore the command assuming it has been handled.
 
 _Context_
 
-The pointer to the context passed to `RunOemFunction()`.
+The pointer to the context passed to `CommandExec()`.
 
 _MsgType_
 
-A `EFI_FASTBOOT_MESSAGE_TYPE` value indicating message type.
+A `GBL_EFI_FASTBOOT_MESSAGE_TYPE` value indicating message type.
+
+_MsgLen_
+
+The length of `Msg`.
 
 _Msg_
 
 A pointer to a UTF8 string. The string does not need to be NULL terminated.
-
-_Len_
-
-The length of `Msg`.
 
 Note: The max allowed length of a message depends on the transport. For example,
 for Fastboot over USB, it is the native packet size. Implementation should
@@ -526,8 +525,8 @@ EFI_STATUS
 (EFIAPI * GBL_EFI_FASTBOOT_GET_PARTITION_TYPE)(
     IN GBL_EFI_FASTBOOT_PROTOCOL*   Self,
     IN CONST CHAR8*                 PartName,
-    OUT CHAR8*                      PartType,
-    IN OUT UINTN*                   PartTypeLen
+    IN OUT UINTN*                   PartTypeLen,
+    OUT CHAR8*                      PartType
 );
 ```
 
@@ -548,17 +547,17 @@ _PartName_
 
 The NULL-terminated name of the partition to query.
 
+_PartTypeLen_
+
+On entry, the size of the `PartType` buffer. This should be larger or equal to
+`GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN`.
+
+On exit, the size in bytes of the `PartType` string, excluding any
+NULL-terminator.
+
 _PartType_
 
 A buffer to write the result to. This does not need to be NULL-terminated.
-
-_PartTypeLen_
-
-On entry, the size of the _PartType_ buffer. This should be larger or equal to
-`GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN`.
-
-On exit, the size in bytes of the _PartType_ string, excluding any
-NULL-terminator.
 
 ### Description
 
@@ -566,7 +565,7 @@ This API is for supporting `fastboot format`. The partition type returned here
 would be reported to the fastboot client in `getvar partition-type:<partname>`.
 
 If the partition should support formatting with `fastboot format`, then
-_PartType_ should contain the filesystem type to format to.
+`PartType` should contain the filesystem type to format to.
 
 If a partition or all partitions shouldn't support `fastboot format`, then this
 API can be left unimplemented or return `EFI_UNSUPPORTED`. In that case GBL
@@ -577,6 +576,6 @@ reports the partition type as `raw`.
 | Return Code             | Semantics                                                                                                                              |
 | :---------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
 | `EFI_SUCCESS`           | The call completed successfully.                                                                                                       |
-| `EFI_INVALID_PARAMETER` | One of _Self_, _PartName_, or _PartType_ is `NULL`.                                                                                    |
-| `EFI_UNSUPPORTED`       | _PartName_ is a raw partition that doesn't support `fastboot format`.                                                                  |
-| `EFI_BUFFER_TOO_SMALL`  | _PartType_ buffer is too small to store the result. The value of _PartTypeLen_ should be updated to the minimum necessary buffer size. |
+| `EFI_INVALID_PARAMETER` | One of `Self`, `PartName`, `PartType`, or `PartTypeLen` is `NULL`.                                                                     |
+| `EFI_UNSUPPORTED`       | `PartName` is a raw partition that doesn't support `fastboot format`.                                                                  |
+| `EFI_BUFFER_TOO_SMALL`  | `PartType` buffer is too small to store the result. The value of `PartTypeLen` should be updated to the minimum necessary buffer size. |

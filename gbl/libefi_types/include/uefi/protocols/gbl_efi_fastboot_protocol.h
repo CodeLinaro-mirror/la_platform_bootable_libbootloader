@@ -34,7 +34,7 @@
 #define GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8 32
 
 static const uint64_t GBL_EFI_FASTBOOT_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 7);
+    GBL_PROTOCOL_REVISION(0, 8);
 
 static const size_t GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN = 56;
 
@@ -44,8 +44,9 @@ static const size_t GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN = 56;
 // args: An array of NULL-terminated strings that contains the variable name
 //       followed by additional arguments if any.
 // val: A NULL-terminated string representing the value.
-typedef void (*GetVarAllCallback)(void* context, const char* const* args,
-                                  size_t num_args, const char* val);
+typedef void (*GetVarAllCallback)(void* context, size_t num_args,
+                                  const uint8_t* const* args,
+                                  const uint8_t* val);
 
 EFI_ENUM(GblEfiFastbootMessageType, uint32_t,
          GBL_EFI_FASTBOOT_MESSAGE_TYPE_OKAY, GBL_EFI_FASTBOOT_MESSAGE_TYPE_FAIL,
@@ -53,7 +54,7 @@ EFI_ENUM(GblEfiFastbootMessageType, uint32_t,
 
 typedef EfiStatus (*FastbootMessageSender)(void* context,
                                            GblEfiFastbootMessageType msg_type,
-                                           const char* msg, size_t msg_len);
+                                           size_t msg_len, const uint8_t* msg);
 
 EFI_ENUM(GblEfiFastbootCommandExecResult, uint32_t,
          GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED,
@@ -66,27 +67,26 @@ typedef struct GblEfiFastbootProtocol {
   uint8_t serial_number[GBL_EFI_FASTBOOT_SERIAL_NUMBER_MAX_LEN_UTF8];
 
   // Fastboot variable methods
-  EfiStatus (*get_var)(struct GblEfiFastbootProtocol* self,
-                       const char* const* args, size_t num_args, uint8_t* out,
-                       size_t* out_size);
-  EfiStatus (*get_var_all)(struct GblEfiFastbootProtocol* self, void* ctx,
+  EfiStatus (*get_var)(struct GblEfiFastbootProtocol* self, size_t num_args,
+                       const uint8_t* const* args, size_t* buffer_size,
+                       uint8_t* buffer);
+  EfiStatus (*get_var_all)(struct GblEfiFastbootProtocol* self, void* context,
                            GetVarAllCallback cb);
 
-  // Fastboot get_staged backend
-  EfiStatus (*get_staged)(struct GblEfiFastbootProtocol* self, uint8_t* out,
-                          size_t* out_size, size_t* out_remain);
+  EfiStatus (*get_staged)(struct GblEfiFastbootProtocol* self,
+                          size_t* buffer_size, size_t* buffer_remains,
+                          uint8_t* buffer);
 
-  // Misc methods
   EfiStatus (*command_exec)(struct GblEfiFastbootProtocol* self,
-                            size_t num_args, const char* const* args,
-                            size_t download_data_used_len,
-                            uint8_t* download_data,
-                            size_t download_data_full_size,
+                            size_t num_args, const uint8_t* const* args,
+                            size_t download_buffer_size,
+                            size_t download_buffer_used_size,
+                            uint8_t* download_buffer,
                             GblEfiFastbootCommandExecResult* implementation,
-                            FastbootMessageSender sender, void* ctx);
+                            FastbootMessageSender sender, void* context);
   EfiStatus (*get_partition_type)(struct GblEfiFastbootProtocol* self,
-                                  const uint8_t* part_name, uint8_t* part_type,
-                                  size_t* part_type_len);
+                                  const uint8_t* part_name,
+                                  size_t* part_type_len, uint8_t* part_type);
 } GblEfiFastbootProtocol;
 
 #endif  // __GBL_EFI_FASTBOOT_PROTOCOL_H__
