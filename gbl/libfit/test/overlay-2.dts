@@ -1,0 +1,14 @@
+/dts-v1/;
+
+// re-generate and push test artifacts using ./gen_test_fit.sh after change in this file
+/ {
+
+    // add a new node at the root level
+    fragment@0 {
+        target-path = "/";
+        __overlay__ {
+		dev_overlay2: dev-overlay-2 {};
+        };
+    };
+
+};

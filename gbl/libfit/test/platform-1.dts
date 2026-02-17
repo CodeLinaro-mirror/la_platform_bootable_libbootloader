@@ -1,0 +1,10 @@
+/dts-v1/;
+
+// re-generate and push test artifacts using ./gen_test_fit.sh after change in this file
+/ {
+        info = "test device tree for FIT";
+
+    dev1: dev-1 {};
+
+};
+

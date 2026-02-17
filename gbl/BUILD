@@ -37,6 +37,7 @@ readme_test(
         "@gbl//liberror",
         "@gbl//libfastboot",
         "@gbl//libfdt",
+        "@gbl//libfit",
         "@gbl//libgbl",
         "@gbl//libmisc",
         "@gbl//libsafemath",

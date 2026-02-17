@@ -25,8 +25,8 @@ use core::mem::size_of;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 use liberror::{Error, Result};
 use libfdt_bindgen::{
-    fdt_add_subnode_namelen, fdt_create_empty_tree, fdt_del_node, fdt_delprop, fdt_get_property,
-    fdt_header, fdt_move, fdt_setprop, fdt_setprop_placeholder, fdt_strerror,
+    fdt_add_subnode_namelen, fdt_create_empty_tree, fdt_del_node, fdt_delprop, fdt_first_subnode,
+    fdt_get_property, fdt_header, fdt_move, fdt_setprop, fdt_setprop_placeholder, fdt_strerror,
     fdt_subnode_offset_namelen,
 };
 use libufdt_bindgen::ufdt_apply_multioverlay;
@@ -269,34 +269,46 @@ impl<'a, T: AsRef<[u8]> + 'a> Fdt<T> {
         Ok(self.header_ref()?.totalsize())
     }
 
-    /// Get a property from an existing node.
+    /// Get a property from an existing node at the given node offset.
     ///
     /// Note: The lifetime of the returned buffer must be tied to the Fdt
     /// instance. This prevents the underlying device tree from being modified
     /// while the buffer is in use, ensuring the data remains valid.
-    pub fn get_property(&self, path: &str, name: &CStr) -> Result<&[u8]> {
-        let node = self.find_node(path)?;
+    pub fn get_property_by_node_offset(&self, node_offset: usize, name: &CStr) -> Result<&[u8]> {
         let mut len: c_int = 0;
-        // SAFETY: API from libfdt_c.
+        // SAFETY:
+        // * `self.0` is guaranteed to be a proper fdt header reference.
+        // * `name` is guaranteed to point to a null-terminated string.
+        // * `len` is guaranteed to point to a writable integer buffer.
         let ptr = unsafe {
             fdt_get_property(
-                self.0.as_ref().as_ptr() as *const _,
-                node,
+                self.0.as_ref().as_ptr() as *const c_void,
+                node_offset.try_into()?,
                 name.to_bytes_with_nul().as_ptr() as *const _,
-                &mut len as *mut _,
+                &mut len,
             )
         };
-        // SAFETY: Buffer returned by API from libfdt_c.
+        // SAFETY: On error, `fdt_get_property` returns NULL. On success, it returns
+        // a pointer to a `const struct fdt_property`.
         match unsafe { ptr.as_ref() } {
-            // SAFETY: Buffer returned by API from libfdt_c.
+            // SAFETY: On success the `const struct fdt_property` contains a byte array
+            // pointed to by `v.data`, with its length in `v.len`.
+            // The length is in big-endian byte order, so we convert it before using it.
             Some(v) => Ok(unsafe {
                 from_raw_parts(
                     v.data.as_ptr() as *const u8,
                     u32::from_be(v.len).try_into().or(Err(Error::Other(None)))?,
                 )
             }),
+            // On error, `len` is set to an error value.
             _ => Err(map_result(len).unwrap_err()),
         }
+    }
+
+    /// Get a property from an existing node at the given node path.
+    pub fn get_property(&self, path: &str, name: &CStr) -> Result<&[u8]> {
+        let node = self.find_node_offset(path)?;
+        self.get_property_by_node_offset(node.try_into().unwrap(), name)
     }
 
     /// Treat the property value as a u32 and return it.
@@ -306,7 +318,13 @@ impl<'a, T: AsRef<[u8]> + 'a> Fdt<T> {
     }
 
     /// Find the offset of a node by a given node path.
-    fn find_node(&self, path: &str) -> Result<c_int> {
+    pub fn find_node_offset(&self, path: &str) -> Result<usize> {
+        let offset = self.find_node_offset_ffi(path)?;
+        offset.try_into().map_err(|_| Error::Other(Some("Invalid FDT node offset")))
+    }
+
+    /// Find the offset of a node by a given node path.
+    fn find_node_offset_ffi(&self, path: &str) -> Result<c_int> {
         let mut curr: c_int = 0;
         for name in path.split('/') {
             if name.len() == 0 {
@@ -315,6 +333,33 @@ impl<'a, T: AsRef<[u8]> + 'a> Fdt<T> {
             curr = fdt_subnode_offset(self.0.as_ref(), curr, name)?;
         }
         Ok(curr)
+    }
+
+    /// Get first subnode from an existing node.
+    pub fn get_first_subnode_offset(&self, node_offset: usize) -> Result<usize> {
+        // SAFETY:
+        // * `self.0` is guaranteed to be a proper fdt header reference
+        map_result(unsafe {
+            fdt_first_subnode(self.0.as_ref().as_ptr() as *const c_void, node_offset.try_into()?)
+        })
+        .map(|o| o.try_into().unwrap())
+    }
+
+    /// Iterator based implementation of fdt_stringlist_get()
+    pub fn get_property_stringlist_by_node_offset(
+        &self,
+        node_offset: usize,
+        name: &CStr,
+    ) -> Result<impl Iterator<Item = &CStr>> {
+        // Stringlist is required to be null terminated.
+        let prop = self.get_property_by_node_offset(node_offset, name)?;
+
+        // Stringlist is required to be null terminated.
+        if prop.last() != Some(&0) {
+            return Err(Error::InvalidInput);
+        }
+
+        Ok(prop.split_inclusive(|v| *v == 0).map(|v| CStr::from_bytes_with_nul(v).unwrap()))
     }
 }
 
@@ -392,7 +437,7 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
 
     /// Delete node by `path`. Fail if node doesn't exist.
     pub fn delete_node(&mut self, path: &str) -> Result<()> {
-        let node = self.find_node(path)?;
+        let node = self.find_node_offset_ffi(path)?;
         // SAFETY:
         // * `self.0` is guaranteed to be a proper fdt header reference
         // * `node` is offset of the node to delete within `self.0` fdt buffer
@@ -444,7 +489,7 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
 
     /// Delete property by `path` and `name`. Fail if property doesn't exist.
     pub fn delete_property(&mut self, path: &str, name: &CStr) -> Result<()> {
-        let node = self.find_node(path)?;
+        let node = self.find_node_offset_ffi(path)?;
         // SAFETY:
         // * `self.0` is guaranteed to be a proper fdt header reference.
         // * `node` is offset of the node to delete within `self.0` fdt buffer.
@@ -623,6 +668,31 @@ mod test {
 
         // Non eixsts
         assert!(fdt.get_property("/", c"non-existent").is_err());
+    }
+
+    #[test]
+    fn test_get_property_by_node_offset() {
+        let init = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut fdt_buf = vec![0u8; init.len()];
+        let fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        let node_offset = fdt.find_node_offset("/dev-2/dev-2.2/dev-2.2.1").unwrap();
+
+        assert_eq!(
+            CStr::from_bytes_with_nul(
+                fdt.get_property_by_node_offset(node_offset.try_into().unwrap(), c"property-1")
+                    .unwrap()
+            )
+            .unwrap()
+            .to_str()
+            .unwrap(),
+            "dev-2.2.1-property-1"
+        );
+
+        // Non eixsts
+        assert!(fdt
+            .get_property_by_node_offset(node_offset.try_into().unwrap(), c"non-existent")
+            .is_err());
     }
 
     #[test]
@@ -965,10 +1035,10 @@ mod test {
         let mut dt_buf = [0u8; 1000];
         let mut dt = Fdt::new_from_init(&mut dt_buf, &init).unwrap();
 
-        dt.find_node("/dev-3").unwrap();
+        dt.find_node_offset("/dev-3").unwrap();
         dt.ensure_node("/dev-3").unwrap();
         dt.ensure_node("/dev-3/a/b").unwrap();
-        dt.find_node("/dev-3/a/b").unwrap();
+        dt.find_node_offset("/dev-3/a/b").unwrap();
     }
 
     #[test]
@@ -976,13 +1046,78 @@ mod test {
         let mut dt_buf = AlignedBuffer::new(256, 8);
         let mut dt = Fdt::new_empty(&mut dt_buf[..]).unwrap();
 
-        dt.find_node("/").unwrap();
-        dt.find_node("/a").unwrap_err();
+        dt.find_node_offset("/").unwrap();
+        dt.find_node_offset("/a").unwrap_err();
         dt.ensure_node("/a").unwrap();
-        dt.find_node("/a").unwrap();
-        dt.find_node("/b").unwrap_err();
+        dt.find_node_offset("/a").unwrap();
+        dt.find_node_offset("/b").unwrap_err();
 
         dt.shrink_to_fit().unwrap();
         dt.header_ref().unwrap();
+    }
+
+    #[test]
+    fn test_get_property_stringlist_by_node_offset() {
+        let init = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut fdt_buf = vec![0u8; init.len()];
+        let fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        let valid_prop_node_offset = fdt.find_node_offset("/dev-4").unwrap();
+        let invalid_prop_node_offset = fdt.find_node_offset("/dev-2/dev-2.2/dev-2.2.1").unwrap();
+        let non_exist_prop_node_offset = fdt.find_node_offset("/").unwrap();
+        let invalid_node_offset = usize::MAX;
+
+        let strings_from_fdt: Vec<&str> = fdt
+            .get_property_stringlist_by_node_offset(
+                valid_prop_node_offset.try_into().unwrap(),
+                c"property-1",
+            )
+            .unwrap()
+            .map(|cs| cs.to_str().unwrap())
+            .collect();
+        assert_eq!(strings_from_fdt, vec!["Str1", "Str2", "Str3"]);
+
+        // Not a valid stringlist
+        assert!(fdt
+            .get_property_stringlist_by_node_offset(
+                invalid_prop_node_offset.try_into().unwrap(),
+                c"property-2"
+            )
+            .is_err());
+        // Non exists
+        assert!(fdt
+            .get_property_stringlist_by_node_offset(
+                non_exist_prop_node_offset.try_into().unwrap(),
+                c"non-existent"
+            )
+            .is_err());
+        // Invalid node
+        assert!(fdt
+            .get_property_stringlist_by_node_offset(invalid_node_offset, c"invalid-property")
+            .is_err());
+    }
+
+    #[test]
+    fn test_find_node_offset() {
+        let init = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut fdt_buf = vec![0u8; init.len()];
+        let fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        assert!(fdt.find_node_offset("/dev-4").is_ok());
+        assert!(fdt.find_node_offset("/non-existent").is_err());
+    }
+
+    #[test]
+    fn test_get_first_subnode_offset() {
+        let init = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut fdt_buf = vec![0u8; init.len()];
+        let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        let mut node_offset = fdt.find_node_offset("/dev-2/dev-2.2").unwrap();
+        assert!(fdt.get_first_subnode_offset(node_offset.try_into().unwrap()).is_ok());
+
+        fdt.delete_node("/dev-2/dev-2.2/dev-2.2.1").unwrap();
+        node_offset = fdt.find_node_offset("/dev-2/dev-2.2").unwrap();
+        assert!(fdt.get_first_subnode_offset(node_offset.try_into().unwrap()).is_err());
     }
 }
