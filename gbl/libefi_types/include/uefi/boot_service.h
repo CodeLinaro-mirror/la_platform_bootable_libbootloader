@@ -104,15 +104,15 @@ typedef struct {
                           EfiDevicePathProtocol* path, void* src,
                           size_t src_size, EfiHandle* image_handle);
   EfiStatus (*start_image)(EfiHandle image_handle, size_t* exit_data_size,
-                           uint16_t** exit_data);
+                           EfiChar16** exit_data);
   EfiStatus (*exit)(EfiHandle image_handle, EfiStatus exit_status,
-                    size_t exit_data_size, uint16_t* exit_data);
+                    size_t exit_data_size, EfiChar16* exit_data);
   EfiStatus (*unload_image)(EfiHandle image_handle);
   EfiStatus (*exit_boot_services)(EfiHandle image_handle, size_t map_key);
   EfiStatus (*get_next_monotonic_count)(uint64_t* count);
   EfiStatus (*stall)(size_t microseconds);
   EfiStatus (*set_watchdog_timer)(size_t timeout, uint64_t watchdog_code,
-                                  size_t data_size, uint16_t* watchdog_data);
+                                  size_t data_size, EfiChar16* watchdog_data);
   EfiStatus (*connect_controller)(EfiHandle controller_handle,
                                   EfiHandle* driver_image_handle,
                                   EfiDevicePathProtocol* remaining_path,

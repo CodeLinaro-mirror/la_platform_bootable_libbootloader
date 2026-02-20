@@ -80,7 +80,7 @@ typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_GET_PARTITION_BUFFER) (
   IN GBL_EFI_BOOT_MEMORY_PROTOCOL *Self,
-  IN CONST CHAR                   *BaseName,
+  IN CONST CHAR8                  *BaseName,
   OUT UINTN                       *Size,
   OUT VOID                        **Addr,
   OUT GblEfiPartitionBufferFlag   *Flag,
