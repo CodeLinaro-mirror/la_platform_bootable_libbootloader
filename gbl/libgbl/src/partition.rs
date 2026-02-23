@@ -122,9 +122,9 @@ impl Partition {
         let off = off.unwrap_or(0);
         let abs_start = SafeNum::from(start) + off;
         let sz = sz.map_or(SafeNum::from(end) - abs_start, |v| v.into());
-        let abs_end = u64::try_from(abs_start + sz)?;
-        match abs_end <= end {
-            true => Ok((abs_start.try_into()?, abs_end)),
+        let abs_end: SafeNum = abs_start + sz;
+        match (abs_start.try_into(), abs_end.try_into()) {
+            (Ok(s), Ok(e)) if e <= end => Ok((s, e)),
             _ => Err(Error::OutOfRange),
         }
     }
@@ -821,7 +821,21 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_sub_overflow() {
+    fn test_partition_metadata_sub() {
+        let raw = Partition::Raw(RawName::try_from("raw").unwrap(), 1024);
+        assert_eq!(raw.sub(None, None), Ok((0, 1024)));
+        assert_eq!(raw.sub(Some(256), None), Ok((256, 1024)));
+        assert_eq!(raw.sub(None, Some(512)), Ok((0, 512)));
+        assert_eq!(raw.sub(Some(256), Some(512)), Ok((256, 768)));
+        assert_eq!(raw.sub(Some(512), Some(512)), Ok((512, 1024)));
+        assert_eq!(raw.sub(Some(1024), Some(1)), Err(Error::OutOfRange));
+        assert_eq!(raw.sub(Some(512), Some(1024)), Err(Error::OutOfRange));
+        assert_eq!(raw.sub(Some(2048), None), Err(Error::OutOfRange));
+        assert_eq!(raw.sub(Some(0), Some(u64::MAX)), Err(Error::OutOfRange));
+    }
+
+    #[test]
+    fn test_partition_io_sub_overflow() {
         let disk = include_bytes!("../../libstorage/test/gpt_test_1.bin");
         let gpt = gpt_disk(&disk[..]);
         assert_eq!(block_on(gpt.sync_gpt()).unwrap(), Some(GptSyncResult::BothValid));

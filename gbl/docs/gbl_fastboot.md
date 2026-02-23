@@ -12,6 +12,29 @@ channels such as USB, the
 protocol is required. GBL automatically establishes the corresponding transport
 channel if the required protocol is available.
 
+## Common Target Variables
+
+GBL fastboot supports flexible access to storage using this format:
+
+`fastboot {flash,erase,fetch} part/storage_id/offset/size`
+
+The following variables areused to construct targets across various commands:
+
+- `<part>` (Required: production builds, Optional: dev builds): The name of the
+  partition to operate on. This must be a valid, non-empty partition name on
+  production builds.
+- `<storage_id>` (Optional): A hex string representing a unique integer ID
+  assigned to each storage device detected by GBL. If `storage_id` is not given,
+  GBL will check if a default storage ID is set via
+  `fastboot oem gbl-set-default-block <storage_id>` and use the default ID if
+  set. If the default ID is not set, GBL will check that `part` can match to a
+  unique partition. Otherwise, it will be rejected. The default ID can be unset
+  via `fastboot oem gbl-unset-default-block`.
+- `<offset>` (Optional): A 64-bit integer hex string which defaults to 0 if not
+  given.
+- `<size>` (Optional): A 64-bit integer that defaults to the rest of the
+  partition after `offset` if not given.
+
 ## The Partition Argument
 
 Fastboot commands such as `fastboot flash`, `fastboot fetch` and
@@ -34,20 +57,11 @@ the supported syntaxes for the partition name argument in fastboot.
   <part>/[<storage_id>]/[<offset>][/<size>]
   ```
 
-  This specifies range `[offset, offset+size)` in partition `part` on the
-  storage device with ID `storage_id`. `storage_id` is a hex string and
-  represents a unique integer ID assigned to each storage device detected by
-  GBL. The integer ID is for disambiguation purpose in case multiple storage
-  devices have same name partitions. If `storage_id` is not given, GBL will
-  check if a default storage ID is set via
-  `fastboot oem gbl-set-default-block <storage_id>` and use the default ID if
-  set. If the default ID is not set, GBL will check that `part` can match to a
-  unique parition. Otherwise, it will be rejected. The default ID can be unset
-  via `fastboot oem gbl-unset-default-block`. `offset` and `size` must be a
-  64bit integer hex string. `offset` defaults to 0 if not given. `size` defaults
-  to the rest of the partition after `offset` if not given.
+  This specifies the range `[offset, offset+size)` in partition `part` on the
+  storage device with ID `storage_id`.
 
   Examples:
+
   - `fastboot flash boot_a` -- If there is only one storage or a default storage
     ID is set via `fastboot oem gbl-set-default-block <default ID>`, flashes in
     the entire range of the storage. If not, checks that `boot_a` can match to a
@@ -64,6 +78,10 @@ the supported syntaxes for the partition name argument in fastboot.
 
 - Raw storage devices by ID
 
+  Note: Omitting the partition name is restricted to development builds compiled
+  with the `gbl_dev` feature enabled. Production builds will reject these
+  queries with a "partition name is required" error.
+
   ```
   /[<storage_id>]
   /[<storage_id>][/<offset>]
@@ -78,7 +96,9 @@ the supported syntaxes for the partition name argument in fastboot.
   set. Otherwise it is rejected. `offset` defaults to 0 if not given. `size`
   defaults to the rest of the block after `offset` if not given. This semantic
   applies to all storage devices that can be detected by GBL, whether or not
-  they are raw storage partitions or GPT devices. Examples:
+  they are raw storage partitions or GPT devices.
+
+  Examples:
   - `fastboot flash /` -- If there is only one storage or a default storage ID
     is set via `fastboot oem gbl-set-default-block <default ID>`, flashes in the
     entire range of the storage.
