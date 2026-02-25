@@ -78,9 +78,9 @@ typedef struct GblEfiOsConfigurationProtocol {
   // Generates fixups for the bootconfig built by GBL.
   EfiStatus (*fixup_bootconfig)(struct GblEfiOsConfigurationProtocol* self,
                                 /* in */ size_t bootconfig_size,
-                                /* in */ const uint8_t* bootconfig,
+                                /* in */ const EfiChar8* bootconfig,
                                 /* in-out */ size_t* fixup_buffer_size,
-                                /* out */ uint8_t* fixup);
+                                /* out */ EfiChar8* fixup);
 
   // Selects which device trees and overlays to use from those loaded by GBL.
   EfiStatus (*select_device_trees)(

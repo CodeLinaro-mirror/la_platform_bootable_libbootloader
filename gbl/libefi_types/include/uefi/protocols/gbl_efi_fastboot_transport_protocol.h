@@ -39,7 +39,7 @@ static const uint64_t GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION =
 
 typedef struct GblEfiFastbootTransportProtocol {
   uint64_t revision;
-  const char* description;
+  const EfiChar8* description;
   EfiStatus (*start)(struct GblEfiFastbootTransportProtocol* self);
   EfiStatus (*stop)(struct GblEfiFastbootTransportProtocol* self);
   EfiStatus (*receive)(struct GblEfiFastbootTransportProtocol* self,
