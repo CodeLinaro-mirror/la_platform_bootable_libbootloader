@@ -6,16 +6,16 @@ devices.
 ## Definition of Partition
 
 In GBL, all EFI devices that implement either the `EFI_BLOCK_IO_PROTOCOL` or
-`EFI_BLOCK_IO2_PROTOCOL` protocols are considered storage devices that may
-contain necessary data for GBL to access. For each of this device, GBL supports
-two schemes of partition:
+`EFI_BLOCK_IO2_PROTOCOL` are considered storage devices that may contain
+necessary data for GBL to access. For each of these devices, GBL supports two
+schemes of partition:
 
 1. Entire raw storage as a partition.
 
    This scheme treats the entire storage device as a single partition. For
-   storage devices intended to be used according to this scheme, the device need
-   to provide an instance of device path that ends with the GBL "Vendor-Defined
-   Media Device Path" defined as follows.
+   storage devices intended to be used according to this scheme, the device
+   needs to provide an instance of device path that ends with the GBL
+   "Vendor-Defined Media Device Path" defined as follows.
 
    | Mnemonic            | Bytes Offset | Bytes Length | Description                                                 |
    | ------------------- | ------------ | ------------ | ----------------------------------------------------------- |
@@ -40,7 +40,7 @@ two schemes of partition:
 
 2. UEFI GUID Partition Table (GPT)
 
-   For all other storage devices that doesn't have an instance of GBL
+   For all other storage devices that don't have an instance of GBL
    vendor-defined media device path, GBL considers them to be using the GPT
    partition scheme defined in the UEFI spec. Each partition will be identified
    using its corresponding GPT partition name in the context of booting and
@@ -49,6 +49,6 @@ two schemes of partition:
 GBL fastboot implementation introduces a special syntax
 `<part>/<storage id>/<offset>/<size>` for specifying arbitrary subranges of a
 partition on one of the potentially multiple storage devices. Thus the partition
-name cannot contain character `'/'`. The name `gpt` is reserved for flashing GPT
-partition table and thus should not be used as partition name. See this
+name cannot contain the character `'/'`. The name `gpt` is reserved for flashing
+GPT partition table and thus should not be used as partition name. See this
 [doc](./gbl_fastboot.md) for more details.

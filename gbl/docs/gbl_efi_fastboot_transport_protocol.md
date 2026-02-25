@@ -13,7 +13,7 @@ device side logic.
 
 ### Summary
 
-This protocol defines interfaces that abstract platform Fastboot transport
+This protocol defines interfaces that abstracts platform Fastboot transport
 implementation such as USB/TCP or other custom channels.
 
 ### GUID
@@ -34,60 +34,58 @@ implementation such as USB/TCP or other custom channels.
 #define GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
-See
-[GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions)
-for details about protocol revisions.
+See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about
+protocol revisions.
 
 ### Protocol Interface Structure
 
 ```c
 typedef struct _GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL {
-  UINT64                                       Revision;
-  CONST CHAR8                                  *Description;
-  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_START   Start;
-  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_STOP    Stop;
-  GBL_EFI_FASTBOOT_TRANSPORT_RECEIVE           Receive;
-  GBL_EFI_FASTBOOT_TRANSPORT_SEND              Send;
-  GBL_EFI_FASTBOOT_TRANSPORT_FLUSH             Flush;
+  UINT64                                     Revision;
+  CONST CHAR8                                *Description;
+  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_START Start;
+  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_STOP  Stop;
+  GBL_EFI_FASTBOOT_TRANSPORT_RECEIVE         Receive;
+  GBL_EFI_FASTBOOT_TRANSPORT_SEND            Send;
+  GBL_EFI_FASTBOOT_TRANSPORT_FLUSH           Flush;
 } GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL;
 ```
 
 ### Parameters
 
-#### **Revision**
+#### Revision
 
 The revision to which the GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL adheres. All
 future revisions must be backwards compatible. If a future version is not
 backwards compatible, a different GUID must be used.
 
-#### **Description**
+#### Description
 
 A static null-terminated ASCII string that describes the transport.
 
-#### **Start**
+#### Start
 
 Starts the transport for Fastboot traffic. See
-[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Start()`](#gbl_efi_fastboot_transport_protocolstart).
+[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Start()`][start].
 
-#### **Stop**
+#### Stop
 
-Stops the transport. See
-[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Stop()`](#gbl_efi_fastboot_transport_protocolstop).
+Stops the transport. See [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Stop()`][stop].
 
-#### **Receive**
+#### Receive
 
 Receives data from the transport if available. See
-[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Receive()`](#gbl_efi_fastboot_transport_protocolreceive).
+[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Receive()`][receive].
 
-#### **Send**
+#### Send
 
 Sends data to the transport. See
-[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Send()`](#gbl_efi_fastboot_transport_protocolsend).
+[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Send()`][send].
 
-#### **Flush**
+#### Flush
 
 Flushes and waits for all pending sends to complete. See
-[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Flush()`](#gbl_efi_fastboot_transport_protocolflush).
+[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Flush()`][flush].
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Start()
 
@@ -100,17 +98,16 @@ Start the transport channel.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_START)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self,
+(EFIAPI *GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_START)(
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL *Self
   );
 ```
 
 ### Parameters
 
-#### _Self_
+#### Self
 
-A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
-instance.
+A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`][protocol] instance.
 
 ### Description
 
@@ -119,11 +116,11 @@ the transport channel.
 
 ### Status Codes Returned
 
-| Return Code         | Semantics                              |
-| :------------------ | :------------------------------------- |
-| EFI_SUCCESS         | Transport is started successfully.     |
-| EFI_ALREADY_STARTED | The transport is already started.      |
-| EFI_DEVICE_ERROR    | The physical device reported an error. |
+| Return Code           | Semantics                              |
+| :-------------------- | :------------------------------------- |
+| `EFI_SUCCESS`         | Transport is started successfully.     |
+| `EFI_ALREADY_STARTED` | The transport is already started.      |
+| `EFI_DEVICE_ERROR`    | The physical device reported an error. |
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Stop()
 
@@ -136,17 +133,16 @@ Stops the transport interface.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_STOP)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self
+(EFIAPI *GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_STOP)(
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL *Self
   );
 ```
 
 ### Parameters
 
-#### _Self_
+#### Self
 
-A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
-instance.
+A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`][protocol] instance.
 
 ### Description
 
@@ -155,11 +151,11 @@ transport channel.
 
 ### Status Codes Returned
 
-| Return Code      | Semantics                              |
-| :--------------- | :------------------------------------- |
-| EFI_SUCCESS      | Transport is stopped successfully.     |
-| EFI_NOT_STARTED  | The transport is not started.          |
-| EFI_DEVICE_ERROR | The physical device reported an error. |
+| Return Code        | Semantics                              |
+| :----------------- | :------------------------------------- |
+| `EFI_SUCCESS`      | Transport is stopped successfully.     |
+| `EFI_NOT_STARTED`  | The transport is not started.          |
+| `EFI_DEVICE_ERROR` | The physical device reported an error. |
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Receive()
 
@@ -172,32 +168,31 @@ Receives data from the transport channel
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_RECEIVE)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self,
-  IN OUT UINTN                            *BufferSize,
-  OUT VOID                                *Buffer,
-  IN GBL_EFI_FASTBOOT_RX_MODE             Mode,
+(EFIAPI *GBL_EFI_FASTBOOT_TRANSPORT_RECEIVE)(
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL *Self,
+  IN OUT UINTN                           *BufferSize,
+  OUT VOID                               *Buffer,
+  IN GBL_EFI_FASTBOOT_RX_MODE            Mode
   );
 ```
 
 ### Parameters
 
-#### _Self_
+#### Self
 
-A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
-instance.
+A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`][protocol] instance.
 
-#### _BufferSize_
+#### BufferSize
 
 On entry, the value may represent size of `Buffer` or total requested data size.
 See description below for more details. On exit, it is set to the size in bytes
 of the data that was received.
 
-#### _Buffer_
+#### Buffer
 
 A pointer to the data buffer to receive data.
 
-#### _Mode_
+#### Mode
 
 Indicates whether to receive a single packet of any size or multiple packets
 until a fixed number of bytes.
@@ -213,7 +208,7 @@ data, implementation should return `EFI_BUFFER_TOO_SMALL` and `BufferSize`
 should be set to the required buffer size.
 
 If `Mode` is set to `FIXED_LENGTH`, caller should set `BufferSize` to the total
-amount data expected to be received from the transport. Partial recieved is
+amount data expected to be received from the transport. Partial receive is
 allowed. Implementation does not need to block until buffer is fully filled.
 Caller should be prepared to call this API again with updated size for remaining
 data.
@@ -256,7 +251,7 @@ enum {
   GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
   GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH,
 };
-typedef uint32_t GBL_EFI_FASTBOOT_RX_MODE;
+typedef UINT32 GBL_EFI_RX_MODE;
 ```
 
 #### SINGLE_PACKET
@@ -269,14 +264,14 @@ Receives multiple packets until a fixed number of bytes.
 
 ### Status Codes Returned
 
-| Return Code           | Semantics                                            |
-| :-------------------- | :--------------------------------------------------- |
-| EFI_SUCCESS           | Read is successful                                   |
-| EFI_INVALID_PARAMETER | A parameter is invalid.                              |
-| EFI_BUFFER_TOO_SMALL  | The provided buffer is too small for available data. |
-| EFI_NOT_STARTED       | The transport is not started.                        |
-| EFI_NOT_READY         | No data available from the transport.                |
-| EFI_DEVICE_ERROR      | The physical device reported an error.               |
+| Return Code             | Semantics                                            |
+| :---------------------- | :--------------------------------------------------- |
+| `EFI_SUCCESS`           | Read is successful                                   |
+| `EFI_INVALID_PARAMETER` | A parameter is invalid.                              |
+| `EFI_BUFFER_TOO_SMALL`  | The provided buffer is too small for available data. |
+| `EFI_NOT_STARTED`       | The transport is not started.                        |
+| `EFI_NOT_READY`         | No data available from the transport.                |
+| `EFI_DEVICE_ERROR`      | The physical device reported an error.               |
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Send()
 
@@ -289,26 +284,25 @@ Sends data to the transport channel.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_SEND)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self,
-  IN OUT UINTN                            *BufferSize,
-  IN CONST VOID                           *Buffer,
+(EFIAPI *GBL_EFI_FASTBOOT_TRANSPORT_SEND)(
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL *Self,
+  IN OUT UINTN                           *BufferSize,
+  IN CONST VOID                          *Buffer
   );
 ```
 
 ### Parameters
 
-#### _Self_
+#### Self
 
-A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
-instance.
+A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`][protocol] instance.
 
-#### _BufferSize_
+#### BufferSize
 
 On entry, the size in bytes of `Buffer` to be sent. On exit, the size in bytes
 of the data that was actually queued or sent.
 
-#### _Buffer_
+#### Buffer
 
 A pointer to the data buffer to be sent.
 
@@ -322,19 +316,19 @@ data is queued for transfer. If implementation does not have available resource
 to serve the request, i.e. queue is full, `EFI_NOT_READY` should be returned.
 
 If using the GBL EFI application, See
-[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Receive()`](#gbl_efi_fastboot_transport_protocolreceive)
-for recommended handling of disconnection/reconnection events if full device
-reset is not desired.
+[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Receive()`][receive] for recommended
+handling of disconnection/reconnection events if full device reset is not
+desired.
 
 ### Status Codes Returned
 
-| Return Code           | Semantics                                          |
-| :-------------------- | :------------------------------------------------- |
-| EFI_SUCCESS           | Some data is sent successfully.                    |
-| EFI_INVALID_PARAMETER | A parameter is invalid.                            |
-| EFI_NOT_STARTED       | The transport is not started.                      |
-| EFI_NOT_READY         | The driver is not ready to queue or send new data. |
-| EFI_DEVICE_ERROR      | The physical device reported an error.             |
+| Return Code             | Semantics                                          |
+| :---------------------- | :------------------------------------------------- |
+| `EFI_SUCCESS`           | Some data is sent successfully.                    |
+| `EFI_INVALID_PARAMETER` | A parameter is invalid.                            |
+| `EFI_NOT_STARTED`       | The transport is not started.                      |
+| `EFI_NOT_READY`         | The driver is not ready to queue or send new data. |
+| `EFI_DEVICE_ERROR`      | The physical device reported an error.             |
 
 ## GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL.Flush()
 
@@ -347,17 +341,16 @@ Waits until all pending TX transfers are completed.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_FLUSH)(
-  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL  *Self
+(EFIAPI *GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_FLUSH)(
+  IN GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL *Self
   );
 ```
 
 ### Parameters
 
-#### _Self_
+#### Self
 
-A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](#gbl_efi_protocol)
-instance.
+A pointer to the [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`][protocol] instance.
 
 ### Description
 
@@ -368,9 +361,17 @@ case `EFI_TIMEOUT` should be returned if this happens.
 
 ### Status Codes Returned
 
-| Return Code      | Semantics                              |
-| :--------------- | :------------------------------------- |
-| EFI_SUCCESS      | Transport is stopped successfully.     |
-| EFI_NOT_STARTED  | The transport is not started.          |
-| EFI_TIMEOUT      | Timeout waiting for send to complete.  |
-| EFI_DEVICE_ERROR | The physical device reported an error. |
+| Return Code        | Semantics                              |
+| :----------------- | :------------------------------------- |
+| `EFI_SUCCESS`      | Flush completed successfully.          |
+| `EFI_NOT_STARTED`  | The transport is not started.          |
+| `EFI_TIMEOUT`      | Timeout waiting for send to complete.  |
+| `EFI_DEVICE_ERROR` | The physical device reported an error. |
+
+[start]: #gbl_efi_fastboot_transport_protocol_start
+[stop]: #gbl_efi_fastboot_transport_protocol_stop
+[receive]: #gbl_efi_fastboot_transport_protocol_receive
+[send]: #gbl_efi_fastboot_transport_protocol_send
+[flush]: #gbl_efi_fastboot_transport_protocol_flush
+[protocol]: #gbl_efi_fastboot_transport_protocol
+[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions

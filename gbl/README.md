@@ -18,7 +18,7 @@ Your machine must have the following dependencies installed:
 
 On Google Linux machines these tools can be installed via:
 
-```shell
+```sh
 sudo apt install repo bazel-bootstrap
 ```
 
@@ -27,7 +27,7 @@ sudo apt install repo bazel-bootstrap
 Use `repo` to download the source using the Android
 [uefi-gbl-mainline manifest](https://android.googlesource.com/kernel/manifest/+/refs/heads/uefi-gbl-mainline/default.xml):
 
-```shell
+```sh
 # You can choose a different directory name if you prefer.
 mkdir gbl
 cd gbl
@@ -40,7 +40,7 @@ repo sync -j16
 
 Run this command from the repo root directory (`gbl` in the example above):
 
-```shell
+```sh
 ./tools/bazel run //bootable/libbootloader:gbl_efi_dist
 ```
 
@@ -52,7 +52,7 @@ will be placed in `out/gbl_efi/`.
 
 Run this command from the repo root directory (`gbl` in the example above):
 
-```shell
+```sh
 ./tools/bazel test @gbl//tests
 ```
 
@@ -65,35 +65,35 @@ message in this case is `Inconsistent filesystem operations`.
 If you run into this, clean the build with the `--expunge` flag to reset your
 Bazel state:
 
-```shell
+```sh
 ./tools/bazel clean --expunge
 ```
 
 ## IDE Setup
 
-For rust development, we recommend use VSCode + rust-analyzer plugin.
+For rust development, we recommend using the VSCode + rust-analyzer plugin.
 
 rust-analyzer requires `rust-project.json` to work properly. Luckily, bazel has
 support for generating `rust-project.json`:
 
-```
+```sh
 ./tools/bazel run @rules_rust//tools/rust_analyzer:gen_rust_project --norepository_disable_download -- --bazel ./tools/bazel @gbl//efi/...
 ```
 
 `@gbl//efi/...` is the target to generate rust project for, here it means
 "everything under @gbl//efi/ directory" . Omitting the target specifier would
 result in analyzing "@/..." , which would most likely fail due to some obscure
-reason. Should targets get moved around in the future, this path spec also need
+reason. Should targets get moved around in the future, this path spec also needs
 to be updated.
 
 After generating `rust-project.json`, you would notice that your IDE still
-doesn't offer auto completion. This is because some source file paths pointing
+doesn't offer auto completion. This is because some source file paths point
 to bazel-output dir, and you are most likely editing source files in
 `bootable/libbootloader/gbl`. In addition, the generated rust-project.json sets
 "cfg=test" for all targets, which causes certain dependency graph to resolve
 incorrectly. To fix this, run
 
-```
+```sh
 python3 bootable/libbootloader/gbl/rewrite_rust_project_path.py rust-project.json --arch <arch>
 ```
 
@@ -104,7 +104,7 @@ specific code.
 Note: The generated rust-project.json points to host version of generated
 sources. You may need to run
 
-```
+```sh
 ./tools/bazel test @gbl//tests
 ```
 
@@ -125,11 +125,11 @@ to help specialize it for this codebase.
 
 ### Boot Android on Cuttlefish
 
-If you have a main AOSP checkout and is setup to run
+If you have a main AOSP checkout and it is set up to run
 [Cuttlefish](https://source.android.com/docs/setup/create/cuttlefish), you can
 run the EFI image directly with:
 
-```
+```sh
 cvd create --android_efi_loader=<path to the EFI image> ...
 ```
 
@@ -150,7 +150,7 @@ application:
 2. Reboot the device into fastboot mode.
 3. Run fastboot command:
 
-```
+```sh
 fastboot stage <path to the EFI binary> && fastboot oem run-staged-efi
 ```
 
@@ -161,7 +161,7 @@ configurations:
 
 1. Install EDK, QEMU and u-boot prebuilts
 
-   ```
+   ```sh
    sudo apt-get install qemu-system ovmf u-boot-qemu
    ```
 
@@ -169,7 +169,7 @@ configurations:
 
    For `x86_64`:
 
-   ```
+   ```sh
    mkdir -p /tmp/esp/EFI/BOOT && \
    cp <path to EFI image> /tmp/esp/EFI/BOOT/bootx64.efi && \
    qemu-system-x86_64 -nographic -m 1G \
@@ -179,7 +179,7 @@ configurations:
 
    For `aarch64`:
 
-   ```
+   ```sh
    mkdir -p /tmp/esp/EFI/BOOT && \
    cp <path to EFI image> /tmp/esp/EFI/BOOT/bootaa64.efi && \
    qemu-system-aarch64 -nographic -machine virt -m 1G -cpu cortex-a57 \
@@ -189,7 +189,7 @@ configurations:
 
    For `riscv64`:
 
-   ```
+   ```sh
    mkdir -p /tmp/esp/EFI/BOOT && \
    cp <path to EFI image> /tmp/esp/EFI/BOOT/bootriscv64.efi && \
    qemu-system-riscv64 -nographic -machine virt -m 1G \
@@ -204,19 +204,19 @@ x86_64 GBL EFI app on QEMU using rust-gdb. To try the example:
 
 1. Install necessary dependencies:
 
-   ```
+   ```sh
    sudo apt-get install qemu-system ovmf
    ```
 
    For aarch64 target debugging, also install:
 
-   ```
+   ```sh
    sudo apt-get install gdb-multiarch
    ```
 
-2. Runs the following script:
+2. Run the following script:
 
-   ```
+   ```sh
    ./qemu_gdb_example/launch_qemu_gdb.sh
    ```
 
@@ -225,7 +225,7 @@ x86_64 GBL EFI app on QEMU using rust-gdb. To try the example:
 
    For debugging aarch64 target, run:
 
-   ```
+   ```sh
    ./qemu_gdb_example/launch_qemu_gdb.sh aarch64
    ```
 
@@ -237,13 +237,13 @@ following gives an example of debugging GBL with the pdb file on Cuttlefish.
 
 1. Build GBL with GDB connection listening enabled:
 
-   ```
+   ```sh
    ./tools/bazel run //bootable/libbootloader:gbl_efi_dist -c dbg --@gbl//toolchain:always_wait_gdb
    ```
 
 2. Launch cuttlefish with GBL and qemu.
 
-   ```
+   ```sh
    launch_cvd \
       --vm_manager=qemu_cli \
       --android_efi_loader=./out/gbl_efi/gbl_aarch64_dev.efi \
@@ -254,7 +254,7 @@ following gives an example of debugging GBL with the pdb file on Cuttlefish.
 3. After cuttlefish emulator started successfully, in a separate terminal,
    launch lldb.
 
-   ```
+   ```sh
    lldb \
     -o "target create ./out/gbl_efi/gbl_aarch64_dev.efi" \
     -o "gdb-remote localhost:1337" \
@@ -264,7 +264,7 @@ following gives an example of debugging GBL with the pdb file on Cuttlefish.
 
 ### Boot Fuchsia on emulator
 
-1. Make sure Fuchsia target pass control to GBL.
+1. Make sure the Fuchsia target passes control to GBL.
 
    Set path to GBL binary here:
    [fuchsia/src/firmware/gigaboot/cpp/backends.gni : gigaboot_gbl_efi_app](https://cs.opensource.google/fuchsia/fuchsia/+/main:src/firmware/gigaboot/cpp/backends.gni;l=25?q=gigaboot_gbl_efi_app)
@@ -274,7 +274,7 @@ following gives an example of debugging GBL with the pdb file on Cuttlefish.
 
    E.g. in `fuchsia/src/firmware/gigaboot/cpp/backends.gni`:
 
-   ```
+   ```sh
    $ cat ./fuchsia/src/firmware/gigaboot/cpp/backends.gni
    ...
    declare_args() {
@@ -286,7 +286,7 @@ following gives an example of debugging GBL with the pdb file on Cuttlefish.
 
    Or in `fx set`:
 
-   ```
+   ```sh
    fx set core.x64 --args=gigaboot_gbl_efi_app='"<path to EFI image>/gbl_x86_64.efi"' --args=gigaboot_use_gbl=true
    ```
 
@@ -296,7 +296,7 @@ following gives an example of debugging GBL with the pdb file on Cuttlefish.
 
 3. Run emulator in UEFI mode with raw disk
 
-   ```
+   ```sh
    fx qemu -a x64 --uefi --disktype=nvme -D ./out/default/obj/build/images/disk.raw
    ```
 
@@ -311,7 +311,7 @@ For aarch64, GBL supports tracing and visualization by Perfetto
 ([GBL cuttlefish trace example](https://ui.perfetto.dev/#!/?s=38c35e39b29b6cc328336962e8859384b40788d1)).
 To enable it, build GBL with the following option:
 
-```
+```sh
 ./tools/bazel run //bootable/libbootloader:gbl_efi_dist \
    --@gbl//toolchain:enable_tracing \
    --@gbl//toolchain:pause_boot_in_fastboot
@@ -322,7 +322,7 @@ To enable it, build GBL with the following option:
 fastboot after loading OS and before booting, which will be needed for
 retrieving trace data.
 
-Boots GBL on your device. Waits until GBL finishes loading OS and stops in
+Boot GBL on your device. Wait until GBL finishes loading OS and stops in
 fastboot. Then run the following fastboot commands to retrieve trace.
 
 ```sh

@@ -9,10 +9,10 @@
 
 ### Summary
 
-This document describes the GBL Boot Memory protocol. The protocol allows UEFI
-firmware to provde reserved buffers for sharing preloaded partition image to the
-bootloader, or as destination buffers for the bootloader to load the images to,
-assemble kernel/ramdisk/fdt images, and download data in fastboot mode etc.
+The GBL Boot Memory protocol allows UEFI firmware to provide reserved buffers
+for sharing preloaded partition images with GBL, or as destination buffers for
+GBL to load images, assemble kernel/ramdisk/FDT images, and download data in
+Fastboot mode.
 
 ### GUID
 
@@ -32,104 +32,113 @@ assemble kernel/ramdisk/fdt images, and download data in fastboot mode etc.
 #define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
-See
-[GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions)
-for details about protocol revisions.
+See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about
+protocol revisions.
 
 ### Protocol Interface Structure
 
 ```c
 typedef struct _GBL_EFI_BOOT_MEMORY_PROTOCOL {
-  UINT64                            Revision;
-  GBL_EFI_GET_PARTITION_BUFFER      GetPartitionBuffer;
-  GBL_EFI_SYNC_PARTITION_BUFFER     SyncPartitionBuffer;
-  GBL_EFI_GET_BOOT_BUFFER           GetBootBuffer;
+  UINT64                        Revision;
+  GBL_EFI_GET_PARTITION_BUFFER  GetPartitionBuffer;
+  GBL_EFI_SYNC_PARTITION_BUFFER SyncPartitionBuffer;
+  GBL_EFI_GET_BOOT_BUFFER       GetBootBuffer;
 } GBL_EFI_BOOT_MEMORY_PROTOCOL;
 ```
 
 ### Parameters
 
-**Revision** \
-The revision to which the GBL_EFI_BOOT_MEMORY_PROTOCOL adheres. All future
+#### Revision
+
+The revision to which the `GBL_EFI_BOOT_MEMORY_PROTOCOL` adheres. All future
 revisions must be backwards compatible. If a future version is not backwards
 compatible, a different GUID must be used.
 
-**GetPartitionBuffer** \
-Get the reserved memory for loading a specific image. See
-[`GBL_EFI_BOOT_MEMORY_PROTOCOL.GetPartitionBuffer()`](#gbl_efi_boot_memory_protocolgetpartitionbuffer).
+#### GetPartitionBuffer
 
-**SyncPartitionBuffer** \
-Notify firmware to inspect or update all reserved buffers for return by
-`GetPartitionBuffer()`
-[`GBL_EFI_BOOT_MEMORY_PROTOCOL.SyncPartitionBuffer()`](#gbl_efi_boot_memory_protocolsyncpartitionbuffer).
+Retrieves the reserved memory for loading a specific partition image. See
+[`GetPartitionBuffer()`][get_partition_buffer] for more information.
 
-**GetBootBuffer** \
-Get the reserved memory for assembling different boot images. See
-[`GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()`](#gbl_efi_boot_memory_protocolgetbootbuffer).
+#### SyncPartitionBuffer
+
+Notifies the firmware to inspect or update all reserved buffers returned by
+`GetPartitionBuffer()`. See [`SyncPartitionBuffer()`][sync_partition_buffer] for
+more information.
+
+#### GetBootBuffer
+
+Retrieves the reserved memory for assembling various boot images. See
+[`GetBootBuffer()`][get_boot_buffer] for more information.
 
 ## GBL_EFI_BOOT_MEMORY_PROTOCOL.GetPartitionBuffer()
 
 ### Summary
 
-`GetPartitionBuffer()` gets the reserved buffer for loading a partition image.
+Gets the reserved buffer for loading a partition image.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_GET_PARTITION_BUFFER) (
-  IN GBL_EFI_BOOT_MEMORY_PROTOCOL *Self,
-  IN CONST CHAR8                  *BaseName,
-  OUT UINTN                       *Size,
-  OUT VOID                        **Addr,
-  OUT GblEfiPartitionBufferFlag   *Flag,
-)
+(EFIAPI *GBL_EFI_GET_PARTITION_BUFFER)(
+  IN GBL_EFI_BOOT_MEMORY_PROTOCOL   *Self,
+  IN CONST CHAR8                    *BaseName,
+  OUT UINTN                         *Size,
+  OUT VOID                          **Addr,
+  OUT GBL_EFI_PARTITION_BUFFER_FLAG *Flag
+  );
 ```
 
 ### Parameters
 
-**Self** \
-A pointer to the [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol)
-instance.
+#### Self
 
-**BaseName** \
-A null-terminated UTF8 encoded string that represents slotless partition name.
+A pointer to the `GBL_EFI_BOOT_MEMORY_PROTOCOL` instance.
 
-**Size** \
-On exit, stores the size of the reserved memory in number of bytes.
+#### BaseName
 
-**Addr** \
-On exit, stores the address of the reserved memory.
+A null-terminated UTF-8 encoded string representing the slotless partition name.
 
-**Flag** \
-On exit, stores a flag that contains additional information for the memory. See
-`GblEfiPartitionBufferFlag` for more details.
+#### Size
+
+An output parameter to store the size of the reserved memory in bytes.
+
+#### Addr
+
+An output parameter to store the address of the reserved memory.
+
+#### Flag
+
+An output parameter to store flags containing additional information about the
+memory. See [GBL_EFI_PARTITION_BUFFER_FLAG][partition_buffer_flag] for more
+details.
 
 ### Description
 
-The interface is optional and can be used by the firmware to provide designated
-buffers for the bootloader to read different images. The firmware can also
-preload images to the memory and share it with the bootloader via this
-interface. `Flag` should have the `PRELOADED` bit set to 1 in this case. If no
-memory is provided, the caller is responsible for finding the needed memory.
+This interface is optional and can be used by the firmware to provide designated
+buffers for the bootloader to read various images. The firmware can also preload
+images into memory and share them with the bootloader via this interface. In
+this case, the `GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED` bit must be set in
+`Flag`. If no memory is provided, GBL is responsible for finding the required
+memory.
 
-Firmware must guarantee that the preloaded data is up-to-date when the API is
+Firmware must guarantee that preloaded data is up-to-date when this API is
 called. Each partition image must map to a unique reserved memory that remains
-valid for read and write througout the lifetime of the caller app. It's up to
-the caller to interpret and validate the content in the memory before use.
+valid for read and write operations throughout the lifetime of the GBL
+application. It is up to GBL to interpret and validate the content in the memory
+before use.
 
-Certain partition images have specific alignment requirement in order to be
-parsed. For example, for DTB/DTBO images, it is required to be loaded to 8-bytes
-aligned buffers. Failing to do so may cause the caller to wrongly process the
-image data. Thus firmware should make sure to provide correctly aligned memory
-that matches the requirement of the image and caller's expectation. For
-alignment requirement on common boot images, see
-[`GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()`](#gbl_efi_boot_memory_protocolgetbootbuffer).
+Certain partition images have specific alignment requirements. For example,
+DTB/DTBO images must be loaded into 8-byte aligned buffers. Failure to meet
+these requirements may cause GBL to process the image data incorrectly. Thus,
+firmware should ensure it provides correctly aligned memory that matches the
+requirements of the image. For alignment requirements on common boot images, see
+[`GetBootBuffer()`][get_boot_buffer].
 
-Note: each device-specific partition that requests verification in
-[GBL_EFI_AVB_PROTOCOL.ReadPartitionsAttributes()](./gbl_efi_avb_protocol.md#gbl_efi_image_loading_protocolreadpartitionsattributes)
-will be able to provide a partition buffer using the same partition name.
+Note: Each device-specific partition that requests verification in
+[`GBL_EFI_AVB_PROTOCOL.ReadPartitionAttributes()`][avbreadpartitionattributes]
+can provide a partition buffer using the same partition name.
 
 ### Related Definitions
 
@@ -137,147 +146,149 @@ will be able to provide a partition buffer using the same partition name.
 
 ```c
 enum {
-    GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED = 1 << 0,
+  GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED = 1 << 0,
 };
 
-typedef uint32_t GBL_EFI_PARTITION_BUFFER_FLAG;
+typedef UINT32 GBL_EFI_PARTITION_BUFFER_FLAG;
 ```
 
 ##### PRELOADED
 
 If set, it indicates the buffer returned by `GetPartitionBuffer()` already
-contains the image loaded by the firwmare.
+contains the image loaded by the firmware.
 
 ### Status Codes Returned
 
-| Return Code           | Semantics                                                                          |
-| :-------------------- | :--------------------------------------------------------------------------------- |
-| EFI_SUCCESS           | Buffer provided successfully                                                       |
-| EFI_NOT_FOUND         | The platform does not have reserved memory for this image.                         |
-| EFI_INVALID_PARAMETER | `Self` is invalid or any of `ImageType`, `Addr`, `Size` and `IsPreloaded` is NULL. |
+| Return Code             | Semantics                                                         |
+| :---------------------- | :---------------------------------------------------------------- |
+| `EFI_SUCCESS`           | The buffer was provided successfully.                             |
+| `EFI_NOT_FOUND`         | The platform does not have reserved memory for this image.        |
+| `EFI_INVALID_PARAMETER` | `Self` is invalid, or any of `Addr`, `Size`, or `Flag` is `NULL`. |
 
 ## GBL_EFI_BOOT_MEMORY_PROTOCOL.SyncPartitionBuffer()
 
 ### Summary
 
-`SyncPartitionBuffer()` notifies the firmware to inspect or update buffers for
-return by `GetPartitionBuffer()`.
+Notifies the firmware to inspect or update buffers returned by
+`GetPartitionBuffer()`.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_SYNC_PARTITION_BUFFER) (
+(EFIAPI *GBL_EFI_SYNC_PARTITION_BUFFER)(
   IN GBL_EFI_BOOT_MEMORY_PROTOCOL *Self,
-  IN BOOL                         SyncPreloaded,
-)
+  IN BOOLEAN                      SyncPreloaded
+  );
 ```
 
 ### Parameters
 
-**Self** \
-A pointer to the [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol)
-instance.
+#### Self
 
-**SyncPreloaded** \
+A pointer to the `GBL_EFI_BOOT_MEMORY_PROTOCOL` instance.
+
+#### SyncPreloaded
+
 Set to true to instruct the firmware to sync preloaded partition data based on
-current device state.
+the current device state.
 
 ### Description
 
-Caller calls this interface to allow the firmware to inspect, update or move the
-buffers returned by `GetPartitionBuffer()`. Caller can call this API after
-loading new images to the buffers to notify the firmware to process it.
+Caller calls this interface to allow the firmware to inspect, update, or move
+the buffers returned by `GetPartitionBuffer()`. Caller can call this API after
+loading new images into the buffers to notify the firmware to process them.
 
 Caller can also call this API with `SyncPreloaded` set to true to request the
 firmware to re-sync preloaded partition data. Firmware should either re-load the
 partitions if supported, or invalidate existing ones by clearing the `PRELOADED`
-bit or returning EFI_NOT_FOUND for future calls of `GetPartitionBuffer()`
+bit or returning `EFI_NOT_FOUND` for future calls to `GetPartitionBuffer()`.
 
-For the caller, all buffers previously obtained from `GetPartitionBuffer()`
-should not be considered valid anymore.
+After calling this method, all buffers previously obtained from
+`GetPartitionBuffer()` must be considered invalid.
 
 ### Status Codes Returned
 
-| Return Code           | Semantics                   |
-| :-------------------- | :-------------------------- |
-| EFI_SUCCESS           | Sync completed successfully |
-| EFI_DEVICE_ERROR      | An internal error occurred. |
-| EFI_INVALID_PARAMETER | `Self` is invalid.          |
+| Return Code             | Semantics                    |
+| :---------------------- | :--------------------------- |
+| `EFI_SUCCESS`           | Sync completed successfully. |
+| `EFI_DEVICE_ERROR`      | An internal error occurred.  |
+| `EFI_INVALID_PARAMETER` | `Self` is invalid.           |
 
 ### Examples
 
-Below is an example use this API for a bootloader application to interact with
-firmware provided partition buffers.
+Below is an example of how a bootloader application interacts with
+firmware-provided partition buffers using this API.
 
-```
+```c
 GBL_EFI_BOOT_MEMORY_PROTOCOL  *Protocol;
 BOOLEAN                       DiskContentChanged;
 EFI_STATUS                    Status;
 
-// Makes sure partition buffers is up-to-date
-Status = Protocol->SyncPartitionBuffer(DiskContentChanged);
-// Interacts with partitions buffers
-Status = Protocol->GetPartitionBuffer(Protocol, "boot",...);
+// Ensure partition buffers are up-to-date
+Status = Protocol->SyncPartitionBuffer(Protocol, DiskContentChanged);
+
+// Interact with partition buffers
+Status = Protocol->GetPartitionBuffer(Protocol, "boot", ...);
 ...
-// Notfiies firmware that new images may have been loaded.
-Status = Protocol->SyncPartitionBuffer(FALSE);
+// Notify firmware that new images may have been loaded
+Status = Protocol->SyncPartitionBuffer(Protocol, FALSE);
 ...
-// Boot OS.
+// Boot OS
 ```
 
 ## GBL_EFI_BOOT_MEMORY_PROTOCOL.GetBootBuffer()
 
 ### Summary
 
-`GetBootBuffer()` get the reserved buffers for bootloader to construct boot
-images.
+Gets the reserved buffers for the bootloader to construct boot images.
 
 ### Prototype
 
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_GET_BOOT_BUFFER) (
+(EFIAPI *GBL_EFI_GET_BOOT_BUFFER)(
   IN GBL_EFI_BOOT_MEMORY_PROTOCOL *Self,
   IN GBL_EFI_BOOT_BUFFER_TYPE     BootBufferType,
   OUT UINTN                       *Size,
-  OUT VOID                        **Addr,
-)
+  OUT VOID                        **Addr
+  );
 ```
 
 ### Parameters
 
-**Self** \
-A pointer to the [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](#gbl_efi_boot_memory_protocol)
-instance.
+#### Self
 
-**BootBufferType** \
-A GBL_EFI_BOOT_BUFFER_TYPE value that identifies the type of boot buffer.
+A pointer to the `GBL_EFI_BOOT_MEMORY_PROTOCOL` instance.
 
-**Size** \
-On exit, stores the size of the reserved memory if one is available, or the
-recommended size of the memory for the caller to allocate.
+#### BootBufferType
 
-**Addr** \
-On exit, stores the address of the reserved memory if one is available, or NULL
-to indicate that caller can allocate any memory to use.
+A `GBL_EFI_BOOT_BUFFER_TYPE` value that identifies the type of boot buffer.
+
+#### Size
+
+An output parameter to store the size of the reserved memory if available, or
+the recommended size for GBL to allocate.
+
+#### Addr
+
+An output parameter to store the address of the reserved memory if available, or
+`NULL` to indicate that GBL should allocate its own memory.
 
 ### Description
 
-The interface can be used by the firmware to provide designated buffers for the
-bootloader to assemble different boot images such as kernel, ramdisk, fdt pvmfw
-etc, or download data in fastboot.
+This interface can be used by the firmware to provide designated buffers for GBL
+to assemble various boot images (kernel, ramdisk, FDT, pvmfw, etc.) or download
+data in Fastboot.
 
-If no memory is provided, it's up to the caller to decide where to find the
-memory needed.
+If no memory is provided, GBL determines where to find the required memory.
 
-In some cases, the firmware may choose not to reserve a memory for a buffer type
-but instead want the caller to allocate it at run time when it is needed. In
-this case, `Addr` should be set to NULL and `Size` should be set to the
-recommended allocation size. This is useful for buffer types such as fastboot
-download buffer which is only needed on demand and can be deallocated when done.
+In some cases, the firmware may choose not to reserve memory but instead
+recommend that GBL allocate it at runtime. In this case, `Addr` should be set to
+`NULL` and `Size` to the recommended allocation size. This is useful for buffers
+like the Fastboot download buffer, which is only needed on demand.
 
 ### Related Definitions
 
@@ -293,40 +304,48 @@ enum {
   GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD,
 };
 
-typedef uint32_t GBL_EFI_BOOT_BUFFER_TYPE;
+typedef UINT32 GBL_EFI_BOOT_BUFFER_TYPE;
 ```
 
 ##### GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD
 
-General purpose load buffer. This is typically for cases where firmware only
-want to provide a single piece of memory for the bootloader to load all of
-kernel/ramdisk/fdt and does not care where each one is.
+General-purpose load buffer. Typically used when the firmware provides a single
+memory region for GBL to load kernel, ramdisk, and FDT without concern for their
+individual placement.
 
 ##### GBL_EFI_BOOT_BUFFER_TYPE_KERNEL
 
-Memory for assembling finalized kernel. Must be 2MB aligned.
+Memory for assembling the finalized kernel. Must be 2MB aligned.
 
 ##### GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK
 
-Memory for assembling finalized ramdisk.
+Memory for assembling the finalized ramdisk.
 
 ##### GBL_EFI_BOOT_BUFFER_TYPE_FDT
 
-Memory for assembling finalized FDT. Must be 8-bytes aligned.
+Memory for assembling the finalized FDT. Must be 8-byte aligned.
 
-##### GBL_EFI_BOOT_BUFFER_TYPE_PVM_FW
+##### GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA
 
 Memory for loading finalized protected VM firmware. Both the size and address
-must be 4K bytes aligned.
+must be 4KB aligned.
 
 ##### GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD
 
-Memory for use as download buffer in fastboot mode.
+Memory for use as the download buffer in Fastboot mode.
 
 ### Status Codes Returned
 
-| Return Code           | Semantics                                                                                      |
-| :-------------------- | :--------------------------------------------------------------------------------------------- |
-| EFI_SUCCESS           | Buffer provided successfully                                                                   |
-| EFI_NOT_FOUND         | The platform does not have reserved memory, or has no suggested allocation size for this type. |
-| EFI_INVALID_PARAMETER | `Self` is invalid or any of `Addr` and `Size` is NULL.                                         |
+| Return Code             | Semantics                                                                                |
+| :---------------------- | :--------------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`           | The buffer was provided successfully.                                                    |
+| `EFI_NOT_FOUND`         | The platform does not have reserved memory or a suggested allocation size for this type. |
+| `EFI_INVALID_PARAMETER` | `Self` is invalid, or either `Addr` or `Size` is `NULL`.                                 |
+
+[get_partition_buffer]: #gbl_efi_boot_memory_protocol_getpartitionbuffer
+[sync_partition_buffer]: #gbl_efi_boot_memory_protocol_syncpartitionbuffer
+[get_boot_buffer]: #gbl_efi_boot_memory_protocol_getbootbuffer
+[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[partition_buffer_flag]: #gbl_efi_partition_buffer_flag
+[avbreadpartitionattributes]:
+  ./gbl_efi_avb_protocol.md#gbl_efi_avb_protocol_readpartitionattributes

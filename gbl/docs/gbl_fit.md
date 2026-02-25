@@ -3,32 +3,32 @@
 This document describes how FIT image is handled by GBL for selecting the
 appropriate configuration as per the platform.
 
-[FIT specification][specification] provides a standard format for FIT image.
-Present state of GBL implementation for handling of FIT image supports only
-devicetree selection and loading via FIT image. FIT image can be flashed either
+[FIT specification][specification] provides a standard format for FIT image. The
+present state of the GBL implementation for handling of FIT image supports only
+device tree selection and loading via FIT image. FIT image can be flashed either
 in DTBO or DTB partition. If FIT image is present in either of these partitions,
-the DTB(O)s from all other partitions (including `boot`/`vendor_boot`) will not
-be considered. GBL will refuse to boot up if FIT image is present in both DTBO
-and DTB partitions.
+the DTBs or DTBOs from all other partitions (including `boot`/`vendor_boot`)
+will not be considered. GBL will refuse to boot up if FIT image is present in
+both DTBO and DTB partitions.
 
-Each devicetree image in the "/images" node should have `flat_dt` type. Each
+Each device tree image in the "/images" node should have `flat_dt` type. Each
 image binary is expected to be a payload external to the FIT FDT. The sub-node
 corresponding to each image should have data-offset and data-size properties.
 The data-offset should contain an 8-byte aligned offset to the actual image
 binary from the end of the 8-byte aligned FIT FDT. Each image binary should be
 8-byte aligned.
 
-FIT specification [suggests][suggests] the usage of compatible stringlist for
-selection of correct configuration. In some cases, maintaining a stringlist
-within bootloader might be cumbersome due to multiple configurations required
-for minor platform and SKU differences. GBL provides support for loading a data
-payload of type "metadata". Metadata payload can be used by firmware to match
-the platform information with the compatible string maintained for each
-configuration.
+The FIT specification [suggests][fit_selection] the use of a compatible
+stringlist for selection of the correct configuration. In some cases,
+maintaining a stringlist within the bootloader might be cumbersome due to the
+multiple configurations required to support minor platform and SKU differences.
+GBL provides support for loading a data payload of type "metadata". A metadata
+payload can be used by the firmware to match the platform information with the
+compatible string maintained for each configuration.
 
-An image of type "metadata" can be added as a sub-node under "/images" node, as
-shown in below example. If present, "metadata" must be the first image present
-in "/images", otherwise it will be ignored by GBL.
+An image of type "metadata" can be added as a sub-node under the "/images" node,
+as shown in the example below. If present, "metadata" must be the first image
+present in "/images", otherwise it will be ignored by GBL.
 
 ```
 / images
@@ -155,4 +155,4 @@ the payloads outside FIT image. "-B 8" flag can be used to make the FIT image 8
 byte aligned.
 
 [specification]: https://fitspec.osfw.foundation/
-[suggests]: https://fitspec.osfw.foundation/#select-a-configuration-to-boot
+[fit_selection]: https://fitspec.osfw.foundation/#select-a-configuration-to-boot

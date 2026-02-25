@@ -6,25 +6,25 @@ This document describes Fastboot in the [GBL UEFI bootloader](../efi/BUILD).
 
 The GBL UEFI bootloader supports both Fastboot over TCP and USB. To enable
 Fastboot over TCP, the UEFI loader needs to implement the
-`EFI_SIMPLE_NETWORK_PROTOCOL` protocol. To enable Fastboot on other platform
-specific channels such as USB, the
-[GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL](./gbl_efi_fastboot_transport_protocol.md)
+`EFI_SIMPLE_NETWORK_PROTOCOL`. To enable Fastboot on other platform-specific
+channels such as USB, the
+[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`][gbl_efi_fastboot_transport_protocol]
 protocol is required. GBL automatically establishes the corresponding transport
 channel if the required protocol is available.
 
 ## The Partition Argument
 
 Fastboot commands such as `fastboot flash`, `fastboot fetch` and
-`fastboot getvar partition-size` operate on partitions and requires a partition
+`fastboot getvar partition-size` operate on partitions and require a partition
 name argument. See this [doc](./partitions.md) for how GBL defines and handles
 partitions on storage devices. The information of detected storage devices is
 included in the output of `getvar all`. The partition layout for each of them
 can be displayed by `oem gbl-partition-info`.
 
-GBL fastboot additionaly supports accessing sub ranges of partitions and
-disambiguating betweeen same name partitions on multiple storage devices (i.e.
-in the presence of external or removable boot storage). The following summarizes
-the supported syntaxes for partition name argument in fastboot.
+GBL fastboot additionally supports accessing sub ranges of partitions and
+disambiguating between same name partitions on multiple storage devices (i.e. in
+the presence of external or removable boot storage). The following summarizes
+the supported syntaxes for the partition name argument in fastboot.
 
 - Partition
 
@@ -77,10 +77,8 @@ the supported syntaxes for partition name argument in fastboot.
   `fastboot oem gbl-set-default-block <storage_id>` and use the default ID if
   set. Otherwise it is rejected. `offset` defaults to 0 if not given. `size`
   defaults to the rest of the block after `offset` if not given. This semantic
-  applies to all storage devcies that can detected by GBL, whether or not it is
-  a raw storage partition or GPT device.
-
-  Examples:
+  applies to all storage devices that can be detected by GBL, whether or not
+  they are raw storage partitions or GPT devices. Examples:
   - `fastboot flash /` -- If there is only one storage or a default storage ID
     is set via `fastboot oem gbl-set-default-block <default ID>`, flashes in the
     entire range of the storage.
@@ -108,7 +106,7 @@ then use `fastboot flash vendor_boot_a:<part size>` normally.
 GBL supports the following syntaxes for updating GPT partition table on a
 storage device:
 
-```
+```sh
 fastboot flash gpt <path to MBR+primary GPT blob file>
 fastboot flash gpt/<storage_id> <path to MBR+primary GPT blob file>
 fastboot flash gpt/[<storage_id>][/resize] <path to MBR+primary GPT blob file>
@@ -134,7 +132,7 @@ Examples:
 
 To erase existing GPT partition table on a storage device, use:
 
-```
+```sh
 fastboot erase gpt
 fastboot erase gpt/<storage_id>
 ```
@@ -149,17 +147,17 @@ Examples:
   that storage.
 - `fastboot erase gpt/0` -- Erase GPT to storage device 0.
 
-## Non-blocking Flash.
+## Non-blocking Flash
 
 If the UEFI firmware supports `EFI_BLOCK_IO2_PROTOCOL` for the storage devices,
 GBL Fastboot provides an option to make `fastboot flash` non-blocking.
 Specifically, after the image is downloaded, GBL Fastboot will launch a separate
 task in the background for writing the image to the device, while itself will
 continue to listen for the next Fastboot command from the host, including a new
-`fastboot flash` command. This provides some paralellism between downloading and
+`fastboot flash` command. This provides some parallelism between downloading and
 flashing when the host is flashing multiple images. Example:
 
-```
+```sh
 fastboot oem gbl-enable-async-task
 fastboot flash boot_a <image>
 fastboot flash boot_b <image>
@@ -174,11 +172,11 @@ downloaded and ready to be flashed, it will be blocked until the previous flash
 is completed. Different storage devices are independent to each other.
 
 Because IO is now non-blocking, the return status of a `fastboot flash` does not
-necessarily represents the status of the IO. If a storage device encounters
+necessarily represent the status of the IO. If a storage device encounters
 errors while processing a non-blocking IO, all subsequent flash requests will be
 rejected and the host should reboot the device. `fastboot oem gbl-sync-blocks`
-can be used to wait until all currently pending flash are completed. The command
-returns error if any previous or current flash encounters errors.
+can be used to wait until all currently pending flashes are completed. The
+command returns error if any previous or current flash encounters errors.
 
 ## Fastboot Boot for Fuchsia
 
@@ -215,13 +213,13 @@ build:
 
 This section describes how to create a UI interface that can be used to execute
 fastboot commands. The implementation must be based on the
-[`GblFastbootTransportProtocol`](./gbl_efi_fastboot_transport_protocol.md).
+[`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`][gbl_efi_fastboot_transport_protocol].
 
-### GblFastbootTransportProtocol for UI
+### GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL for UI
 
-A fastboot UI can be implemented as a separate `GblFastbootTransportProtocol`.
-This allows GBL to discover and use the UI as a fastboot transport, just like
-USB or other custom channels.
+A fastboot UI can be implemented as a separate
+`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`. This allows GBL to discover and use the
+UI as a fastboot transport, just like USB or other custom channels.
 
 GBL loops over all discovered transports. Each transport would get `receive()`
 call and `send()` if necessary after packet processing. E.g. of very simplified
@@ -239,35 +237,35 @@ loop {
 
 #### Protocol Interface Structure
 
-The `[GBL Custom Protocol Revisions](gbl_efi_fastboot_transport_protocol.md) is
-defined as follows:
+The [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`][gbl_efi_fastboot_transport_protocol]
+is defined as follows:
 
 ```c
-typedef struct _GblEfiFastbootTransportProtocol {
-  UINT64                                       Revision;
-  CONST CHAR8                                  *Description;
-  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_START   Start;
-  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_STOP    Stop;
-  GBL_EFI_FASTBOOT_TRANSPORT_RECEIVE           Receive;
-  GBL_EFI_FASTBOOT_TRANSPORT_SEND              Send;
-  GBL_EFI_FASTBOOT_TRANSPORT_FLUSH             Flush;
-} GblEfiFastbootTransportProtocol;
+typedef struct _GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL {
+  UINT64                                     Revision;
+  CONST CHAR8                                *Description;
+  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_START Start;
+  GBL_EFI_FASTBOOT_TRANSPORT_INTERFACE_STOP  Stop;
+  GBL_EFI_FASTBOOT_TRANSPORT_RECEIVE         Receive;
+  GBL_EFI_FASTBOOT_TRANSPORT_SEND            Send;
+  GBL_EFI_FASTBOOT_TRANSPORT_FLUSH           Flush;
+} GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL;
 ```
 
 #### UI Implementation Details
 
-##### **Start**
+##### Start
 
 The `Start` function should be used to initialize the UI. This includes setting
 up the screen, drawing the initial UI elements, and starting a timer for polling
 for user input.
 
-##### **Stop**
+##### Stop
 
 The `Stop` function should be used to de-initialize the UI. This includes
 clearing the screen and stopping the timer.
 
-##### **Receive**
+##### Receive
 
 The `Receive` function is called by GBL to get a fastboot command from the UI.
 When called with `Mode` as `SINGLE_PACKET`, the UI should check if a fastboot
@@ -283,12 +281,12 @@ example, fastboot could be processing a long command like `flash` and GBL would
 not be polling other protocols for input while `flash` is in process. So
 `Receive` should only be used to send fastboot commands.
 
-##### **Send**
+##### Send
 
 The `Send` function is called by GBL to send a message to the UI. This can be
 used to display the status of a command (e.g., "OKAY", "FAIL") if needed.
 
-##### **Flush**
+##### Flush
 
 The `Flush` function is called by GBL to wait for all pending `Send` operations
 to complete. The UI should wait until all messages have been displayed.
@@ -309,3 +307,5 @@ to complete. The UI should wait until all messages have been displayed.
 9.  Depending on desired behaviour the UI driver may display the message on the
     screen. (may be defered to main loop)
 10. GBL calls `Stop` to de-initialize the UI.
+
+[gbl_efi_fastboot_transport_protocol]: ./gbl_efi_fastboot_transport_protocol.md

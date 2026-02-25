@@ -36,25 +36,24 @@ boards. However, this protocol must be implemented on production devices.
 #define GBL_EFI_AVB_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
-See
-[GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions)
-for details about protocol revisions.
+See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about
+protocol revisions.
 
 ### Protocol Interface Structure
 
 ```c
 typedef struct _GBL_EFI_AVB_PROTOCOL {
-  UINT64 Revision;
-  GBL_EFI_AVB_READ_PARTITION_ATTRIBUTES ReadPartitionAttributes;
-  GBL_EFI_AVB_READ_DEVICE_STATUS ReadDeviceStatus;
+  UINT64                                 Revision;
+  GBL_EFI_AVB_READ_PARTITION_ATTRIBUTES  ReadPartitionAttributes;
+  GBL_EFI_AVB_READ_DEVICE_STATUS         ReadDeviceStatus;
   GBL_EFI_AVB_VALIDATE_VBMETA_PUBLIC_KEY ValidateVbmetaPublicKey;
-  GBL_EFI_AVB_READ_ROLLBACK_INDEX ReadRollbackIndex;
-  GBL_EFI_AVB_WRITE_ROLLBACK_INDEX WriteRollbackIndex;
-  GBL_EFI_AVB_READ_PERSISTENT_VALUE ReadPersistentValue;
-  GBL_EFI_AVB_WRITE_PERSISTENT_VALUE WritePersistentValue;
+  GBL_EFI_AVB_READ_ROLLBACK_INDEX        ReadRollbackIndex;
+  GBL_EFI_AVB_WRITE_ROLLBACK_INDEX       WriteRollbackIndex;
+  GBL_EFI_AVB_READ_PERSISTENT_VALUE      ReadPersistentValue;
+  GBL_EFI_AVB_WRITE_PERSISTENT_VALUE     WritePersistentValue;
   GBL_EFI_AVB_HANDLE_VERIFICATION_RESULT HandleVerificationResult;
-  GBL_EFI_AVB_WRITE_LOCK_STATE WriteLockState;
-  GBL_EFI_AVB_FACTORY_DATA_RESET FactoryDataReset;
+  GBL_EFI_AVB_WRITE_LOCK_STATE           WriteLockState;
+  GBL_EFI_AVB_FACTORY_DATA_RESET         FactoryDataReset;
 } GBL_EFI_AVB_PROTOCOL;
 ```
 
@@ -69,54 +68,54 @@ different GUID must be used.
 #### ReadPartitionAttributes
 
 Retrieves attributes for partitions that require custom handling. See
-[`ReadPartitionAttributes()`][readpartitionattributes] for more information.
+[`ReadPartitionAttributes()`][read_partition_attributes] for more information.
 
 #### ReadDeviceStatus
 
 Retrieves the current device status, including its lock state and dm-verity
-error indication. See [`ReadDeviceStatus()`][readdevicestatus] for more
+error indication. See [`ReadDeviceStatus()`][read_device_status] for more
 information.
 
 #### ValidateVbmetaPublicKey
 
-Validates proper public key is used to sign HLOS artifacts. See
-[`ValidateVbmetaPublicKey()`][validatevbmetapublickey] for more information.
+Validates that the proper public key is used to sign HLOS artifacts. See
+[`ValidateVbmetaPublicKey()`][validate_vbmeta_public_key] for more information.
 
 #### ReadRollbackIndex
 
 Retrieves the rollback index corresponding to the provided index location. See
-[`ReadRollbackIndex()`][readrollbackindex] for more information.
+[`ReadRollbackIndex()`][read_rollback_index] for more information.
 
 #### WriteRollbackIndex
 
 Writes the rollback index corresponding to the provided index location. See
-[`WriteRollbackIndex()`][writerollbackindex] for more information.
+[`WriteRollbackIndex()`][write_rollback_index] for more information.
 
 #### ReadPersistentValue
 
 Retrieves the persistent value for the provided name. See
-[`ReadPersistentValue()`][readpersistentvalue] for more information.
+[`ReadPersistentValue()`][read_persistent_value] for more information.
 
 #### WritePersistentValue
 
 Writes or clears the persistent value for the provided name. See
-[`WritePersistentValue()`][writepersistentvalue] for more information.
+[`WritePersistentValue()`][write_persistent_value] for more information.
 
 #### HandleVerificationResult
 
 Handles the AVB verification result (e.g., updating the Root of Trust, setting
 device state, displaying UI warnings/errors, handling anti-tampering, etc.). See
-[`HandleVerificationResult()`][handleverificationresult] for more information.
+[`HandleVerificationResult()`][handle_verification_result] for more information.
 
 #### WriteLockState
 
 Locks or unlocks the device lock or device critical lock. See
-[`WriteLockState()`][writelockstate] for more information.
+[`WriteLockState()`][write_lock_state] for more information.
 
 #### FactoryDataReset
 
 Performs a factory data reset (FDR), securely erasing all user data. See
-[`FactoryDataReset()`][factorydatareset] for more information.
+[`FactoryDataReset()`][factory_data_reset] for more information.
 
 ## GBL_EFI_AVB_PROTOCOL.ReadPartitionAttributes()
 
@@ -131,21 +130,22 @@ special behavior indicated by the provided flags need to be provided here.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_READ_PARTITION_ATTRIBUTES) (
-  IN GBL_EFI_AVB_PROTOCOL *Self,
-  IN OUT UINTN *NumPartitions,
-  IN OUT GBL_EFI_AVB_PARTITION_ATTRIBUTES *Partitions);
+(EFIAPI *GBL_EFI_AVB_READ_PARTITION_ATTRIBUTES)(
+  IN GBL_EFI_AVB_PROTOCOL                 *Self,
+  IN OUT UINTN                            *NumPartitions,
+  IN OUT GBL_EFI_AVB_PARTITION_ATTRIBUTES *Partitions
+  );
 ```
 
 ### Related Definitions
 
 #### GBL_EFI_AVB_PARTITION_ATTRIBUTES
 
-```
+```c
 typedef struct {
-  UINTN BaseNameLen,
-  CHAR8 *BaseName,
-  GBL_EFI_AVB_PARTITION_FLAGS Flags
+  UINTN                       BaseNameLen;
+  CHAR8                       *BaseName;
+  GBL_EFI_AVB_PARTITION_FLAGS Flags;
 } GBL_EFI_AVB_PARTITION_ATTRIBUTES;
 ```
 
@@ -191,7 +191,7 @@ handle this case as follows:
 2. For an unlocked device: `ORANGE` boot status color, still can boot.
 
 In addition to enforcing verification, this flag also makes the partition
-available via [`HandleVerificationResult()`][handleverificationresult] once
+available via [`HandleVerificationResult()`][handle_verification_result] once
 verification is complete for backend-specific handling.
 
 A partition cannot set both this and
@@ -230,7 +230,7 @@ A partition cannot set both this and `GBL_EFI_AVB_PARTITION_FLAG_VERIFY`.
 ##### GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL
 
 This partition should be protected by the critical flashing lock. See
-[`WriteLockState()`][writelockstate] for details.
+[`WriteLockState()`][write_lock_state] for details.
 
 It is up to the implementation to specify every desired critical partition; GBL
 will not automatically apply the critical lock to any partitions.
@@ -240,10 +240,10 @@ will not automatically apply the critical lock to any partitions.
 This partition is tied to Factory Data Reset (FDR). This has two effects:
 
 1. Any fastboot write or erase of this partition will automatically be followed
-   by a call to [`FactoryDataReset()`][factorydatareset].
+   by a call to [`FactoryDataReset()`][factory_data_reset].
 2. GBL will use Block I/O protocols to erase all of these partitions (and issue
-   a `FactoryDataReset()`) prior to changing device lock state via
-   [`WriteLockState()`][writelockstate].
+   a [`FactoryDataReset()`][factory_data_reset]) prior to changing device lock
+   state via [`WriteLockState()`][write_lock_state].
 
 This functionality is provided mostly as a developer tool and must not be
 security load-bearing, i.e. FDR must not assume or rely on any particular state
@@ -281,7 +281,7 @@ On output, with a return code of:
 #### Partitions
 
 Pointer to an array of
-[`GBL_EFI_AVB_PARTITION_ATTRIBUTES`](#gbl_efi_avb_partition_attributes) with
+[`GBL_EFI_AVB_PARTITION_ATTRIBUTES`][avb_partition_attributes] with
 `NumPartitions` elements, to be filled by the implementation.
 
 ### Description
@@ -295,8 +295,8 @@ partitions get which behaviors.
 The input is an array of empty partition attributes, and the output should be
 the filled array. For example, to provide N additional partitions, firmware must
 update the `NumPartitions` to N and fill the first N elements of `Partitions`
-following the
-[`GBL_EFI_AVB_PARTITION_ATTRIBUTES`](#gbl_efi_avb_partition_attributes) format.
+following the [`GBL_EFI_AVB_PARTITION_ATTRIBUTES`][avb_partition_attributes]
+format.
 
 If no partition attributes are needed, `NumPartitions` can be set to 0 or
 `EFI_UNSUPPORTED` can be returned - both have the same effect.
@@ -322,9 +322,10 @@ and dm-verity error indication in a vendor-specific way.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_READ_DEVICE_STATUS) (
-  IN GBL_EFI_AVB_PROTOCOL *Self,
-  OUT GBL_EFI_AVB_DEVICE_STATUS *StatusFlags);
+(EFIAPI *GBL_EFI_AVB_READ_DEVICE_STATUS)(
+  IN GBL_EFI_AVB_PROTOCOL       *Self,
+  OUT GBL_EFI_AVB_DEVICE_STATUS *StatusFlags
+  );
 ```
 
 ### Related Definitions
@@ -333,7 +334,6 @@ EFI_STATUS
 
 ```c
 typedef UINT64 GBL_EFI_AVB_DEVICE_STATUS;
-
 STATIC CONST GBL_EFI_AVB_DEVICE_STATUS GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED = 0x1 << 0;
 STATIC CONST GBL_EFI_AVB_DEVICE_STATUS GBL_EFI_AVB_DEVICE_STATUS_DM_VERITY_FAILED = 0x1 << 1;
 STATIC CONST GBL_EFI_AVB_DEVICE_STATUS GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL = 0x1 << 2;
@@ -359,8 +359,8 @@ Flag indicating that the device bootloader can be unlocked. Corresponds to the
 ["OEM unlocking"][oem_unlocking] option in the booted OS.
 
 The `UNLOCKABLE` status applies to both the
-[`DEVICE`](#gbl_efi_avb_device_status_unlocked) lock and the
-[`CRITICAL`](#gbl_efi_avb_device_status_unlocked_critical) lock.
+[`DEVICE`][avb_device_status_unlocked] lock and the
+[`CRITICAL`][avb_device_status_unlocked_critical] lock.
 
 ### Parameters
 
@@ -394,19 +394,19 @@ status, covering:
    unlocked for critical operations.
 4. `GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE` - Indicates that the device can be
    unlocked. If the device is not unlockable, calls to
-   [`WriteLockState()`][writelockstate] with a _State_ parameter of value
-   `GBL_EFI_AVB_LOCK_STATE_UNLOCKED` will fail. See
-   [https://source.android.com/docs/core/architecture/bootloader/locking_unlocking].
+   [`WriteLockState()`][write_lock_state] with a _State_ parameter of value
+   `GBL_EFI_AVB_LOCK_STATE_UNLOCKED` will fail. See ["Oem
+   Unlocking"][oem_unlocking] documentation for more details.
 
 GBL may call this method multiple times within a single boot session. If the
 method returns an error, GBL rejects the boot attempt.
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                              |
-| :---------------------- | :----------------------------------------------------- |
-| `EFI_SUCCESS`           | A device status is successfully returned.              |
-| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| Return Code             | Semantics                                                |
+| :---------------------- | :------------------------------------------------------- |
+| `EFI_SUCCESS`           | A device status is successfully returned.                |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL will fail to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ValidateVbmetaPublicKey()
 
@@ -420,13 +420,14 @@ in a vendor-specific way.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_VALIDATE_VBMETA_PUBLIC_KEY) (
-  IN GBL_EFI_AVB_PROTOCOL *Self,
-  IN UINTN PublicKeyLength,
-  IN CONST UINT8 *PublicKeyData,
-  IN UINTN PublicKeyMetadataLength,
-  IN CONST UINT8 *PublicKeyMetadata,
-  /* GBL_EFI_AVB_KEY_VALIDATION_STATUS */ OUT UINT32 *ValidationStatus);
+(EFIAPI *GBL_EFI_AVB_VALIDATE_VBMETA_PUBLIC_KEY)(
+  IN GBL_EFI_AVB_PROTOCOL               *Self,
+  IN UINTN                              PublicKeyLength,
+  IN CONST UINT8                        *PublicKeyData,
+  IN UINTN                              PublicKeyMetadataLength,
+  IN CONST UINT8                        *PublicKeyMetadata,
+  OUT GBL_EFI_AVB_KEY_VALIDATION_STATUS *ValidationStatus
+  );
 ```
 
 ### Related Definitions
@@ -438,12 +439,12 @@ EFI_STATUS
 //
 // https://source.android.com/docs/security/features/verifiedboot/boot-flow#locked-devices-with-custom-root-of-trust
 enum {
-    GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID,
-    GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY,
-    GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID,
+  GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID,
+  GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID_CUSTOM_KEY,
+  GBL_EFI_AVB_KEY_VALIDATION_STATUS_VALID,
 };
 
-typedef uint32_t GBL_EFI_AVB_KEY_VALIDATION_STATUS;
+typedef UINT32 GBL_EFI_AVB_KEY_VALIDATION_STATUS;
 ```
 
 ##### GBL_EFI_AVB_KEY_VALIDATION_STATUS_INVALID
@@ -508,10 +509,10 @@ GBL calls this function once per AVB verification session.
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                              |
-| :---------------------- | :----------------------------------------------------- |
-| `EFI_SUCCESS`           | Public key validation was successfully completed.      |
-| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot. |
+| Return Code             | Semantics                                                |
+| :---------------------- | :------------------------------------------------------- |
+| `EFI_SUCCESS`           | Public key validation was successfully completed.        |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL will fail to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadRollbackIndex()
 
@@ -525,10 +526,11 @@ GBL in a vendor-specific way.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_READ_ROLLBACK_INDEX) (
+(EFIAPI *GBL_EFI_AVB_READ_ROLLBACK_INDEX)(
   IN GBL_EFI_AVB_PROTOCOL *Self,
-  IN UINTN IndexLocation,
-  OUT UINT64 *RollbackIndex);
+  IN UINTN                IndexLocation,
+  OUT UINT64              *RollbackIndex
+  );
 ```
 
 ### Parameters
@@ -551,21 +553,21 @@ provided `IndexLocation`.
 GBL requests rollback indexes to compare against the value provided in the
 vbmeta header. This prevents a locked device from booting if the rollback index
 provided by the partition is smaller than the value previously written using
-[`WriteRollbackIndex`][protocolwriterollbackindex] during the last successful
+[`WriteRollbackIndex`][protocol_write_rollback_index] during the last successful
 boot ensuring [rollback protection][rp] in case of an OTA.
 
-GBL only requests rollback indexes for `IndexLocation` equals `0` as a global
+GBL only requests rollback indexes for `IndexLocation` equal to `0` as a global
 HLOS index or locations specified in the corresponding chained partition
 descriptors. Returning any error in such cases causes GBL boot failure for
 locked devices.
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                                                 |
-| :---------------------- | :---------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`           | The rollback index value is successfully returned.                                        |
-| `EFI_NOT_FOUND`         | The requested rollback index isn't supported, so cannot be returned. GBL rejects to boot. |
-| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot.                                    |
+| Return Code             | Semantics                                                                                   |
+| :---------------------- | :------------------------------------------------------------------------------------------ |
+| `EFI_SUCCESS`           | The rollback index value is successfully returned.                                          |
+| `EFI_NOT_FOUND`         | The requested rollback index isn't supported, so cannot be returned. GBL will fail to boot. |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL will fail to boot.                                    |
 
 ## GBL_EFI_AVB_PROTOCOL.WriteRollbackIndex()
 
@@ -579,10 +581,11 @@ a vendor-specific way.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_WRITE_ROLLBACK_INDEX) (
+(EFIAPI *GBL_EFI_AVB_WRITE_ROLLBACK_INDEX)(
   IN GBL_EFI_AVB_PROTOCOL *Self,
-  IN UINTN IndexLocation,
-  IN UINT64 RollbackIndex);
+  IN UINTN                IndexLocation,
+  IN UINT64               RollbackIndex
+  );
 ```
 
 ### Parameters
@@ -607,18 +610,18 @@ rollback indexes to the value provided in the vbmeta header in accordance with
 previous version of HLOS on the next boot, ensuring [rollback protection][rp] in
 case of an OTA.
 
-GBL only updates rollback indexes for `IndexLocation` equals `0` as a global
+GBL only updates rollback indexes for `IndexLocation` equal to `0` as a global
 HLOS index or locations specified in the corresponding chained partition
 descriptors. Returning any error in such cases causes GBL boot failure for
 locked devices.
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                                                |
-| :---------------------- | :--------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`           | The rollback index value is successfully updated.                                        |
-| `EFI_NOT_FOUND`         | The requested rollback index isn't supported, so cannot be updated. GBL rejects to boot. |
-| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot.                                   |
+| Return Code             | Semantics                                                                                  |
+| :---------------------- | :----------------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`           | The rollback index value is successfully updated.                                          |
+| `EFI_NOT_FOUND`         | The requested rollback index isn't supported, so cannot be updated. GBL will fail to boot. |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL will fail to boot.                                   |
 
 ## GBL_EFI_AVB_PROTOCOL.ReadPersistentValue()
 
@@ -632,11 +635,12 @@ a vendor-specific manner.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_READ_PERSISTENT_VALUE) (
+(EFIAPI *GBL_EFI_AVB_READ_PERSISTENT_VALUE)(
   IN GBL_EFI_AVB_PROTOCOL *Self,
-  IN CONST CHAR8 *Name,
-  IN OUT UINTN *ValueSize,
-  OUT UINT8 *Value);
+  IN CONST CHAR8          *Name,
+  IN OUT UINTN            *ValueSize,
+  OUT UINT8               *Value
+  );
 ```
 
 ### Parameters
@@ -673,8 +677,8 @@ handle [dm-verity][dmv_error] errors and EIO mode.
 | :---------------------- | :---------------------------------------------------------------------------------------------------------------------------- |
 | `EFI_SUCCESS`           | The requested persistent value is presented and successfully provided in case `Value` buffer isn't NULL.                      |
 | `EFI_NOT_FOUND`         | The requested persistent value is not yet populated or supported. GBL will try to initialize it using `WritePersistentValue`. |
-| `EFI_BUFFER_TOO_SMALL`  | The provided `Value` buffer is too small. GBL rejects to boot.                                                                |
-| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL rejects to boot.                                                                        |
+| `EFI_BUFFER_TOO_SMALL`  | The provided `Value` buffer is too small. GBL will fail to boot.                                                              |
+| `EFI_INVALID_PARAMETER` | Unexpected arguments combination. GBL will fail to boot.                                                                      |
 
 ## GBL_EFI_AVB_PROTOCOL.WritePersistentValue()
 
@@ -688,11 +692,12 @@ vendor-specific way.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_WRITE_PERSISTENT_VALUE) (
+(EFIAPI *GBL_EFI_AVB_WRITE_PERSISTENT_VALUE)(
   IN GBL_EFI_AVB_PROTOCOL *Self,
-  IN CONST CHAR8 *Name,
-  IN UINTN ValueSize,
-  IN CONST UINT8 *Value);
+  IN CONST CHAR8          *Name,
+  IN UINTN                ValueSize,
+  IN CONST UINT8          *Value
+  );
 ```
 
 ### Parameters
@@ -725,11 +730,11 @@ updates in order to disable EIO mode.
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                                                      |
-| :---------------------- | :--------------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`           | The value for `Name` is successfully updated.                                                  |
-| `EFI_NOT_FOUND`         | Updating the value for `Name` isn't supported. GBL rejects to boot.                            |
-| `EFI_INVALID_PARAMETER` | The `ValueSize` is too big or any other unexpected arguments combination. GBL rejects to boot. |
+| Return Code             | Semantics                                                                                        |
+| :---------------------- | :----------------------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`           | The value for `Name` is successfully updated.                                                    |
+| `EFI_NOT_FOUND`         | Updating the value for `Name` isn't supported. GBL will fail to boot.                            |
+| `EFI_INVALID_PARAMETER` | The `ValueSize` is too big or any other unexpected arguments combination. GBL will fail to boot. |
 
 ## GBL_EFI_AVB_PROTOCOL.HandleVerificationResult()
 
@@ -743,9 +748,10 @@ manner.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI *GBL_EFI_AVB_HANDLE_VERIFICATION_RESULT) (
-  IN GBL_EFI_AVB_PROTOCOL *Self,
-  IN CONST GBL_EFI_AVB_VERIFICATION_RESULT *Result);
+(EFIAPI *GBL_EFI_AVB_HANDLE_VERIFICATION_RESULT)(
+  IN GBL_EFI_AVB_PROTOCOL                  *Self,
+  IN CONST GBL_EFI_AVB_VERIFICATION_RESULT *Result
+  );
 ```
 
 ### Related Definitions
@@ -793,12 +799,12 @@ Flag indicating that device is locked and verification passed. Boot can proceed.
 ##### GBL_EFI_AVB_BOOT_COLOR_RED_EIO
 
 Flag indicating the device has rebooted due to [dm-verity][dmv_error] hash tree
-corruption (detected via [`ReadDeviceStatus`][readdevicestatus]), or this error
-occurred on a previous boot and a system update has not been applied since. A
-corresponding notification [must][boot_flow_red_eio] be shown to obtain user
-confirmation before proceeding with the dialogs for other colors and boot in
-degraded mode, allowing the device to receive a future update that resolves the
-issue.
+corruption (detected via [`ReadDeviceStatus`][read_device_status]), or this
+error occurred on a previous boot and a system update has not been applied
+since. A corresponding notification [must][boot_flow_red_eio] be shown to obtain
+user confirmation before proceeding with the dialogs for other colors and boot
+in degraded mode, allowing the device to receive a future update that resolves
+the issue.
 
 #### GBL_EFI_AVB_PROPERTY
 
@@ -938,7 +944,7 @@ used for:
 2. Handle anti-tampering mechanisms.
 3. Handle data for all partitions loaded by GBL, including device-specific
    partitions requested through
-   [`ReadPartitionAttributes()`][readpartitionattributes].
+   [`ReadPartitionAttributes()`][read_partition_attributes].
 4. Display the appropriate UI and obtaining user confirmation for states that
    may affect the device's security guarantees.
 
@@ -948,11 +954,11 @@ invalid afterward.
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                                                          |
-| :---------------------- | :------------------------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`           | Verification result is successfully handled.                                                       |
-| `EFI_INVALID_PARAMETER` | Invalid data is provided by the `Result`. GBL rejects to boot.                                     |
-| `EFI_ACCESS_DENIED`     | Failed to update root of trust or other secure world issues occurred. GBL reject the boot attempt. |
+| Return Code             | Semantics                                                                                           |
+| :---------------------- | :-------------------------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`           | Verification result is successfully handled.                                                        |
+| `EFI_INVALID_PARAMETER` | Invalid data is provided by the `Result`. GBL will fail to boot.                                    |
+| `EFI_ACCESS_DENIED`     | Failed to update root of trust or other secure world issues occurred. GBL rejects the boot attempt. |
 
 ## GBL_EFI_AVB_PROTOCOL.WriteLockState()
 
@@ -965,11 +971,11 @@ Locks or unlocks the device lock or critical lock.
 ```c
 typedef
 EFI_STATUS
-(EFIAPI * GBL_EFI_AVB_WRITE_LOCK_STATE)(
-    IN GBL_EFI_AVB_PROTOCOL *Self,
-    IN GBL_EFI_AVB_LOCK_TYPE Type,
-    IN GBL_EFI_AVB_LOCK_STATE State,
-);
+(EFIAPI *GBL_EFI_AVB_WRITE_LOCK_STATE)(
+  IN GBL_EFI_AVB_PROTOCOL   *Self,
+  IN GBL_EFI_AVB_LOCK_TYPE  Type,
+  IN GBL_EFI_AVB_LOCK_STATE State
+  );
 ```
 
 ### Related Definitions
@@ -978,10 +984,10 @@ EFI_STATUS
 
 ```c
 enum {
-    GBL_EFI_AVB_LOCK_TYPE_DEVICE,
-    GBL_EFI_AVB_LOCK_TYPE_CRITICAL,
+  GBL_EFI_AVB_LOCK_TYPE_DEVICE,
+  GBL_EFI_AVB_LOCK_TYPE_CRITICAL,
 };
-typedef uint8_t GBL_EFI_AVB_LOCK_TYPE;
+typedef UINT8 GBL_EFI_AVB_LOCK_TYPE;
 ```
 
 ##### GBL_EFI_AVB_LOCK_TYPE_DEVICE
@@ -1031,7 +1037,7 @@ rebooting into fastboot and flashing the correct OS images. Once the _CRITICAL_
 lock is off, this protection is removed.
 
 The set of critical partitions is device-specific and must be provided via
-[`ReadPartitionAttributes()`][readpartitionattributes]. If no critical
+[`ReadPartitionAttributes()`][read_partition_attributes]. If no critical
 partitions are specified, the _CRITICAL_ lock has no effect.
 
 Note: the _CRITICAL_ lock is optional. If a firmware implementation does not
@@ -1042,10 +1048,10 @@ support the _CRITICAL_ lock, calls to `WriteLockState()` where `Type` is
 
 ```c
 enum {
-    GBL_EFI_AVB_LOCK_STATE_UNLOCKED,
-    GBL_EFI_AVB_LOCK_STATE_LOCKED,
+  GBL_EFI_AVB_LOCK_STATE_UNLOCKED,
+  GBL_EFI_AVB_LOCK_STATE_LOCKED,
 };
-typedef uint8_t GBL_EFI_AVB_LOCK_STATE;
+typedef UINT8 GBL_EFI_AVB_LOCK_STATE;
 ```
 
 ##### GBL_EFI_AVB_LOCK_STATE_UNLOCKED
@@ -1090,8 +1096,8 @@ Performs a factory data reset.
 typedef
 EFI_STATUS
 (EFIAPI *GBL_EFI_AVB_FACTORY_DATA_RESET)(
-    IN GBL_EFI_AVB_PROTOCOL *Self
-);
+  IN GBL_EFI_AVB_PROTOCOL *Self
+  );
 ```
 
 ### Parameters
@@ -1141,18 +1147,22 @@ following UEFI error codes are used to communicate results back to the library:
 | `EFI_UNSUPPORTED`       | Operation isn't implemented / supported                                                                                                                 |
 | Others                  | Treated as `libavb::AvbIOResult::AVB_IO_RESULT_ERROR_IO`                                                                                                |
 
-[readpartitionattributes]: #gbl_efi_avb_protocolreadpartitionattributes
-[readdevicestatus]: #gbl_efi_avb_protocolreaddevicestatus
-[handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
-[protocolwriterollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
-[validatevbmetapublickey]: #gbl_efi_avb_protocolvalidatevbmetapublickey
-[readrollbackindex]: #gbl_efi_avb_protocolreadrollbackindex
-[writerollbackindex]: #gbl_efi_avb_protocolwriterollbackindex
-[readpersistentvalue]: #gbl_efi_avb_protocolreadpersistentvalue
-[writepersistentvalue]: #gbl_efi_avb_protocolwritepersistentvalue
-[handleverificationresult]: #gbl_efi_avb_protocolhandleverificationresult
-[writelockstate]: #gbl_efi_avb_protocolwritelockstate
-[factorydatareset]: #gbl_efi_avb_protocolfactorydatareset
+[read_partition_attributes]: #gbl_efi_avb_protocol_readpartitionattributes
+[read_device_status]: #gbl_efi_avb_protocol_readdevicestatus
+[handle_verification_result]: #gbl_efi_avb_protocol_handleverificationresult
+[protocol_write_rollback_index]: #gbl_efi_avb_protocol_writerollbackindex
+[validate_vbmeta_public_key]: #gbl_efi_avb_protocol_validatevbmetapublickey
+[read_rollback_index]: #gbl_efi_avb_protocol_readrollbackindex
+[write_rollback_index]: #gbl_efi_avb_protocol_writerollbackindex
+[read_persistent_value]: #gbl_efi_avb_protocol_readpersistentvalue
+[write_persistent_value]: #gbl_efi_avb_protocol_writepersistentvalue
+[write_lock_state]: #gbl_efi_avb_protocol_writelockstate
+[factory_data_reset]: #gbl_efi_avb_protocol_factorydatareset
+[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[avb_partition_attributes]: #gbl_efi_avb_partition_attributes
+[avb_device_status_unlocked]: #gbl_efi_avb_device_status_unlocked
+[avb_device_status_unlocked_critical]:
+  #gbl_efi_avb_device_status_unlocked_critical
 [avb]: https://source.android.com/docs/security/features/verifiedboot/avb
 [unlocked]:
   https://android.googlesource.com/platform/external/avb/+/refs/heads/main/README.md#locked-and-unlocked-mode

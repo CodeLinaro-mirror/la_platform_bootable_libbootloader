@@ -11,12 +11,12 @@
 
 While GBL is responsible for loading pvmfw and constructing the corresponding
 configuration to share with the Android Virtualization Framework, it still
-relies on the firmware through this protocol to get certain configuration.
+relies on the firmware through this protocol to get certain configurations.
 
-The `GBL_EFI_AVF_PROTOCOL` protocol is optional. When implemented, GBL loads
-pvmfw along with related configuration, and refuses to boot if any error occurs.
-If the protocol is not present, GBL ignores the `pvmfw` partition, and AVF will
-not be available on such devices.
+The `GBL_EFI_AVF_PROTOCOL` is optional. When implemented, GBL loads pvmfw along
+with related configuration, and refuses to boot if any error occurs. If the
+protocol is not present, GBL ignores the `pvmfw` partition, and AVF will not be
+available on such devices.
 
 ### GUID
 
@@ -36,9 +36,8 @@ not be available on such devices.
 #define GBL_EFI_AVF_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
-See
-[GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions)
-for details about protocol revisions.
+See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about
+protocol revisions.
 
 ### Protocol Interface Structure
 
@@ -61,14 +60,14 @@ different GUID must be used.
 #### ReadVendorDiceHandover
 
 Retrieves the vendor DICE handover, covering GBL and earlier boot stages, to be
-wrapped by GBL with pvmfw layer.
-[`ReadVendorDiceHandover()`](#gbl_efi_avf_protocolreadvendordicehandover)
+wrapped by GBL with pvmfw layer. See
+[`ReadVendorDiceHandover()`][read_vendor_dice_handover] for more information.
 
 #### ReadSecretKeeperPublicKey
 
 Retrieves the Secret Keeper public key to be used in the VM reference DT built
-by the GBL.
-[`ReadSecretKeeperPublicKey()`](#gbl_efi_avf_protocolreadsecretkeeperpublickey)
+by the GBL. See [`ReadSecretKeeperPublicKey()`][read_secret_keeper_public_key]
+for more information.
 
 ## GBL_EFI_AVF_PROTOCOL.ReadVendorDiceHandover()
 
@@ -80,10 +79,12 @@ wrapped by GBL with pvmfw layer.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_VENDOR_DICE_HANDOVER)(
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_AVF_READ_VENDOR_DICE_HANDOVER)(
   IN GBL_EFI_AVF_PROTOCOL *Self,
   IN OUT UINTN            *HandoverSize,
-  OUT CONST UINT8         *Handover,
+  OUT UINT8               *Handover
   );
 ```
 
@@ -93,7 +94,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_VENDOR_DICE_HANDOVER)(
 
 A pointer to the `GBL_EFI_AVF_PROTOCOL` instance.
 
-#### HandoverSize [in, out]
+#### HandoverSize
 
 On function call, this points to the handover buffer size provided by
 `Handover`. The implementation is free to provide vendor handover up to this
@@ -107,7 +108,7 @@ call.
 `HandoverSize` must be also updated on success to let GBL determine the provided
 handover size.
 
-#### Handover [out]
+#### Handover
 
 Pointer to a pre-allocated buffer to store vendor DICE handover provided by FW.
 
@@ -150,13 +151,13 @@ The AVF protocol can be uninstalled at runtime if needed. In that case, GBL will
 skip all the AVF-related work. To uninstall AVF protocol, use the
 `UninstallProtocolInterface` function.
 
-TODO(b/391191885): be less specific about AVF DICE requrements once protocol is
+TODO(b/391191885): be less specific about AVF DICE requirements once protocol is
 mainly adopted by the ecosystem.
 
 ### Status Codes Returned
 
-|                        |                                                                                  |
-| ---------------------- | -------------------------------------------------------------------------------- |
+| Return Code            | Semantics                                                                        |
+| :--------------------- | :------------------------------------------------------------------------------- |
 | `EFI_SUCCESS`          | Handover was successfully written.                                               |
 | `EFI_BUFFER_TOO_SMALL` | The buffer is too small; `HandoverSize` has been updated with the required size. |
 | Other                  | Error loading vendor DICE handover; GBL will refuse to boot                      |
@@ -171,10 +172,12 @@ by GBL.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_SECRET_KEEPER_PUBLIC_KEY)(
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_AVF_READ_SECRET_KEEPER_PUBLIC_KEY)(
   IN GBL_EFI_AVF_PROTOCOL *Self,
   IN OUT UINTN            *PublicKeySize,
-  OUT CONST UINT8         *PublicKey,
+  OUT UINT8               *PublicKey
   );
 ```
 
@@ -184,7 +187,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_AVF_READ_SECRET_KEEPER_PUBLIC_KEY)(
 
 A pointer to the `GBL_EFI_AVF_PROTOCOL` instance.
 
-#### PublicKeySize [in, out]
+#### PublicKeySize
 
 On function call, this points to the Secret Keeper public key buffer size
 provided by `PublicKey`. The implementation is free to provide public key up to
@@ -198,7 +201,7 @@ GBL will then allocate a larger buffer and repeat the
 `PublicKeySize` must be also updated on success to let GBL determine the
 provided handover size.
 
-#### PublicKey [out]
+#### PublicKey
 
 Pointer to a pre-allocated buffer to store Secret Keeper public key provided by
 FW.
@@ -215,12 +218,15 @@ method is used by GBL to obtain the Secret Keeper public key from the FW.
 
 ### Status Codes Returned
 
-|                        |                                                                                  |
-| ---------------------- | -------------------------------------------------------------------------------- |
-| `EFI_SUCCESS`          | Secret Keeper public key was successfully written.                               |
-| `EFI_BUFFER_TOO_SMALL` | The buffer is too small; `HandoverSize` has been updated with the required size. |
-| Other                  | Error loading Secret Keeper public key; GBL will refuse to boot                  |
+| Return Code            | Semantics                                                                         |
+| :--------------------- | :-------------------------------------------------------------------------------- |
+| `EFI_SUCCESS`          | Secret Keeper public key was successfully written.                                |
+| `EFI_BUFFER_TOO_SMALL` | The buffer is too small; `PublicKeySize` has been updated with the required size. |
+| Other                  | Error loading Secret Keeper public key; GBL will refuse to boot                   |
 
+[read_vendor_dice_handover]: #gbl_efi_avf_protocol_readvendordicehandover
+[read_secret_keeper_public_key]: #gbl_efi_avf_protocol_readsecretkeeperpublickey
+[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
 [dice_handover]:
   https://pigweed.googlesource.com/open-dice/+/42ae7760023/src/android.c#212
 [opendice]:

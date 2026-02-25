@@ -10,18 +10,18 @@
 ### Summary
 
 The GBL Debug Protocol is an optional protocol that provides callbacks to the
-firmware.
+firmware to handle debug-related events, such as fatal errors.
 
 ### GUID
 
 ```c
 // {98ca3da1-c1ac-4402-9c16-7558d3ed5705}
 #define GBL_EFI_DEBUG_PROTOCOL_GUID                        \
-    {                                                      \
-        0x98ca3da1, 0xc1ac, 0x4402, {                      \
-            0x9c, 0x16, 0x75, 0x58, 0xd3, 0xed, 0x57, 0x05 \
-        }                                                  \
-    }
+  {                                                        \
+    0x98ca3da1, 0xc1ac, 0x4402, {                          \
+      0x9c, 0x16, 0x75, 0x58, 0xd3, 0xed, 0x57, 0x05 \
+    }                                                      \
+  }
 ```
 
 ### Revision Number
@@ -30,16 +30,15 @@ firmware.
 #define GBL_EFI_DEBUG_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
-See
-[GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions)
-for details about protocol revisions.
+See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about
+protocol revisions.
 
 ### Protocol Interface Structure
 
 ```c
 typedef struct _GBL_EFI_DEBUG_PROTOCOL {
-    UINT64                    Revision;
-    GBL_EFI_DEBUG_FATAL_ERROR FatalError;
+  UINT64                    Revision;
+  GBL_EFI_DEBUG_FATAL_ERROR FatalError;
 } GBL_EFI_DEBUG_PROTOCOL;
 ```
 
@@ -53,7 +52,8 @@ different GUID must be used.
 
 #### FatalError
 
-Alerts the firmware that a fatal error has occured.
+Alerts the firmware that a fatal error has occurred. See
+[`FatalError()`][fatal_error] for more information.
 
 ## GBL_EFI_DEBUG_PROTOCOL.FatalError()
 
@@ -65,11 +65,13 @@ so that the firmware can store or log backtrace information.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_DEBUG_FATAL_ERROR)(
-    IN GBL_EFI_DEBUG_PROTOCOL  *Self,
-    IN CONST VOID              *FramePtr,
-    IN GBL_EFI_DEBUG_ERROR_TAG Tag,
-    );
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_DEBUG_FATAL_ERROR)(
+  IN GBL_EFI_DEBUG_PROTOCOL  *Self,
+  IN CONST VOID              *FramePtr,
+  IN GBL_EFI_DEBUG_ERROR_TAG Tag
+  );
 ```
 
 ### Parameters
@@ -78,7 +80,7 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_DEBUG_FATAL_ERROR)(
 
 A pointer to the `GBL_EFI_DEBUG_PROTOCOL` instance.
 
-#### FramePtr [in]
+#### FramePtr
 
 The frame pointer of the calling context. GBL's toolchain requires all builds to
 include frame pointers and unwind tables in their ABI. This means that all stack
@@ -87,33 +89,35 @@ ABI boundary is usually the GBL entry point, but it can also be UEFI code to
 which GBL passed a callback. Frames further back may be valid, but this depends
 on whether the firmware was compiled with frame pointers enabled.
 
-On aarch64, the frame pointer is x29. On x86_64, the frame pointer is rbp. On
-RISC-V, the frame pointer is x8.
+On aarch64, the frame pointer is `x29`. On x86_64, the frame pointer is `rbp`.
+On RISC-V, the frame pointer is `x8`.
 
-**Note:** for aarch64 and RISC-V, the register used to store the frame pointer
+**Note:** For aarch64 and RISC-V, the register used to store the frame pointer
 is an ABI convention, not a hard and fast rule. Compilers may use other
 registers to store the frame pointer.
 
-#### Tag [in]
+#### Tag
 
 A tag used to describe the type of error being logged. See
-[`Related Definitions`](#related-definitions) for expected tags and their
-semantics.
+[GBL_EFI_DEBUG_ERROR_TAG][error_tag] for expected tags and their semantics.
 
 ### Related Definitions
 
+#### GBL_EFI_DEBUG_ERROR_TAG
+
 ```c
 enum {
-    // Error was generated automatically due to an assertion failure
-    GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
-    // General partition related error
-    GBL_EFI_DEBUG_ERROR_TAG_PARTITION,
-    // Failed to load required image
-    GBL_EFI_DEBUG_ERROR_TAG_LOAD_IMAGE,
-    // General boot failure
-    GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR
+  // Error was generated automatically due to an assertion failure
+  GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
+  // General partition related error
+  GBL_EFI_DEBUG_ERROR_TAG_PARTITION,
+  // Failed to load required image
+  GBL_EFI_DEBUG_ERROR_TAG_LOAD_IMAGE,
+  // General boot failure
+  GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR
 };
-typedef uint64_t GBL_EFI_DEBUG_ERROR_TAG;
+
+typedef UINT64 GBL_EFI_DEBUG_ERROR_TAG;
 ```
 
 ### Description
@@ -124,13 +128,13 @@ postmortem analysis. The current frame pointer is passed in case the firmware
 wishes to conduct a stack trace, and a best-effort tag is passed to provide
 additional context about the cause of the error.
 
-Note: when invoked automatically from the panic handler, e.g. when accessing an
-array at an invalid index, the tag variant will be
-GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR. Other tag values are provided on a best
-effort basis. Additional tag variants may be added as part of a non-breaking
-update.
+Note: When invoked automatically from the panic handler (e.g., when accessing an
+array at an invalid index), the tag variant will be
+`GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR`. Other tag values are provided on a
+best-effort basis. Additional tag variants may be added as part of a
+non-breaking update.
 
-Note: only fatal errors that occur within GBL will automatically invoke
+Note: Only fatal errors that occur within GBL will automatically invoke
 `FatalError()` as part of the panic handler. Any errors that occur within
 protocol drivers or the UEFI runtime are not visible to GBL and will not trigger
 automatic calls to `FatalError()`.
@@ -140,4 +144,8 @@ automatic calls to `FatalError()`.
 | Return Code             | Semantics                        |
 | :---------------------- | :------------------------------- |
 | `EFI_SUCCESS`           | The call completed successfully. |
-| `EFI_INVALID_PARAMETER` | _Self_ is `NULL`.                |
+| `EFI_INVALID_PARAMETER` | `Self` is `NULL`.                |
+
+[fatal_error]: #gbl_efi_debug_protocol_fatalerror
+[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[error_tag]: #gbl_efi_debug_error_tag

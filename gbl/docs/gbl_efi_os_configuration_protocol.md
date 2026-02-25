@@ -1,4 +1,4 @@
-# GBL OS Configuration EFI Protocol
+# GBL EFI OS Configuration Protocol
 
 |             |            |
 | :---------- | :--------- |
@@ -12,18 +12,18 @@
 This protocol provides a mechanism for the EFI firmware to build and update OS
 configuration data:
 
-- device tree (select components to build the final one)
+- device tree (select components with which to build the final one)
 - bootconfig (append fixups)
-- FIT configuration (select configuration corresponding to the platform)
+- FIT configuration (select the configuration corresponding to the platform)
 
 GBL will load and verify the data provided by boot partitions, and then call
 these protocol functions to give the firmware a chance to construct and adjust
-the data as needed for the particular device. Device tree fixup (including
-kernel command line) is handled by `DT_FIXUP` protocol.
+the data as needed for the particular device. Device tree fixups (including
+kernel command line) are handled by the `EFI_DT_FIXUP` protocol.
 
 If no runtime modifications are necessary, this protocol may be left
-unimplemented, so GBL autoselection logic will be used. Refer to
-[`SelectDeviceTrees()`][select] description for more details.
+unimplemented, in which case GBL autoselection logic will be used. Refer to
+[`SelectDeviceTrees()`][select_device_trees] description for more details.
 
 ### GUID
 
@@ -43,19 +43,18 @@ unimplemented, so GBL autoselection logic will be used. Refer to
 #define GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
 ```
 
-See
-[GBL Custom Protocol Revisions](efi_protocols.md#gbl-custom-protocol-revisions)
-for details about protocol revisions.
+See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about
+protocol revisions.
 
 ### Protocol Interface Structure
 
 ```c
 typedef struct _GBL_EFI_OS_CONFIGURATION_PROTOCOL {
-  UINT64                            Revision;
-  GBL_EFI_FIXUP_BOOTCONFIG          FixupBootConfig;
-  GBL_EFI_SELECT_DEVICE_TREES       SelectDeviceTrees;
-  GBL_EFI_SELECT_FIT_CONFIGURATION  SelectFitConfiguration;
-  GBL_EFI_FIXUP_ZBI                 FixupZbi;
+  UINT64                           Revision;
+  GBL_EFI_FIXUP_BOOTCONFIG         FixupBootConfig;
+  GBL_EFI_SELECT_DEVICE_TREES      SelectDeviceTrees;
+  GBL_EFI_SELECT_FIT_CONFIGURATION SelectFitConfiguration;
+  GBL_EFI_FIXUP_ZBI                FixupZbi;
 } GBL_EFI_OS_CONFIGURATION_PROTOCOL;
 ```
 
@@ -69,21 +68,24 @@ backwards compatible, a different GUID must be used.
 
 #### FixupBootConfig
 
-Applies bootconfig fixups. See [`FixupBootConfig()`][bootconfig_fixup].
+Applies bootconfig fixups. See [`FixupBootConfig()`][fixup_bootconfig] for more
+information.
 
 #### SelectDeviceTrees
 
-Select components such as base device tree, overlays to build the final device
-tree. See [`SelectDeviceTrees()`][select].
+Selects components such as base device tree and overlays to build the final
+device tree. See [`SelectDeviceTrees()`][select_device_trees] for more
+information.
 
 #### SelectFitConfiguration
 
 Selects the FIT configuration corresponding to the platform. See
-[`SelectFitConfiguration()`][fit_configuration]
+[`SelectFitConfiguration()`][select_fit_configuration] for more information.
 
 #### FixupZbi
 
-Applies ZBI fixups (Fuchsia kernels only). See [`FixupZbi()`][fixup_zbi].
+Applies ZBI fixups (Fuchsia kernels only). See [`FixupZbi()`][fixup_zbi] for
+more information.
 
 ## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupBootConfig()
 
@@ -94,7 +96,9 @@ Provides runtime fixups to the bootconfig.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_FIXUP_BOOTCONFIG)(
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_FIXUP_BOOTCONFIG)(
   IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *Self,
   IN UINTN                             BootConfigSize,
   IN CONST CHAR8                       *BootConfig,
@@ -112,15 +116,15 @@ call, and must not be retained by the protocol after returning.
 
 A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
 
-#### BootConfigSize [in]
+#### BootConfigSize
 
 Size of the bootconfig built by GBL.
 
-#### BootConfig [in]
+#### BootConfig
 
 Pointer to the bootconfig built by GBL. Trailing data isn't provided.
 
-#### FixupBufferSize [in, out]
+#### FixupBufferSize
 
 On function call, this points to the fixup buffer size provided by `Fixup`. The
 implementation is free to provide fixup data up to this size.
@@ -133,7 +137,7 @@ will then allocate a larger buffer, discard all modifications and repeat the
 `FixupBufferSize` must be updated on success to let GBL determine the provided
 bootconfig fixup size.
 
-#### Fixup [out]
+#### Fixup
 
 Pointer to a pre-allocated buffer to store the generated bootconfig fixup. GBL
 verifies and appends provided data into the final bootconfig. FW may either
@@ -156,7 +160,7 @@ automatically update the bootconfig trailer metadata afterwards. Override
 bootconfig operator `:=` may be used to re-define some of the values provided by
 GBL.
 
-#### Security
+### Security
 
 To ensure the integrity of verified boot data, this protocol will not be allowed
 to append any bootconfig provided by [libavb][libavb]. If any of these
@@ -170,7 +174,7 @@ Additionally, all data used to apply fixups to the bootconfig must be trusted.
 In particular, if the protocol loads any data from non-secure storage, it must
 verify that data before use.
 
-#### Status Codes Returned
+### Status Codes Returned
 
 | Return Code             | Semantics                                                                               |
 | :---------------------- | :-------------------------------------------------------------------------------------- |
@@ -188,48 +192,102 @@ Inspects device trees and overlays loaded by GBL to determine which ones to use.
 ### Prototype
 
 ```c
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_SELECT_DEVICE_TREES)(
+  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *Self,
+  IN UINTN                             NumDeviceTrees,
+  IN OUT GBL_EFI_VERIFIED_DEVICE_TREE  *DeviceTrees
+  );
+```
+
+### Related Definitions
+
+#### GBL_EFI_DEVICE_TREE_SOURCE
+
+```c
 enum {
   GBL_EFI_DEVICE_TREE_SOURCE_BOOT,
   GBL_EFI_DEVICE_TREE_SOURCE_VENDOR_BOOT,
   GBL_EFI_DEVICE_TREE_SOURCE_DTBO,
   GBL_EFI_DEVICE_TREE_SOURCE_DTB,
 };
-typedef uint32_t GBL_EFI_DEVICE_TREE_SOURCE;
 
+typedef UINT32 GBL_EFI_DEVICE_TREE_SOURCE;
+```
+
+#### GBL_EFI_DEVICE_TREE_TYPE
+
+```c
 enum {
   GBL_EFI_DEVICE_TREE_TYPE_DEVICE_TREE,
   GBL_EFI_DEVICE_TREE_TYPE_OVERLAY,
   GBL_EFI_DEVICE_TREE_TYPE_PVM_DA_OVERLAY,
 };
-typedef uint32_t GBL_EFI_DEVICE_TREE_TYPE;
 
+typedef UINT32 GBL_EFI_DEVICE_TREE_TYPE;
+```
+
+#### GBL_EFI_DEVICE_TREE_METADATA
+
+```c
 typedef struct {
-  // GBL_EFI_DEVICE_TREE_SOURCE
-  UINT32 Source;
-  // GBL_EFI_DEVICE_TREE_TYPE
-  UINT32 Type;
+  GBL_EFI_DEVICE_TREE_SOURCE Source;
+  GBL_EFI_DEVICE_TREE_TYPE   Type;
   // values are zeroed and must not be used in case of BOOT / VENDOR_BOOT source
-  UINT32 Id;
-  UINT32 Rev;
-  UINT32 Custom[4];
+  UINT32                     Id;
+  UINT32                     Rev;
+  UINT32                     Custom[4];
 } GBL_EFI_DEVICE_TREE_METADATA;
+```
 
+##### Source
+
+A `GBL_EFI_DEVICE_TREE_SOURCE` value identifying the origin partition of the
+loaded device tree component.
+
+##### Type
+
+A `GBL_EFI_DEVICE_TREE_TYPE` value identifying the type of device tree
+component.
+
+##### Id
+
+The ID value from the `dttable` `entry.id`. Guaranteed to be zero for `BOOT` and
+`VENDOR_BOOT` sources.
+
+##### Rev
+
+The revision value from the `dttable` `entry.rev`. Guaranteed to be zero for
+`BOOT` and `VENDOR_BOOT` sources.
+
+##### Custom
+
+Additional custom metadata values.
+
+#### GBL_EFI_VERIFIED_DEVICE_TREE
+
+```c
 typedef struct {
   GBL_EFI_DEVICE_TREE_METADATA Metadata;
-  // base device tree / overlay buffer (guaranteed to be 8-bytes aligned),
-  // cannot be NULL. Device tree size can be identified by the header totalsize field.
-  CONST VOID *DeviceTree;
-  // Indicates whether this device tree (or overlay) must be included in the
-  // final device tree. Set to true by a FW if this component must be used
-  BOOLEAN Selected;
+  CONST VOID                   *DeviceTree;
+  BOOLEAN                      Selected;
 } GBL_EFI_VERIFIED_DEVICE_TREE;
-
-typedef EFI_STATUS (EFIAPI *GBL_EFI_SELECT_DEVICE_TREES)(
-  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *Self,
-  IN UINTN                             NumDeviceTrees
-  IN OUT GBL_EFI_VERIFIED_DEVICE_TREE  *DeviceTrees,
-  );
 ```
+
+##### Metadata
+
+The metadata associated with this device tree component.
+
+##### DeviceTree
+
+Pointer to the device tree or overlay buffer. Guaranteed to be 8-byte aligned
+and non-`NULL`.
+
+##### Selected
+
+Set to `TRUE` by the firmware if this component must be included in the final
+device tree.
 
 ### Parameters
 
@@ -240,16 +298,16 @@ call, and must not be retained by the protocol after returning.
 
 A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
 
-#### NumDeviceTrees [in]
+#### NumDeviceTrees
 
 The number of device tree components in the provided `DeviceTrees` array.
 
-#### DeviceTrees [in, out]
+#### DeviceTrees
 
 Pointer to an array containing loaded device tree components along with
 associated metadata to distinguish device tree component types
-(`GBL_EFI_DEVICE_TREE_METADATA.Type`) and identify source it's loaded from
-(`GBL_EFI_DEVICE_TREE_METADATA.Source`).
+(`GBL_EFI_DEVICE_TREE_METADATA.Type`) and identify the source from which it's
+loaded (`GBL_EFI_DEVICE_TREE_METADATA.Source`).
 
 ### Description
 
@@ -270,7 +328,7 @@ distinguish between different types of device tree components:
 2. Device tree overlays (`OVERLAY`) — Overlays to be applied to a base device
    tree.
 3. Device assignment overlays (`PVM_DA_OVERLAY`) — Overlays to be applied to
-   pVMs managed by [AVF][avf]. Device assignment overlay is distingueshed from
+   pVMs managed by [AVF][avf]. Device assignment overlay is distinguished from
    the regular host overlay by 31st bit of `dttable` `entry.id`:
 
    ```c
@@ -278,7 +336,7 @@ distinguish between different types of device tree components:
    ```
 
    It also affects the exposed `GBL_EFI_DEVICE_TREE_METADATA.Id` value since
-   it's a pure copy of coresponding `entry.id`.
+   it's a pure copy of corresponding `entry.id`.
 
 The `GBL_EFI_DEVICE_TREE_METADATA.Source` field identifies the origin partition
 of each loaded device tree component (`BOOT`, `VENDOR_BOOT`, `DTBO`, `DTB`,
@@ -303,11 +361,11 @@ pVM device assignment overlays will be selected by the autoselection logic.
 
 ### Status Codes Returned
 
-| Return Code             | Semantics                                                   |
-| :---------------------- | :---------------------------------------------------------- |
-| `EFI_SUCCESS`           | Base device tree, overlays, DA overlays have been selected. |
-| `EFI_UNSUPPORTED`       | No components been selected; GBL will use autoselection.    |
-| `EFI_INVALID_PARAMETER` | Unexpected input; GBL will refuse to boot.                  |
+| Return Code             | Semantics                                                     |
+| :---------------------- | :------------------------------------------------------------ |
+| `EFI_SUCCESS`           | Base device tree, overlays, DA overlays have been selected.   |
+| `EFI_UNSUPPORTED`       | No components have been selected; GBL will use autoselection. |
+| `EFI_INVALID_PARAMETER` | Unexpected input; GBL will refuse to boot.                    |
 
 ## GBL_EFI_OS_CONFIGURATION_PROTOCOL.SelectFitConfiguration()
 
@@ -319,13 +377,15 @@ platform.
 ### Prototype
 
 ```c
-typedef EFI_STATUS (EFIAPI *GBL_EFI_SELECT_FIT_CONFIGURATION)(
-  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *This,
+typedef
+EFI_STATUS
+(EFIAPI *GBL_EFI_SELECT_FIT_CONFIGURATION)(
+  IN GBL_EFI_OS_CONFIGURATION_PROTOCOL *Self,
   IN UINTN                             FitSize,
   IN CONST UINT8                       *Fit,
   IN UINTN                             MetadataSize,
   IN CONST UINT8                       *Metadata,
-  OUT UINTN                            *SelectedConfigurationOffset,
+  OUT UINTN                            *SelectedConfigurationOffset
   );
 ```
 
@@ -334,24 +394,24 @@ typedef EFI_STATUS (EFIAPI *GBL_EFI_SELECT_FIT_CONFIGURATION)(
 Ownership of all the parameters is loaned only for the duration of the function
 call, and must not be retained by the protocol after returning.
 
-#### This
+#### Self
 
 A pointer to the `GBL_EFI_OS_CONFIGURATION_PROTOCOL` instance.
 
-#### FitSize [in]
+#### FitSize
 
 Size of the FIT FDT buffer.
 
-#### Fit [in]
+#### Fit
 
 Pointer to the FIT FDT loaded by GBL.
 
-#### MetadataSize [in]
+#### MetadataSize
 
 Size of the metadata payload. The size is guaranteed to be `0` if `Metadata` is
 NULL.
 
-#### Metadata [in]
+#### Metadata
 
 Pointer to the first FIT image payload if the type is set to "metadata".
 
@@ -361,7 +421,7 @@ the `/images` node in FIT FDT. The sub-node for metadata must have type set to
 
 If no such metadata node is found, this parameter will have a `NULL` value.
 
-#### SelectedConfigurationOffset [out]
+#### SelectedConfigurationOffset
 
 Pointer to a value to be set by the firmware with the offset of the selected
 configuration node within the `Fit` FDT.
@@ -369,9 +429,9 @@ configuration node within the `Fit` FDT.
 ### Description
 
 A single FIT image can contain multiple configurations with various images -
-kernel, DTB, ramdisk, etc. Each configuration can have different set of images
+kernel, DTB, ramdisk, etc. Each configuration can have a different set of images
 corresponding to the platform on which images need to be loaded. Present GBL
-implementation supports only devicetree selection via FIT image.
+implementation supports only device tree selection via FIT image.
 
 The appropriate configuration can be dynamically selected by the firmware at
 runtime based on the platform. Firmware can use the `Metadata` parameter to read
@@ -395,11 +455,13 @@ traditional device tree selection and ignore the FIT image entirely.
 
 TODO(b/353272981)
 
-[select]: #gbl_efi_os_configuration_protocolselectdevicetrees
-[bootconfig_fixup]: #gbl_efi_os_configuration_protocolfixupbootconfig
-[fixup_zbi]: #gbl_efi_os_configuration_protocolfixupzbi
+[fixup_bootconfig]: #gbl_efi_os_configuration_protocol_fixupbootconfig
+[select_device_trees]: #gbl_efi_os_configuration_protocol_selectdevicetrees
+[select_fit_configuration]:
+  #gbl_efi_os_configuration_protocol_selectfitconfiguration
+[fixup_zbi]: #gbl_efi_os_configuration_protocol_fixupzbi
+[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
 [avf]: https://source.android.com/docs/core/virtualization
 [bootconfig]:
   https://source.android.com/docs/core/architecture/bootloader/implementing-bootconfig
 [libavb]: https://source.android.com/docs/security/features/verifiedboot/avb
-[fit_configuration]: #gbl_efi_os_configuration_protocolselectfitconfiguration
