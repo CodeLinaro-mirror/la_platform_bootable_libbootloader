@@ -7,7 +7,7 @@ describes the use case with any requirements.
 
 These protocols are taken from an external source, typically the UEFI spec.
 
-### EFI_BLOCK_IO_PROTOCOL
+### BlockIoProtocol
 
 - [`EFI_BLOCK_IO_PROTOCOL`][efi_block_io_protocol]
 - required
@@ -18,7 +18,7 @@ in fastboot.
 This is required even if the Block I/O 2 Protocol is provided, as some use cases
 might want to use this simpler API.
 
-### EFI_BLOCK_IO2_PROTOCOL
+### BlockIo2Protocol
 
 - [`EFI_BLOCK_IO2_PROTOCOL`][efi_block_io2_protocol]
 - optional: enables performance optimizations.
@@ -27,7 +27,7 @@ If provided, GBL may use this protocol instead of the Block I/O Protocol as a
 performance optimization; for example during fastboot flashing it may flash to
 disk while concurrently receiving the next image over USB.
 
-### EFI_ERASE_BLOCK_PROTOCOL
+### EraseBlockProtocol
 
 - [`EFI_ERASE_BLOCK_PROTOCOL`][efi_erase_block_protocol]
 - optional: enables block IO specific erase.
@@ -35,7 +35,7 @@ disk while concurrently receiving the next image over USB.
 If provided, GBL may use this protocol when erasing data on a block device
 instead of writing zeroes.
 
-### EFI_DEVICE_PATH_PROTOCOL
+### DevicePathProtocol
 
 - [`EFI_DEVICE_PATH_PROTOCOL`][efi_device_path_protocol]
 - optional: enables logging the image path on GBL start
@@ -50,7 +50,7 @@ This logging requires all three of:
 - Device Path to Text Protocol
 - Loaded Image Protocol
 
-### EFI_DEVICE_PATH_TO_TEXT_PROTOCOL
+### DevicePathToTextProtocol
 
 - [`EFI_DEVICE_PATH_TO_TEXT_PROTOCOL`][efi_device_path_to_text_protocol]
 - optional: enables logging the image path on GBL start
@@ -65,7 +65,7 @@ This logging requires all three of:
 - Device Path to Text Protocol
 - Loaded Image Protocol
 
-### EFI_LOADED_IMAGE_PROTOCOL
+### LoadedImageProtocol
 
 - [`EFI_LOADED_IMAGE_PROTOCOL`][efi_loaded_image_protocol]
 - optional: enables logging the image path on GBL start
@@ -80,7 +80,7 @@ This logging requires all three of:
 - Device Path to Text Protocol
 - Loaded Image Protocol
 
-### EFI_SERVICE_BINDING_PROTOCOL
+### ServiceBindingProtocol
 
 - [`EFI_SERVICE_BINDING_PROTOCOL`][efi_service_binding_protocol]
 - optional: used to create bound handles for certain protocols.
@@ -94,7 +94,7 @@ has the same structural interface as the EFI_SERVICE_BINDING_PROTOCOL. Once the
 corresponding EFI_SERVICE_BINDING_PROTOCOL has been opened, a call to
 `CreateChild()` will generate a handle bound to the desired protocol.
 
-### EFI_HASH2_PROTOCOL
+### Hash2Protocol
 
 - [`EFI_HASH2_PROTOCOL`][efi_hash2_protocol]
 - optional: enables optimized, incremental cryptographic hash algorithms
@@ -118,14 +118,14 @@ Dynamic memory allocation can be minimized, but not completely eliminated, by
 providing preallocated image buffers via the
 [GBL Boot Memory Protocol](./gbl_efi_boot_memory_protocol.md).
 
-### RISCV_EFI_BOOT_PROTOCOL
+### RiscvBootProtocol
 
 - [`RISCV_EFI_BOOT_PROTOCOL`][riscv_efi_boot_protocol]
 - required for RISC-V targets
 
 Used to query the boot hart ID which is required to pass to the kernel.
 
-### EFI_SIMPLE_NETWORK_PROTOCOL
+### SimpleNetworkProtocol
 
 - [`EFI_SIMPLE_NETWORK_PROTOCOL`][efi_simple_network_protocol]
 - optional: enables fastboot over TCP
@@ -140,7 +140,7 @@ Production devices should not expose fastboot over TCP.
 GBL only uses the Simple Network Protocol, and will not use higher-level
 protocols such as the TCP4/6 Protocols even if they are available.
 
-### EFI_SIMPLE_TEXT_INPUT_PROTOCOL
+### SimpleTextInputProtocol
 
 - [`EFI_SIMPLE_TEXT_INPUT_PROTOCOL`][efi_simple_text_input_protocol]
 - optional: enables the 'f' key to enter fastboot
@@ -152,7 +152,7 @@ this check.
 We plan to remove this and instead use a more general protocol to allow devices
 to specify their own custom fastboot triggers.
 
-### EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL
+### SimpleTextOutputProtocol
 
 - [`EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL`][efi_simple_text_output_protocol]
 - required, but can be no-op
@@ -160,12 +160,12 @@ to specify their own custom fastboot triggers.
 Used for logging and debugging. Implementations must provide this protocol, but
 the functions may be no-ops.
 
-### EFI_TIMESTAMP_PROTOCOL
+### TimestampProtocol
 
 - [`EFI_TIMESTAMP_PROTOCOL`][efi_timestamp_protocol]
 - optional: enables performance analysis.
 
-### EFI_RNG_PROTOCOL
+### RandomNumberGeneratorProtocol
 
 - [`EFI_RNG_PROTOCOL`][efi_rng_protocol]
 - required: enables dynamic stack canary values and configures KASLR and
@@ -185,7 +185,7 @@ will not be propagated.
 Protocols defined by a community and used across the ecosystem, but not
 officially part of the UEFI specification. None of these protocols are required.
 
-### EFI_DT_FIXUP_PROTOCOL
+### DtFixupProtocol
 
 - original [proposal][dt_fixup_proposal]
 - [u-boot][u_boot_dt_fixup]
@@ -242,7 +242,7 @@ indicate that the protocol is in a pre-frozen state. While backward
 compatibility is guaranteed across all pre-release revisions, a final breaking
 change may occur upon the official `1.0` release to finalize the specification.
 
-### GBL_EFI_FASTBOOT_PROTOCOL
+### GblFastbootProtocol
 
 - [`GBL_EFI_FASTBOOT_PROTOCOL`](./gbl_efi_fastboot_protocol.md)
 - optional: enables custom fastboot functionality.
@@ -255,14 +255,14 @@ Used to provide an interface for
 - Lock-contingent partition permission information
 - User data erasure
 
-### GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL
+### GblFastbootTransportProtocol
 
 - [`GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL`](./gbl_efi_fastboot_transport_protocol.md)
 - optional: enables fastboot over platform defined channels such as USB.
 
 This can be enabled by itself, or in addition to fastboot over TCP.
 
-### GBL_EFI_OS_CONFIGURATION_PROTOCOL
+### GblOsConfigurationProtocol
 
 - [`GBL_EFI_OS_CONFIGURATION_PROTOCOL`](./gbl_efi_os_configuration_protocol.md)
 - optional: enables runtime fixups of OS data
@@ -270,7 +270,7 @@ This can be enabled by itself, or in addition to fastboot over TCP.
 Used for device tree selection and bootconfig fixup. If not provided, the data
 from boot partitions will be used without FW-specific modifications.
 
-### GBL_EFI_BOOT_CONTROL_PROTOCOL
+### GblBootControlProtocol
 
 - [`GBL_EFI_BOOT_CONTROL_PROTOCOL`](./gbl_efi_boot_control_protocol.md)
 - required: enables A/B slotted booting and boot mode selection
@@ -287,14 +287,14 @@ Typically these components are:
 This protocol allows the device to implement its own A/B metadata format while
 still allowing GBL to implement the boot flow logic.
 
-### GBL_EFI_BOOT_MEMORY_PROTOCOL
+### GblBootMemoryProtocol
 
 - [`GBL_EFI_BOOT_MEMORY_PROTOCOL`](./gbl_efi_boot_memory_protocol.md)
 - Optional: Provides reserved buffers for loading/preloaded partition image,
   assembling finalized kernel, ramdisk, fdt, pvmfw image and downloading in
   fastboot.
 
-### GBL_EFI_AVB_PROTOCOL
+### GblAvbProtocol
 
 - [`GBL_EFI_AVB_PROTOCOL`](./gbl_efi_avb_protocol.md)
 - required for production devices: enables AVB-related firmware callbacks.
@@ -303,7 +303,7 @@ This protocol delegates some of AVB-related logic to the firmware, including
 tasks such as verifying public keys, handling verification results, and managing
 the device’s secure state (e.g., ROT, lock state, rollback indexes, etc.).
 
-### GBL_EFI_AVF_PROTOCOL
+### GblAvfProtocol
 
 - [`GBL_EFI_AVF_PROTOCOL`](./gbl_efi_avf_protocol.md)
 - optional: enables AVF-related firmware callbacks.
@@ -311,7 +311,7 @@ the device’s secure state (e.g., ROT, lock state, rollback indexes, etc.).
 This protocol delegates AVF-related logic to the firmware to ensure the
 integrity of pVMs running under the Android Virtualization Framework.
 
-### GBL_EFI_DEBUG_PROTOCOL
+### GblDebugProtocol
 
 - [`GBL_EFI_DEBUG_PROTOCOL`](./gbl_efi_debug_protocol.md)
 - optional: callbacks to facilitate debugging.
