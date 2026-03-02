@@ -374,4 +374,4 @@ case `EFI_TIMEOUT` should be returned if this happens.
 [send]: #gbl_efi_fastboot_transport_protocol_send
 [flush]: #gbl_efi_fastboot_transport_protocol_flush
 [protocol]: #gbl_efi_fastboot_transport_protocol
-[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[custom_protocol_revisions]: efi_integration.md#gbl-custom-protocol-revisions

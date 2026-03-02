@@ -502,7 +502,7 @@ has the same effect: the boot process continues.
 [set_active_slot]: #gbl_efi_boot_control_protocol_setactiveslot
 [get_one_shot_boot_mode]: #gbl_efi_boot_control_protocol_getoneshotbootmode
 [handle_loaded_os]: #gbl_efi_boot_control_protocol_handleloadedos
-[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[custom_protocol_revisions]: efi_integration.md#gbl-custom-protocol-revisions
 [slot_info]: #gbl_efi_slot_info
 [one_shot_boot_mode]: #gbl_efi_one_shot_boot_mode
 [ab_boot_flow]: ./gbl_ab_boot_flow.md

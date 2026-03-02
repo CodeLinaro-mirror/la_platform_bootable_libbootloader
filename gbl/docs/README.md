@@ -6,7 +6,7 @@ This directory contains documentation for the Generic Bootloader (GBL).
 
 ### General Documentation
 
-- [UEFI Protocols Overview](./efi_protocols.md): Lists the UEFI protocols used
+- [UEFI Protocols Overview](./efi_integration.md): Lists the UEFI protocols used
   by GBL.
 - [A/B Boot Flow](./gbl_ab_boot_flow.md): Explains GBL's A/B boot logic.
 - [Buffer Usage](./gbl_buffer_usage.md): Discusses memory buffer management.

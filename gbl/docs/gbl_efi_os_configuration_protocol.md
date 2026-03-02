@@ -460,7 +460,7 @@ TODO(b/353272981)
 [select_fit_configuration]:
   #gbl_efi_os_configuration_protocol_selectfitconfiguration
 [fixup_zbi]: #gbl_efi_os_configuration_protocol_fixupzbi
-[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[custom_protocol_revisions]: efi_integration.md#gbl-custom-protocol-revisions
 [avf]: https://source.android.com/docs/core/virtualization
 [bootconfig]:
   https://source.android.com/docs/core/architecture/bootloader/implementing-bootconfig

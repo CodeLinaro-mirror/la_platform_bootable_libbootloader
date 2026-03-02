@@ -147,5 +147,5 @@ automatic calls to `FatalError()`.
 | `EFI_INVALID_PARAMETER` | `Self` is `NULL`.                |
 
 [fatal_error]: #gbl_efi_debug_protocol_fatalerror
-[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[custom_protocol_revisions]: efi_integration.md#gbl-custom-protocol-revisions
 [error_tag]: #gbl_efi_debug_error_tag

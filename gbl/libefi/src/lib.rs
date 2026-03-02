@@ -197,6 +197,10 @@ pub const EFI_GLOBAL_VARIABLE_GUID: EfiGuid =
 #[cfg(feature = "fuchsia")]
 pub const GBL_EFI_OS_BOOT_TARGET_VARNAME: &str = "gbl_os_boot_fuchsia";
 
+/// UEFI variable that indicates the api level of the firmware.
+/// This must have the same `YYYYMM` format as the ro.board.api_level system property.
+pub const GBL_EFI_FW_API_LEVEL: &str = "gbl_fw_api_level";
+
 /// Creates an `EfiEntry` and initialize EFI global allocator.
 ///
 /// # Safety

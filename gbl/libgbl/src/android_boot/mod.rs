@@ -224,6 +224,11 @@ pub fn android_load_verify_fixup<'a, 'b>(
     bootconfig_builder.add("androidboot.gbl.version=0\n")?;
     write!(bootconfig_builder, "androidboot.gbl.build_number={BUILD_NUMBER}\n")
         .map_err(Error::from)?;
+    // TODO(b/484066914): Error if this var is missing.
+    if let Ok(fw_api_level) = ops.get_fw_api_level() {
+        write!(bootconfig_builder, "androidboot.gbl.fw.api_level={fw_api_level}\n")
+            .map_err(Error::from)?
+    }
     // Add bootconfig from vendor_boot
     bootconfig_builder.add_with(|_, out| {
         out.get_mut(..images.vendor_bootconfig.len())
@@ -1017,6 +1022,7 @@ androidboot.veritymode.managed=yes
             .extra(format!("androidboot.slot_suffix=_{slot}\n"))
             .extra("androidboot.gbl.version=0\n")
             .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
+            .extra("androidboot.gbl.fw.api_level=202604\n")
             .extra(vendor_config)
             .extra(fixup_config);
 
@@ -2068,6 +2074,7 @@ androidboot.veritymode.managed=yes
             .extra(format!("androidboot.slot_suffix=_a\n"))
             .extra("androidboot.gbl.version=0\n")
             .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
+            .extra("androidboot.gbl.fw.api_level=202604\n")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
@@ -2084,6 +2091,7 @@ androidboot.veritymode.managed=yes
             .extra(format!("androidboot.slot_suffix=_a\n"))
             .extra("androidboot.gbl.version=0\n")
             .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
+            .extra("androidboot.gbl.fw.api_level=202604\n")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
@@ -2225,6 +2233,7 @@ androidboot.veritymode.managed=yes
             .extra(format!("androidboot.slot_suffix=_b\n"))
             .extra("androidboot.gbl.version=0\n")
             .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
+            .extra("androidboot.gbl.fw.api_level=202604\n")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_b.img"), &expected_bootconfig);
@@ -2660,6 +2669,7 @@ androidboot.veritymode.managed=yes
             .extra(format!("androidboot.slot_suffix=_a\n"))
             .extra("androidboot.gbl.version=0\n")
             .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
+            .extra("androidboot.gbl.fw.api_level=202604\n")
             .extra("gbl-fb-config-1=1\n")
             .extra("gbl-fb-config-2=1\n")
             .extra("gbl.blob.test=c29tZSB0ZXN0IGRhdGE=\n")

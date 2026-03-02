@@ -236,6 +236,21 @@ fn test_gbl_avb(entry: &EfiEntry) -> Result<()> {
     res
 }
 
+fn test_gbl_uefi_variables(entry: &EfiEntry) -> Result<()> {
+    let mut buf = [0u8; 32];
+    entry
+        .system_table()
+        .runtime_services()
+        .get_variable(&efi::GBL_EFI_VENDOR_GUID, efi::GBL_EFI_FW_API_LEVEL, &mut buf)
+        .and_then(|size| Ok(str::from_utf8(&buf[..size])?))
+        .and_then(|s| Ok(s.parse::<u64>()?))
+        .inspect_err(|_| {
+            efi_println!(entry, "Failed to get UEFI variable {}", efi::GBL_EFI_FW_API_LEVEL)
+        })?;
+
+    Ok(())
+}
+
 /// Run tests for all required protocols
 pub fn test_all_required_protocols(entry: &EfiEntry) -> Result<()> {
     let tests: &[TestEntry] = &[
@@ -246,6 +261,7 @@ pub fn test_all_required_protocols(entry: &EfiEntry) -> Result<()> {
         test_entry!(test_riscv_boot_protocol),
         test_entry!(test_gbl_avb),
         test_entry!(test_gbl_boot_control),
+        test_entry!(test_gbl_uefi_variables),
     ];
 
     let mut res = Ok(());

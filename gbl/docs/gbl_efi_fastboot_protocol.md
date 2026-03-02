@@ -587,4 +587,4 @@ reports the partition type as `raw`.
 [get_staged]: #gbl_efi_fastboot_protocol_getstaged
 [command_exec]: #gbl_efi_fastboot_protocol_commandexec
 [get_partition_type]: #gbl_efi_fastboot_protocol_getpartitiontype
-[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[custom_protocol_revisions]: efi_integration.md#gbl-custom-protocol-revisions

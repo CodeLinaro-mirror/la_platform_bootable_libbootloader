@@ -990,6 +990,16 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         EfiProfileBackend::new(self.efi_entry)
     }
+
+    fn get_fw_api_level(&self) -> Result<u64> {
+        let mut buf = [0u8; 32];
+        let size = self.efi_entry.system_table().runtime_services().get_variable(
+            &efi::GBL_EFI_VENDOR_GUID,
+            efi::GBL_EFI_FW_API_LEVEL,
+            &mut buf,
+        )?;
+        Ok(str::from_utf8(&buf[..size])?.parse()?)
+    }
 }
 
 /// Converts a [AvbPartition] to [GblEfiAvbLoadedPartition]

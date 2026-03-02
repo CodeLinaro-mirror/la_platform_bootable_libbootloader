@@ -345,7 +345,7 @@ Memory for use as the download buffer in Fastboot mode.
 [get_partition_buffer]: #gbl_efi_boot_memory_protocol_getpartitionbuffer
 [sync_partition_buffer]: #gbl_efi_boot_memory_protocol_syncpartitionbuffer
 [get_boot_buffer]: #gbl_efi_boot_memory_protocol_getbootbuffer
-[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[custom_protocol_revisions]: efi_integration.md#gbl-custom-protocol-revisions
 [partition_buffer_flag]: #gbl_efi_partition_buffer_flag
 [avbreadpartitionattributes]:
   ./gbl_efi_avb_protocol.md#gbl_efi_avb_protocol_readpartitionattributes

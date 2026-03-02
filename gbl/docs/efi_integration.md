@@ -320,6 +320,45 @@ This protocol provides a callback for GBL to indicate that a fatal error has
 occurred and gives the firmware an opportunity to save state internally before
 GBL attempts to reset the system.
 
+## GBL UEFI Variables
+
+UEFI variables defined and used by GBL.
+
+### Vendor GUID
+
+| Name                       | Value                                                                            |
+| :------------------------- | :------------------------------------------------------------------------------- |
+| `EFI_GLOBAL_VARIABLE_GUID` | `{0x8be4df61, 0x93ca, 0x11d2, {0xaa, 0x0d, 0x00, 0xe0, 0x98, 0x03, 0x2b, 0x8c}}` |
+| `GBL_EFI_VENDOR_GUID`      | `{0x5a6d92f3, 0xa2d0, 0x4083, {0x91, 0xa1, 0xa5, 0x0f, 0x6c, 0x3d, 0x98, 0x30}}` |
+
+### gbl_debug
+
+- Vendor GUID: `EFI_GLOBAL_VARIABLE_GUID`
+- Feature flag: `gdb_debug` or `always-wait-gdb`
+
+If this variable is defined, enable GDB debugger support.
+
+### gbl_fw_api_level
+
+- Vendor GUID: `GBL_EFI_VENDOR_GUID`
+- Required
+
+This variable must be set to the API level of the platform firmware, indicating
+the API level of the vendor software. This should have the same value as the
+[`ro.board.api_level`][android_vendor_api_level] system property in Android.
+This variable must be read-only and readable from GBL.
+
+GBL shall use this variable to decide the expected feature level and capability
+of the firmware protocols. This variable can be updated when the platform
+firmware is updated.
+
+### gbl_os_boot_fuchsia
+
+- Vendor GUID: `GBL_EFI_VENDOR_GUID`
+- Feature flag: `fuchsia`
+
+If this variable is defined, boot as Fuchsia OS.
+
 [efi_block_io_protocol]:
   https://uefi.org/specs/UEFI/2.10/13_Protocols_Media_Access.html#efi-block-io-protocol
 [efi_block_io2_protocol]:
@@ -353,3 +392,5 @@ GBL attempts to reset the system.
 [dt_fixup_proposal]: https://github.com/U-Boot-EFI/EFI_DT_FIXUP_PROTOCOL
 [u_boot_dt_fixup]:
   https://github.com/u-boot/u-boot/blob/master/include/efi_dt_fixup.h
+[android_vendor_api_level]:
+  https://source.android.com/docs/core/architecture/api-flags

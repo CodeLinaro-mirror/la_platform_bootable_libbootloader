@@ -1158,7 +1158,7 @@ following UEFI error codes are used to communicate results back to the library:
 [write_persistent_value]: #gbl_efi_avb_protocol_writepersistentvalue
 [write_lock_state]: #gbl_efi_avb_protocol_writelockstate
 [factory_data_reset]: #gbl_efi_avb_protocol_factorydatareset
-[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[custom_protocol_revisions]: efi_integration.md#gbl-custom-protocol-revisions
 [avb_partition_attributes]: #gbl_efi_avb_partition_attributes
 [avb_device_status_unlocked]: #gbl_efi_avb_device_status_unlocked
 [avb_device_status_unlocked_critical]:

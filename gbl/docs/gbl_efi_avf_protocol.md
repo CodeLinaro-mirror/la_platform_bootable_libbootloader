@@ -226,7 +226,7 @@ method is used by GBL to obtain the Secret Keeper public key from the FW.
 
 [read_vendor_dice_handover]: #gbl_efi_avf_protocol_readvendordicehandover
 [read_secret_keeper_public_key]: #gbl_efi_avf_protocol_readsecretkeeperpublickey
-[custom_protocol_revisions]: efi_protocols.md#gbl-custom-protocol-revisions
+[custom_protocol_revisions]: efi_integration.md#gbl-custom-protocol-revisions
 [dice_handover]:
   https://pigweed.googlesource.com/open-dice/+/42ae7760023/src/android.c#212
 [opendice]:

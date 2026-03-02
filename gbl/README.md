@@ -303,7 +303,7 @@ following gives an example of debugging GBL with the pdb file on Cuttlefish.
 ## EFI Protocols
 
 List of EFI protocols used by GBL and a brief description of each
-[here](./docs/efi_protocols.md).
+[here](./docs/efi_integration.md).
 
 ## Trace Analysis
 

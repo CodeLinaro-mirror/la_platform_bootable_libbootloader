@@ -464,7 +464,7 @@ pub trait GblOps<'a> {
     ///
     /// Modified device tree will be verified and used to boot a device. Refer to the behavior
     /// specified for the corresponding UEFI interface:
-    /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/efi_protocols.md
+    /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/efi_integration.md
     fn fixup_device_tree(&mut self, device_tree: &mut [u8]) -> Result<(), Error>;
 
     /// Gets platform-specific fastboot variable.
@@ -635,6 +635,9 @@ pub trait GblOps<'a> {
 
     /// Provides backend specific hooks for profiling.
     fn get_profiling_backend(&self) -> impl ProfileBackend;
+
+    /// Gets the firmware api level.
+    fn get_fw_api_level(&self) -> Result<u64, Error>;
 }
 
 /// Prints the stack usage at the callsite.
@@ -1004,6 +1007,10 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         self.ops.get_profiling_backend()
     }
+
+    fn get_fw_api_level(&self) -> Result<u64, Error> {
+        self.ops.get_fw_api_level()
+    }
 }
 
 #[cfg(test)]
@@ -1230,6 +1237,9 @@ pub(crate) mod test {
 
         /// For return by `fastboot_get_partition_type`.
         pub partition_type: HashMap<String, FastbootPartitionType>,
+
+        /// For return by `get_fw_api_level`.
+        pub fw_api_level: Option<Result<u64, Error>>,
     }
 
     /// Print `console_out` output, which can be useful for debugging.
@@ -1272,6 +1282,7 @@ pub(crate) mod test {
                 partitions,
                 #[cfg(feature = "fuchsia")]
                 zbi_bootloader_files_buffer: vec![0u8; 32 * 1024],
+                fw_api_level: Some(Ok(202604)),
                 ..Default::default()
             };
             #[cfg(feature = "fuchsia")]
@@ -1761,6 +1772,10 @@ pub(crate) mod test {
         fn get_profiling_backend(&self) -> impl ProfileBackend {
             NullProfiler {}
         }
+
+        fn get_fw_api_level(&self) -> Result<u64, Error> {
+            self.fw_api_level.unwrap_or(Err(Error::Unsupported))
+        }
     }
 
     /// Helper for creating a slot object.
@@ -2055,6 +2070,10 @@ pub(crate) mod test {
 
         fn get_profiling_backend(&self) -> impl ProfileBackend {
             NullProfiler {}
+        }
+
+        fn get_fw_api_level(&self) -> Result<u64, Error> {
+            Err(Error::Unsupported)
         }
     }
 

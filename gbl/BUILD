@@ -20,7 +20,7 @@ package(
 
 readme_test(
     name = "readme_test",
-    readme = "docs/efi_protocols.md",
+    readme = "docs/efi_integration.md",
     # Note: can't read files in subpackages, not sure how to add a dependency on all,
     # globbed, subpackages and all the rust_lib targets they contain.
     deps = [
