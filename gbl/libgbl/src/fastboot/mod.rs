@@ -579,6 +579,10 @@ where
         let mut args = part.split('/');
         // Parses partition name.
         let part = next_arg(&mut args);
+        // Partition name is required unless using gbl_dev
+        if cfg!(not(feature = "gbl_dev")) && part.is_none() {
+            return Err("partition name is required".into());
+        }
         // Parses block device ID.
         let blk_id = self.check_next_arg_blk_id(&mut args)?;
         // Parses sub window offset.
@@ -2111,6 +2115,60 @@ pub(crate) mod test {
         );
     }
 
+    #[test]
+    fn test_flash_invalid_partition_arg() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let resp: TestResponder = Default::default();
+
+        // Flashing 1 byte.
+        set_download(&mut gbl_fb, &[0u8; 1]);
+        // Offset overflows
+        assert!(block_on(gbl_fb.flash("boot_a//0x2001", &resp)).is_err());
+        assert!(block_on(gbl_fb.flash("boot_a//0x2000", &resp)).is_err());
+
+        // Size overflows
+        assert!(block_on(gbl_fb.flash("boot_a//0/0x2001", &resp)).is_err());
+
+        // Offset + size overflows.
+        assert!(block_on(gbl_fb.flash("boot_a//0x1FFF/2", &resp)).is_err());
+
+        // Download size overflows partition size
+        set_download(&mut gbl_fb, &[0u8; 0x2001]);
+        assert!(block_on(gbl_fb.flash("boot_a", &resp)).is_err());
+    }
+
+    #[test]
+    fn test_erase_invalid_partition_arg() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let resp: TestResponder = Default::default();
+
+        // Offset overflows
+        assert!(block_on(gbl_fb.erase("boot_a//0x2001", &resp)).is_err());
+        assert!(block_on(gbl_fb.erase("boot_a//0x2000/1", &resp)).is_err());
+
+        // Size overflows from offset 0
+        assert!(block_on(gbl_fb.erase("boot_a//0/0x2001", &resp)).is_err());
+
+        // Offset + erase size overflows
+        assert!(block_on(gbl_fb.erase("boot_a//0x1FFF/2", &resp)).is_err());
+    }
+
     /// A helper for fetching partition from a `GblFastboot`
     fn fetch<EOff: core::fmt::Debug, ESz: core::fmt::Debug>(
         fb: &mut impl FastbootImplementation,
@@ -2158,6 +2216,19 @@ pub(crate) mod test {
         assert!(fetch(&mut gbl_fb, "boot_a".into(), 0, 0x2001).is_err());
     }
 
+    /// A helper for checking the fetch result when no partition name is provided
+    fn check_fetch_no_part_name_result(
+        result: &CommandResult<Vec<u8>>,
+        expected: &[u8],
+        part: Option<&str>,
+    ) {
+        if cfg!(feature = "gbl_dev") || part.unwrap_or("") != "" {
+            assert_eq!(result.as_ref().unwrap(), expected);
+        } else {
+            assert!(matches!(result.as_ref().unwrap_err().as_str(), "partition name is required"));
+        }
+    }
+
     /// A helper for testing raw block upload. It verifies that data read from block device
     /// `blk_id` in range [`off`, `off`+`size`) is the same as `disk[off..][..size]`
     fn check_blk_upload(
@@ -2170,10 +2241,12 @@ pub(crate) mod test {
         let expected = disk[off.try_into().unwrap()..][..size.try_into().unwrap()].to_vec();
         // offset/size as part of the partition string.
         let part = format!("/{:#x}/{:#x}/{:#x}", blk_id, off, size);
-        assert_eq!(fetch(fb, part, 0, size).unwrap(), expected);
+        let result = fetch(fb, part, 0, size);
+        check_fetch_no_part_name_result(&result, &expected, None);
         // offset/size as separate fetch arguments.
         let part = format!("/{:#x}", blk_id);
-        assert_eq!(fetch(fb, part, off, size).unwrap(), expected);
+        let result = fetch(fb, part, off, size);
+        check_fetch_no_part_name_result(&result, &expected, None);
     }
 
     #[test]
@@ -2213,10 +2286,12 @@ pub(crate) mod test {
         let blk_id = blk_id.map_or("".to_string(), |v| format!("{:#x}", v));
         // offset/size as part of the partition string.
         let gpt_part = format!("{}/{}/{:#x}/{:#x}", part, blk_id, off, size);
-        assert_eq!(fetch(fb, gpt_part, 0, size).unwrap(), expected);
+        let result = fetch(fb, gpt_part, 0, size);
+        check_fetch_no_part_name_result(&result, &expected, Some(part));
         // offset/size as separate fetch arguments.
         let gpt_part = format!("{}/{}", part, blk_id);
-        assert_eq!(fetch(fb, gpt_part, off, size).unwrap(), expected);
+        let result = fetch(fb, gpt_part, off, size);
+        check_fetch_no_part_name_result(&result, &expected, Some(part));
     }
 
     #[test]
@@ -2321,7 +2396,9 @@ pub(crate) mod test {
         check_flash_part(&mut gbl_fb, "boot_b", expect_boot_b);
         check_flash_part(&mut gbl_fb, "raw_0", &[0xaau8; KiB!(4)]);
         check_flash_part(&mut gbl_fb, "raw_1", &[0x55u8; KiB!(8)]);
+        #[cfg(feature = "gbl_dev")]
         check_flash_part(&mut gbl_fb, "/0", disk_0);
+        #[cfg(feature = "gbl_dev")]
         check_flash_part(&mut gbl_fb, "/1", disk_1);
         check_flash_multi_part(&mut gbl_fb, "boot_ab", &["boot_a", "boot_b"], expect_boot_a);
         check_flash_multi_part(&mut gbl_fb, "boot", &["boot_b"], expect_boot_a);
@@ -2344,7 +2421,9 @@ pub(crate) mod test {
             &["boot_b//200"],
             &expect_boot_a[range.clone()],
         );
+        #[cfg(feature = "gbl_dev")]
         check_flash_part(&mut gbl_fb, "/0/200", &disk_0[range.clone()]);
+        #[cfg(feature = "gbl_dev")]
         check_flash_part(&mut gbl_fb, "/1/200", &disk_1[range.clone()]);
     }
 
@@ -2369,7 +2448,9 @@ pub(crate) mod test {
         let download = sparse.to_vec();
         let resp: TestResponder = Default::default();
         set_download(&mut gbl_fb, &download[..]);
+        #[cfg(feature = "gbl_dev")]
         block_on(gbl_fb.flash("/0", &resp)).unwrap();
+        #[cfg(feature = "gbl_dev")]
         assert_eq!(fetch(&mut gbl_fb, "/0".into(), 0, raw.len()).unwrap(), raw);
 
         // Maps to both slots
@@ -2401,6 +2482,25 @@ pub(crate) mod test {
         // of exact match.
         check_flash_part(&mut gbl_fb, "boot_ab", &[0x55u8; KiB!(4)]);
         check_flash_part(&mut gbl_fb, "boot", &[0x55u8; KiB!(4)]);
+    }
+
+    #[cfg(not(feature = "gbl_dev"))]
+    #[test]
+    fn test_flash_rejects_missing_partition() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let listener: SharedTestListener = Default::default();
+        listener.add_transport_input(b"flash:/200");
+        use fastboot::process_next_command;
+        let _ = block_on(process_next_command(&mut &listener, &mut gbl_fb));
+        let out = listener.transport_out_queue();
+        assert_eq!(out[0], b"FAILpartition name is required");
     }
 
     /// A helper to invoke OEM commands.
