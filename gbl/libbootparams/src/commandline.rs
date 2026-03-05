@@ -76,7 +76,7 @@ impl<'a> CommandlineBuilder<'a> {
     /// command line (space separation is handled by the call). The API is for situations where
     /// command line is read from sources such as disk and separate buffer allocation is not
     /// possible or desired.
-    pub fn add_with<F>(&mut self, reader: F) -> Result<()>
+    pub fn add_raw_with<F>(&mut self, reader: F) -> Result<()>
     where
         F: FnOnce(&CStr, &mut [u8]) -> Result<usize>,
     {
@@ -121,8 +121,8 @@ impl<'a> CommandlineBuilder<'a> {
     }
 
     /// Append a new command line.
-    /// Wrapper over `add_with`, so refer to its documentation for details.
-    pub fn add(&mut self, commandline: &str) -> Result<()> {
+    /// Wrapper over `add_raw_with`, so refer to its documentation for details.
+    pub fn add_raw(&mut self, commandline: &str) -> Result<()> {
         if commandline.is_empty() {
             return Ok(());
         }
@@ -133,7 +133,7 @@ impl<'a> CommandlineBuilder<'a> {
             return Err(Error::BufferTooSmall(Some(required_capacity)));
         }
 
-        self.add_with(|_, out| {
+        self.add_raw_with(|_, out| {
             out[..commandline.len()].clone_from_slice(commandline.as_bytes());
             Ok(commandline.len())
         })
@@ -163,7 +163,7 @@ impl core::fmt::Display for CommandlineBuilder<'_> {
 
 impl core::fmt::Write for CommandlineBuilder<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.add(s).map_err(|_| core::fmt::Error)
+        self.add_raw(s).map_err(|_| core::fmt::Error)
     }
 }
 
@@ -209,7 +209,7 @@ mod test {
         for element in
             CStr::from_bytes_until_nul(TEST_COMMANDLINE).unwrap().to_str().unwrap().split(' ')
         {
-            builder.add(element).unwrap();
+            builder.add_raw(element).unwrap();
         }
 
         assert_eq!(
@@ -246,7 +246,7 @@ mod test {
             CStr::from_bytes_until_nul(TEST_COMMANDLINE).unwrap().to_str().unwrap().split(' ')
         {
             builder
-                .add_with(|current, out| {
+                .add_raw_with(|current, out| {
                     let current = core::str::from_utf8(current.to_bytes()).unwrap().trim();
                     let expected =
                         core::str::from_utf8(&TEST_COMMANDLINE[..offset]).unwrap().trim();
@@ -273,7 +273,7 @@ mod test {
         let mut buffer = [0u8; NODE_TO_ADD.len() + COMMANDLINE_TRAILING_SIZE + 1];
         let mut builder = CommandlineBuilder::new(&mut buffer[..]).unwrap();
 
-        builder.add(NODE_TO_ADD).unwrap();
+        builder.add_raw(NODE_TO_ADD).unwrap();
         assert_eq!(builder.as_str(), NODE_TO_ADD);
         assert_eq!(builder.remaining_capacity(), 0);
     }
@@ -285,7 +285,7 @@ mod test {
         let mut builder = CommandlineBuilder::new(&mut buffer[..]).unwrap();
 
         assert!(builder
-            .add_with(|current, out| {
+            .add_raw_with(|current, out| {
                 assert_eq!(current.to_bytes().len(), 0);
                 out[..NODE_TO_ADD.len()].copy_from_slice(NODE_TO_ADD.as_bytes());
                 Ok(NODE_TO_ADD.len())
@@ -318,7 +318,7 @@ mod test {
 
         // + 1 requested for space separator
         assert_eq!(
-            builder.add(NODE_TO_ADD),
+            builder.add_raw(NODE_TO_ADD),
             Err(Error::BufferTooSmall(Some(NODE_TO_ADD.len() + 1)))
         );
     }
@@ -329,7 +329,7 @@ mod test {
         let mut builder = CommandlineBuilder::new(&mut buffer[..]).unwrap();
 
         assert_eq!(
-            builder.add_with(|_, _| { Err(Error::BufferTooSmall(Some(NODE_TO_ADD.len()))) }),
+            builder.add_raw_with(|_, _| { Err(Error::BufferTooSmall(Some(NODE_TO_ADD.len()))) }),
             Err(Error::BufferTooSmall(Some(NODE_TO_ADD.len() + 1)))
         );
     }
@@ -339,7 +339,7 @@ mod test {
         let mut buffer = [0u8; COMMANDLINE_TRAILING_SIZE];
         let mut builder = CommandlineBuilder::new(&mut buffer[..]).unwrap();
 
-        assert!(builder.add_with(|_, _| { Ok(0) }).is_ok());
+        assert!(builder.add_raw_with(|_, _| { Ok(0) }).is_ok());
     }
 
     #[test]
@@ -348,7 +348,7 @@ mod test {
         let mut builder = CommandlineBuilder::new(&mut buffer[..]).unwrap();
 
         assert_eq!(
-            builder.add_with(|_, out| {
+            builder.add_raw_with(|_, out| {
                 let with_null_terminator = b"null\0terminator";
                 out[..with_null_terminator.len()].copy_from_slice(&with_null_terminator[..]);
                 Ok(with_null_terminator.len())

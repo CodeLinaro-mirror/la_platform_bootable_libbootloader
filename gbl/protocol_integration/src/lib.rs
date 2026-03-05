@@ -126,7 +126,7 @@ fn test_simple_text_output(entry: &EfiEntry) -> Result<()> {
         entry.system_table().boot_services().find_first_and_open::<SimpleTextOutputProtocol>()?;
 
     protocol.reset(false)?;
-    write!(protocol, "Test string for SimpleTextOutputProtocol\n")?;
+    writeln!(protocol, "Test string for SimpleTextOutputProtocol")?;
 
     Ok(())
 }

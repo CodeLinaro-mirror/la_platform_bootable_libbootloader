@@ -507,20 +507,23 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
 
     /// Wrapper/equivalent of ufdt_apply_multioverlay.
     /// It extend current FDT buffer by applying passed overlays.
-    pub fn multioverlay_apply(&mut self, overlays: &[&[u8]]) -> Result<()> {
-        // Avoid shrinking device tree or doing any other actions in case nothing to apply.
-        if overlays.is_empty() {
-            return Ok(());
+    pub fn multioverlay_apply(
+        &mut self,
+        overlays: impl IntoIterator<Item = impl AsRef<[u8]>>,
+    ) -> Result<()> {
+        // Iterate through the overlays and extract their pointers.
+        let mut pointers: ArrayVec<*const u8, MAXIMUM_OVERLAYS_TO_APPLY> = ArrayVec::new();
+        for overlay in overlays {
+            pointers
+                .try_push(overlay.as_ref().as_ptr())
+                .map_err(|_| Error::Other(Some(MAXIMUM_OVERLAYS_ERROR_MSG)))?;
         }
-        if overlays.len() > MAXIMUM_OVERLAYS_TO_APPLY {
-            return Err(Error::Other(Some(MAXIMUM_OVERLAYS_ERROR_MSG)));
+
+        if pointers.is_empty() {
+            return Ok(());
         }
 
         self.shrink_to_fit()?;
-
-        // Convert input fat references into the raw pointers.
-        let pointers: ArrayVec<_, MAXIMUM_OVERLAYS_TO_APPLY> =
-            overlays.iter().map(|&slice| slice.as_ptr()).collect();
 
         // SAFETY: The `ufdt_apply_multioverlay` function guarantees that `self.0` is accessed
         // within the specified length boundaries. The `pointers` are non-null and are accessed
@@ -530,7 +533,7 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
                 self.0.as_mut().as_mut_ptr() as *mut _,
                 self.0.as_ref().len(),
                 pointers.as_ptr().cast(),
-                overlays.len(),
+                pointers.len(),
             )
         })?;
 
@@ -863,7 +866,7 @@ mod test {
         let mut fdt_buf = vec![0u8; base.len() + overlay_modify.len() + overlay_modify2.len()];
         let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &base[..]).unwrap();
 
-        fdt.multioverlay_apply(&[&overlay_modify[..] as _, &overlay_modify2[..] as _]).unwrap();
+        fdt.multioverlay_apply([&overlay_modify[..], &overlay_modify2[..]]).unwrap();
 
         check_overlays_are_applied(fdt.0);
     }
@@ -877,8 +880,8 @@ mod test {
         let mut fdt_buf = vec![0u8; base.len() + overlay_modify.len() + overlay_modify2.len()];
         let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &base[..]).unwrap();
 
-        fdt.multioverlay_apply(&[&overlay_modify[..] as _]).unwrap();
-        fdt.multioverlay_apply(&[&overlay_modify2[..] as _]).unwrap();
+        fdt.multioverlay_apply([&overlay_modify[..]]).unwrap();
+        fdt.multioverlay_apply([&overlay_modify2[..]]).unwrap();
 
         check_overlays_are_applied(fdt.0);
     }
@@ -895,7 +898,7 @@ mod test {
         let mut fdt_buf = vec![0u8; base.len() + overlay_modify.len() + overlay_modify2.len()];
         let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &base[..]).unwrap();
 
-        fdt.multioverlay_apply(&[&overlay_modify[..] as _, &overlay_modify2[..] as _]).unwrap();
+        fdt.multioverlay_apply([&overlay_modify[..], &overlay_modify2[..]]).unwrap();
 
         check_overlays_are_applied(fdt.0);
     }
@@ -912,8 +915,8 @@ mod test {
         let mut fdt_buf = vec![0u8; base.len() + overlay_modify.len() + overlay_modify2.len()];
         let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &base[..]).unwrap();
 
-        fdt.multioverlay_apply(&[&overlay_modify[..] as _]).unwrap();
-        fdt.multioverlay_apply(&[&overlay_modify2[..] as _]).unwrap();
+        fdt.multioverlay_apply([&overlay_modify[..]]).unwrap();
+        fdt.multioverlay_apply([&overlay_modify2[..]]).unwrap();
 
         check_overlays_are_applied(fdt.0);
     }

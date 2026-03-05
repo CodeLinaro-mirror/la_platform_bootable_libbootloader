@@ -17,21 +17,21 @@
 use crate::{constants::FDT_ALIGNMENT, gbl_println, GblOps};
 use arrayvec::ArrayVec;
 use dttable::{DtTableEntry, DtTableImage, DtTableMetadata};
-use fdt::{Fdt, FdtHeader, FDT_HEADER_SIZE};
+use fdt::{Fdt, FdtHeader, FDT_HEADER_SIZE, MAXIMUM_OVERLAYS_TO_APPLY};
 use liberror::{Error, Result};
 use libutils::aligned_subslice;
 
 /// Maximum amount of device tree components GBL can handle to select from.
 /// TODO(b/353272981): Use dynamic memory to store components. Currently
-/// DeviceTreeComponentsRegistry takes about 18kb of stack, which can be slow and dangerous.
-pub const MAXIMUM_DEVICE_TREE_COMPONENTS: usize = 256;
+/// DtComponentsRegistry takes about 20kb of stack, which can be slow and dangerous.
+pub const MAXIMUM_DT_COMPONENTS: usize = 256;
 /// Error message to fail in case of unsupported amount of device tree components.
-pub const MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG: &str =
-    "At most 256 device components are supported to build the final one";
+pub const MAXIMUM_DT_COMPONENTS_ERROR_MSG: &str =
+    "At most 256 device tree components are supported to build the final one";
 
 /// The source device tree component is coming from.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum DeviceTreeComponentSource {
+pub enum DtComponentSource {
     /// Loaded from Boot partition.
     Boot,
     /// Loaded from Vendor Boot partition.
@@ -44,45 +44,55 @@ pub enum DeviceTreeComponentSource {
 
 /// The device tree component type.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum DeviceTreeComponentType {
+pub enum DtComponentType {
     /// HLOS base device tree.
-    DeviceTree,
+    BaseDt,
     /// HLOS device tree overlay.
     Overlay,
     /// Device assignment overlay to be applied to pVM
     PvmDeviceAssignmentOverlay,
 }
 
-impl core::fmt::Display for DeviceTreeComponentSource {
+/// To be used in the bootconfig. Do not change the values.
+impl core::fmt::Display for DtComponentSource {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            DeviceTreeComponentSource::Boot => write!(f, "Boot"),
-            DeviceTreeComponentSource::VendorBoot => write!(f, "VendorBoot"),
-            DeviceTreeComponentSource::Dtb => write!(f, "Dtb"),
-            DeviceTreeComponentSource::Dtbo => write!(f, "Dtbo"),
+            DtComponentSource::Boot => write!(f, "boot"),
+            DtComponentSource::VendorBoot => write!(f, "vendor_boot"),
+            DtComponentSource::Dtb => write!(f, "dtb"),
+            DtComponentSource::Dtbo => write!(f, "dtbo"),
         }
     }
 }
 
-impl core::fmt::Display for DeviceTreeComponentType {
+impl core::fmt::Display for DtComponentType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            DeviceTreeComponentType::DeviceTree => write!(f, "DTB"),
-            DeviceTreeComponentType::Overlay => write!(f, "DTBO"),
-            DeviceTreeComponentType::PvmDeviceAssignmentOverlay => write!(f, "PVM_DA_OVERLAY"),
+            DtComponentType::BaseDt => write!(f, "DTB"),
+            DtComponentType::Overlay => write!(f, "DTBO"),
+            DtComponentType::PvmDeviceAssignmentOverlay => write!(f, "PVM_DA_OVERLAY"),
         }
     }
 }
 
-/// Device tree component (device tree or overlay) to build the final one.
+/// Metadata for device tree component source information.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct DeviceTreeComponent<'a> {
+pub struct DtComponentSourceMetadata {
     /// Source the component is loaded from.
-    pub component_source: DeviceTreeComponentSource,
-    /// Device tree component type.
-    pub component_type: DeviceTreeComponentType,
+    pub source: DtComponentSource,
+    /// Index of the component within its source.
+    pub source_index: usize,
+}
+
+/// Device tree component (base device tree or overlay) to build the final one.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct DtComponent<'a> {
+    /// Source metadata.
+    pub source_metadata: DtComponentSourceMetadata,
+    /// Dt component type.
+    pub component_type: DtComponentType,
     /// Metadata for entries loaded from dt_table structure.
-    pub metadata: Option<DtTableMetadata>,
+    pub selection_metadata: Option<DtTableMetadata>,
     /// Device tree component payload. Must be 8 bytes aligned.
     pub dt: &'a [u8],
     /// Device tree component is selected.
@@ -90,25 +100,56 @@ pub struct DeviceTreeComponent<'a> {
 }
 
 /// Maintain, select and get the device tree components to build the final device tree.
-pub struct DeviceTreeComponentsRegistry<'a> {
-    components: ArrayVec<DeviceTreeComponent<'a>, MAXIMUM_DEVICE_TREE_COMPONENTS>,
-    /// `selected_overlays` array is used to return selected overlays as a sequential reference
-    /// slice. It must only be used within the `selected()` method and must not be assumed
-    /// valid elsewhere.
-    selected_overlays: ArrayVec<&'a [u8], MAXIMUM_DEVICE_TREE_COMPONENTS>,
+pub struct DtComponentsRegistry<'a> {
+    components: ArrayVec<DtComponent<'a>, MAXIMUM_DT_COMPONENTS>,
 }
 
-type SelectedVmdtbo<'a> = Option<(usize, &'a [u8])>;
+/// Selected device tree component.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct SelectedDtComponent<'a> {
+    /// Source information metadata.
+    pub source_metadata: DtComponentSourceMetadata,
+    /// Device tree component payload.
+    pub dt: &'a [u8],
+}
+
+/// A structure that holds all selected device tree components.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct SelectedDtComponentsContainer<T> {
+    /// Selected base device tree.
+    pub base_dt: T,
+    /// Selected VMDTBO, if any.
+    pub vmdtbo: Option<T>,
+    /// Selected overlays.
+    pub overlays: ArrayVec<T, MAXIMUM_OVERLAYS_TO_APPLY>,
+}
+
+/// A structure that holds all selected device tree components.
+pub type SelectedDtComponents<'a> = SelectedDtComponentsContainer<SelectedDtComponent<'a>>;
+/// A structure that holds all selected device tree components metadata.
+pub type SelectedDtComponentsMetadata = SelectedDtComponentsContainer<DtComponentSourceMetadata>;
+
+impl<'a> SelectedDtComponents<'a> {
+    /// Consumes the object and returns lifetime-independent metadata for selected
+    /// device tree components.
+    pub fn into_metadata(self) -> SelectedDtComponentsMetadata {
+        SelectedDtComponentsMetadata {
+            base_dt: self.base_dt.source_metadata,
+            vmdtbo: self.vmdtbo.map(|c| c.source_metadata),
+            overlays: self.overlays.into_iter().map(|c| c.source_metadata).collect(),
+        }
+    }
+}
 
 /// Check the VM flag in overlay id
-pub fn entry_is_vmdtbo(metadata: &DtTableMetadata) -> bool {
+pub fn entry_is_vmdtbo(selection_metadata: &DtTableMetadata) -> bool {
     const VMDTBO_FLAG: u32 = 1 << 31;
-    metadata.id & VMDTBO_FLAG != 0
+    selection_metadata.id & VMDTBO_FLAG != 0
 }
 
-fn valid_vmdtbo(component: &DeviceTreeComponent) -> bool {
-    component.component_source == DeviceTreeComponentSource::Dtbo
-        && component.component_type == DeviceTreeComponentType::PvmDeviceAssignmentOverlay
+fn valid_vmdtbo(component: &DtComponent) -> bool {
+    component.source_metadata.source == DtComponentSource::Dtbo
+        && component.component_type == DtComponentType::PvmDeviceAssignmentOverlay
 }
 
 fn try_dt_totalsize_from_unaligned_bytes_ref(header: &[u8], buffer: &mut [u8]) -> Result<usize> {
@@ -128,28 +169,25 @@ fn try_dt_totalsize_from_unaligned_bytes_ref(header: &[u8], buffer: &mut [u8]) -
     }
 }
 
-impl<'a> DeviceTreeComponentsRegistry<'a> {
-    /// Create new empty DeviceTreeComponentsRegistry.
+impl<'a> DtComponentsRegistry<'a> {
+    /// Create new empty DtComponentsRegistry.
     pub fn new() -> Self {
-        DeviceTreeComponentsRegistry {
-            components: ArrayVec::new(),
-            selected_overlays: ArrayVec::new(),
-        }
+        DtComponentsRegistry { components: ArrayVec::new() }
     }
 
     fn component_type(
-        component_source: DeviceTreeComponentSource,
+        component_source: DtComponentSource,
         dt_entry: &DtTableEntry,
-    ) -> DeviceTreeComponentType {
+    ) -> DtComponentType {
         match component_source {
-            DeviceTreeComponentSource::Boot
-            | DeviceTreeComponentSource::VendorBoot
-            | DeviceTreeComponentSource::Dtb => DeviceTreeComponentType::DeviceTree,
-            DeviceTreeComponentSource::Dtbo => {
+            DtComponentSource::Boot | DtComponentSource::VendorBoot | DtComponentSource::Dtb => {
+                DtComponentType::BaseDt
+            }
+            DtComponentSource::Dtbo => {
                 if entry_is_vmdtbo(&dt_entry.metadata) {
-                    DeviceTreeComponentType::PvmDeviceAssignmentOverlay
+                    DtComponentType::PvmDeviceAssignmentOverlay
                 } else {
-                    DeviceTreeComponentType::Overlay
+                    DtComponentType::Overlay
                 }
             }
         }
@@ -159,16 +197,16 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
     /// aligned by using provided buffer to cut from. Returns remain buffer.
     pub fn append_from_dttable<'b, 'c: 'a>(
         &mut self,
-        component_source: DeviceTreeComponentSource,
+        component_source: DtComponentSource,
         dttable: &DtTableImage<'b>,
         buffer: &'c mut [u8],
     ) -> Result<&'c mut [u8]> {
         if dttable.entries_count() > self.components.remaining_capacity() {
-            return Err(Error::Other(Some(MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG)));
+            return Err(Error::Other(Some(MAXIMUM_DT_COMPONENTS_ERROR_MSG)));
         }
 
         let mut remains = buffer;
-        for entry in dttable.entries() {
+        for (idx, entry) in dttable.entries().enumerate() {
             // TODO(b/374336105): Find a better way to handle 8-bytes alignment rather than copy.
             let (aligned_buffer, rest) = aligned_subslice(remains, FDT_ALIGNMENT)?
                 .split_at_mut_checked(entry.dtb.len())
@@ -177,10 +215,13 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
                 )))?;
             aligned_buffer.copy_from_slice(entry.dtb);
 
-            self.components.push(DeviceTreeComponent {
-                component_source: component_source,
+            self.components.push(DtComponent {
+                source_metadata: DtComponentSourceMetadata {
+                    source: component_source,
+                    source_index: idx,
+                },
                 component_type: Self::component_type(component_source, &entry),
-                metadata: Some(entry.metadata),
+                selection_metadata: Some(entry.metadata),
                 dt: aligned_buffer,
                 selected: false,
             });
@@ -194,12 +235,25 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
     /// Append additional device trees from the buffer, where they are stored sequentially.
     /// Ensure components are 8 bytes aligned by using provided buffer to cut from. Returns remain
     /// buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `ops` - an implementation of `GblOps`.
+    /// * `component_source` - Source of the component.
+    /// * `component_type` - Type of the component.
+    /// * `start_index` - The starting index for components being appended. This is used to
+    ///   assign a unique `source_index` to each appended component, relative to its
+    ///   `component_source`.
+    /// * `data` - Input buffer containing the raw sequential FDT data.
+    /// * `buffer` - Output buffer where the 8-byte aligned FDT data will be stored.
+    ///
     /// TODO(b/363244924): Remove after partners migrated to DTB.
     fn append_from_multifdt_buffer<'b, 'd: 'a>(
         &mut self,
         ops: &mut impl GblOps<'b>,
-        component_source: DeviceTreeComponentSource,
-        component_type: DeviceTreeComponentType,
+        component_source: DtComponentSource,
+        component_type: DtComponentType,
+        start_index: usize,
         data: &'a [u8],
         buffer: &'d mut [u8],
     ) -> Result<&'d mut [u8]> {
@@ -211,7 +265,7 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
             try_dt_totalsize_from_unaligned_bytes_ref(data_remains, buffer_remains)
         {
             if self.components.is_full() {
-                return Err(Error::Other(Some(MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG)));
+                return Err(Error::Other(Some(MAXIMUM_DT_COMPONENTS_ERROR_MSG)));
             }
 
             // Cut fdt and temporary buffers to make sure result fdt is 8 bytes aligned
@@ -227,10 +281,13 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
             aligned_buffer.copy_from_slice(data_buffer);
 
             Fdt::new(&aligned_buffer)?;
-            self.components.push(DeviceTreeComponent {
-                component_source: component_source,
+            self.components.push(DtComponent {
+                source_metadata: DtComponentSourceMetadata {
+                    source: component_source,
+                    source_index: start_index + components_added,
+                },
                 component_type: component_type,
-                metadata: None,
+                selection_metadata: None,
                 dt: &aligned_buffer[..],
                 selected: false,
             });
@@ -258,43 +315,52 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
     /// valid fdt buffer. `fdt` may also have multiple fdt buffers placed sequentially. Ensure each
     /// of such components are 8 bytes aligned by using provided `buffer` to cut from. Returns
     /// remain buffer.
-    /// TODO(b/363244924): Remove multiple fdt support after partners migrated to DTB.
     pub fn append<'b, 'd: 'a>(
         &mut self,
         ops: &mut impl GblOps<'b>,
-        component_source: DeviceTreeComponentSource,
-        component_type: DeviceTreeComponentType,
+        component_source: DtComponentSource,
+        component_type: DtComponentType,
         fdt: &'a [u8],
         buffer: &'d mut [u8],
     ) -> Result<&'d mut [u8]> {
         if self.components.is_full() {
-            return Err(Error::Other(Some(MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG)));
+            return Err(Error::Other(Some(MAXIMUM_DT_COMPONENTS_ERROR_MSG)));
         }
 
         let header = FdtHeader::from_bytes_ref(fdt)?;
         let (fdt_buffer, fdt_remains) = fdt.split_at(header.totalsize());
-        self.components.push(DeviceTreeComponent {
-            component_source: component_source,
+        self.components.push(DtComponent {
+            source_metadata: DtComponentSourceMetadata {
+                source: component_source,
+                source_index: 0,
+            },
             component_type: component_type,
-            metadata: None,
+            selection_metadata: None,
             dt: fdt_buffer,
             selected: false,
         });
 
         // TODO(b/363244924): Remove after partners migrated to dttable.
-        self.append_from_multifdt_buffer(ops, component_source, component_type, fdt_remains, buffer)
+        self.append_from_multifdt_buffer(
+            ops,
+            component_source,
+            component_type,
+            1,
+            fdt_remains,
+            buffer,
+        )
     }
 
     /// Default implementation of selected logic in case external one isn't provided.
     /// Only base device tree is supported to choose from. Otherwise fail. No overlays will be
     /// selected.
     pub fn autoselect(&mut self) -> Result<()> {
-        let base_device_tree_count = self
+        let base_dt_count = self
             .components
             .iter()
-            .filter(|component| component.component_type == DeviceTreeComponentType::DeviceTree)
+            .filter(|component| component.component_type == DtComponentType::BaseDt)
             .count();
-        if base_device_tree_count > 1 {
+        if base_dt_count > 1 {
             return Err(Error::Other(Some(
                 "Base device tree autoselection isn't supported if multiple device trees are \
                 provided",
@@ -304,7 +370,7 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
         let base = self
             .components
             .iter_mut()
-            .find(|component| component.component_type == DeviceTreeComponentType::DeviceTree)
+            .find(|component| component.component_type == DtComponentType::BaseDt)
             .ok_or(Error::Other(Some("0 base device trees to autoselect from")))?;
         base.selected = true;
 
@@ -313,54 +379,61 @@ impl<'a> DeviceTreeComponentsRegistry<'a> {
 
     /// Return selected base device tree and overlays to apply. Fail in case selection isn't
     /// correct. For correctness rules refer to `GblOps.select_device_trees` requirements.
-    pub fn selected(&mut self) -> Result<(&[u8], &[&[u8]], SelectedVmdtbo<'_>)> {
-        self.selected_overlays = self
-            .components
-            .iter()
-            .filter(|component| {
-                component.selected && component.component_type == DeviceTreeComponentType::Overlay
-            })
-            .map(|component| component.dt)
-            .collect();
-        let base = self.selected_base_dt()?;
-        let vmdtbo = self.selected_vmdtbo()?;
-
-        Ok((base, &self.selected_overlays[..], vmdtbo))
+    pub fn selected(&self) -> Result<SelectedDtComponents<'a>> {
+        Ok(SelectedDtComponents {
+            base_dt: self.selected_base_dt()?,
+            vmdtbo: self.selected_vmdtbo()?,
+            overlays: self.selected_overlays()?,
+        })
     }
 
-    fn selected_base_dt(&self) -> Result<&[u8]> {
-        self.components
-            .iter()
-            .filter(|comp| {
-                comp.selected && comp.component_type == DeviceTreeComponentType::DeviceTree
-            })
+    fn selected_base_dt(&self) -> Result<SelectedDtComponent<'a>> {
+        self.components()
+            .filter(|comp| comp.selected && comp.component_type == DtComponentType::BaseDt)
             .try_fold(None, |res, comp| match res {
-                None => Ok(Some(comp.dt)),
-                _ => Err(Error::Other(Some("More than 1 base device tree is selected"))),
+                None => Ok(Some(SelectedDtComponent {
+                    source_metadata: comp.source_metadata,
+                    dt: comp.dt,
+                })),
+                _ => Err(Error::Other(Some("More than one base device tree is selected."))),
             })?
             .ok_or(Error::Other(Some("0 base device trees are selected")))
     }
 
-    /// Return the selected pvmfw VMDTBO, if any, and its index in the DTBO partition.
-    fn selected_vmdtbo(&self) -> Result<SelectedVmdtbo<'_>> {
-        self.components
-            .iter()
-            .filter(|comp| comp.component_source == DeviceTreeComponentSource::Dtbo)
-            .enumerate()
-            .filter(|(_, comp)| comp.selected && valid_vmdtbo(comp))
-            .try_fold(None, |res, (idx, comp)| match res {
-                None => Ok(Some((idx, comp.dt))),
-                _ => Err(Error::Other(Some("More than one VMDTBO is selected"))),
+    fn selected_overlays(
+        &self,
+    ) -> Result<ArrayVec<SelectedDtComponent<'a>, MAXIMUM_OVERLAYS_TO_APPLY>> {
+        self.components()
+            .filter(|comp| comp.selected && comp.component_type == DtComponentType::Overlay)
+            .map(|comp| SelectedDtComponent { source_metadata: comp.source_metadata, dt: comp.dt })
+            .try_fold(ArrayVec::new(), |mut acc, comp| {
+                acc.try_push(comp)
+                    .map_err(|_| Error::Other(Some("Too many overlays got selected.")))?;
+                Ok(acc)
             })
     }
 
+    /// Return the selected pvmfw VMDTBO, if any, and its index in the DTBO partition.
+    fn selected_vmdtbo(&self) -> Result<Option<SelectedDtComponent<'a>>> {
+        self.components().filter(|comp| comp.selected && valid_vmdtbo(comp)).try_fold(
+            None,
+            |res, comp| match res {
+                None => Ok(Some(SelectedDtComponent {
+                    source_metadata: comp.source_metadata,
+                    dt: comp.dt,
+                })),
+                _ => Err(Error::Other(Some("More than one VMDTBO is selected"))),
+            },
+        )
+    }
+
     /// Iterator over components.
-    pub fn components(&self) -> impl Iterator<Item = &DeviceTreeComponent<'a>> {
+    pub fn components(&self) -> impl Iterator<Item = &DtComponent<'a>> {
         self.components.iter()
     }
 
     /// Mutable iterator over components.
-    pub fn components_mut(&mut self) -> impl Iterator<Item = &mut DeviceTreeComponent<'a>> {
+    pub fn components_mut(&mut self) -> impl Iterator<Item = &mut DtComponent<'a>> {
         self.components.iter_mut()
     }
 }
@@ -372,7 +445,7 @@ pub(crate) mod test {
 
     #[test]
     fn test_components_registry_empty() {
-        let registry = DeviceTreeComponentsRegistry::new();
+        let registry = DtComponentsRegistry::new();
 
         assert_eq!(registry.components().count(), 0);
     }
@@ -382,13 +455,13 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         registry
             .append(
                 &mut gbl_ops,
-                DeviceTreeComponentSource::Boot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::Boot,
+                DtComponentType::BaseDt,
                 &dt[..],
                 &mut buffer,
             )
@@ -400,15 +473,18 @@ pub(crate) mod test {
 
         assert_eq!(
             component,
-            &DeviceTreeComponent {
-                component_source: DeviceTreeComponentSource::Boot,
-                component_type: DeviceTreeComponentType::DeviceTree,
-                metadata: None,
+            &DtComponent {
+                source_metadata: DtComponentSourceMetadata {
+                    source: DtComponentSource::Boot,
+                    source_index: 0,
+                },
+                component_type: DtComponentType::BaseDt,
+                selection_metadata: None,
                 dt: &dt[..],
                 selected: false,
             }
         );
-        assert!(component.component_type == DeviceTreeComponentType::DeviceTree);
+        assert!(component.component_type == DtComponentType::BaseDt);
     }
 
     #[test]
@@ -417,13 +493,13 @@ pub(crate) mod test {
         let dt_with_tail = [dt.clone(), vec![0; 100]].concat();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         registry
             .append(
                 &mut gbl_ops,
-                DeviceTreeComponentSource::Boot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::Boot,
+                DtComponentType::BaseDt,
                 &dt_with_tail[..],
                 &mut buffer,
             )
@@ -435,15 +511,18 @@ pub(crate) mod test {
 
         assert_eq!(
             component,
-            &DeviceTreeComponent {
-                component_source: DeviceTreeComponentSource::Boot,
-                component_type: DeviceTreeComponentType::DeviceTree,
-                metadata: None,
+            &DtComponent {
+                source_metadata: DtComponentSourceMetadata {
+                    source: DtComponentSource::Boot,
+                    source_index: 0,
+                },
+                component_type: DtComponentType::BaseDt,
+                selection_metadata: None,
                 dt: &dt[..],
                 selected: false,
             }
         );
-        assert!(component.component_type == DeviceTreeComponentType::DeviceTree);
+        assert!(component.component_type == DtComponentType::BaseDt);
     }
 
     #[test]
@@ -451,16 +530,16 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         let mut current_buffer = &mut buffer[..];
         // Fill the whole reserved space
-        for _ in 0..MAXIMUM_DEVICE_TREE_COMPONENTS {
+        for _ in 0..MAXIMUM_DT_COMPONENTS {
             current_buffer = registry
                 .append(
                     &mut gbl_ops,
-                    DeviceTreeComponentSource::Boot,
-                    DeviceTreeComponentType::DeviceTree,
+                    DtComponentSource::Boot,
+                    DtComponentType::BaseDt,
                     &dt[..],
                     current_buffer,
                 )
@@ -470,12 +549,12 @@ pub(crate) mod test {
         assert_eq!(
             registry.append(
                 &mut gbl_ops,
-                DeviceTreeComponentSource::Boot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::Boot,
+                DtComponentType::BaseDt,
                 &dt[..],
                 current_buffer
             ),
-            Err(Error::Other(Some(MAXIMUM_DEVICE_TREE_COMPONENTS_ERROR_MSG)))
+            Err(Error::Other(Some(MAXIMUM_DT_COMPONENTS_ERROR_MSG)))
         );
     }
 
@@ -483,21 +562,23 @@ pub(crate) mod test {
     fn test_components_append_from_dttable() {
         let dttable = include_bytes!("../../libdttable/test/data/dttable.img").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         let table = DtTableImage::from_bytes(&dttable[..]).unwrap();
-        registry
-            .append_from_dttable(DeviceTreeComponentSource::Dtbo, &table, &mut buffer[..])
-            .unwrap();
+        registry.append_from_dttable(DtComponentSource::Dtbo, &table, &mut buffer[..]).unwrap();
 
         // Check data is loaded
         let components: Vec<_> = registry.components().cloned().collect();
-        let expected_components: Vec<DeviceTreeComponent> = table
+        let expected_components: Vec<DtComponent> = table
             .entries()
-            .map(|e| DeviceTreeComponent {
-                component_source: DeviceTreeComponentSource::Dtbo,
-                component_type: DeviceTreeComponentType::Overlay,
-                metadata: Some(e.metadata),
+            .enumerate()
+            .map(|(i, e)| DtComponent {
+                source_metadata: DtComponentSourceMetadata {
+                    source: DtComponentSource::Dtbo,
+                    source_index: i,
+                },
+                component_type: DtComponentType::Overlay,
+                selection_metadata: Some(e.metadata),
                 dt: e.dtb,
                 selected: false,
             })
@@ -513,14 +594,14 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         let sources = [
-            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Boot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DtComponentSource::VendorBoot, DtComponentType::BaseDt),
+            (DtComponentSource::Boot, DtComponentType::BaseDt),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
         for (source, component_type) in sources.iter() {
@@ -530,17 +611,32 @@ pub(crate) mod test {
         }
 
         // Select base device tree
-        registry.components_mut().nth(1).unwrap().selected = true;
+        registry.components_mut().nth(0).unwrap().selected = true;
         // Select first overlay
         registry.components_mut().nth(2).unwrap().selected = true;
         // Select second overlay
         registry.components_mut().nth(3).unwrap().selected = true;
 
-        let expected_overlays =
-            &[registry.components().nth(2).unwrap().dt, registry.components().nth(3).unwrap().dt];
         // Expected selected data
-        let expected_selected =
-            (registry.components().nth(1).unwrap().dt, &expected_overlays[..], None);
+        let expected_selected = SelectedDtComponents {
+            base_dt: SelectedDtComponent {
+                source_metadata: registry.components().nth(0).unwrap().source_metadata,
+                dt: registry.components().nth(0).unwrap().dt,
+            },
+            vmdtbo: None,
+            overlays: [
+                SelectedDtComponent {
+                    source_metadata: registry.components().nth(2).unwrap().source_metadata,
+                    dt: registry.components().nth(2).unwrap().dt,
+                },
+                SelectedDtComponent {
+                    source_metadata: registry.components().nth(3).unwrap().source_metadata,
+                    dt: registry.components().nth(3).unwrap().dt,
+                },
+            ]
+            .into_iter()
+            .collect(),
+        };
 
         assert_eq!(registry.selected().unwrap(), expected_selected);
     }
@@ -550,14 +646,14 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         let sources = [
-            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Boot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DtComponentSource::VendorBoot, DtComponentType::BaseDt),
+            (DtComponentSource::Boot, DtComponentType::BaseDt),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
         for (source, component_type) in sources.iter() {
@@ -567,10 +663,17 @@ pub(crate) mod test {
         }
 
         // Select base device tree
-        registry.components_mut().nth(1).unwrap().selected = true;
+        registry.components_mut().nth(0).unwrap().selected = true;
 
         // Expected selected data
-        let expected_selected = (registry.components().nth(1).unwrap().dt, &[][..], None);
+        let expected_selected = SelectedDtComponents {
+            base_dt: SelectedDtComponent {
+                source_metadata: registry.components().nth(0).unwrap().source_metadata,
+                dt: registry.components().nth(0).unwrap().dt,
+            },
+            vmdtbo: None,
+            overlays: ArrayVec::new(),
+        };
 
         assert_eq!(registry.selected().unwrap(), expected_selected);
     }
@@ -580,17 +683,17 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         let sources = [
-            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Boot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::PvmDeviceAssignmentOverlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::PvmDeviceAssignmentOverlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::PvmDeviceAssignmentOverlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DtComponentSource::VendorBoot, DtComponentType::BaseDt),
+            (DtComponentSource::Boot, DtComponentType::BaseDt),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::PvmDeviceAssignmentOverlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::PvmDeviceAssignmentOverlay),
+            (DtComponentSource::Dtbo, DtComponentType::PvmDeviceAssignmentOverlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
         for (source, component_type) in sources.iter() {
@@ -604,11 +707,17 @@ pub(crate) mod test {
         // Select VMDTBO
         registry.components_mut().nth(5).unwrap().selected = true;
 
-        let expected_selected = (
-            registry.components().nth(1).unwrap().dt,
-            &[][..],
-            Some((3, registry.components().nth(5).unwrap().dt)),
-        );
+        let expected_selected = SelectedDtComponents {
+            base_dt: SelectedDtComponent {
+                source_metadata: registry.components().nth(0).unwrap().source_metadata,
+                dt: registry.components().nth(0).unwrap().dt,
+            },
+            vmdtbo: Some(SelectedDtComponent {
+                source_metadata: registry.components().nth(5).unwrap().source_metadata,
+                dt: registry.components().nth(5).unwrap().dt,
+            }),
+            overlays: ArrayVec::new(),
+        };
         assert_eq!(registry.selected().unwrap(), expected_selected);
 
         // Select another VMDTBO
@@ -621,14 +730,14 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         let sources = [
-            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Boot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DtComponentSource::VendorBoot, DtComponentType::BaseDt),
+            (DtComponentSource::Boot, DtComponentType::BaseDt),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
         for (source, component_type) in sources.iter() {
@@ -650,14 +759,14 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         let sources = [
-            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Boot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DtComponentSource::VendorBoot, DtComponentType::BaseDt),
+            (DtComponentSource::Boot, DtComponentType::BaseDt),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
         for (source, component_type) in sources.iter() {
@@ -679,13 +788,13 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         let sources = [
-            (DeviceTreeComponentSource::VendorBoot, DeviceTreeComponentType::DeviceTree),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
-            (DeviceTreeComponentSource::Dtbo, DeviceTreeComponentType::Overlay),
+            (DtComponentSource::VendorBoot, DtComponentType::BaseDt),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
+            (DtComponentSource::Dtbo, DtComponentType::Overlay),
         ];
         let mut current_buffer = &mut buffer[..];
         for (source, component_type) in sources.iter() {
@@ -697,7 +806,14 @@ pub(crate) mod test {
         assert!(registry.autoselect().is_ok());
 
         // Expected auto selected data
-        let expected_selected = (registry.components().nth(0).unwrap().dt, &[][..], None);
+        let expected_selected = SelectedDtComponents {
+            base_dt: SelectedDtComponent {
+                source_metadata: registry.components().nth(0).unwrap().source_metadata,
+                dt: registry.components().nth(0).unwrap().dt,
+            },
+            vmdtbo: None,
+            overlays: ArrayVec::new(),
+        };
 
         assert_eq!(registry.selected().unwrap(), expected_selected);
     }
@@ -707,13 +823,13 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         registry
             .append(
                 &mut gbl_ops,
-                DeviceTreeComponentSource::VendorBoot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::VendorBoot,
+                DtComponentType::BaseDt,
                 &dt[..],
                 &mut buffer,
             )
@@ -722,7 +838,14 @@ pub(crate) mod test {
         assert!(registry.autoselect().is_ok());
 
         // Expected auto selected data
-        let expected_selected = (registry.components().nth(0).unwrap().dt, &[][..], None);
+        let expected_selected = SelectedDtComponents {
+            base_dt: SelectedDtComponent {
+                source_metadata: registry.components().nth(0).unwrap().source_metadata,
+                dt: registry.components().nth(0).unwrap().dt,
+            },
+            vmdtbo: None,
+            overlays: ArrayVec::new(),
+        };
 
         assert_eq!(registry.selected().unwrap(), expected_selected);
     }
@@ -732,14 +855,14 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         let mut current_buffer = &mut buffer[..];
         current_buffer = registry
             .append(
                 &mut gbl_ops,
-                DeviceTreeComponentSource::VendorBoot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::VendorBoot,
+                DtComponentType::BaseDt,
                 &dt[..],
                 current_buffer,
             )
@@ -747,8 +870,8 @@ pub(crate) mod test {
         registry
             .append(
                 &mut gbl_ops,
-                DeviceTreeComponentSource::Boot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::Boot,
+                DtComponentType::BaseDt,
                 &dt[..],
                 current_buffer,
             )
@@ -762,13 +885,13 @@ pub(crate) mod test {
         let dt = include_bytes!("../../libfdt/test/data/base.dtb").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         registry
             .append(
                 &mut gbl_ops,
-                DeviceTreeComponentSource::Dtbo,
-                DeviceTreeComponentType::Overlay,
+                DtComponentSource::Dtbo,
+                DtComponentType::Overlay,
                 &dt[..],
                 &mut buffer,
             )
@@ -783,13 +906,13 @@ pub(crate) mod test {
         let dt = [half.clone(), half].concat();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         registry
             .append(
                 &mut gbl_ops,
-                DeviceTreeComponentSource::VendorBoot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::VendorBoot,
+                DtComponentType::BaseDt,
                 &dt[..],
                 &mut buffer,
             )
@@ -804,13 +927,13 @@ pub(crate) mod test {
         let dt = [half.clone(), half, vec![0; 100]].concat();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut gbl_ops = FakeGblOps::new(&[]);
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         registry
             .append(
                 &mut gbl_ops,
-                DeviceTreeComponentSource::VendorBoot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::VendorBoot,
+                DtComponentType::BaseDt,
                 &dt[..],
                 &mut buffer,
             )

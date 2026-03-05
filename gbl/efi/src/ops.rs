@@ -54,8 +54,8 @@ use liberror::{Error, Result};
 use libgbl::{
     constants::{FASTBOOT_PARTITION_TYPE_LEN, IMAGE_NAME_MAX_LEN},
     device_tree::{
-        DeviceTreeComponent, DeviceTreeComponentSource, DeviceTreeComponentType,
-        DeviceTreeComponentsRegistry, MAXIMUM_DEVICE_TREE_COMPONENTS,
+        DtComponent, DtComponentSource, DtComponentType, DtComponentsRegistry,
+        MAXIMUM_DT_COMPONENTS,
     },
     gbl_avb::{
         state::{BootStateColor, KeyValidationStatus, VerificationStatus},
@@ -87,26 +87,22 @@ const_assert_eq!(PARTITION_NAME_LEN_U16 as usize, IMAGE_NAME_MAX_LEN);
 // fastboot protocol.
 const_assert!(FASTBOOT_PARTITION_TYPE_LEN >= GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN);
 
-fn dt_component_to_efi_dt(component: &DeviceTreeComponent) -> GblEfiVerifiedDeviceTree {
-    let metadata = component.metadata.unwrap_or_default();
+fn dt_component_to_efi_dt(component: &DtComponent) -> GblEfiVerifiedDeviceTree {
+    let metadata = component.selection_metadata.unwrap_or_default();
 
     GblEfiVerifiedDeviceTree {
         metadata: GblEfiDeviceTreeMetadata {
             // bindgen may make enum i32 or u32. because we only care about bits, cast to u32 is ok.
-            source: match component.component_source {
-                DeviceTreeComponentSource::Boot => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_BOOT,
-                DeviceTreeComponentSource::VendorBoot => {
-                    efi_types::GBL_EFI_DEVICE_TREE_SOURCE_VENDOR_BOOT
-                }
-                DeviceTreeComponentSource::Dtb => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTB,
-                DeviceTreeComponentSource::Dtbo => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTBO,
+            source: match component.source_metadata.source {
+                DtComponentSource::Boot => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_BOOT,
+                DtComponentSource::VendorBoot => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_VENDOR_BOOT,
+                DtComponentSource::Dtb => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTB,
+                DtComponentSource::Dtbo => efi_types::GBL_EFI_DEVICE_TREE_SOURCE_DTBO,
             } as _,
             type_: match component.component_type {
-                DeviceTreeComponentType::DeviceTree => {
-                    efi_types::GBL_EFI_DEVICE_TREE_TYPE_DEVICE_TREE
-                }
-                DeviceTreeComponentType::Overlay => efi_types::GBL_EFI_DEVICE_TREE_TYPE_OVERLAY,
-                DeviceTreeComponentType::PvmDeviceAssignmentOverlay => {
+                DtComponentType::BaseDt => efi_types::GBL_EFI_DEVICE_TREE_TYPE_DEVICE_TREE,
+                DtComponentType::Overlay => efi_types::GBL_EFI_DEVICE_TREE_TYPE_OVERLAY,
+                DtComponentType::PvmDeviceAssignmentOverlay => {
                     efi_types::GBL_EFI_DEVICE_TREE_TYPE_PVM_DA_OVERLAY
                 }
             } as _,
@@ -699,7 +695,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
 
     fn select_device_trees(
         &mut self,
-        components_registry: &mut DeviceTreeComponentsRegistry,
+        components_registry: &mut DtComponentsRegistry,
     ) -> Result<()> {
         match self
             .efi_entry
@@ -709,11 +705,10 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         {
             Ok(protocol) => {
                 // Protocol detected, convert to UEFI types.
-                let mut uefi_components: ArrayVec<_, MAXIMUM_DEVICE_TREE_COMPONENTS> =
-                    components_registry
-                        .components()
-                        .map(|component| dt_component_to_efi_dt(component))
-                        .collect();
+                let mut uefi_components: ArrayVec<_, MAXIMUM_DT_COMPONENTS> = components_registry
+                    .components()
+                    .map(|component| dt_component_to_efi_dt(component))
+                    .collect();
 
                 protocol.select_device_trees(&mut uefi_components[..])?;
 
@@ -729,7 +724,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
                                 "Device tree component at index {} got selected by UEFI call. \
                                 Source: {}. Type: {}",
                                 index,
-                                component.component_source,
+                                component.source_metadata.source,
                                 component.component_type,
                             );
                         }
@@ -1105,7 +1100,10 @@ mod test {
     use super::*;
     use efi_mocks::{protocol::gbl_efi_avb::GblAvbProtocol, MockEfi};
     use efi_types::defs::EFI_DT_FIXUP_PROTOCOL_REVISION;
-    use libgbl::gbl_avb::Verification;
+    use libgbl::{
+        device_tree::{DtComponentSourceMetadata, SelectedDtComponent, SelectedDtComponents},
+        gbl_avb::Verification,
+    };
     use libutils::cstr_buffer;
     use mockall::predicate::eq;
     use std::{cell::RefCell, rc::Rc, slice};
@@ -2129,13 +2127,13 @@ mod test {
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
         let mut current_buffer = &mut buffer[..];
         current_buffer = registry
             .append(
                 &mut ops,
-                DeviceTreeComponentSource::VendorBoot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::VendorBoot,
+                DtComponentType::BaseDt,
                 &base,
                 current_buffer,
             )
@@ -2143,8 +2141,8 @@ mod test {
         current_buffer = registry
             .append(
                 &mut ops,
-                DeviceTreeComponentSource::Dtbo,
-                DeviceTreeComponentType::Overlay,
+                DtComponentSource::Dtbo,
+                DtComponentType::Overlay,
                 &overlay,
                 current_buffer,
             )
@@ -2152,8 +2150,8 @@ mod test {
         current_buffer = registry
             .append(
                 &mut ops,
-                DeviceTreeComponentSource::Dtbo,
-                DeviceTreeComponentType::Overlay,
+                DtComponentSource::Dtbo,
+                DtComponentType::Overlay,
                 &overlay2,
                 current_buffer,
             )
@@ -2161,8 +2159,8 @@ mod test {
         current_buffer = registry
             .append(
                 &mut ops,
-                DeviceTreeComponentSource::Dtbo,
-                DeviceTreeComponentType::PvmDeviceAssignmentOverlay,
+                DtComponentSource::Dtbo,
+                DtComponentType::PvmDeviceAssignmentOverlay,
                 &vmdtbo1,
                 current_buffer,
             )
@@ -2170,8 +2168,8 @@ mod test {
         registry
             .append(
                 &mut ops,
-                DeviceTreeComponentSource::Dtbo,
-                DeviceTreeComponentType::PvmDeviceAssignmentOverlay,
+                DtComponentSource::Dtbo,
+                DtComponentType::PvmDeviceAssignmentOverlay,
                 &vmdtbo2,
                 current_buffer,
             )
@@ -2180,7 +2178,31 @@ mod test {
         assert_eq!(ops.select_device_trees(&mut registry), Ok(()));
         assert_eq!(
             registry.selected(),
-            Ok((&base[..], &[&overlay2[..]][..], Some((3, &vmdtbo2[..]))))
+            Ok(SelectedDtComponents {
+                base_dt: SelectedDtComponent {
+                    source_metadata: DtComponentSourceMetadata {
+                        source: DtComponentSource::VendorBoot,
+                        source_index: 0,
+                    },
+                    dt: &base[..]
+                },
+                vmdtbo: Some(SelectedDtComponent {
+                    source_metadata: DtComponentSourceMetadata {
+                        source: DtComponentSource::Dtbo,
+                        source_index: 0,
+                    },
+                    dt: &vmdtbo2[..]
+                }),
+                overlays: [SelectedDtComponent {
+                    source_metadata: DtComponentSourceMetadata {
+                        source: DtComponentSource::Dtbo,
+                        source_index: 0,
+                    },
+                    dt: &overlay2[..]
+                }]
+                .into_iter()
+                .collect(),
+            })
         );
     }
 
@@ -2203,7 +2225,7 @@ mod test {
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
 
         assert_eq!(ops.select_device_trees(&mut registry), Err(Error::InvalidInput));
     }
@@ -2223,13 +2245,13 @@ mod test {
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         // Appends some data to ensure autoselect is passed.
-        let mut registry = DeviceTreeComponentsRegistry::new();
+        let mut registry = DtComponentsRegistry::new();
         let current_buffer = &mut buffer[..];
         registry
             .append(
                 &mut ops,
-                DeviceTreeComponentSource::VendorBoot,
-                DeviceTreeComponentType::DeviceTree,
+                DtComponentSource::VendorBoot,
+                DtComponentType::BaseDt,
                 &base,
                 current_buffer,
             )

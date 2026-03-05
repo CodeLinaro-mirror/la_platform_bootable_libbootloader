@@ -55,7 +55,7 @@ pub use slots::Slot;
 #[cfg(feature = "fuchsia")]
 pub use zbi::{ZbiContainer, ZBI_ALIGNMENT_USIZE};
 
-use super::device_tree;
+use super::device_tree::DtComponentsRegistry;
 use super::slots;
 
 /// Target Type of OS to boot.
@@ -444,10 +444,7 @@ pub trait GblOps<'a> {
     /// and any number of overlays. Refer to the behavior specified for the corresponding UEFI
     /// interface:
     /// https://cs.android.com/android/kernel/superproject/+/common-android-mainline:bootable/libbootloader/gbl/docs/gbl_os_configuration_protocol.md
-    fn select_device_trees(
-        &mut self,
-        components: &mut device_tree::DeviceTreeComponentsRegistry,
-    ) -> Result<(), Error>;
+    fn select_device_trees(&mut self, components: &mut DtComponentsRegistry) -> Result<(), Error>;
 
     /// Selects FIT configuration from FIT FDT.
     ///
@@ -827,7 +824,7 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
 
     fn select_device_trees(
         &mut self,
-        components_registry: &mut device_tree::DeviceTreeComponentsRegistry,
+        components_registry: &mut DtComponentsRegistry,
     ) -> Result<(), Error> {
         self.ops.select_device_trees(components_registry)
     }
@@ -1018,7 +1015,7 @@ pub(crate) mod test {
     use super::*;
     use crate::{
         android_boot::device_tree::{PROP_BOOTARGS, RNG_SEED_SIZE_BYTES},
-        device_tree::DeviceTreeComponentType,
+        device_tree::{DtComponentType, DtComponentsRegistry},
         partition::GblDisk,
         slots::Bootability,
     };
@@ -1565,7 +1562,7 @@ pub(crate) mod test {
             let cmd_prop_buffer =
                 fdt.set_property_placeholder("chosen", PROP_BOOTARGS, cmd_prop_len)?;
             let mut commandline = CommandlineBuilder::new_from_prefix(cmd_prop_buffer)?;
-            commandline.add("fixup")?;
+            commandline.add_raw("fixup")?;
 
             // Test custom fixup.
             fdt.set_property(
@@ -1583,12 +1580,12 @@ pub(crate) mod test {
 
         fn select_device_trees(
             &mut self,
-            device_tree: &mut device_tree::DeviceTreeComponentsRegistry,
+            device_tree: &mut DtComponentsRegistry,
         ) -> Result<(), Error> {
             // Select all overlays.
             device_tree
                 .components_mut()
-                .filter(|v| v.component_type == DeviceTreeComponentType::Overlay)
+                .filter(|v| v.component_type == DtComponentType::Overlay)
                 .for_each(|v| v.selected = true);
             // Select the first base device tree.
             device_tree.autoselect()
@@ -1922,10 +1919,7 @@ pub(crate) mod test {
             Err(Error::Unsupported)
         }
 
-        fn select_device_trees(
-            &mut self,
-            _: &mut device_tree::DeviceTreeComponentsRegistry,
-        ) -> Result<(), Error> {
+        fn select_device_trees(&mut self, _: &mut DtComponentsRegistry) -> Result<(), Error> {
             Err(Error::Unsupported)
         }
 

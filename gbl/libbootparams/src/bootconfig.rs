@@ -16,7 +16,8 @@
 //!
 //! https://source.android.com/docs/core/architecture/bootloader/implementing-bootconfig#bootloader-changes
 
-use core::str::from_utf8;
+use crate::slice::SliceWriter;
+use core::{fmt::Write, str::from_utf8};
 use liberror::{Error, Result};
 
 /// A class for constructing bootconfig section.
@@ -84,7 +85,7 @@ impl<'a> BootConfigBuilder<'a> {
     /// to make sure the read content will eventually form a valid boot config. The API is for
     /// situations where configs are read from sources such as disk and separate buffer allocation
     /// is not possible or desired.
-    pub fn add_with<F>(&mut self, reader: F) -> Result<()>
+    pub fn add_raw_with<F>(&mut self, reader: F) -> Result<()>
     where
         F: FnOnce(&[u8], &mut [u8]) -> Result<usize>,
     {
@@ -98,13 +99,45 @@ impl<'a> BootConfigBuilder<'a> {
     }
 
     /// Append a new config from string.
-    pub fn add(&mut self, config: &str) -> Result<()> {
+    pub fn add_raw(&mut self, config: &str) -> Result<()> {
         if self.remaining_capacity() < config.len() {
             return Err(Error::BufferTooSmall(Some(config.len())));
         }
-        self.add_with(|_, out| {
+        self.add_raw_with(|_, out| {
             out[..config.len()].clone_from_slice(config.as_bytes());
             Ok(config.len())
+        })
+    }
+
+    /// Append a single bootconfig item.
+    pub fn add_item(
+        &mut self,
+        key: impl core::fmt::Display,
+        value: impl core::fmt::Display,
+    ) -> Result<()> {
+        writeln!(self, "{}={}", key, value).map_err(|_| Error::BufferTooSmall(None))
+    }
+
+    /// Append a bootconfig array item.
+    pub fn add_array(
+        &mut self,
+        key: impl core::fmt::Display,
+        items: impl IntoIterator<Item = impl core::fmt::Display>,
+    ) -> Result<()> {
+        let mut iter = items.into_iter().peekable();
+        if iter.peek().is_none() {
+            return Ok(());
+        }
+
+        self.add_raw_with(|_, out| {
+            let mut writer = SliceWriter::new(out);
+            write!(writer, "{}={}", key, iter.next().unwrap())
+                .map_err(|_| Error::BufferTooSmall(None))?;
+            for item in iter {
+                write!(writer, ",{}", item).map_err(|_| Error::BufferTooSmall(None))?;
+            }
+            writeln!(writer).map_err(|_| Error::BufferTooSmall(None))?;
+            Ok(writer.len())
         })
     }
 
@@ -162,7 +195,7 @@ impl core::fmt::Display for BootConfigBuilder<'_> {
 
 impl core::fmt::Write for BootConfigBuilder<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.add_with(|_, out| {
+        self.add_raw_with(|_, out| {
             out.get_mut(..s.len())
                 .ok_or(Error::BufferTooSmall(Some(s.len())))?
                 .clone_from_slice(s.as_bytes());
@@ -232,7 +265,7 @@ androidboot.verifiedbootstate=orange
     fn test_add() {
         let mut buffer = [0u8; TEST_CONFIG.len() + TEST_CONFIG_TRAILER.len()];
         let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
-        builder.add(TEST_CONFIG).unwrap();
+        builder.add_raw(TEST_CONFIG).unwrap();
         assert_eq!(
             builder.config_bytes().to_vec(),
             [TEST_CONFIG.as_bytes(), TEST_CONFIG_TRAILER].concat().to_vec()
@@ -247,7 +280,7 @@ androidboot.verifiedbootstate=orange
         let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
         for ele in TEST_CONFIG.strip_suffix('\n').unwrap().split('\n') {
             let config = std::string::String::from(ele) + "\n";
-            builder.add(config.as_str()).unwrap();
+            builder.add_raw(config.as_str()).unwrap();
         }
         assert_eq!(
             builder.config_bytes().to_vec(),
@@ -265,7 +298,7 @@ androidboot.verifiedbootstate=orange
             let config = std::string::String::from(ele) + "\n";
 
             builder
-                .add_with(|current, out| {
+                .add_raw_with(|current, out| {
                     assert_eq!(current, &TEST_CONFIG.as_bytes()[..offset]);
 
                     out[..config.len()].copy_from_slice(config.as_bytes());
@@ -304,20 +337,60 @@ androidboot.verifiedbootstate=orange
     fn test_add_buffer_too_small() {
         let mut buffer = [0u8; BOOTCONFIG_TRAILER_SIZE + 1];
         let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
-        assert!(builder.add("a\n").is_err());
+        assert!(builder.add_raw("a\n").is_err());
     }
 
     #[test]
     fn test_add_empty_string() {
         let mut buffer = [0u8; BOOTCONFIG_TRAILER_SIZE + 1];
         let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
-        builder.add("").unwrap();
+        builder.add_raw("").unwrap();
     }
 
     #[test]
     fn test_add_with_error() {
         let mut buffer = [0u8; BOOTCONFIG_TRAILER_SIZE + 1];
         let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
-        assert!(builder.add_with(|_, _| Err(Error::Other(None))).is_err());
+        assert!(builder.add_raw_with(|_, _| Err(Error::Other(None))).is_err());
+    }
+
+    #[test]
+    fn test_add_array() {
+        let mut buffer = [0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+        builder.add_array("androidboot.dtbo_idx", [1, 2, 3]).unwrap();
+
+        let expected_config = "androidboot.dtbo_idx=1,2,3\n";
+        assert_eq!(extract_bootconfig(builder.config_bytes()).unwrap(), expected_config);
+    }
+
+    #[test]
+    fn test_add_array_single() {
+        let mut buffer = [0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+        builder.add_array("foo", ["bar"]).unwrap();
+
+        let expected_config = "foo=bar\n";
+        assert_eq!(extract_bootconfig(builder.config_bytes()).unwrap(), expected_config);
+    }
+
+    #[test]
+    fn test_add_array_empty() {
+        let mut buffer = [0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+        builder.add_array("foo", Vec::<u32>::new()).unwrap();
+
+        // Empty array should not add anything.
+        assert_eq!(extract_bootconfig(builder.config_bytes()).unwrap(), "");
+    }
+
+    #[test]
+    fn test_add_item() {
+        let mut buffer = [0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+        builder.add_item("foo", "bar").unwrap();
+        builder.add_item("baz", 123).unwrap();
+
+        assert_eq!(extract_bootconfig(builder.config_bytes()).unwrap(), "foo=bar\nbaz=123\n");
     }
 }

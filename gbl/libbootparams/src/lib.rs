@@ -20,5 +20,6 @@
 pub mod bootconfig;
 pub mod commandline;
 pub mod entry;
+mod slice;
 
 pub use self::entry::Entry;

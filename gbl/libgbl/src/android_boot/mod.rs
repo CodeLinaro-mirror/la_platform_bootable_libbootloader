@@ -17,7 +17,8 @@
 use crate::{
     constants::FDT_ALIGNMENT,
     device_tree::{
-        DeviceTreeComponentSource, DeviceTreeComponentType, DeviceTreeComponentsRegistry,
+        DtComponentSource, DtComponentSourceMetadata, DtComponentType, DtComponentsRegistry,
+        SelectedDtComponent, SelectedDtComponents, SelectedDtComponentsMetadata,
     },
     fastboot::{
         boot_items::{BootItem, BootItemContainer},
@@ -32,6 +33,7 @@ use crate::{
     slots::Slot,
     GblOps, IntegrationError, Result,
 };
+use arrayvec::ArrayVec;
 use avb::IoError;
 use bootparams::{
     bootconfig::{extract_bootconfig, BootConfigBuilder},
@@ -205,32 +207,29 @@ pub fn android_load_verify_fixup<'a, 'b>(
     let kernel_len = loader.kernel_sz;
     let ramdisk_len = loader.ramdisk_sz;
 
-    // Fixes up bootconfig.
+    // Updates bootconfig with AVB results and GBL metadata.
 
     let bootconfig_buf = loader.expand_bootconfig_buffer()?;
     let mut bootconfig_builder = BootConfigBuilder::new(bootconfig_buf)?;
     for entry in CommandlineParser::new(verify_data.cmdline().to_str().unwrap()) {
-        write!(bootconfig_builder, "{}\n", entry?).map_err(Error::from)?;
+        writeln!(bootconfig_builder, "{}", entry?).map_err(Error::from)?;
     }
-    write!(bootconfig_builder, "androidboot.verifiedbootstate={}\n", status.color)
-        .map_err(Error::from)?;
+    bootconfig_builder.add_item("androidboot.verifiedbootstate", status.color)?;
     if !is_recovery {
-        bootconfig_builder.add("androidboot.force_normal_boot=1\n")?;
+        bootconfig_builder.add_item("androidboot.force_normal_boot", 1)?;
     }
-    write!(bootconfig_builder, "androidboot.slot_suffix=_{}\n", slot.suffix.as_char())
-        .map_err(Error::from)?;
+    bootconfig_builder
+        .add_item("androidboot.slot_suffix", format_args!("_{}", slot.suffix.as_char()))?;
     // Placeholder value for now. Userspace can use this value to tell if device is booted with GBL.
     // TODO(yochiang): Generate useful value like version, build_incremental in the bootconfig.
-    bootconfig_builder.add("androidboot.gbl.version=0\n")?;
-    write!(bootconfig_builder, "androidboot.gbl.build_number={BUILD_NUMBER}\n")
-        .map_err(Error::from)?;
+    bootconfig_builder.add_item("androidboot.gbl.version", 0)?;
+    bootconfig_builder.add_item("androidboot.gbl.build_number", BUILD_NUMBER)?;
     // TODO(b/484066914): Error if this var is missing.
     if let Ok(fw_api_level) = ops.get_fw_api_level() {
-        write!(bootconfig_builder, "androidboot.gbl.fw.api_level={fw_api_level}\n")
-            .map_err(Error::from)?
+        bootconfig_builder.add_item("androidboot.gbl.fw.api_level", fw_api_level)?;
     }
     // Add bootconfig from vendor_boot
-    bootconfig_builder.add_with(|_, out| {
+    bootconfig_builder.add_raw_with(|_, out| {
         out.get_mut(..images.vendor_bootconfig.len())
             .ok_or(Error::BufferTooSmall(Some(images.vendor_bootconfig.len())))?
             .clone_from_slice(images.vendor_bootconfig);
@@ -246,17 +245,32 @@ pub fn android_load_verify_fixup<'a, 'b>(
     // Fixes up FDT.
 
     let (designated_fdt, remains) = loader.get_fdt_and_general_unused_buffer()?;
-    let mut components = DeviceTreeComponentsRegistry::new();
+    let mut components = DtComponentsRegistry::new();
     // TODO(b/353272981): Remove get_custom_device_tree
-    let (remains, base, overlays, vmdtbo) = match ops.get_custom_device_tree() {
-        Some(v) => (remains, v, &[][..], None),
+    let (remains, selected) = match ops.get_custom_device_tree() {
+        Some(v) => (
+            remains,
+            SelectedDtComponents {
+                base_dt: SelectedDtComponent {
+                    // Incorrect placeholder information. This is acceptable since the
+                    // get_custom_device_tree approach will be removed soon.
+                    source_metadata: DtComponentSourceMetadata {
+                        source: DtComponentSource::Boot,
+                        source_index: 0,
+                    },
+                    dt: v,
+                },
+                vmdtbo: None,
+                overlays: ArrayVec::new(),
+            },
+        ),
         _ => {
             let mut remains = match images.dtbo.len() > 0 {
                 // TODO(b/384964561, b/374336105): Investigate if we can avoid additional copy.
                 true => {
                     gbl_println!(ops, "Handling overlays from dtbo");
                     components.append_from_dttable(
-                        DeviceTreeComponentSource::Dtbo,
+                        DtComponentSource::Dtbo,
                         &DtTableImage::from_bytes(images.dtbo)?,
                         remains,
                     )?
@@ -268,13 +282,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
                 gbl_println!(ops, "Handling device tree from {source}");
                 remains = if FdtHeader::from_bytes_ref(images.dtb).is_ok() {
                     gbl_println!(ops, "Raw device tree found");
-                    components.append(
-                        ops,
-                        source,
-                        DeviceTreeComponentType::DeviceTree,
-                        images.dtb,
-                        remains,
-                    )?
+                    components.append(ops, source, DtComponentType::BaseDt, images.dtb, remains)?
                 } else if let Ok(table) = DtTableImage::from_bytes(images.dtb) {
                     gbl_println!(ops, "Dttable with {} entries found", table.entries_count());
                     components.append_from_dttable(source, &table, remains)?
@@ -289,50 +297,46 @@ pub fn android_load_verify_fixup<'a, 'b>(
             if images.dtb_part.len() > 0 {
                 gbl_println!(ops, "Handling device trees from dtb");
                 let dttable = DtTableImage::from_bytes(images.dtb_part)?;
-                remains = components.append_from_dttable(
-                    DeviceTreeComponentSource::Dtb,
-                    &dttable,
-                    remains,
-                )?;
+                remains =
+                    components.append_from_dttable(DtComponentSource::Dtb, &dttable, remains)?;
             }
 
             gbl_println!(ops, "Selecting device tree components");
             ops.select_device_trees(&mut components)?;
-            let (base, overlays, vmdtbo) = components.selected()?;
-            (remains, base, overlays, vmdtbo)
+            (remains, components.selected()?)
         }
     };
     // Assembles DT in designated buffer if provided, otherwise allocates from `general` buffer.
     let fdt_load = designated_fdt.unwrap_or(aligned_subslice(remains, FDT_ALIGNMENT)?);
-    let mut fdt = Fdt::new_from_init(&mut fdt_load[..], base)?;
+    let mut fdt = Fdt::new_from_init(&mut fdt_load[..], selected.base_dt.dt)?;
 
-    gbl_println!(ops, "Applying {} overlays", overlays.len());
-    fdt.multioverlay_apply(overlays)?;
+    gbl_println!(ops, "Applying {} overlays", selected.overlays.len());
+    fdt.multioverlay_apply(selected.overlays.iter().map(|c| c.dt))?;
     gbl_println!(ops, "Overlays applied");
 
     // Builds the FDT commandline. Reserves 1024 bytes for separators and fixup.
-    fdt_build_bootargs(ops, &mut fdt, &images, overlays, boot_items.as_ref(), 1024)?;
+    fdt_build_bootargs(
+        ops,
+        &mut fdt,
+        &images,
+        selected.overlays.iter().map(|c| c.dt),
+        boot_items.as_ref(),
+        1024,
+    )?;
 
-    let vmdtbo_idx = match pvmfw.as_mut() {
-        Some((reg, bin_sz)) => {
-            let (vmdtbo_idx, vmdtbo) = vmdtbo.unzip();
-            gbl_println!(ops, "AVF: VMDTBO index: {vmdtbo_idx:?}");
-            let total_size = match vmdtbo {
-                Some(v) => inject_vmdtbo(reg, *bin_sz, v)?,
-                None => reg.len(),
-            };
-            avf_fixup_host_dt(ops, &mut fdt, &reg[..total_size], *bin_sz, &verify_data)?;
-            vmdtbo_idx
-        }
-        _ => None,
+    if let Some((reg, bin_sz)) = pvmfw.as_mut() {
+        let total_size = match selected.vmdtbo {
+            Some(vmdtbo) => inject_vmdtbo(reg, *bin_sz, vmdtbo.dt)?,
+            None => reg.len(),
+        };
+        avf_fixup_host_dt(ops, &mut fdt, &reg[..total_size], *bin_sz, &verify_data)?;
     };
 
-    // `DeviceTreeComponentsRegistry` internally uses ArrayVec which causes it to have a default
+    let selected_metadata = selected.into_metadata();
+    // `DtComponentsRegistry` internally uses ArrayVec which causes it to have a default
     // life time equal to the scope it lives in. This is unnecessarily strict and prevents us from
     // accessing `load` buffer.
     drop(components);
-
-    fdt_propagate_random(ops, &mut fdt)?;
 
     // Notifies platform to process loaded partitions before final bootconfig and FDT fixup, so
     // that backend can add fixup items that depend on certain partition data.
@@ -344,6 +348,8 @@ pub fn android_load_verify_fixup<'a, 'b>(
     drop(partitions_to_verify);
     drop(partitions);
     ops.sync_partition_buffer(false)?;
+
+    fdt_propagate_random(ops, &mut fdt)?;
 
     // Backend FDT fixup.
 
@@ -363,7 +369,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
         loader.expand_bootconfig_buffer()?,
         bootconfig_sz,
         pvmfw.is_some(),
-        vmdtbo_idx,
+        &selected_metadata,
         boot_items,
     )?;
     loader.set_bootconfig_size(bootconfig_sz);
@@ -424,21 +430,31 @@ fn finalize_dt<'b>(
 /// * `buf`: Buffer containing an existing bootconfig.
 /// * `curr_bootconfig_sz`: The size including trailer of the existing bootconfig.
 /// * `avf_enabled`: Whether to write AVF-related bootconfig.
-/// * `vmdtbo_idx`: Index of a custom VMDTBO used for AVF device assignment.
+/// * `selected_dt_metadata`: Metadata for selected device tree components.
 /// * `boot_items`: Fastboot boot items.
 fn finalize_bootconfig<'a, 'b, 'c>(
     ops: &mut impl GblOps<'b>,
     buf: &'a mut [u8],
     curr_bootconfig_sz: usize,
     avf_enabled: bool,
-    vmdtbo_idx: Option<usize>,
+    selected_dt_metadata: &SelectedDtComponentsMetadata,
     boot_items: Option<BootItemContainer<'c>>,
 ) -> Result<usize> {
     let mut builder = BootConfigBuilder::from_prefix_unchecked(buf, curr_bootconfig_sz)?;
-    // Adds AVF-specific bootconfig.
     if avf_enabled {
-        avf_update_bootconfig(ops, &mut builder, vmdtbo_idx)?;
+        avf_update_bootconfig(ops, &mut builder, selected_dt_metadata.vmdtbo.as_ref())?;
     }
+    builder.add_item("androidboot.dtb_idx", selected_dt_metadata.base_dt.source_index)?;
+    builder.add_item("androidboot.dtb_source", selected_dt_metadata.base_dt.source)?;
+    builder.add_array(
+        "androidboot.dtbo_idx",
+        selected_dt_metadata.overlays.iter().map(|m| m.source_index),
+    )?;
+    builder.add_array(
+        "androidboot.dtbo_source",
+        selected_dt_metadata.overlays.iter().map(|m| m.source),
+    )?;
+
     if let Some(ref v) = boot_items {
         for val in v.utf8_items(BootItem::Bootconfig) {
             write!(builder, "{}{}", val, val.ends_with("\n").then_some("").unwrap_or("\n"))
@@ -446,7 +462,7 @@ fn finalize_bootconfig<'a, 'b, 'c>(
         }
     }
     // Adds platform-specific bootconfig.
-    builder.add_with(|bytes, out| {
+    builder.add_raw_with(|bytes, out| {
         Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
     })?;
     Ok(builder.config_bytes().len())
@@ -783,7 +799,10 @@ pub(crate) mod tests {
             PartitionBuffer,
         },
     };
-    use avf::test::{dummy_pvmfw_partition, DUMMY_VENDOR_HANDOVER};
+    use avf::{
+        test::{dummy_pvmfw_partition, DUMMY_VENDOR_HANDOVER},
+        PROTECTED_PROP, UNPROTECTED_PROP,
+    };
     use bootparams::bootconfig::{BootConfigBuilder, BOOTCONFIG_TRAILER_SIZE};
     use cfg_if::cfg_if;
     use fdt::std_props;
@@ -880,28 +899,53 @@ pub(crate) mod tests {
         );
     }
 
-    /// A helper for generating avb bootconfig with the given parameters.
-    pub(crate) struct AvbResultBootconfigBuilder {
+    /// A helper for generating expected bootconfig with the given parameters.
+    pub(crate) struct ExpectedBootconfigBuilder {
+        slot: Option<char>,
         vbmeta_size: usize,
         digest: String,
         partition_digests: BTreeMap<String, String>,
         public_key_digest: String,
         color: BootStateColor,
         unlocked: bool,
+        force_normal_boot: bool,
+        gbl_version: usize,
+        gbl_build_number: String,
+        fw_api_level: u64,
+        vendor_bootconfig: Option<String>,
+        dtb_idx: Option<usize>,
+        dtb_source: Option<String>,
+        dtbo_idx: Vec<usize>,
+        dtbo_source: Vec<String>,
         extra: String,
     }
 
-    impl AvbResultBootconfigBuilder {
+    impl ExpectedBootconfigBuilder {
         pub(crate) fn new() -> Self {
             Self {
+                slot: None,
                 vbmeta_size: 0,
                 digest: String::new(),
                 partition_digests: BTreeMap::new(),
                 public_key_digest: String::new(),
                 color: BootStateColor::Green,
                 unlocked: false,
+                force_normal_boot: true,
+                gbl_version: 0,
+                gbl_build_number: BUILD_NUMBER.to_string(),
+                fw_api_level: 202604,
+                vendor_bootconfig: None,
+                dtb_idx: None,
+                dtb_source: None,
+                dtbo_idx: Vec::new(),
+                dtbo_source: Vec::new(),
                 extra: String::new(),
             }
+        }
+
+        pub(crate) fn slot(mut self, slot: char) -> Self {
+            self.slot = Some(slot);
+            self
         }
 
         pub(crate) fn vbmeta_size(mut self, size: usize) -> Self {
@@ -934,45 +978,108 @@ pub(crate) mod tests {
             self
         }
 
+        pub(crate) fn force_normal_boot(mut self, force: bool) -> Self {
+            self.force_normal_boot = force;
+            self
+        }
+
+        pub(crate) fn vendor_bootconfig(mut self, vendor_bootconfig: &str) -> Self {
+            self.vendor_bootconfig = Some(vendor_bootconfig.to_string());
+            self
+        }
+
+        pub(crate) fn dtb_idx(mut self, idx: usize) -> Self {
+            self.dtb_idx = Some(idx);
+            self
+        }
+
+        pub(crate) fn dtb_source(mut self, source: impl Into<String>) -> Self {
+            self.dtb_source = Some(source.into());
+            self
+        }
+
+        pub(crate) fn dtbo_idx(mut self, idx: &[usize]) -> Self {
+            self.dtbo_idx = idx.to_vec();
+            self
+        }
+
+        pub(crate) fn dtbo_source(mut self, source: &[&str]) -> Self {
+            self.dtbo_source = source.iter().map(|&s| s.to_owned()).collect();
+            self
+        }
+
         pub(crate) fn extra(mut self, extra: impl Into<String>) -> Self {
             self.extra += &extra.into();
             self
         }
 
         pub(crate) fn build_no_avb_string(&self) -> String {
-            format!("androidboot.verifiedbootstate={}\n{}", self.color, self.extra)
+            let mut result = String::new();
+
+            writeln!(result, "androidboot.verifiedbootstate={}", self.color).unwrap();
+            if self.force_normal_boot {
+                writeln!(result, "androidboot.force_normal_boot=1").unwrap();
+            }
+            if let Some(slot) = self.slot {
+                writeln!(result, "androidboot.slot_suffix=_{slot}").unwrap();
+            }
+            writeln!(result, "androidboot.gbl.version={}", self.gbl_version).unwrap();
+            writeln!(result, "androidboot.gbl.build_number={}", self.gbl_build_number).unwrap();
+            writeln!(result, "androidboot.gbl.fw.api_level={}", self.fw_api_level).unwrap();
+
+            if let Some(vendor_bootconfig) = &self.vendor_bootconfig {
+                result.push_str(vendor_bootconfig);
+            }
+
+            if let Some(dtb_idx) = self.dtb_idx {
+                writeln!(result, "androidboot.dtb_idx={dtb_idx}").unwrap();
+            }
+            if let Some(dtb_source) = &self.dtb_source {
+                writeln!(result, "androidboot.dtb_source={dtb_source}").unwrap();
+            }
+
+            if !self.dtbo_idx.is_empty() {
+                let idx =
+                    self.dtbo_idx.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
+                writeln!(result, "androidboot.dtbo_idx={idx}").unwrap();
+            }
+            if !self.dtbo_source.is_empty() {
+                writeln!(result, "androidboot.dtbo_source={}", self.dtbo_source.join(",")).unwrap();
+            }
+
+            result.push_str(&self.extra);
+            result
         }
 
         pub(crate) fn build_string(self) -> String {
+            let mut result = String::new();
             let device_state = match self.unlocked {
                 true => "unlocked",
                 false => "locked",
             };
 
-            let mut boot_digests = String::new();
-            for (k, v) in self.partition_digests.iter() {
-                boot_digests += &format!("androidboot.vbmeta.{k}.hash_alg=sha256\n");
-                boot_digests += &format!("androidboot.vbmeta.{k}.digest={v}\n");
+            write!(
+                result,
+                "androidboot.vbmeta.device=PARTUUID=00000000-0000-0000-0000-000000000000\n\
+                androidboot.vbmeta.public_key_digest={}\n\
+                androidboot.vbmeta.avb_version=1.4\n\
+                androidboot.vbmeta.device_state={device_state}\n\
+                androidboot.vbmeta.hash_alg=sha512\n\
+                androidboot.vbmeta.size={}\n\
+                androidboot.vbmeta.digest={}\n\
+                androidboot.veritymode=enforcing\n\
+                androidboot.veritymode.managed=yes\n",
+                self.public_key_digest, self.vbmeta_size, self.digest
+            )
+            .unwrap();
+
+            for (k, v) in &self.partition_digests {
+                writeln!(result, "androidboot.vbmeta.{k}.hash_alg=sha256").unwrap();
+                writeln!(result, "androidboot.vbmeta.{k}.digest={v}").unwrap();
             }
 
-            format!(
-                "androidboot.vbmeta.device=PARTUUID=00000000-0000-0000-0000-000000000000
-androidboot.vbmeta.public_key_digest={}
-androidboot.vbmeta.avb_version=1.4
-androidboot.vbmeta.device_state={}
-androidboot.vbmeta.hash_alg=sha512
-androidboot.vbmeta.size={}
-androidboot.vbmeta.digest={}
-androidboot.veritymode=enforcing
-androidboot.veritymode.managed=yes
-{}{}",
-                self.public_key_digest,
-                device_state,
-                self.vbmeta_size,
-                self.digest,
-                boot_digests.as_str(),
-                self.build_no_avb_string(),
-            )
+            result.push_str(&self.build_no_avb_string());
+            result
         }
 
         pub(crate) fn build_no_avb(self) -> Vec<u8> {
@@ -989,7 +1096,7 @@ androidboot.veritymode.managed=yes
         let bootconfig = bootconfig.as_ref();
         let mut buffer = vec![0u8; bootconfig.len() + BOOTCONFIG_TRAILER_SIZE];
         let mut res = BootConfigBuilder::new(&mut buffer).unwrap();
-        res.add_with(|_, out| {
+        res.add_raw_with(|_, out| {
             out[..bootconfig.len()].clone_from_slice(bootconfig.as_bytes());
             Ok(bootconfig.as_bytes().len())
         })
@@ -1016,15 +1123,25 @@ androidboot.veritymode.managed=yes
         vendor_config: &str,
         fixup_config: &str,
     ) -> Vec<u8> {
-        let mut builder = AvbResultBootconfigBuilder::new()
+        let mut builder = ExpectedBootconfigBuilder::new()
             .color(color)
-            .extra("androidboot.force_normal_boot=1\n")
-            .extra(format!("androidboot.slot_suffix=_{slot}\n"))
-            .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
-            .extra("androidboot.gbl.fw.api_level=202604\n")
-            .extra(vendor_config)
+            .slot(slot)
+            .vendor_bootconfig(vendor_config)
             .extra(fixup_config);
+
+        let has_partition = |name: &str| {
+            let target = format!("{name}_{slot}");
+            partitions.iter().any(|(p, _)| p == &target)
+        };
+
+        // Find the first matching source in priority order
+        let dtb_sources = ["dtb", "vendor_boot", "boot"];
+        if let Some(&source) = dtb_sources.iter().find(|&&s| has_partition(s)) {
+            builder = builder.dtb_idx(0).dtb_source(source);
+        }
+        if has_partition("dtbo") {
+            builder = builder.dtbo_idx(&[0, 1]).dtbo_source(&["dtbo", "dtbo"]);
+        }
 
         match vbmeta_file {
             Some(vbmeta_file) => {
@@ -2065,16 +2182,14 @@ androidboot.veritymode.managed=yes
 
     /// Helper for checking V2 image loaded from slot A and in normal mode.
     pub(crate) fn checks_loaded_v2_slot_a_normal_mode(ramdisk: &[u8], kernel: &[u8]) {
-        let expected_bootconfig = AvbResultBootconfigBuilder::new()
+        let expected_bootconfig = ExpectedBootconfigBuilder::new()
             .vbmeta_size(read_test_data("vbmeta_v2_a.img").len())
             .digest(read_test_data_as_str("vbmeta_v2_a.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("vbmeta_v2_a.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
-            .extra("androidboot.force_normal_boot=1\n")
-            .extra(format!("androidboot.slot_suffix=_a\n"))
-            .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
-            .extra("androidboot.gbl.fw.api_level=202604\n")
+            .slot('a')
+            .dtb_idx(0)
+            .dtb_source("boot")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
@@ -2083,15 +2198,15 @@ androidboot.veritymode.managed=yes
 
     /// Helper for checking V2 image loaded from slot A and in recovery mode.
     fn checks_loaded_v2_slot_a_recovery_mode(ramdisk: &[u8], kernel: &[u8]) {
-        let expected_bootconfig = AvbResultBootconfigBuilder::new()
+        let expected_bootconfig = ExpectedBootconfigBuilder::new()
             .vbmeta_size(read_test_data("vbmeta_v2_a.img").len())
             .digest(read_test_data_as_str("vbmeta_v2_a.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("vbmeta_v2_a.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
-            .extra(format!("androidboot.slot_suffix=_a\n"))
-            .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
-            .extra("androidboot.gbl.fw.api_level=202604\n")
+            .force_normal_boot(false)
+            .slot('a')
+            .dtb_idx(0)
+            .dtb_source("boot")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
@@ -2145,8 +2260,8 @@ androidboot.veritymode.managed=yes
             android_load_verify_fixup(&mut ops, slot('a'), false, boot_buffer).unwrap();
 
         let bootconfig = extract_bootconfig(ramdisk).unwrap();
-        bootconfig.find("androidboot.hypervisor.protected_vm.supported=true").unwrap();
-        bootconfig.find("androidboot.hypervisor.vm.supported=true").unwrap();
+        bootconfig.find(&format!("{PROTECTED_PROP}=true")).unwrap();
+        bootconfig.find(&format!("{UNPROTECTED_PROP}=true")).unwrap();
 
         let fdt = Fdt::new(&fdt[..]).unwrap();
         assert_eq!(
@@ -2224,16 +2339,14 @@ androidboot.veritymode.managed=yes
 
     /// Helper for checking V2 image loaded from slot B and in normal mode.
     pub(crate) fn checks_loaded_v2_slot_b_normal_mode(ramdisk: &[u8], kernel: &[u8]) {
-        let expected_bootconfig = AvbResultBootconfigBuilder::new()
+        let expected_bootconfig = ExpectedBootconfigBuilder::new()
             .vbmeta_size(read_test_data("vbmeta_v2_b.img").len())
             .digest(read_test_data_as_str("vbmeta_v2_b.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("vbmeta_v2_b.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
-            .extra("androidboot.force_normal_boot=1\n")
-            .extra(format!("androidboot.slot_suffix=_b\n"))
-            .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
-            .extra("androidboot.gbl.fw.api_level=202604\n")
+            .slot('b')
+            .dtb_idx(0)
+            .dtb_source("boot")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_b.img"), &expected_bootconfig);
@@ -2658,18 +2771,16 @@ androidboot.veritymode.managed=yes
         })
         .unwrap();
 
-        let expected_bootconfig = AvbResultBootconfigBuilder::new()
+        let expected_bootconfig = ExpectedBootconfigBuilder::new()
             .vbmeta_size(read_test_data("vbmeta_v2_a.img").len())
             .digest(read_test_data_as_str("vbmeta_v2_a.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("vbmeta_v2_a.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .unlocked(true)
             .color(BootStateColor::Orange)
-            .extra("androidboot.force_normal_boot=1\n")
-            .extra(format!("androidboot.slot_suffix=_a\n"))
-            .extra("androidboot.gbl.version=0\n")
-            .extra(format!("androidboot.gbl.build_number={BUILD_NUMBER}\n"))
-            .extra("androidboot.gbl.fw.api_level=202604\n")
+            .slot('a')
+            .dtb_idx(0)
+            .dtb_source("boot")
             .extra("gbl-fb-config-1=1\n")
             .extra("gbl-fb-config-2=1\n")
             .extra("gbl.blob.test=c29tZSB0ZXN0IGRhdGE=\n")

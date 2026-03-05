@@ -20,7 +20,7 @@ use crate::{
         load::split,
     },
     constants::PAGE_SIZE,
-    device_tree::entry_is_vmdtbo,
+    device_tree::{entry_is_vmdtbo, DtComponentSourceMetadata},
     gbl_avb::state::BootStateColor,
     gbl_println, GblOps, KiB,
 };
@@ -28,7 +28,6 @@ use avb::{SlotVerifyData, VbmetaVerifyError};
 use bootparams::bootconfig::BootConfigBuilder;
 use core::{
     ffi::CStr,
-    fmt::Write,
     mem::{align_of, size_of},
 };
 use dttable::DtTableImage;
@@ -565,6 +564,11 @@ where
     Ok(())
 }
 
+pub const PROTECTED_PROP: &str = "androidboot.hypervisor.protected_vm.supported";
+pub const UNPROTECTED_PROP: &str = "androidboot.hypervisor.vm.supported";
+pub const VMDTBO_IDX_PROP: &str = "androidboot.hypervisor.vm_dtbo_idx";
+pub const VMDTBO_SOURCE_PROP: &str = "androidboot.hypervisor.vm_dtbo_source";
+
 /// Add AVF-specific parameters to bootconfig
 ///
 /// # Note
@@ -572,12 +576,8 @@ where
 pub fn avf_update_bootconfig<'a>(
     ops: &mut impl GblOps<'a>,
     bootconfig: &mut BootConfigBuilder,
-    vmdtbo_idx: Option<usize>,
+    vmdtbo_metadata: Option<&DtComponentSourceMetadata>,
 ) -> core::result::Result<(), Error> {
-    const PROTECTED_PROP: &str = "androidboot.hypervisor.protected_vm.supported";
-    const UNPROTECTED_PROP: &str = "androidboot.hypervisor.vm.supported";
-    const VMDTBO_IDX_PROP: &str = "androidboot.hypervisor.vm_dtbo_idx";
-
     for prop in [PROTECTED_PROP, UNPROTECTED_PROP] {
         if bootconfig.config_str().contains(prop) {
             gbl_println!(
@@ -587,11 +587,12 @@ pub fn avf_update_bootconfig<'a>(
                 cause GBL boot failure."
             );
         } else {
-            write!(bootconfig, "{prop}=true\n")?;
+            bootconfig.add_item(prop, true)?;
         }
     }
-    if let Some(idx) = vmdtbo_idx {
-        write!(bootconfig, "{VMDTBO_IDX_PROP}={idx}\n")?;
+    if let Some(metadata) = vmdtbo_metadata {
+        bootconfig.add_item(VMDTBO_IDX_PROP, metadata.source_index)?;
+        bootconfig.add_item(VMDTBO_SOURCE_PROP, metadata.source)?;
     }
     Ok(())
 }
@@ -677,6 +678,7 @@ pub(crate) mod test {
     use super::*;
     use crate::{
         constants::PVMFW_DATA_ALIGNMENT,
+        device_tree::DtComponentSource,
         ops::test::{FakeGblOps, FakeGblOpsStorage},
     };
     use libtestutils::AlignedBuffer;
@@ -920,26 +922,27 @@ pub(crate) mod test {
 
     #[test]
     fn test_write_avf_bootconfig() {
-        let protected = "androidboot.hypervisor.protected_vm.supported";
-        let unprotected = "androidboot.hypervisor.vm.supported";
-        let vmdtbo = "androidboot.hypervisor.vm_dtbo_idx";
         let mut ops = FakeGblOps::new(&[][..]);
         let mut bootconf_buffer = [0u8; 256];
         let mut bootconfig = BootConfigBuilder::new(&mut bootconf_buffer).unwrap();
 
         let bootconf_str = bootconfig.config_str();
-        assert!(!bootconf_str.contains(protected));
-        assert!(!bootconf_str.contains(unprotected));
+        assert!(!bootconf_str.contains(PROTECTED_PROP));
+        assert!(!bootconf_str.contains(UNPROTECTED_PROP));
 
         avf_update_bootconfig(&mut ops, &mut bootconfig, None).unwrap();
-        assert!(!bootconfig.config_str().contains(vmdtbo));
-        assert_eq!(bootconfig.config_str().matches(protected).count(), 1);
-        assert_eq!(bootconfig.config_str().matches(unprotected).count(), 1);
+        assert!(!bootconfig.config_str().contains(VMDTBO_IDX_PROP));
+        assert!(!bootconfig.config_str().contains(VMDTBO_SOURCE_PROP));
+        assert_eq!(bootconfig.config_str().matches(PROTECTED_PROP).count(), 1);
+        assert_eq!(bootconfig.config_str().matches(UNPROTECTED_PROP).count(), 1);
 
-        avf_update_bootconfig(&mut ops, &mut bootconfig, Some(5)).unwrap();
-        assert_eq!(bootconfig.config_str().matches(protected).count(), 1);
-        assert_eq!(bootconfig.config_str().matches(unprotected).count(), 1);
-        assert!(bootconfig.config_str().contains(&format!("{vmdtbo}=5")));
+        let metadata =
+            DtComponentSourceMetadata { source: DtComponentSource::Dtbo, source_index: 5 };
+        avf_update_bootconfig(&mut ops, &mut bootconfig, Some(&metadata)).unwrap();
+        assert_eq!(bootconfig.config_str().matches(PROTECTED_PROP).count(), 1);
+        assert_eq!(bootconfig.config_str().matches(UNPROTECTED_PROP).count(), 1);
+        assert!(bootconfig.config_str().contains(&format!("{VMDTBO_IDX_PROP}=5")));
+        assert!(bootconfig.config_str().contains(&format!("{VMDTBO_SOURCE_PROP}=dtbo")));
     }
 
     #[test]

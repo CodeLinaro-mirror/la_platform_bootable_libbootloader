@@ -37,18 +37,18 @@ const NODE_CHOSEN: &str = "chosen";
 
 /// Helper function to build DT commandline from loaded images, overlays
 /// `bootargs_ext` and additional items provided via fastboot.
-pub(crate) fn fdt_build_bootargs<'a>(
+pub(crate) fn fdt_build_bootargs<'a, 'b>(
     ops: &mut impl GblOps<'a>,
     fdt: &mut Fdt<&mut [u8]>,
     images: &LoadedImages,
-    overlays: &[&[u8]],
+    overlays: impl IntoIterator<Item = &'b [u8]>,
     boot_items: Option<&BootItemContainer>,
     extra_reserved: usize,
 ) -> Result<()> {
     // We need to obtain all Fdt instances first so that we can later store property slices from
     // them to calculate the expected destination size before copying the data.
     let mut parsed_overlays: ArrayVec<Fdt<&[u8]>, MAXIMUM_OVERLAYS_TO_APPLY> = ArrayVec::new();
-    for &overlay in overlays {
+    for overlay in overlays {
         parsed_overlays.push(Fdt::new(overlay)?);
     }
 
@@ -102,7 +102,7 @@ pub(crate) fn fdt_append_bootargs<'a, 'b>(
         if v.find(":=").is_some() {
             gbl_println!(ops, "{v},  \":=\" assignment may not be supported");
         }
-        builder.add(v)?;
+        builder.add_raw(v)?;
     }
 
     // It has been observed that some OS call `from_utf8` on the entire bootarg buffer to decode,
