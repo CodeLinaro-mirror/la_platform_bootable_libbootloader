@@ -106,7 +106,7 @@ pub(crate) fn read_zircon_image<'a, 'b>(
     out: impl Into<&'b mut UninitSlice>,
 ) -> GblResult<usize> {
     let zircon_part = find_part_aliases(ops, zircon_part_name_aliases(slot))?;
-    // Reads ZBI header to computes the total size of kernel.
+    // Reads ZBI header to compute the total size of kernel.
     let mut zbi_header: ZbiHeader = Default::default();
     ops.read_from_partition_sync(zircon_part, 0, zbi_header.as_bytes_mut())?;
     let image_length =
@@ -159,7 +159,7 @@ pub fn zircon_check_enter_fastboot<'a>(ops: &mut impl GblOps<'a>) -> bool {
         }
         Err(e) => {
             gbl_println!(ops, "Warning: error while checking A/B/R one-shot-bootloader ({:?})", e);
-            gbl_println!(ops, "Ignoring error and considered not set");
+            gbl_println!(ops, "Ignoring error and considering it not set");
         }
         _ => {}
     };
@@ -341,7 +341,7 @@ pub(crate) mod test {
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
         assert!(zircon_check_enter_fastboot(&mut ops));
         ops.one_shot_boot_mode = None;
-        // A/B/R metadata should be prioritized in the previous check and thus one-shot-booloader
+        // A/B/R metadata should be prioritized in the previous check and thus one-shot-bootloader
         // flag should be cleared.
         assert!(!zircon_check_enter_fastboot(&mut ops));
     }

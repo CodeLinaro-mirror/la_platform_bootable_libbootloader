@@ -60,7 +60,7 @@ def _gbl_llvm_prebuilts_impl(repo_ctx):
     gbl_cpp_config_inc = Label("@gbl//libc:include/cpp_config_site")
     gbl_cpp_config_inc = _abs_path(repo_ctx, repo_ctx.path(gbl_cpp_config_inc))
 
-    # Create a info.bzl file in the assembled repo to export header/library/tool paths.
+    # Create an info.bzl file in the assembled repo to export header/library/tool paths.
     info_bzl_content = """
 def gbl_llvm_tool_path(tool_name):
     return "{}/" + tool_name
@@ -91,7 +91,7 @@ LINUX_SYSROOT_INCLUDES = \"{}\"
     repo_ctx.file("info.bzl", info_bzl_content)
 
     # The following files are needed for defining bindgen toolchain, we symlink them out to the
-    # top level directory in case the the distribution repo has its own BUILD file which blocks
+    # top level directory in case the distribution repo has its own BUILD file which blocks
     # direct access.
     repo_ctx.symlink("llvm-linux-x86/bin/clang", "clang")
 

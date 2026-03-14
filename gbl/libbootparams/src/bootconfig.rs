@@ -89,10 +89,10 @@ impl<'a> BootConfigBuilder<'a> {
     where
         F: FnOnce(&[u8], &mut [u8]) -> Result<usize>,
     {
-        let remains = self.remaining_capacity();
-        let (current_buffer, remains_buffer) = self.buffer.split_at_mut(self.current_size);
-        let size = reader(&current_buffer[..], &mut remains_buffer[..remains])?;
-        assert!(size <= remains);
+        let remaining = self.remaining_capacity();
+        let (current_buffer, remaining_buffer) = self.buffer.split_at_mut(self.current_size);
+        let size = reader(&current_buffer[..], &mut remaining_buffer[..remaining])?;
+        assert!(size <= remaining);
         self.current_size += size;
         // Content may have been modified. Re-compute trailer.
         self.update_trailer()

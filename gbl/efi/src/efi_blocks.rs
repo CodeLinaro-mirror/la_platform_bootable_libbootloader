@@ -32,11 +32,11 @@ use libgbl::partition::GblDisk;
 use libprofile_macros::profile;
 use safemath::SafeNum;
 
-/// `EfiBlockDeviceIo` wraps a EFI `BlockIoProtocol` and optionally a `BlockIo2Protocol` and
+/// `EfiBlockDeviceIo` wraps an EFI `BlockIoProtocol` and optionally a `BlockIo2Protocol` and
 /// implements the `BlockIo` interface.
 ///
 /// `BlockIoProtocol` is always required and used for implementation of `read_blocks_sync` and
-/// `write_blocks_sync``. When `BlockIo2Protocol` is provided, it will be used to implement
+/// `write_blocks_sync`. When `BlockIo2Protocol` is provided, it will be used to implement
 /// `read_blocks` and `write_blocks`, otherwise they fall back to `BlockIoProtocol`.
 pub struct EfiBlockDeviceIo<'a> {
     block_io: Protocol<'a, BlockIoProtocol>,
@@ -50,7 +50,7 @@ pub struct EfiBlockDeviceIo<'a> {
 }
 
 // SAFETY:
-// `read_blocks()` usess EFI protocol that guarantees to read exact number of blocks that were
+// `read_blocks()` uses EFI protocol that guarantees to read exact number of blocks that were
 // requested, or return error.
 // For async `read_blocks_ex()` blocking wait guarantees that read finishes.
 unsafe impl BlockIo for EfiBlockDeviceIo<'_> {

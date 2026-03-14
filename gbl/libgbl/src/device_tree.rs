@@ -21,11 +21,11 @@ use fdt::{Fdt, FdtHeader, FDT_HEADER_SIZE, MAXIMUM_OVERLAYS_TO_APPLY};
 use liberror::{Error, Result};
 use libutils::aligned_subslice;
 
-/// Maximum amount of device tree components GBL can handle to select from.
+/// Maximum number of device tree components GBL can handle to select from.
 /// TODO(b/353272981): Use dynamic memory to store components. Currently
 /// DtComponentsRegistry takes about 20kb of stack, which can be slow and dangerous.
 pub const MAXIMUM_DT_COMPONENTS: usize = 256;
-/// Error message to fail in case of unsupported amount of device tree components.
+/// Error message for unsupported number of device tree components.
 pub const MAXIMUM_DT_COMPONENTS_ERROR_MSG: &str =
     "At most 256 device tree components are supported to build the final one";
 
@@ -194,7 +194,7 @@ impl<'a> DtComponentsRegistry<'a> {
     }
 
     /// Load device tree components from a dt table image. Ensure components are 8 bytes
-    /// aligned by using provided buffer to cut from. Returns remain buffer.
+    /// aligned by using provided buffer to cut from. Returns remaining buffer.
     pub fn append_from_dttable<'b, 'c: 'a>(
         &mut self,
         component_source: DtComponentSource,
@@ -233,8 +233,8 @@ impl<'a> DtComponentsRegistry<'a> {
     }
 
     /// Append additional device trees from the buffer, where they are stored sequentially.
-    /// Ensure components are 8 bytes aligned by using provided buffer to cut from. Returns remain
-    /// buffer.
+    /// Ensure components are 8 bytes aligned by using provided buffer to cut from. Returns
+    /// remaining buffer.
     ///
     /// # Arguments
     ///
@@ -314,7 +314,7 @@ impl<'a> DtComponentsRegistry<'a> {
     /// Append device tree components from provided buffer prefix. `fdt` must be a 8 bytes aligned
     /// valid fdt buffer. `fdt` may also have multiple fdt buffers placed sequentially. Ensure each
     /// of such components are 8 bytes aligned by using provided `buffer` to cut from. Returns
-    /// remain buffer.
+    /// remaining buffer.
     pub fn append<'b, 'd: 'a>(
         &mut self,
         ops: &mut impl GblOps<'b>,

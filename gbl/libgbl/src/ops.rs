@@ -166,7 +166,7 @@ pub trait GblOps<'a> {
     ///
     /// If successful this method will not return.
     /// If an error is generated instead, the caller is expected to log the error
-    /// and bring the system to a halt, usually by entering an infinte loop.
+    /// and bring the system to a halt, usually by entering an infinite loop.
     fn reboot(&mut self) -> Result<!, Error>;
 
     /// Returns the list of disk devices on this platform.
@@ -174,7 +174,7 @@ pub trait GblOps<'a> {
     /// Notes that the return slice doesn't capture the life time of `&self`, meaning that the slice
     /// reference must be producible without borrowing `Self`. This is intended and necessary to
     /// make disk IO and the rest of GblOps methods independent and parallelizable, which is
-    /// required for features such as parallell fastboot flash, download and other commands. For
+    /// required for features such as parallel fastboot flash, download and other commands. For
     /// implementation, this typically means that the `GblOps` object should hold a reference of the
     /// array instead of owning it.
     fn disks(
@@ -224,7 +224,7 @@ pub trait GblOps<'a> {
         block_on(self.write_to_partition(part, off, data))
     }
 
-    /// Returns the size of a partiiton. Returns Ok(None) if partition doesn't exist.
+    /// Returns the size of a partition. Returns Ok(None) if partition doesn't exist.
     fn partition_size(&mut self, part: &str) -> Result<Option<u64>, Error> {
         match check_part_unique(self.disks(), part) {
             Ok((_, p)) => Ok(Some(p.size()?)),
@@ -468,9 +468,9 @@ pub trait GblOps<'a> {
     ///
     /// # Args
     ///
-    /// * `name`: Varaiable name.
+    /// * `name`: Variable name.
     /// * `args`: Additional arguments.
-    /// * `out`: The output buffer for the value of the variable. Must be a ASCII string.
+    /// * `out`: The output buffer for the value of the variable. Must be an ASCII string.
     ///
     /// # Returns
     ///
@@ -1558,7 +1558,7 @@ pub(crate) mod test {
             // Update kernel command line with fixup value.
             let cmd_prop_len = fdt.get_property("chosen", PROP_BOOTARGS)?.len();
 
-            // GBL guaranties kernel command line has some extra space reserved to append.
+            // GBL guarantees kernel command line has some extra space reserved to append.
             let cmd_prop_buffer =
                 fdt.set_property_placeholder("chosen", PROP_BOOTARGS, cmd_prop_len)?;
             let mut commandline = CommandlineBuilder::new_from_prefix(cmd_prop_buffer)?;

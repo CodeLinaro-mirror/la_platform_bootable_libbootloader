@@ -101,7 +101,7 @@ fn zircon_verify_kernel_internal<'a, 'b, B: SplitByteSliceMut + PartialEq>(
             // the state is now unknown and unpredictable. It's also more useful
             // for board bringup if we fail when the callbacks are not properly
             // implemented.
-            gbl_println!(avb_ops.gbl_ops, "Verification failed {:?}", e);
+            gbl_println!(avb_ops.gbl_ops, "Verification failed: {:?}", e);
             return Err(e.without_verify_data().into());
         }
     };

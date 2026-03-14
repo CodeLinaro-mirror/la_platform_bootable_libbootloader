@@ -18,7 +18,7 @@ GBL fastboot supports flexible access to storage using this format:
 
 `fastboot {flash,erase,fetch} part/storage_id/offset/size`
 
-The following variables areused to construct targets across various commands:
+The following variables are used to construct targets across various commands:
 
 - `<part>` (Required: production builds, Optional: dev builds): The name of the
   partition to operate on. This must be a valid, non-empty partition name on
@@ -61,7 +61,6 @@ the supported syntaxes for the partition name argument in fastboot.
   storage device with ID `storage_id`.
 
   Examples:
-
   - `fastboot flash boot_a` -- If there is only one storage or a default storage
     ID is set via `fastboot oem gbl-set-default-block <default ID>`, flashes in
     the entire range of the storage. If not, checks that `boot_a` can match to a
@@ -89,7 +88,7 @@ the supported syntaxes for the partition name argument in fastboot.
   ```
 
   This is similar to the case of partition except that `part` is an empty
-  string. It specifies range`[offset, offset+size)` of the raw data on the
+  string. It specifies range `[offset, offset+size)` of the raw data on the
   storage device with ID `storage_id`. If `storage_id` is not given, GBL will
   check if a default storage ID is set via
   `fastboot oem gbl-set-default-block <storage_id>` and use the default ID if

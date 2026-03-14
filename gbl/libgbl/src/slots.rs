@@ -79,13 +79,9 @@ impl Suffix {
         self.0
     }
 
-    // We want lexigraphically lower suffixes
-    // to have higher priority.
-    // A cheater way to do this is to compare
-    // their negative values.
-    // A char is 4 bytes, and a signed 64 bit int
-    // can comfortably contain the negative of a
-    // number represented by an unsigned 32 bit int.
+    // We want lexicographically lower suffixes to have higher priority. A cheater way to do
+    // this is to compare their negative values. A char is 4 bytes, and a signed 64 bit int
+    // can comfortably contain the negative of a number represented by an unsigned 32 bit int.
     fn rank(&self) -> i64 {
         -i64::from(u32::from(self.0))
     }
@@ -307,7 +303,7 @@ impl<'a> Iterator for SlotIterator<'a> {
     }
 }
 
-/// Describe a oneshot boot target.
+/// Describes a oneshot boot target.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum OneShot {
     /// The bootloader will stop in some kind of interactive mode.

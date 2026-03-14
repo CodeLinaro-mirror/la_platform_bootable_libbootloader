@@ -14,7 +14,7 @@
 
 // The compiler looks for this function. It is normally provided by libstd.
 // But for baremetal we don't use std and implementation doesn't matter
-// anyway. We put a empty place holder here to get compilation pass.
+// anyway. We put an empty placeholder here to get compilation pass.
 #[no_mangle]
 pub extern "C" fn rust_eh_personality() {}
 

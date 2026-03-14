@@ -330,7 +330,7 @@ pub enum CommandExecType {
     /// Default GBL implementation
     #[default]
     DefaultImpl,
-    /// Custom vendor imlementation
+    /// Custom vendor implementation
     CustomImpl,
     /// Command is not allowed
     Prohibited,
@@ -496,7 +496,7 @@ pub trait FastbootImplementation {
     ///
     /// # Args
     ///
-    /// * `mode`: An `RebootMode` specifying the reboot mode.
+    /// * `mode`: A `RebootMode` specifying the reboot mode.
     /// * `responder`: An instance of `InfoSender + OkaySender`. Implementation should call
     ///   `responder.send_okay("")` right before reboot to notify the remote host that the
     ///   operation is successful.
@@ -534,7 +534,7 @@ pub trait FastbootImplementation {
     ///
     /// # Returns
     ///
-    /// * The method is always return OK to let fastboot continue.
+    /// * The method always returns OK to let fastboot continue.
     /// * Returns `Err(e)` on error.
     async fn boot(&mut self, responder: impl InfoSender + OkaySender) -> CommandResult<()>;
 
@@ -546,9 +546,9 @@ pub trait FastbootImplementation {
     /// * `responder`: An instance of `InfoSender + OkaySender + FailSender`.
     ///
     /// * If backend does not plan to return from the function, or wants to construct custom result
-    ///   message, it should send either a OKAY or FAIL messgae with `responder`, otherwise host
+    ///   message, it should send either an OKAY or FAIL message with `responder`, otherwise host
     ///   may hang waiting for reply.
-    /// * If implementation returns Ok(()) without sending a OKAY message via `responder`,
+    /// * If implementation returns Ok(()) without sending an OKAY message via `responder`,
     ///   an empty OKAY message will be sent by `process_next_command()`.
     /// * If implementation returns Err(e) without sending a FAIL message via `responder`,
     ///   a FAIL message of `e` will be sent.
@@ -595,7 +595,7 @@ pub trait FastbootImplementation {
     /// * DefaultImpl - Default implementation will run for the command if available.
     /// * CustomImpl - Vendor has overridden the command. `fastboot oem ...` is one of the cases
     /// that is implemented using this approach.
-    /// * Prohibited - short cut for CustomImpl that just bans the command.
+    /// * Prohibited - shortcut for CustomImpl that just bans the command.
     async fn command_exec(
         &mut self,
         args: impl Iterator<Item = &'_ CStr> + Clone,
@@ -694,7 +694,7 @@ pub trait InfoSender {
     ///
     /// # Args:
     ///
-    /// * `cb`: A closure provided by the caller for constructing the formatted messagae.
+    /// * `cb`: A closure provided by the caller for constructing the formatted message.
     async fn send_formatted_info<F: FnOnce(&mut dyn Write)>(&mut self, cb: F) -> Result<()>;
 
     /// Sends a Fastboot "INFO<`msg`>" packet.
@@ -709,7 +709,7 @@ pub trait OkaySender {
     ///
     /// # Args:
     ///
-    /// * `cb`: A closure provided by the caller for constructing the formatted messagae.
+    /// * `cb`: A closure provided by the caller for constructing the formatted message.
     async fn send_formatted_okay<F: FnOnce(&mut dyn Write)>(self, cb: F) -> Result<()>;
 
     /// Sends a fastboot OKAY<msg> packet. `Self` is consumed.
@@ -727,7 +727,7 @@ pub trait FailSender {
     ///
     /// # Args:
     ///
-    /// * `cb`: A closure provided by the caller for constructing the formatted messagae.
+    /// * `cb`: A closure provided by the caller for constructing the formatted message.
     async fn send_formatted_fail<F: FnOnce(&mut dyn Write)>(self, cb: F) -> Result<()>;
 
     /// Sends a fastboot FAIL<msg> packet. `Self` is consumed.
@@ -834,7 +834,7 @@ impl<'a, T: Transport> Responder<'a, T> {
     ///
     /// # Args:
     ///
-    /// * `cb`: A closure provided by the caller for constructing the formatted messagae.
+    /// * `cb`: A closure provided by the caller for constructing the formatted message.
     async fn send_formatted_msg<F: FnOnce(&mut dyn Write)>(
         &mut self,
         msg_type: &str,
@@ -1210,7 +1210,7 @@ async fn fetch(
     let fetch_res = async {
         let cmd = cmd.strip_prefix("fetch:").ok_or::<CommandError>("Missing arguments".into())?;
         if args.clone().count() < 3 {
-            return Err("Not enough argments".into());
+            return Err("Not enough arguments".into());
         }
         // Parses backward. Parses size, offset first and treats the remaining string as
         // partition name. This allows ":" in partition name.
@@ -1684,8 +1684,8 @@ mod test {
         ) -> CommandResult<()> {
             self.predownload_handler.as_mut().map(|f| f(&mut responder)).transpose()?;
             let total = responder.total();
-            let mut donwloader = responder.initiate_download().await?;
-            self.download_handler.as_mut().map(|f| f(&mut donwloader, total)).transpose()?;
+            let mut downloader = responder.initiate_download().await?;
+            self.download_handler.as_mut().map(|f| f(&mut downloader, total)).transpose()?;
             Ok(())
         }
 
@@ -2303,9 +2303,9 @@ mod test {
             transport.out_queue,
             VecDeque::<Vec<u8>>::from([
                 b"FAILMissing arguments".into(),
-                b"FAILNot enough argments".into(),
-                b"FAILNot enough argments".into(),
-                b"FAILNot enough argments".into(),
+                b"FAILNot enough arguments".into(),
+                b"FAILNot enough arguments".into(),
+                b"FAILNot enough arguments".into(),
                 b"FAILMissing offset".into(),
                 b"FAILMissing size".into(),
                 b"FAILInvalid offset".into(),

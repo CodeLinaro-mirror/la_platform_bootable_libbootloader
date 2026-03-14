@@ -388,7 +388,7 @@ pub unsafe extern "C" fn AbrMarkSlotSuccessful(
     unpack_result(mark_slot_successful(&mut abr_ops, slot_index), &mut ())
 }
 
-/// `SlotInfo` contains the current state of a A/B/R slot.
+/// `SlotInfo` contains the current state of an A/B/R slot.
 ///
 /// TODO(b/338243123): Detailed documentation is available in Fuchsia upstream header
 /// "src/firmware/lib/abr/include/lib/abr/abr.h", which will migrate to the GBL repo.

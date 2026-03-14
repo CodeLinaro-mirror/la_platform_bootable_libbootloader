@@ -252,7 +252,7 @@ pub fn build_pvmfw_data_region<'a, T: AVFVerificationData>(
         PAGE_SIZE,
     )?;
 
-    gbl_println!(ops, "AVF: init success");
+    gbl_println!(ops, "AVF: init successful");
     Ok(total_size)
 }
 

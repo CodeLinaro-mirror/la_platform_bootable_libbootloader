@@ -183,8 +183,8 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> Task<'a, 'b, B, P> {
 
     /// Runs the task. Panics on error.
     ///
-    /// The method is intended for use in the context of parallel/background async task where errors
-    /// can't be easily handled by the main routine.
+    /// The method is intended for use in the context of parallel/background async tasks where
+    /// errors can't be easily handled by the main routine.
     async fn run(mut self) {
         match self.workload.run().await {
             Err(e) => panic!(
@@ -921,12 +921,12 @@ where
         Ok(())
     }
 
-    /// Helper for checking and getting an `BootItemContainer` from general load buffer.
+    /// Helper for checking and getting a `BootItemContainer` from general load buffer.
     fn boot_item_container(&mut self) -> CommandResult<&mut BootItemContainer<'b>> {
         let v = self.data.boot_buffer.boot_items();
         match v.check_valid() {
             Err(_) => v.init().map_err(|e| {
-                CommandError::from(format_args!("Failed to initialize boot item container {e})"))
+                CommandError::from(format_args!("Failed to initialize boot item container {e}"))
             })?,
             _ => {}
         }
@@ -936,13 +936,13 @@ where
     /// Helper for checking whether device is unlocked.
     fn check_unlocked(&mut self) -> CommandResult<()> {
         match self.gbl_ops.fastboot_read_lock_state(LockType::Device) {
-            Err(e) => Err(format_args!("Fail to get unlock status {e}").into()),
+            Err(e) => Err(format_args!("Failed to get unlock status {e}").into()),
             Ok(LockState::Locked) => Err("Device is not unlocked".into()),
             _ => Ok(()),
         }
     }
 
-    /// Takes the download data and resets download size.
+    /// Takes the download data and resets the download size.
     fn take_download(&mut self) -> Option<(ScopedBuffer<'b, P>, usize)> {
         Some((self.current_download_buffer.take()?, take(&mut self.current_download_size)))
     }
@@ -956,7 +956,7 @@ where
         }
     }
 
-    /// Gets or allocates download buffer and returns it by reference.
+    /// Gets or allocates a download buffer and returns it by reference.
     async fn get_download_buffer(&mut self) -> &mut ScopedBuffer<'b, P> {
         let current = &mut self.current_download_buffer;
         if let Some(buf) = current {
@@ -1142,7 +1142,7 @@ where
             let actual = hasher.finalize();
             if actual != crc {
                 return Err(format_args!(
-                    "CRC check failed. expect: {crc:#x}, actual: {actual:#x}"
+                    "CRC check failed. expected: {crc:#x}, actual: {actual:#x}"
                 )
                 .into());
             }
@@ -2403,7 +2403,7 @@ pub(crate) mod test {
         check_flash_multi_part(&mut gbl_fb, "boot_ab", &["boot_a", "boot_b"], expect_boot_a);
         check_flash_multi_part(&mut gbl_fb, "boot", &["boot_b"], expect_boot_a);
 
-        // Partital flash
+        // Partial flash
         let range = 0x200..0x400;
         check_flash_part(&mut gbl_fb, "boot_a//200", &expect_boot_a[range.clone()]);
         check_flash_part(&mut gbl_fb, "boot_b//200", &expect_boot_b[range.clone()]);
@@ -3017,7 +3017,7 @@ pub(crate) mod test {
             res
         }
 
-        /// A helper for decoding TCP output data as strings
+        /// A helper for decoding TCP output data as a string
         pub(crate) fn dump_tcp_out_queue(&self) -> String {
             let mut data = self.lock();
             let mut v;
@@ -4327,7 +4327,7 @@ pub(crate) mod test {
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
-        // "fastboot boot boot_v2_a.img" should failed.
+        // "fastboot boot boot_v2_a.img" should fail.
         let data = read_test_data("boot_v2_a.img");
         listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
         listener.add_transport_input(&data);
@@ -5259,7 +5259,7 @@ pub(crate) mod test {
                 b"OKAY",
                 b"OKAY",
                 b"DATA00000800",
-                b"FAILCRC check failed. expect: 0x0, actual: 0xb47c63c1",
+                b"FAILCRC check failed. expected: 0x0, actual: 0xb47c63c1",
                 b"DATA00000800",
                 b"OKAY",
                 b"OKAY",

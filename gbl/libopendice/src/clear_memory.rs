@@ -42,7 +42,7 @@ mod aarch64 {
 ///
 /// # Safety
 ///
-/// The provided address and size must be to an address range that is valid for read and write
+/// The provided address and size must be for an address range that is valid for read and write
 /// from a single allocation (e.g. stack array).
 #[no_mangle]
 unsafe extern "C" fn DiceClearMemory(_ctx: *mut c_void, size: usize, addr: *mut c_void) {

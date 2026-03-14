@@ -38,7 +38,7 @@ pub struct RamBlockIo<T> {
 }
 
 impl<T: DerefMut<Target = [u8]>> RamBlockIo<T> {
-    /// Creates an new instance.
+    /// Creates a new instance.
     pub fn new(block_size: u64, alignment: u64, storage: T) -> Self {
         assert_eq!(
             storage.len() % usize::try_from(block_size).unwrap(),

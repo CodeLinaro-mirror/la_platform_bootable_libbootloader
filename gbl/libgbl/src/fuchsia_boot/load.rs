@@ -504,7 +504,7 @@ mod test {
         test_zircon_main_unlock_ignore_vbmeta_items_if_corrupted(SlotIndex::R);
     }
 
-    /// Helper for booting a image via "fastboot boot"
+    /// Helper for booting an image via "fastboot boot"
     fn zircon_main_fastboot_boot<'a>(
         ops: &mut FakeGblOps,
         load_buffer: &'a mut [u8],

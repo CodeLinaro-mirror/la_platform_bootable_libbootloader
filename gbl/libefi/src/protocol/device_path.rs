@@ -92,7 +92,7 @@ impl<'a> Protocol<'a, DevicePathProtocol> {
     /// * `Err(Error::InvalidInput)` if failed to parse EFI data.
     pub fn gbl_vendor_media_device_path(&self) -> Result<Option<&'a CStr>> {
         // SAFETY: UEFI firmware requires that `self.interface_ptr()` is non-null and points to a
-        // series of Device Path nodes that ends with a End of Hardware Device Path node.
+        // series of Device Path nodes that ends with an End of Hardware Device Path node.
         for (header, aux) in unsafe { EfiDevicePathNodeIter::new(self.interface_ptr()) } {
             if header.type_ == EFI_DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH
                 && header.sub_type == EFI_MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR

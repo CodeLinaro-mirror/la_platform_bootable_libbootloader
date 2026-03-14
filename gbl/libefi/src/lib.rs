@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The library implements Rust wrappers for a set of UEFI interfaces needed by GBL. It also
-//! provides a global allocator and supports auto release of dynamic UEFI resource such as
+//! provides a global allocator and supports auto-release of dynamic UEFI resources such as
 //! protocols and UEFI allocated buffers.
 //!
 //! # Examples
@@ -1675,7 +1675,7 @@ mod test {
     pub struct CreateEventTrace {
         // Capture `type_`, `notify_tpl`, `notify_fn`, `notify_ctx`
         pub inputs: VecDeque<(u32, EfiTpl, EfiEventNotify, *mut core::ffi::c_void)>,
-        // Output a EfiEvent.
+        // Output an EfiEvent.
         pub outputs: VecDeque<EfiEvent>,
     }
 

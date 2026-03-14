@@ -288,8 +288,8 @@ unsafe impl<T: BlockIo> BlockIo for BlockIoSync<T> {
 }
 
 // SAFETY:
-// `read_blocks` method has same guaranties as `BlockIo` implementation of referenced type T.
-// Which guaranties `out` to be fully initialized on success.
+// `read_blocks` method has same guarantees as `BlockIo` implementation of referenced type T.
+// Which guarantees `out` to be fully initialized on success.
 unsafe impl<T: DerefMut> BlockIo for T
 where
     T::Target: BlockIo,

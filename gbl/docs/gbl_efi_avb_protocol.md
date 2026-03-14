@@ -945,8 +945,8 @@ used for:
 3. Handle data for all partitions loaded by GBL, including device-specific
    partitions requested through
    [`ReadPartitionAttributes()`][read_partition_attributes].
-4. Display the appropriate UI and obtaining user confirmation for states that
-   may affect the device's security guarantees.
+4. Display the appropriate UI and obtain user confirmation for states that may
+   affect the device's security guarantees.
 
 Note: The data pointed to by `Result` (including the loaded partitions and
 properties buffers) is valid only for the duration of this call and becomes

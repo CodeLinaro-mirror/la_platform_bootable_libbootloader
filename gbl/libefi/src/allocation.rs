@@ -189,7 +189,7 @@ impl EfiAllocator {
             .system_table_checked()
             .and_then(|v| v.boot_services_checked())
             .and_then(|v| v.free_pages(ptr as *mut _, Self::pages(size).unwrap()))
-            .inspect_err(|e| efi_try_print!("failed to deallocate pages: {e}\r\n"));
+            .inspect_err(|e| efi_try_print!("Failed to deallocate pages: {e}\r\n"));
     }
 
     /// Allocate memory via EFI_BOOT_SERVICES.AllocatePool().
@@ -200,7 +200,7 @@ impl EfiAllocator {
             .and_then(|v| v.system_table_checked())
             .and_then(|v| v.boot_services_checked())
             .and_then(|v| v.allocate_pool(EFI_MEMORY_TYPE_LOADER_DATA, size))
-            .inspect_err(|e| efi_try_print!("failed to allocate: {e}"))
+            .inspect_err(|e| efi_try_print!("Failed to allocate: {e}"))
             .unwrap_or(null_mut()) as _
     }
 
@@ -214,7 +214,7 @@ impl EfiAllocator {
                     .system_table_checked()
                     .and_then(|v| v.boot_services_checked())
                     .and_then(|v| v.free_pool(ptr as *mut _))
-                    .inspect_err(|e| efi_try_print!("failed to deallocate: {e}"));
+                    .inspect_err(|e| efi_try_print!("Failed to deallocate: {e}"));
             }
             // After EFI_BOOT_SERVICES.ExitBootServices(), all allocated memory is considered
             // leaked and under full ownership of subsequent OS loader code.

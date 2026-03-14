@@ -90,7 +90,7 @@ pub enum SlotIndex {
 }
 
 impl SlotIndex {
-    // Get the other counterpart of a A/B slot.
+    // Get the other counterpart of an A/B slot.
     fn other(&self) -> Self {
         match self {
             SlotIndex::A => SlotIndex::B,
@@ -161,7 +161,7 @@ impl TryFrom<c_uint> for SlotIndex {
     }
 }
 
-/// `SlotInfo` represents the current state of a A/B/R slot.
+/// `SlotState` represents the current state of an A/B/R slot.
 pub enum SlotState {
     /// Slot has successfully booted.
     Successful,
@@ -172,7 +172,7 @@ pub enum SlotState {
     Unbootable,
 }
 
-/// `SlotInfo` contains the current state and active status of a A/B/R slot.
+/// `SlotInfo` contains the current state and active status of an A/B/R slot.
 pub struct SlotInfo {
     /// The [SlotState] describing the bootability.
     pub state: SlotState,
@@ -525,7 +525,7 @@ pub fn get_boot_slot(abr_ops: &mut dyn Ops, update_metadata: bool) -> (SlotIndex
         }
         // Second is to clear the successful_boot bit from any successfully-marked slots that
         // aren't the slot we're booting. It's possible that booting from one slot will render the
-        // other slot unbootable (say, by migrating a config file format in a shared partiton).
+        // other slot unbootable (say, by migrating a config file format in a shared partition).
         // Clearing these bits minimizes the risk we'll have an unhealthy slot marked
         // "successful_boot", which would prevent the system from automatically booting into
         // recovery.
@@ -537,7 +537,7 @@ pub fn get_boot_slot(abr_ops: &mut dyn Ops, update_metadata: bool) -> (SlotIndex
         }
         if let Err(e) = save_metadata_if_changed(abr_ops, &mut abr_data, &abr_data_orig) {
             // We have no choice but to proceed without updating metadata.
-            avb_print!(abr_ops, "Failed to update metadata {:?}, proceeding anyways.\n", e);
+            avb_print!(abr_ops, "Failed to update metadata {:?}, proceeding anyway.\n", e);
         }
     }
     (slot_to_boot, is_slot_marked_successful)

@@ -110,7 +110,7 @@ impl<'a> CommandlineBuilder<'a> {
 
         assert!(size <= remains_buffer.len());
 
-        // Replace current null terminator with space separator. This logic adding a redundant
+        // Replace current null terminator with space separator. This logic adds a redundant
         // leading space in case build is currently empty. Keep it as is for the simplicity.
         self.buffer[self.current_size] = b' ';
         // +1 for space separator

@@ -167,12 +167,12 @@ pub fn android_load_verify_fixup<'a, 'b>(
     {
         use crate::android_boot::vboot::avb_fake_verify_slot;
 
-        // AVB is failed, try to use fake avb flow since we're in dev flow. Fallback
-        // locking state to unlocked since inside dev GBL flow.
+        // AVB failed, try to use fake avb flow since we're in dev flow. Fallback locking state to
+        // unlocked since inside dev GBL flow.
         if res.is_err() && ops.avb_read_device_status().map(|s| s.is_unlocked).unwrap_or(true) {
             gbl_println!(
                 ops,
-                "AVB is failed with: {}. Dev flavor of GBL, so tyring fake AVB flow.",
+                "AVB failed with: {}. Dev flavor of GBL, so trying fake AVB flow.",
                 res.as_ref().err().unwrap()
             );
 
@@ -476,7 +476,8 @@ pub(crate) fn get_boot_slot<'a>(ops: &mut impl GblOps<'a>) -> Result<Slot> {
         Err(Error::Unsupported | Error::NotFound) => {
             gbl_println!(
                 ops,
-                "Slotting is not supported. Default to 'a' slot. This is only supported on dev GBL"
+                "Slotting is not supported. Defaulting to 'a' slot. \
+                This is only supported on dev GBL"
             );
             Ok(Slot { suffix: 'a'.try_into().unwrap(), ..Default::default() })
         }

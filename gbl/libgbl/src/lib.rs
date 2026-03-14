@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! # Generic Boot Loader (gbl) Library
+//! # Generic Bootloader Library (GBL)
 //!
 //! TODO: b/312610098 - add documentation.
 //!
 //! The intended users of this library are firmware, bootloader, and bring-up teams at OEMs and SOC
-//! Vendors
+//! vendors
 //!
 //! This library is `no_std` as it is intended for use in bootloaders that typically will not
 //! support the Rust standard library. However, it does require `alloc` with a global allocator,
@@ -67,7 +67,7 @@ mod tests {
 
     /// Returns the contents of a test data file.
     ///
-    /// Panicks if the requested file cannot be read.
+    /// Panics if the requested file cannot be read.
     ///
     /// # Arguments
     /// * `path`: file path relative to libgbl's `testdata/` directory.

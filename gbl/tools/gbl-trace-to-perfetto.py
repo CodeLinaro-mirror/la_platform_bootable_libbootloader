@@ -47,7 +47,7 @@ FORMATS = {
 }
 
 
-# Find an llvm-symboilzer tool from prebuilts checked out in GBL repo.
+# Find an llvm-symbolizer tool from prebuilts checked out in GBL repo.
 def find_gbl_repo_llvm_symbolizer():
   try:
     aosp = SCRIPT_DIR.parents[4]
@@ -145,7 +145,7 @@ def main():
     )
 
   print("Converting to trace event format...")
-  trace_bin = trace_bin[struct.calcsize(META_FORMAT) :]
+  trace_bin = trace_bin[struct.calcsize(META_FORMAT):]
 
   # Parses all trace entries and collect addresses that need to be symbolized.
   entries = []

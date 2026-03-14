@@ -84,7 +84,7 @@ pub async fn yield_now() {
     Yield(false).await
 }
 
-/// `YieldCounter` maintains a counter and yield control to executor once it overflows a given
+/// `YieldCounter` maintains a counter and yields control to executor once it overflows a given
 /// threshold. When overflow occurs, the counter value is reset and the carry over is discarded.
 pub struct YieldCounter {
     threshold: u64,

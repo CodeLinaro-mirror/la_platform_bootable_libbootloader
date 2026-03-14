@@ -301,13 +301,13 @@ fn get_verified_partition<'a, 'b>(
         verify_data.partition_data().iter().find(|v| v.partition_name() == part.name_cstr());
     match part_res {
         None if optional => {
-            gbl_println!(ops, "{slotted:?} isn't loaded by avb. Image is optional. Skips.");
+            gbl_println!(ops, "{slotted:?} is not loaded by avb. Image is optional. Skipping.");
             Ok(&[][..])
         }
         None => {
             gbl_println!(
                 ops,
-                "Error: {slotted:?} is required but isn't loaded by avb. \
+                "Error: {slotted:?} is required but is not loaded by avb. \
                 The partition may be missing or not included in the vbmeta."
             );
             Err(Error::NotFound)
@@ -315,7 +315,10 @@ fn get_verified_partition<'a, 'b>(
         Some(v) => match v.verify_result() {
             Ok(_) => Ok(v.data()),
             Err(_) if unlocked => {
-                gbl_println!(ops, "{slotted:?} verification fails. Device is unlocked. Continues.");
+                gbl_println!(
+                    ops,
+                    "{slotted:?} verification failed. Device is unlocked. Continuing."
+                );
                 Ok(v.data())
             }
             _ => unreachable!(), // Should not reach here if locked and verification failed.
@@ -674,7 +677,7 @@ impl<'a> BootBufferLoader<'a> {
                 let general_range = self.general.as_ptr_range();
                 let buffer = &mut self.general[self.ramdisk_sz..];
                 let sz = decompress_kernel(ops, kernel, &mut buffer[..])?;
-                // TODO(b/430068343): We place the kenrel at the tail because we haven't fixup
+                // TODO(b/430068343): We place the kernel at the tail because we haven't fixed up
                 // FDT/bootconfig yet and don't know their exact size. However the fixup requires
                 // calling sync_partition_buffer() first which requires all partition buffers to
                 // be dropped. Thus we need to be done with partitions first.

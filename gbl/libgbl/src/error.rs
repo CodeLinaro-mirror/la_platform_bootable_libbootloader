@@ -21,7 +21,7 @@ use core::{
 };
 
 /// A helper macro for declaring a composite enum type that simply wraps other types as entries.
-/// It auto-generate `From<...>` implementation for each entry type. The type for each entry must
+/// It auto-generates `From<...>` implementation for each entry type. The type for each entry must
 /// be different from each other. i.e.:
 ///
 /// ```rust

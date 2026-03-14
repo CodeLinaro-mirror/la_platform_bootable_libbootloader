@@ -53,8 +53,8 @@ impl Identified for EfiBlockIoProtocol {
 ///
 /// The implementation must guarantee that:
 ///
-/// * the data is never uninitialized (e.g. via [MaybeUninit::uininit()])
-/// * if success is returned, the entire buffer must have been filled
+/// * the data is never uninitialized (e.g. via [MaybeUninit::uninit()])
+/// * if successful, the entire buffer must have been filled
 #[cfg_attr(feature = "mocks", mockall::automock)]
 pub unsafe trait BlockIo {
     /// Returns the protocol revision that the implementation is providing.

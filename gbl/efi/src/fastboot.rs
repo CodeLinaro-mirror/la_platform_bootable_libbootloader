@@ -258,7 +258,7 @@ impl Drop for EfiFastbootTransport<'_> {
         let _ = self
             .protocol
             .stop()
-            .inspect_err(|e| efi_println!(entry, "Fail to stop transport: {e}"));
+            .inspect_err(|e| efi_println!(entry, "Failed to stop transport: {e}"));
     }
 }
 
@@ -362,7 +362,7 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, G: GblOps<'a>>(
             .system_table()
             .boot_services()
             .set_watchdog_timer(Duration::ZERO, FASTBOOT_WATCHDOG_TIMER_CODE)
-            .inspect(|_| efi_println!(entry, "Watchdog is successfully reset for fastboot."))
+            .inspect(|_| efi_println!(entry, "Watchdog successfully reset for fastboot."))
             .inspect_err(|e| efi_println!(entry, "Failed to reset watchdog. {:?}.", e));
     }
 

@@ -99,7 +99,7 @@ pub struct EfiNetworkDevice<'a> {
 }
 
 impl<'a> EfiNetworkDevice<'a> {
-    /// Creates an new instance. Allocates `extra_tx_frames+1` number of TX frames.
+    /// Creates a new instance. Allocates `extra_tx_frames+1` number of TX frames.
     pub fn new(
         protocol: Protocol<'a, SimpleNetworkProtocol>,
         extra_tx_frames: usize,

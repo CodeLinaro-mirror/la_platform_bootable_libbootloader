@@ -434,7 +434,7 @@ impl From<avb::IoError> for Error {
     }
 }
 
-/// Maps a EfiStatus to Result<()>.
+/// Maps an EfiStatus to Result<()>.
 pub fn efi_status_to_result(e: EfiStatus) -> Result<()> {
     // Convert to `EfiResult` using libefi_types, then from there into our
     // GBL `Result`. Once the Rust protocol wrappers get pushed up to

@@ -80,7 +80,7 @@ pub fn efi_fuchsia_boot(efi_entry: EfiEntry, images: LoadedVerifiedZircon<'_>) -
     {
         // Uses the unused buffer for `exit_boot_services` to store output memory map.
         // The map is not used for now. We currently rely on UEFI firmware to pass memory map via
-        // an raw zbi blob in device tree. Long term we want to support adding from EFI memory maps
+        // a raw zbi blob in device tree. Long term we want to support adding from EFI memory maps
         // if none is provided.
         let item_size = zbi::ZbiContainer::parse(&mut zbi_items[..])?.container_size()?;
         let (_, remains) = zbi_items.split_at_mut(item_size);

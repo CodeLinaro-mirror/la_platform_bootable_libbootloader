@@ -53,12 +53,12 @@ where
 }
 
 impl<T: BufferPool> Shared<T> {
-    // Try allocate a [ScopedBuffer]
+    // Try to allocate a [ScopedBuffer]
     pub(crate) fn allocate(&self) -> Option<ScopedBuffer<'_, T>> {
         self.borrow_mut().allocate().map(|v| ScopedBuffer::new(v, self))
     }
 
-    // Allocates a [ScopedBuffer] and waits until succeed.
+    // Allocates a [ScopedBuffer] and waits until succeeded.
     pub(crate) async fn allocate_async(&self) -> ScopedBuffer<'_, T> {
         loop {
             match self.allocate() {
