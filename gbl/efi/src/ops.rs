@@ -2177,7 +2177,7 @@ mod test {
 
         assert_eq!(ops.select_device_trees(&mut registry), Ok(()));
         assert_eq!(
-            registry.selected(),
+            registry.into_selected(),
             Ok(SelectedDtComponents {
                 base_dt: SelectedDtComponent {
                     source_metadata: DtComponentSourceMetadata {

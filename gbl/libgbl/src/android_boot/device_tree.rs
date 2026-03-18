@@ -16,6 +16,10 @@
 
 use crate::{
     android_boot::load::LoadedImages,
+    device_tree::{
+        DtComponentSource, DtComponentSourceMetadata, DtComponentType, DtComponentsRegistry,
+        SelectedDtComponent, SelectedDtComponents,
+    },
     fastboot::boot_items::{BootItem, BootItemContainer},
     gbl_println,
     random::get_random_seed,
@@ -24,11 +28,88 @@ use crate::{
 use arrayvec::ArrayVec;
 use bootparams::commandline::CommandlineBuilder;
 use core::ffi::CStr;
-use fdt::{Fdt, MAXIMUM_OVERLAYS_TO_APPLY};
-#[cfg(feature = "gbl_dev")]
-use liberror::Error;
-use liberror::Result;
+use dttable::DtTableImage;
+use fdt::{Fdt, FdtHeader, MAXIMUM_OVERLAYS_TO_APPLY};
+use liberror::{Error, Result};
 use safemath::SafeNum;
+
+/// Helper function to select device tree components from loaded partitions.
+pub(crate) fn fdt_select<'b, 'a: 'b, 'c: 'b>(
+    ops: &mut impl GblOps<'a>,
+    images: &LoadedImages<'b>,
+    buffer: &'c mut [u8],
+) -> Result<(SelectedDtComponents<'b>, &'c mut [u8])> {
+    // TODO(b/385690995): Handle DTs selection from FIT structure.
+    // TODO(b/353272981): Remove get_custom_device_tree.
+    match ops.get_custom_device_tree() {
+        Some(v) => Ok((
+            SelectedDtComponents {
+                base_dt: SelectedDtComponent {
+                    // Incorrect placeholder information. This is acceptable since the
+                    // get_custom_device_tree approach will be removed soon.
+                    source_metadata: DtComponentSourceMetadata {
+                        source: DtComponentSource::Boot,
+                        source_index: 0,
+                    },
+                    dt: v,
+                },
+                vmdtbo: None,
+                overlays: ArrayVec::new(),
+            },
+            buffer,
+        )),
+        _ => fdt_select_from_boot_partitions(ops, images, buffer),
+    }
+}
+
+/// Helper function to select device trees from traditional Android boot partitions such as `boot`,
+/// `vendor_boot`, `dtb`, `dtbo`, etc.
+pub fn fdt_select_from_boot_partitions<'b, 'a: 'b, 'c: 'b>(
+    ops: &mut impl GblOps<'a>,
+    images: &LoadedImages<'b>,
+    buffer: &'c mut [u8],
+) -> Result<(SelectedDtComponents<'b>, &'c mut [u8])> {
+    let mut components = DtComponentsRegistry::new();
+
+    let mut remains = match images.dtbo.len() > 0 {
+        // TODO(b/384964561, b/374336105): Investigate if we can avoid additional copy.
+        true => {
+            gbl_println!(ops, "Handling overlays from dtbo");
+            components.append_from_dttable(
+                DtComponentSource::Dtbo,
+                &DtTableImage::from_bytes(images.dtbo)?,
+                buffer,
+            )?
+        }
+        _ => buffer,
+    };
+    if images.dtb.len() > 0 {
+        let source = images.dtb_source.unwrap();
+        gbl_println!(ops, "Handling device tree from {source}");
+        remains = if FdtHeader::from_bytes_ref(images.dtb).is_ok() {
+            gbl_println!(ops, "Raw device tree found");
+            components.append(ops, source, DtComponentType::BaseDt, images.dtb, remains)?
+        } else if let Ok(table) = DtTableImage::from_bytes(images.dtb) {
+            gbl_println!(ops, "Dttable with {} entries found", table.entries_count());
+            components.append_from_dttable(source, &table, remains)?
+        } else {
+            return Err(Error::Other(Some(
+                "Invalid or unrecognized device tree format in boot/vendor_boot",
+            ))
+            .into());
+        }
+    }
+    if images.dtb_part.len() > 0 {
+        gbl_println!(ops, "Handling device trees from dtb");
+        let dttable = DtTableImage::from_bytes(images.dtb_part)?;
+        remains = components.append_from_dttable(DtComponentSource::Dtb, &dttable, remains)?;
+    }
+
+    gbl_println!(ops, "Selecting device tree components");
+    ops.select_device_trees(&mut components)?;
+
+    Ok((components.into_selected()?, remains))
+}
 
 /// Device tree bootargs property to store kernel command line.
 pub const PROP_BOOTARGS: &CStr = c"bootargs";

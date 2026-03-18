@@ -16,10 +16,7 @@
 
 use crate::{
     constants::FDT_ALIGNMENT,
-    device_tree::{
-        DtComponentSource, DtComponentSourceMetadata, DtComponentType, DtComponentsRegistry,
-        SelectedDtComponent, SelectedDtComponents, SelectedDtComponentsMetadata,
-    },
+    device_tree::SelectedDtComponentsMetadata,
     fastboot::{
         boot_items::{BootItem, BootItemContainer},
         run_gbl_fastboot, run_gbl_fastboot_stack, split_loaded_android, BufferPool,
@@ -33,15 +30,13 @@ use crate::{
     slots::Slot,
     GblOps, IntegrationError, Result,
 };
-use arrayvec::ArrayVec;
 use avb::IoError;
 use bootparams::{
     bootconfig::{extract_bootconfig, BootConfigBuilder},
     entry::CommandlineParser,
 };
 use core::{array::from_fn, ffi::CStr, fmt::Write, mem::take, ops::Range};
-use dttable::DtTableImage;
-use fdt::{Fdt, FdtHeader};
+use fdt::Fdt;
 use gbl_async::block_on;
 use libbuild_number::BUILD_NUMBER;
 use liberror::Error;
@@ -54,7 +49,9 @@ use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region, inj
 mod hasher;
 
 pub mod device_tree;
-use device_tree::{fdt_append_bootargs, fdt_build_bootargs, fdt_propagate_random, PROP_BOOTARGS};
+use device_tree::{
+    fdt_append_bootargs, fdt_build_bootargs, fdt_propagate_random, fdt_select, PROP_BOOTARGS,
+};
 
 pub mod vboot;
 pub use vboot::{avb_verify_slot, PartitionsToVerify};
@@ -245,67 +242,8 @@ pub fn android_load_verify_fixup<'a, 'b>(
     // Fixes up FDT.
 
     let (designated_fdt, remains) = loader.get_fdt_and_general_unused_buffer()?;
-    let mut components = DtComponentsRegistry::new();
-    // TODO(b/353272981): Remove get_custom_device_tree
-    let (remains, selected) = match ops.get_custom_device_tree() {
-        Some(v) => (
-            remains,
-            SelectedDtComponents {
-                base_dt: SelectedDtComponent {
-                    // Incorrect placeholder information. This is acceptable since the
-                    // get_custom_device_tree approach will be removed soon.
-                    source_metadata: DtComponentSourceMetadata {
-                        source: DtComponentSource::Boot,
-                        source_index: 0,
-                    },
-                    dt: v,
-                },
-                vmdtbo: None,
-                overlays: ArrayVec::new(),
-            },
-        ),
-        _ => {
-            let mut remains = match images.dtbo.len() > 0 {
-                // TODO(b/384964561, b/374336105): Investigate if we can avoid additional copy.
-                true => {
-                    gbl_println!(ops, "Handling overlays from dtbo");
-                    components.append_from_dttable(
-                        DtComponentSource::Dtbo,
-                        &DtTableImage::from_bytes(images.dtbo)?,
-                        remains,
-                    )?
-                }
-                _ => remains,
-            };
-            if images.dtb.len() > 0 {
-                let source = images.dtb_source.unwrap();
-                gbl_println!(ops, "Handling device tree from {source}");
-                remains = if FdtHeader::from_bytes_ref(images.dtb).is_ok() {
-                    gbl_println!(ops, "Raw device tree found");
-                    components.append(ops, source, DtComponentType::BaseDt, images.dtb, remains)?
-                } else if let Ok(table) = DtTableImage::from_bytes(images.dtb) {
-                    gbl_println!(ops, "Dttable with {} entries found", table.entries_count());
-                    components.append_from_dttable(source, &table, remains)?
-                } else {
-                    return Err(Error::Other(Some(
-                        "Invalid or unrecognized device tree format in boot/vendor_boot",
-                    ))
-                    .into());
-                }
-            }
+    let (selected, remains) = fdt_select(ops, &images, remains)?;
 
-            if images.dtb_part.len() > 0 {
-                gbl_println!(ops, "Handling device trees from dtb");
-                let dttable = DtTableImage::from_bytes(images.dtb_part)?;
-                remains =
-                    components.append_from_dttable(DtComponentSource::Dtb, &dttable, remains)?;
-            }
-
-            gbl_println!(ops, "Selecting device tree components");
-            ops.select_device_trees(&mut components)?;
-            (remains, components.selected()?)
-        }
-    };
     // Assembles DT in designated buffer if provided, otherwise allocates from `general` buffer.
     let fdt_load = designated_fdt.unwrap_or(aligned_subslice(remains, FDT_ALIGNMENT)?);
     let mut fdt = Fdt::new_from_init(&mut fdt_load[..], selected.base_dt.dt)?;
@@ -333,10 +271,6 @@ pub fn android_load_verify_fixup<'a, 'b>(
     };
 
     let selected_metadata = selected.into_metadata();
-    // `DtComponentsRegistry` internally uses ArrayVec which causes it to have a default
-    // life time equal to the scope it lives in. This is unnecessarily strict and prevents us from
-    // accessing `load` buffer.
-    drop(components);
 
     // Notifies platform to process loaded partitions before final bootconfig and FDT fixup, so
     // that backend can add fixup items that depend on certain partition data.
@@ -356,7 +290,6 @@ pub fn android_load_verify_fixup<'a, 'b>(
     // Make sure we provide an actual device tree size, so FW can calculate amount of space
     // available for fixup.
     fdt.shrink_to_fit()?;
-    // TODO(b/353272981): Make a copy of current device tree and verify provided fixup.
     // TODO(b/353272981): Handle buffer too small
     ops.fixup_device_tree(fdt.as_mut())?;
     fdt.shrink_to_fit()?;
