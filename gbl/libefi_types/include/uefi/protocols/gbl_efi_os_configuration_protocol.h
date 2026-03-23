@@ -55,6 +55,8 @@ typedef struct {
   // Values are zeroed and must not be used in case of BOOT / VENDOR_BOOT source
   uint32_t id;
   uint32_t rev;
+  // TODO(b/495417516): Migrate to a `size + pointer` approach to support
+  // various custom metadata sizes.
   uint32_t custom[4];
 } GblEfiDeviceTreeMetadata;
 
