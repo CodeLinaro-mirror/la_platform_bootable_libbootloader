@@ -1348,7 +1348,7 @@ where
             StreamOperation::Flash { checksum } => {
                 let (download, size) = self.take_download().ok_or("No downloaded data")?;
                 // TODO(b/479909443): yield while calculating incrementally.
-                let actual = crc32fast::hash(&download);
+                let actual = crc32fast::hash(&download[..size]);
                 if actual != checksum {
                     return Err(format_args!(
                         "Checksum mismatch: expected {:#x}, got {:#x}",
@@ -5293,16 +5293,30 @@ pub(crate) mod test {
         let resp: TestResponder = Default::default();
         let img = &[0x55u8; KiB!(2)];
 
+        // Image fills download buffer, no offset.
         set_download(&mut gbl_fb, img);
         let cmd = "stream-flash:boot_a:0:0xb47c63c1".try_into().unwrap();
         assert!(block_on(gbl_fb.stream(cmd, &resp)).is_ok());
         assert_eq!(fetch(&mut gbl_fb, "boot_a".into(), 0, KiB!(2)).unwrap(), img);
 
+        // Image fills download buffer, nonzero offset.
         set_download(&mut gbl_fb, img);
         let offset_cmd = "stream-flash:boot_a:0x400:0xb47c63c1".try_into().unwrap();
         assert!(block_on(gbl_fb.stream(offset_cmd, &resp)).is_ok());
         assert_eq!(fetch(&mut gbl_fb, "boot_a".into(), 0x400, KiB!(2)).unwrap(), img);
 
+        // Image does not fill download buffer.
+        let new_img = &[0xFFu8; KiB!(1)];
+        set_download(&mut gbl_fb, new_img);
+        let cmd = "stream-flash:boot_a:0:0xb83afff4".try_into().unwrap();
+        assert!(block_on(gbl_fb.stream(cmd, &resp)).is_ok());
+        assert_eq!(fetch(&mut gbl_fb, "boot_a".into(), 0, new_img.len()).unwrap(), new_img);
+        assert_eq!(
+            fetch(&mut gbl_fb, "boot_a".into(), new_img.len(), KiB!(2) - new_img.len()).unwrap(),
+            img[..img.len() - new_img.len()]
+        );
+
+        // Bad checksum
         set_download(&mut gbl_fb, img);
         let bad_checksum_cmd = "stream-flash:boot_a:0:0xDEADBEEF".try_into().unwrap();
         assert_eq!(
