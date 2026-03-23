@@ -14,12 +14,11 @@ Your machine must have the following dependencies installed:
 
 - `repo` to work with android repositories
   (https://source.android.com/docs/setup/reference/repo)
-- `bazel-bootstrap` to build (https://bazel.build/)
 
-On Google Linux machines these tools can be installed via:
+On Google Linux machines this tool can be installed via:
 
 ```sh
-sudo apt install repo bazel-bootstrap
+sudo apt install repo
 ```
 
 ### Download the source
