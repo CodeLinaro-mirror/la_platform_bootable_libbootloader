@@ -19,6 +19,9 @@ use core::time::Duration;
 use liberror::Result;
 use mockall::mock;
 
+/// Stuff that can be used in tests as-is.
+pub use efi::utils::parse_fw_api_level;
+
 mock! {
     /// Mock [efi::utils::Timeout].
     pub Timeout {

@@ -33,7 +33,8 @@ use efi::{
         random_number_generator::{RandomNumberGeneratorProtocol, RngAlgorithm as EfiRngAlgorithm},
         Protocol, Versioned,
     },
-    EfiEntry,
+    utils::parse_fw_api_level,
+    EfiEntry, GBL_EFI_FW_API_LEVEL, GBL_EFI_VENDOR_GUID,
 };
 use efi_types::{
     GblEfiAvbDeviceStatus, GblEfiAvbKeyValidationStatus, GblEfiAvbLoadedPartition,
@@ -982,11 +983,11 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     fn get_fw_api_level(&self) -> Result<u64> {
         let mut buf = [0u8; 32];
         let size = self.efi_entry.system_table().runtime_services().get_variable(
-            &efi::GBL_EFI_VENDOR_GUID,
-            efi::GBL_EFI_FW_API_LEVEL,
+            &GBL_EFI_VENDOR_GUID,
+            GBL_EFI_FW_API_LEVEL,
             &mut buf,
         )?;
-        Ok(str::from_utf8(&buf[..size])?.parse()?)
+        parse_fw_api_level(&buf[..size])
     }
 }
 

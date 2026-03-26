@@ -53,7 +53,8 @@ use efi::{
         timestamp::TimestampProtocol,
         Protocol, ProtocolImpl,
     },
-    EfiEntry,
+    utils::parse_fw_api_level,
+    EfiEntry, GBL_EFI_FW_API_LEVEL, GBL_EFI_VENDOR_GUID,
 };
 use liberror::{Error, Result};
 use libgbl::{
@@ -238,14 +239,13 @@ fn test_gbl_avb(entry: &EfiEntry) -> Result<()> {
 
 fn test_gbl_uefi_variables(entry: &EfiEntry) -> Result<()> {
     let mut buf = [0u8; 32];
-    entry
+    let _: u64 = entry
         .system_table()
         .runtime_services()
-        .get_variable(&efi::GBL_EFI_VENDOR_GUID, efi::GBL_EFI_FW_API_LEVEL, &mut buf)
-        .and_then(|size| Ok(str::from_utf8(&buf[..size])?))
-        .and_then(|s| Ok(s.parse::<u64>()?))
-        .inspect_err(|_| {
-            efi_println!(entry, "Failed to get UEFI variable {}", efi::GBL_EFI_FW_API_LEVEL)
+        .get_variable(&GBL_EFI_VENDOR_GUID, GBL_EFI_FW_API_LEVEL, &mut buf)
+        .and_then(|size| parse_fw_api_level(&buf[..size]))
+        .inspect_err(|e| {
+            efi_println!(entry, "Failed to get/parse UEFI variable {GBL_EFI_FW_API_LEVEL}: {e}")
         })?;
 
     Ok(())

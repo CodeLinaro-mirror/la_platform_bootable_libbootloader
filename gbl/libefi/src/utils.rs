@@ -15,7 +15,7 @@
 //! This file provides some utilities built on EFI APIs.
 
 use crate::{EfiEntry, Event, EventType};
-use core::{future::Future, time::Duration};
+use core::{future::Future, str::from_utf8, time::Duration};
 use efi_types::{EFI_TIMER_DELAY_TIMER_PERIODIC, EFI_TIMER_DELAY_TIMER_RELATIVE};
 use gbl_async::{select, yield_now};
 use liberror::Result;
@@ -103,5 +103,28 @@ impl<'a> RecurringTimer<'a> {
             yield_now().await;
         }
         Ok(())
+    }
+}
+
+/// Parses the firmware API level from a byte slice.
+pub fn parse_fw_api_level(data: &[u8]) -> Result<u64> {
+    Ok(from_utf8(data)?.trim_end_matches('\0').trim().parse()?)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_parse_fw_api_level() {
+        assert_eq!(parse_fw_api_level(b"202404\0\0\0").unwrap(), 202404);
+        assert_eq!(parse_fw_api_level(b"202404\0").unwrap(), 202404);
+        assert_eq!(parse_fw_api_level(b"202404").unwrap(), 202404);
+        assert_eq!(parse_fw_api_level(b" 202404 \0").unwrap(), 202404);
+        assert!(parse_fw_api_level(b"invalid\0").is_err());
+        assert!(parse_fw_api_level(b"2024AA").is_err());
+        assert!(parse_fw_api_level(b"").is_err());
+        assert!(parse_fw_api_level(b"\0").is_err());
+        assert!(parse_fw_api_level(b"202404\0 ").is_err());
     }
 }
