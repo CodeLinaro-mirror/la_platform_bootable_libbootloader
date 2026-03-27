@@ -160,23 +160,31 @@ pub(crate) fn fdt_build_bootargs<'a, 'b>(
     Ok(())
 }
 
-/// Helper for appending one or more commandline strings to FDT chosen/bootarg
+/// Helper to get current bootargs length.
 ///
-/// # Args
-///
-/// * `ops`: An implementation of GblOps.
-/// * `fdt`: Target FDT to append to.
-/// * `cmds`: Commandline strings to add.
+/// Returns `(actual_cmdline_size, total_buffer_size)`.
+fn fdt_get_bootargs_len<T: AsRef<[u8]>>(fdt: &Fdt<T>) -> (usize, usize) {
+    fdt.get_property(NODE_CHOSEN, PROP_BOOTARGS)
+        .map(|b| {
+            (
+                CStr::from_bytes_until_nul(b).map(|s| s.to_bytes_with_nul().len()).unwrap_or(0),
+                b.len(),
+            )
+        })
+        .unwrap_or((0, 0))
+}
+
 pub(crate) fn fdt_append_bootargs<'a, 'b>(
     ops: &mut impl GblOps<'a>,
     fdt: &mut Fdt<&mut [u8]>,
     cmds: impl IntoIterator<Item = &'b str> + Clone,
 ) -> Result<()> {
-    let curr = fdt.get_property(NODE_CHOSEN, PROP_BOOTARGS).map(|v| v.len()).unwrap_or(0);
-    let cmds_len = cmds.clone().into_iter().map(|v| v.len() + 1).sum::<usize>();
-    let total = curr + cmds_len + 1;
-    let buffer = fdt.set_property_placeholder(NODE_CHOSEN, PROP_BOOTARGS, total)?;
-    let mut builder = CommandlineBuilder::new_from_prefix(&mut buffer[..])?;
+    let (current_used_prefix, current_buffer_len) = fdt_get_bootargs_len(fdt);
+    let to_append_len = cmds.clone().into_iter().map(|v| v.len() + 1).sum::<usize>();
+    let final_buffer_len = current_buffer_len + to_append_len + 1;
+    let buffer = fdt.set_property_placeholder(NODE_CHOSEN, PROP_BOOTARGS, final_buffer_len)?;
+    let mut builder =
+        CommandlineBuilder::from_prefix_with_len(&mut buffer[..], current_used_prefix)?;
     for v in cmds {
         // The commandline to be added may be from bootconfig which allows ":=". Emit a warning
         // just in case.
@@ -195,10 +203,11 @@ pub(crate) fn fdt_append_bootargs<'a, 'b>(
 
 /// Reserves additional space in the FDT bootargs property.
 fn fdt_bootargs_reserve_space(fdt: &mut Fdt<&mut [u8]>, reserved: usize) -> Result<()> {
-    let current_len = fdt.get_property(NODE_CHOSEN, PROP_BOOTARGS)?.len();
-    let extended: usize = (SafeNum::from(current_len) + reserved).try_into()?;
-    let updated = fdt.set_property_placeholder(NODE_CHOSEN, PROP_BOOTARGS, extended)?;
-    let mut builder = CommandlineBuilder::new_from_prefix(&mut updated[..])?;
+    let (current_used_prefix, current_buffer_len) = fdt_get_bootargs_len(fdt);
+    let final_buffer_len: usize = (SafeNum::from(current_buffer_len) + reserved).try_into()?;
+    let buffer = fdt.set_property_placeholder(NODE_CHOSEN, PROP_BOOTARGS, final_buffer_len)?;
+    let mut builder =
+        CommandlineBuilder::from_prefix_with_len(&mut buffer[..], current_used_prefix)?;
     builder.zeroize_remains();
     Ok(())
 }

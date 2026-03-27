@@ -464,6 +464,11 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
     /// Wrapper/equivalent of fdt_setprop_placeholder.
     /// It creates/resizes a node's property to the given size and returns the buffer for caller
     /// to modify content.
+    ///
+    /// Note: It is assumed that existing data in the property is retained when growing or shrinking
+    /// the property. This is not explicitly guaranteed by the libfdt C API, but is observed in its
+    /// implementation. Callers are responsible for dealing with any uninitialized garbage data in
+    /// newly allocated space.
     pub fn set_property_placeholder(
         &mut self,
         path: &str,
@@ -472,7 +477,11 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
     ) -> Result<&mut [u8]> {
         let node = self.find_or_add_node(path)?;
         let mut out_ptr: *mut u8 = core::ptr::null_mut();
-        // SAFETY: API from libfdt_c.
+        // SAFETY:
+        // * `self.0` is guaranteed to be a valid FDT buffer.
+        // * `node` is offset of the node within the `self.0` FDT buffer.
+        // * `name` is guaranteed to be a valid null-terminated string.
+        // * `&mut out_ptr` is a valid pointer to receive the address of the resized buffer.
         map_result(unsafe {
             fdt_setprop_placeholder(
                 self.0.as_mut().as_mut_ptr() as *mut _,
@@ -797,14 +806,38 @@ mod test {
     }
 
     #[test]
-    fn test_set_property_placeholder() {
+    fn test_set_property_placeholder_extend() {
         let init = include_bytes!("../test/data/base.dtb").to_vec();
         let mut fdt_buf = vec![0u8; init.len() + 512];
         let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        // First set a property with some data.
         let data = vec![0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8];
         let payload = fdt.set_property_placeholder("/new-node", c"custom", data.len()).unwrap();
         payload.clone_from_slice(&data[..]);
-        assert_eq!(fdt.get_property("/new-node", c"custom").unwrap().to_vec(), data);
+
+        // Extend it.
+        let extended_len = data.len() + 5;
+        let payload = fdt.set_property_placeholder("/new-node", c"custom", extended_len).unwrap();
+        assert_eq!(payload.len(), extended_len);
+        assert_eq!(payload[..data.len()], data[..]);
+    }
+
+    #[test]
+    fn test_set_property_placeholder_shrink() {
+        let init = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut fdt_buf = vec![0u8; init.len() + 512];
+        let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
+
+        // First set a property with some data.
+        let data = vec![0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8];
+        let payload = fdt.set_property_placeholder("/new-node", c"custom", data.len()).unwrap();
+        payload.clone_from_slice(&data[..]);
+
+        // Shrink it.
+        let shrunk_len = data.len() - 3;
+        let payload = fdt.set_property_placeholder("/new-node", c"custom", shrunk_len).unwrap();
+        assert_eq!(payload, &data[..shrunk_len]);
     }
 
     #[test]

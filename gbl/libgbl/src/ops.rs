@@ -1561,7 +1561,7 @@ pub(crate) mod test {
             // GBL guarantees kernel command line has some extra space reserved to append.
             let cmd_prop_buffer =
                 fdt.set_property_placeholder("chosen", PROP_BOOTARGS, cmd_prop_len)?;
-            let mut commandline = CommandlineBuilder::new_from_prefix(cmd_prop_buffer)?;
+            let mut commandline = CommandlineBuilder::from_prefix(cmd_prop_buffer)?;
             commandline.add_raw("fixup")?;
 
             // Test custom fixup.

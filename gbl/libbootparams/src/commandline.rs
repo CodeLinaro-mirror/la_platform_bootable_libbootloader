@@ -41,9 +41,26 @@ impl<'a> CommandlineBuilder<'a> {
     }
 
     /// Initialize with a provided buffer that already contains a command line.
-    pub fn new_from_prefix(buffer: &'a mut [u8]) -> Result<Self> {
+    pub fn from_prefix(buffer: &'a mut [u8]) -> Result<Self> {
         let prefix = CStr::from_bytes_until_nul(buffer).map_err(Error::from)?;
         Ok(Self { current_size: prefix.to_bytes().len(), buffer: buffer })
+    }
+
+    /// Initialize with a provided buffer and the size of the existing prefix.
+    ///
+    /// Note: `prefix_size` must include the null terminator.
+    pub fn from_prefix_with_len(buffer: &'a mut [u8], prefix_size: usize) -> Result<Self> {
+        match prefix_size {
+            0 => Self::new(buffer),
+            _ => {
+                let prefix = CStr::from_bytes_with_nul(
+                    buffer.get(..prefix_size).ok_or(BufferTooSmall(Some(prefix_size)))?,
+                )
+                .map_err(Error::from)?;
+
+                Ok(Self { current_size: prefix.to_bytes().len(), buffer: buffer })
+            }
+        }
     }
 
     /// Get the remaining capacity.
@@ -177,10 +194,10 @@ mod test {
     const NODE_TO_ADD: &str = "bootconfig";
 
     #[test]
-    fn test_new_from_prefix() {
+    fn test_from_prefix() {
         let mut test_commandline = TEST_COMMANDLINE.to_vec();
 
-        let builder = CommandlineBuilder::new_from_prefix(&mut test_commandline[..]).unwrap();
+        let builder = CommandlineBuilder::from_prefix(&mut test_commandline[..]).unwrap();
         assert_eq!(
             builder.as_str(),
             CStr::from_bytes_until_nul(TEST_COMMANDLINE).unwrap().to_str().unwrap()
@@ -188,10 +205,60 @@ mod test {
     }
 
     #[test]
-    fn test_new_from_prefix_without_null_terminator() {
+    fn test_from_prefix_without_null_terminator() {
         let mut test_commandline = TEST_COMMANDLINE.to_vec();
 
-        assert!(CommandlineBuilder::new_from_prefix(&mut test_commandline[..1]).is_err());
+        assert!(CommandlineBuilder::from_prefix(&mut test_commandline[..1]).is_err());
+    }
+
+    #[test]
+    fn test_from_prefix_with_len_zero() {
+        let mut buffer = [0u8; 10];
+        let builder = CommandlineBuilder::from_prefix_with_len(&mut buffer, 0).unwrap();
+        assert_eq!(builder.as_str(), "");
+        assert_eq!(buffer[0], 0);
+    }
+
+    #[test]
+    fn test_from_prefix_with_len_valid() {
+        let mut test_commandline = TEST_COMMANDLINE.to_vec();
+        let len = test_commandline.len();
+
+        let builder =
+            CommandlineBuilder::from_prefix_with_len(&mut test_commandline[..], len).unwrap();
+        assert_eq!(
+            builder.as_str(),
+            CStr::from_bytes_until_nul(TEST_COMMANDLINE).unwrap().to_str().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_from_prefix_with_len_buffer_too_small() {
+        let mut test_commandline = TEST_COMMANDLINE.to_vec();
+        let len = test_commandline.len() + 1;
+
+        assert_eq!(
+            CommandlineBuilder::from_prefix_with_len(&mut test_commandline[..], len).err().unwrap(),
+            Error::BufferTooSmall(Some(len))
+        );
+    }
+    #[test]
+    fn test_from_prefix_with_len_no_null_terminator() {
+        let mut test_commandline = TEST_COMMANDLINE.to_vec();
+        // Overwrite the null terminator
+        let len = test_commandline.len();
+        test_commandline[len - 1] = b'A';
+
+        assert!(CommandlineBuilder::from_prefix_with_len(&mut test_commandline[..], len).is_err());
+    }
+
+    #[test]
+    fn test_from_prefix_with_len_interior_null() {
+        let mut test_commandline = TEST_COMMANDLINE.to_vec();
+        test_commandline[5] = 0;
+        let len = test_commandline.len();
+
+        assert!(CommandlineBuilder::from_prefix_with_len(&mut test_commandline[..], len).is_err());
     }
 
     #[test]
@@ -297,7 +364,7 @@ mod test {
     #[test]
     fn test_get_entries() {
         let mut test_commandline = TEST_COMMANDLINE.to_vec();
-        let builder = CommandlineBuilder::new_from_prefix(&mut test_commandline[..]).unwrap();
+        let builder = CommandlineBuilder::from_prefix(&mut test_commandline[..]).unwrap();
 
         let data_from_builder = builder
             .entries()
