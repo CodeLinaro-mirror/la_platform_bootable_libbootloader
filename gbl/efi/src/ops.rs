@@ -643,13 +643,6 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         }
     }
 
-    fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
-        // On Cuttlefish, the device tree comes from the UEFI config tables.
-        // TODO(b/353272981): once we've settled on the device tree UEFI protocol, use that
-        // instead to provide a Cuttlefish-specific backend.
-        Some(get_efi_fdt(&self.efi_entry)?.1)
-    }
-
     fn fixup_bootconfig<'c>(
         &mut self,
         bootconfig: &[u8],

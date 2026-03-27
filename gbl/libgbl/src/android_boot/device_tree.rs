@@ -16,10 +16,7 @@
 
 use crate::{
     android_boot::load::LoadedImages,
-    device_tree::{
-        DtComponentSource, DtComponentSourceMetadata, DtComponentType, DtComponentsRegistry,
-        SelectedDtComponent, SelectedDtComponents,
-    },
+    device_tree::{DtComponentSource, DtComponentType, DtComponentsRegistry, SelectedDtComponents},
     fastboot::boot_items::{BootItem, BootItemContainer},
     gbl_println,
     random::get_random_seed,
@@ -40,26 +37,7 @@ pub(crate) fn fdt_select<'b, 'a: 'b, 'c: 'b>(
     buffer: &'c mut [u8],
 ) -> Result<(SelectedDtComponents<'b>, &'c mut [u8])> {
     // TODO(b/385690995): Handle DTs selection from FIT structure.
-    // TODO(b/353272981): Remove get_custom_device_tree.
-    match ops.get_custom_device_tree() {
-        Some(v) => Ok((
-            SelectedDtComponents {
-                base_dt: SelectedDtComponent {
-                    // Incorrect placeholder information. This is acceptable since the
-                    // get_custom_device_tree approach will be removed soon.
-                    source_metadata: DtComponentSourceMetadata {
-                        source: DtComponentSource::Boot,
-                        source_index: 0,
-                    },
-                    dt: v,
-                },
-                vmdtbo: None,
-                overlays: ArrayVec::new(),
-            },
-            buffer,
-        )),
-        _ => fdt_select_from_boot_partitions(ops, images, buffer),
-    }
+    fdt_select_from_boot_partitions(ops, images, buffer)
 }
 
 /// Helper function to select device trees from traditional Android boot partitions such as `boot`,

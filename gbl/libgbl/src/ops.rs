@@ -420,13 +420,6 @@ pub trait GblOps<'a> {
     /// Returns `Err(Error::NotReady)`, if some previously returned buffer is still in use.
     fn sync_partition_buffer(&mut self, sync_preloaded: bool) -> Result<(), Error>;
 
-    /// Returns the custom device tree to use, if any.
-    ///
-    /// If this returns a device tree, it will be used instead of any on-disk contents. This is
-    /// currently needed for Cuttlefish, but should not be used in production devices because this
-    /// data cannot be verified with libavb.
-    fn get_custom_device_tree(&mut self) -> Option<&'a [u8]>;
-
     /// Requests an OS bootconfig to be used alongside the one built by GBL.
     ///
     /// The returned bootconfig will be verified and appended on top of the bootconfig
@@ -806,10 +799,6 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
         self.ops.sync_partition_buffer(sync_preloaded)
     }
 
-    fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
-        self.ops.get_custom_device_tree()
-    }
-
     fn fixup_bootconfig<'c>(
         &mut self,
         bootconfig: &[u8],
@@ -1150,9 +1139,6 @@ pub(crate) mod test {
 
         /// For return by `Self::avb_validate_vbmeta_public_key`
         pub avb_key_validation_status: Option<AvbIoResult<KeyValidationStatus>>,
-
-        /// Custom device tree.
-        pub custom_device_tree: Option<&'a [u8]>,
 
         /// Custom handler for `avb_handle_verification_result`
         pub avb_handle_verification_result: Option<
@@ -1533,10 +1519,6 @@ pub(crate) mod test {
             res
         }
 
-        fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
-            self.custom_device_tree
-        }
-
         fn fixup_bootconfig<'c>(
             &mut self,
             _bootconfig: &[u8],
@@ -1901,10 +1883,6 @@ pub(crate) mod test {
 
         fn sync_partition_buffer(&mut self, _: bool) -> Result<(), Error> {
             Err(Error::Unsupported)
-        }
-
-        fn get_custom_device_tree(&mut self) -> Option<&'a [u8]> {
-            None
         }
 
         fn fixup_bootconfig<'c>(
