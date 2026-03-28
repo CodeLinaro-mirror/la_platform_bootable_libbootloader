@@ -37,22 +37,22 @@ repo sync -j16
 
 ### Build the UEFI applications
 
-Run this command from the repo root directory (`gbl` in the example above):
-
 ```sh
-./tools/bazel run //bootable/libbootloader:gbl_efi_dist
+cd bootable/libbootloader/gbl
+./bazel.sh run //bootable/libbootloader:gbl_efi_dist
 ```
 
 This command builds all variations of the EFI application (dev + prod for each
 of `x86_64`, `aarch64`, and `riscv64` architectures). The application binaries
-will be placed in `out/gbl_efi/`.
+will be placed in `out/gbl_efi/` of the repo root.
+
+Note: The `bootable/libbootloader/gbl/bazel.sh` build script can be executed
+from anywhere in the source tree.
 
 ### Run host-side unittests
 
-Run this command from the repo root directory (`gbl` in the example above):
-
 ```sh
-./tools/bazel test @gbl//tests
+./bazel.sh test @gbl//tests
 ```
 
 ### Troubleshooting
@@ -65,7 +65,7 @@ If you run into this, clean the build with the `--expunge` flag to reset your
 Bazel state:
 
 ```sh
-./tools/bazel clean --expunge
+./bazel.sh clean --expunge
 ```
 
 ## IDE Setup
@@ -86,8 +86,8 @@ reason. Should targets get moved around in the future, this path spec also needs
 to be updated.
 
 After generating `rust-project.json`, you would notice that your IDE still
-doesn't offer auto completion. This is because some source file paths point
-to bazel-output dir, and you are most likely editing source files in
+doesn't offer auto completion. This is because some source file paths point to
+bazel-output dir, and you are most likely editing source files in
 `bootable/libbootloader/gbl`. In addition, the generated rust-project.json sets
 "cfg=test" for all targets, which causes certain dependency graph to resolve
 incorrectly. To fix this, run
@@ -311,7 +311,7 @@ For aarch64, GBL supports tracing and visualization by Perfetto
 To enable it, build GBL with the following option:
 
 ```sh
-./tools/bazel run //bootable/libbootloader:gbl_efi_dist \
+./bazel.sh run //bootable/libbootloader:gbl_efi_dist \
    --@gbl//toolchain:enable_tracing \
    --@gbl//toolchain:pause_boot_in_fastboot
 ```

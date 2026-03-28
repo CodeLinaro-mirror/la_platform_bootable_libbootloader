@@ -30,33 +30,39 @@ and should not be modified directly.
 
 ## Building and Testing
 
-Refer to the `README.md` file in this directory for the most up-to-date
-instructions on how to build and test the project. The commands should be run
-from the root of the Android UEFI manifest checkout (`../../../` from this
-directory).
+For quick reference, the most common commands are:
+
+- **Build all EFI applications:**
+  ```bash
+  ./bazel.sh run //bootable/libbootloader:gbl_efi_dist
+  ```
+- **Run all unittests:**
+  ```bash
+  ./bazel.sh test @gbl//tests
+  ```
+
+## Engineering Standards
+
+- **Environment:** GBL targets a bare-metal UEFI environment. The code must be
+  `#![cfg_attr(not(test), no_std)]`. Rely on `core` and `alloc`.
+- **Testing:** Unit tests run in a hosted environment with `std` enabled. Tests
+  heavily mock UEFI services.
+- **Global State:** Because the test runner is multi-threaded, take care when
+  testing code that interacts with global states (like panic hooks). Use `Arc`,
+  `Mutex`, or `thread_local!` to avoid race conditions.
+- **Error Handling:**
+  - **Production:** Avoid `panic!`, `unwrap()`, or `expect()` in production
+    code. These can cause silent hangs in a UEFI environment.
+  - **Pattern:** Favor the `Result` type for recoverable errors. Use the
+    `report_error_and_reset` pattern for fatal failures, ensuring a GBL-specific
+    error tag is provided.
 
 ## Code Style and Formatting
 
-Before committing, please ensure your code is formatted according to the
-project's standards.
-
-- **Rust:** Use `rustfmt` to format Rust code.
-
-  ```bash
-  cargo fmt --all
-  ```
-
-- **Python:** Use the `black` formatter.
-
-  ```bash
-  black .
-  ```
-
-- **C++:** Adhere to the Google C++ Style Guide. Use `clang-format` to format
-  C++ code.
-  ```bash
-  clang-format -i $(find . -name "*.h" -o -name "*.cpp")
-  ```
+- **Rust:** Format with `rustfmt`.
+- **Python:** Format with `black`.
+- **C++:** Format with `clang-format` adhering to the Google C++ Style Guide.
+- **Markdown:** Format with `prettier`.
 
 ## Contribution Workflow
 
