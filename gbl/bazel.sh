@@ -15,8 +15,8 @@
 
 # Use host readlink. b/348003050
 MYPATH=$(readlink -f "$0")
-MYDIR=${MYPATH%/*}
-WORKSPACE_DIR=${MYDIR%bootable/libbootloader/gbl}
-WORKSPACE_DIR=${WORKSPACE_DIR%/}
+BAZEL_PY="${MYPATH%/*}/bazel.py"
+WORKSPACE_DIR=${MYPATH%/bootable/libbootloader/gbl/*}
 
-exec "$WORKSPACE_DIR"/prebuilts/build-tools/path/linux-x86/python3 "$MYDIR"/bazel.py "$@"
+cd "$WORKSPACE_DIR"
+exec "$WORKSPACE_DIR"/prebuilts/build-tools/path/linux-x86/python3 "$BAZEL_PY" "$@"
