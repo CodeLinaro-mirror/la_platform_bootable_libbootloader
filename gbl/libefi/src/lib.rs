@@ -1339,7 +1339,14 @@ mod test {
         EFI_STATUS_SUCCESS, EFI_STATUS_UNSUPPORTED, EFI_TIMER_DELAY_TIMER_PERIODIC,
         GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
     };
-    use std::{cell::RefCell, collections::VecDeque, mem::size_of, slice::from_raw_parts_mut};
+    use std::{
+        cell::RefCell,
+        collections::VecDeque,
+        mem::size_of,
+        panic::{catch_unwind, set_hook, take_hook, PanicHookInfo},
+        slice::from_raw_parts_mut,
+        sync::{Arc, Mutex},
+    };
     use utils::RecurringTimer;
     use zerocopy::IntoBytes;
 
@@ -2755,22 +2762,45 @@ mod test {
                     VecDeque::from([(as_efi_handle(&mut debug_proto), EFI_STATUS_SUCCESS)]);
             });
 
-            std::panic::set_hook(Box::new(|p_info| {
-                // Safety:
-                // * `GLOBAL_EFI_ENTRY` has been initialized and is live.
-                unsafe {
-                    let _ = with_global_efi_entry(|entry| {
-                        report_error_and_reset(
-                            entry,
-                            p_info,
-                            GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
-                        )
-                    });
-                };
-            }));
+            struct PanicHookGuard(
+                Arc<Mutex<Option<Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync>>>>,
+            );
+            impl Drop for PanicHookGuard {
+                fn drop(&mut self) {
+                    // Restore the original hook.
+                    if let Some(hook) = self.0.lock().unwrap().take() {
+                        set_hook(hook);
+                    }
+                }
+            }
 
-            let res =
-                std::panic::catch_unwind(|| panic!("Don't Panic! You know where your towel is."));
+            // TODO: Switch to `update_hook` once it is stablized
+            // [update_hook](https://doc.rust-lang.org/std/panic/fn.update_hook.html)
+            let old_hook = Arc::new(Mutex::new(Some(take_hook())));
+            let res = {
+                let _guard = PanicHookGuard(old_hook.clone());
+                set_hook(Box::new(move |p_info| {
+                    // First, attempt our custom EFI logging.
+                    // Safety:
+                    // * `GLOBAL_EFI_ENTRY` has been initialized and is live.
+                    unsafe {
+                        let _ = with_global_efi_entry(|entry| {
+                            report_error_and_reset(
+                                entry,
+                                p_info,
+                                GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,
+                            )
+                        });
+                    };
+                    // ALWAYS delegate to the original hook so standard error messages are printed.
+                    if let Some(hook) = old_hook.lock().unwrap().as_ref() {
+                        hook(p_info);
+                    }
+                }));
+
+                catch_unwind(|| panic!("Don't Panic! You know where your towel is."))
+            };
+
             assert!(res.is_err());
             assert_eq!(PANICS_CAUGHT.with(|pc| pc.load(Ordering::Relaxed)), 1);
             efi_call_traces().with(|trace| {
