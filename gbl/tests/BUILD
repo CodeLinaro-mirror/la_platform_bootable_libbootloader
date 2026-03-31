@@ -23,6 +23,7 @@ test_suite(
         # data.
         "@gbl//libefi_types:libefi_types_doc_test",
         "@gbl//libstorage:libstorage_doc_test",
+        "@gbl//signtool:gblsigntool_test",
     ],
 )
 
