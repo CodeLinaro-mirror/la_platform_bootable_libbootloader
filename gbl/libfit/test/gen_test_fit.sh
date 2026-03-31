@@ -28,7 +28,6 @@ dtc -@ -I dts -O dtb -o ${DATA_DIR}/overlay-2.dtb -a 8 ${SCRIPT_DIR}/overlay-2.d
 
 #Creation of fit image in .img format
 mkimage -f ${SCRIPT_DIR}/fitimage.its ${DATA_DIR}/fit.img -E -B 8
-mkimage -f ${SCRIPT_DIR}/fitimage.its ${DATA_DIR}/fit_embedded_payload.img -B 8
 mkimage -f ${SCRIPT_DIR}/fitimage_with_default_option.its ${DATA_DIR}/fit_with_default_option.img -E -B 8
 mkimage -f ${SCRIPT_DIR}/fitimage_with_no_metadata.its ${DATA_DIR}/fit_with_no_metadata.img -E -B 8
 mkimage -f ${SCRIPT_DIR}/fitimage_with_invalid_metadata_type.its ${DATA_DIR}/fit_with_invalid_metadata_type.img -E -B 8

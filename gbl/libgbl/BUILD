@@ -73,6 +73,7 @@ rust_library(
         "@gbl//liberror",
         "@gbl//libfastboot",
         "@gbl//libfdt",
+        "@gbl//libfit",
         "@gbl//liblp",
         "@gbl//libmisc",
         "@gbl//libopendice",

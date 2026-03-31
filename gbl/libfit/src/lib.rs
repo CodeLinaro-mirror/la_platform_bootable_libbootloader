@@ -28,7 +28,6 @@ use safemath::SafeNum;
 /// Standard FIT property names
 const TYPE: &CStr = c"type";
 const FDT: &CStr = c"fdt";
-const DATA: &CStr = c"data";
 const DATA_OFFSET: &CStr = c"data-offset";
 const DATA_SIZE: &CStr = c"data-size";
 const DEFAULT: &CStr = c"default";
@@ -53,7 +52,7 @@ impl<'a> Fit<'a> {
 
     /// Returns FIT FDT buffer and metadata buffer when reference to metadata
     /// payload is present in the FIT FDT
-    pub fn get_fit_selection_metadata(&self) -> Result<(&[u8], Option<&[u8]>)> {
+    pub fn get_fit_selection_metadata(&self) -> Result<(&[u8], Option<&'a [u8]>)> {
         // If present, reference to the metadata must be present in the first sub-node under
         // "images" node
         let first_images_subnode =
@@ -75,7 +74,7 @@ impl<'a> Fit<'a> {
     /// Get base and overlay devicetrees corresponding to the selected configuration.
     /// Fallback to default configuration in case no configuration is selected.
     pub fn get_devicetrees_from_selected_configuration(
-        &'a self,
+        &self,
         selected_offset: Option<usize>,
     ) -> Result<(&'a [u8], ArrayVec<&'a [u8], MAXIMUM_OVERLAYS_TO_APPLY>)> {
         let mut base: Option<&[u8]> = None;
@@ -119,35 +118,39 @@ impl<'a> Fit<'a> {
     }
 
     /// Return image offset in FIT FDT
-    fn get_image_by_node_path(&'a self, path: &str) -> Result<&'a [u8]> {
+    fn get_image_by_node_path(&self, path: &str) -> Result<&'a [u8]> {
         self.get_image_at_offset(self.fdt.find_node_offset(path)?)
     }
 
     /// Return image buffer given the offset of the image node in FIT FDT
-    fn get_image_at_offset(&'a self, node_offset: usize) -> Result<&'a [u8]> {
-        match self.fdt.get_property_by_node_offset(node_offset, DATA) {
-            Ok(embedded_image) => Ok(embedded_image),
-            _ => {
-                // Get image offset wrt the position from FIT FDT
-                let image_offset = SafeNum::from(u32::from_be_bytes(
-                    self.fdt
-                        .get_property_by_node_offset(node_offset, DATA_OFFSET)?
-                        .try_into()
-                        .map_err(|_| Error::Other(Some("not a u32 value")))?,
-                ));
+    fn get_image_at_offset(&self, node_offset: usize) -> Result<&'a [u8]> {
+        let image_offset = SafeNum::from(u32::from_be_bytes(
+            self.fdt
+                .get_property_by_node_offset(node_offset, DATA_OFFSET)
+                .map_err(|_| {
+                    Error::Other(Some(
+                        "FIT: Missing required `DATA_OFFSET`. Embedded images (`DATA`) unsupported",
+                    ))
+                })?
+                .try_into()
+                .map_err(|_| Error::Other(Some("Wrong DATA_OFFSET")))?,
+        ));
 
-                let image_size = u32::from_be_bytes(
-                    self.fdt
-                        .get_property_by_node_offset(node_offset, DATA_SIZE)?
-                        .try_into()
-                        .map_err(|_| Error::Other(Some("not a u32 value")))?,
-                );
+        let image_size = u32::from_be_bytes(
+            self.fdt
+                .get_property_by_node_offset(node_offset, DATA_SIZE)
+                .map_err(|_| {
+                    Error::Other(Some(
+                        "FIT: Missing required `DATA_SIZE`. Embedded images (`DATA`) unsupported",
+                    ))
+                })?
+                .try_into()
+                .map_err(|_| Error::Other(Some("Wrong DATA_SIZE")))?,
+        );
 
-                self.external_images
-                    .get(image_offset.try_into()?..(image_offset + image_size).try_into()?)
-                    .ok_or(Error::Other(Some("Invalid image slice bounds")))
-            }
-        }
+        self.external_images
+            .get(image_offset.try_into()?..(image_offset + image_size).try_into()?)
+            .ok_or(Error::Other(Some("Invalid image slice bounds")))
     }
 }
 
@@ -324,20 +327,6 @@ mod test {
         ));
 
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_get_image_by_node_path_embedded_payload() {
-        let fit_buf = include_bytes!("../test/data/fit_embedded_payload.img").to_vec();
-        let fit_buf = fit_buf.as_slice();
-
-        let fit_image = Fit::from_bytes(fit_buf).unwrap();
-        let fdt_image_from_fit = fit_image.get_image_by_node_path("/images/fdt-2").unwrap();
-
-        let fdt2_image_data = include_bytes!("../test/data/platform-2.dtb").to_vec();
-        let fdt2_image_buffer = fdt2_image_data.as_slice();
-
-        assert_eq!(fdt2_image_buffer, fdt_image_from_fit);
     }
 
     #[test]
