@@ -111,6 +111,13 @@ to make sure all generated sources(bindgen) are populated.
 
 And reload your IDE.
 
+## Code Style and Formatting
+
+- **Rust:** Format with `rustfmt`.
+- **Python:** Format with `pyink`.
+- **C++:** Format with `clang-format` adhering to the Google C++ Style Guide.
+- **Markdown:** Format with `prettier`.
+
 ## Gemini CLI
 
 This repo can be used with

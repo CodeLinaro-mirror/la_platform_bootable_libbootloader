@@ -60,7 +60,7 @@ For quick reference, the most common commands are:
 ## Code Style and Formatting
 
 - **Rust:** Format with `rustfmt`.
-- **Python:** Format with `black`.
+- **Python:** Format with `pyink`.
 - **C++:** Format with `clang-format` adhering to the Google C++ Style Guide.
 - **Markdown:** Format with `prettier`.
 
