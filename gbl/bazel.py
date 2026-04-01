@@ -22,181 +22,192 @@ from typing import Tuple, Optional
 _BAZEL_REL_PATH = "prebuilts/kernel-build-tools/bazel/linux-x86_64/bazel"
 
 
-def _partition(lst: list[str], index: Optional[int]) \
-        -> Tuple[list[str], Optional[str], list[str]]:
-    """Returns the triple split by index.
+def _partition(
+    lst: list[str], index: Optional[int]
+) -> Tuple[list[str], Optional[str], list[str]]:
+  """Returns the triple split by index.
 
-    That is, return a tuple:
-    (everything before index, the element at index, everything after index)
+  That is, return a tuple:
+  (everything before index, the element at index, everything after index)
 
-    If index is None, return (the list, None, empty list)
-    """
-    if index is None:
-        return lst[:], None, []
-    return lst[:index], lst[index], lst[index + 1:]
+  If index is None, return (the list, None, empty list)
+  """
+  if index is None:
+    return lst[:], None, []
+  return lst[:index], lst[index], lst[index + 1 :]
 
 
 class BazelWrapper(object):
-    def __init__(self, workspace_dir: pathlib.Path, bazel_args: list[str]):
-        """Splits arguments to the bazel binary based on the functionality.
 
-        bazel [startup_options] command         [command_args] --               [target_patterns]
-                                 ^- command_idx                ^- dash_dash_idx
+  def __init__(self, workspace_dir: pathlib.Path, bazel_args: list[str]):
+    """Splits arguments to the bazel binary based on the functionality.
 
-        See https://bazel.build/reference/command-line-reference
+    bazel [startup_options] command         [command_args] --               [target_patterns]
+                             ^- command_idx                ^- dash_dash_idx
 
-        Args:
-            workspace_dir: root of workspace.
-            bazel_args: The list of arguments the user provides through command line
-            env: existing environment
-        """
+    See https://bazel.build/reference/command-line-reference
 
-        self.workspace_dir = workspace_dir
+    Args:
+        workspace_dir: root of workspace.
+        bazel_args: The list of arguments the user provides through command line
+        env: existing environment
+    """
 
-        self.bazel_path = self.workspace_dir / _BAZEL_REL_PATH
+    self.workspace_dir = workspace_dir
 
-        command_idx = None
-        for idx, arg in enumerate(bazel_args):
-            if not arg.startswith("-"):
-                command_idx = idx
-                break
+    self.bazel_path = self.workspace_dir / _BAZEL_REL_PATH
 
-        self.startup_options, self.command, remaining_args = _partition(bazel_args,
-                                                                        command_idx)
+    command_idx = None
+    for idx, arg in enumerate(bazel_args):
+      if not arg.startswith("-"):
+        command_idx = idx
+        break
 
-        # Split command_args into `command_args -- target_patterns`
-        dash_dash_idx = None
-        try:
-            dash_dash_idx = remaining_args.index("--")
-        except ValueError:
-            # If -- is not found, put everything in command_args. These arguments
-            # are not provided to the Bazel executable target.
-            pass
+    self.startup_options, self.command, remaining_args = _partition(
+        bazel_args, command_idx
+    )
 
-        self.command_args, self.dash_dash, self.target_patterns = _partition(remaining_args,
-                                                                             dash_dash_idx)
+    # Split command_args into `command_args -- target_patterns`
+    dash_dash_idx = None
+    try:
+      dash_dash_idx = remaining_args.index("--")
+    except ValueError:
+      # If -- is not found, put everything in command_args. These arguments
+      # are not provided to the Bazel executable target.
+      pass
 
-        self._parse_startup_options()
-        self._parse_command_args()
-        self._add_extra_startup_options()
+    self.command_args, self.dash_dash, self.target_patterns = _partition(
+        remaining_args, dash_dash_idx
+    )
 
-    def add_startup_option_to_parser(self, parser):
-        parser.add_argument(
-            "-h", "--help", action="store_true",
-            help="show this help message and exit"
-        )
+    self._parse_startup_options()
+    self._parse_command_args()
+    self._add_extra_startup_options()
 
-    def _parse_startup_options(self):
-        """Parses the given list of startup_options.
+  def add_startup_option_to_parser(self, parser):
+    parser.add_argument(
+        "-h",
+        "--help",
+        action="store_true",
+        help="show this help message and exit",
+    )
 
-        After calling this function, the following attributes are set:
-        - absolute_user_root: A path holding bazel build output location
-        - transformed_startup_options: The transformed list of startup_options to replace
-          existing startup_options to be fed to the Bazel binary
-        """
+  def _parse_startup_options(self):
+    """Parses the given list of startup_options.
 
-        parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
-        self.add_startup_option_to_parser(parser)
+    After calling this function, the following attributes are set:
+    - absolute_user_root: A path holding bazel build output location
+    - transformed_startup_options: The transformed list of startup_options to replace
+      existing startup_options to be fed to the Bazel binary
+    """
 
-        self.known_startup_options, self.user_startup_options = \
-            parser.parse_known_args(self.startup_options)
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    self.add_startup_option_to_parser(parser)
 
-        self.absolute_out_dir = self.workspace_dir / "out"
-        self.absolute_user_root = \
-            self.absolute_out_dir / "bazel/output_user_root"
+    self.known_startup_options, self.user_startup_options = (
+        parser.parse_known_args(self.startup_options)
+    )
 
-        if self.known_startup_options.help:
-            self.transformed_startup_options = [
-                "--help"
-            ]
+    self.absolute_out_dir = self.workspace_dir / "out"
+    self.absolute_user_root = self.absolute_out_dir / "bazel/output_user_root"
 
-        if not self.known_startup_options.help:
-            javatmp = self.absolute_out_dir / "bazel/javatmp"
-            self.transformed_startup_options = [
-                f"--host_jvm_args=-Djava.io.tmpdir={javatmp}",
-            ]
+    if self.known_startup_options.help:
+      self.transformed_startup_options = ["--help"]
 
-        # See _add_extra_startup_options for extra startup options
+    if not self.known_startup_options.help:
+      javatmp = self.absolute_out_dir / "bazel/javatmp"
+      self.transformed_startup_options = [
+          f"--host_jvm_args=-Djava.io.tmpdir={javatmp}",
+      ]
 
-    def _parse_command_args(self):
-        """Parses the given list of command_args.
+    # See _add_extra_startup_options for extra startup options
 
-        After calling this function, the following attributes are set:
-        - known_args: A namespace holding options known by this Bazel wrapper script
-        - transformed_command_args: The transformed list of command_args to replace
-          existing command_args to be fed to the Bazel binary
-        - env: A dictionary containing the new environment variables for the subprocess.
-        """
+  def _parse_command_args(self):
+    """Parses the given list of command_args.
 
-        parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    After calling this function, the following attributes are set:
+    - known_args: A namespace holding options known by this Bazel wrapper script
+    - transformed_command_args: The transformed list of command_args to replace
+      existing command_args to be fed to the Bazel binary
+    - env: A dictionary containing the new environment variables for the subprocess.
+    """
 
-        # TODO: Delete these args once build bots no longer specify them
-        parser.add_argument(
-            "--make_jobs", metavar="JOBS", type=int, default=None,
-            help="unused")
-        parser.add_argument(
-            "--make_keep_going", action="store_true", default=False,
-            help="unused")
-        parser.add_argument(
-            "--repo_manifest", metavar="<repo_root>:<manifest.xml>",
-            help="unused")
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
 
-        # Skip startup options (before command) and target_patterns (after --)
-        _, self.transformed_command_args = parser.parse_known_args(
-            self.command_args)
+    # TODO: Delete these args once build bots no longer specify them
+    parser.add_argument(
+        "--make_jobs", metavar="JOBS", type=int, default=None, help="unused"
+    )
+    parser.add_argument(
+        "--make_keep_going",
+        action="store_true",
+        default=False,
+        help="unused",
+    )
+    parser.add_argument(
+        "--repo_manifest",
+        metavar="<repo_root>:<manifest.xml>",
+        help="unused",
+    )
 
-    def _add_extra_startup_options(self):
-        """Adds extra startup options after command args are parsed."""
+    # Skip startup options (before command) and target_patterns (after --)
+    _, self.transformed_command_args = parser.parse_known_args(
+        self.command_args
+    )
 
-        self.transformed_startup_options += self.user_startup_options
+  def _add_extra_startup_options(self):
+    """Adds extra startup options after command args are parsed."""
 
-        if not self.known_startup_options.help:
-            self.transformed_startup_options.append(
-                f"--output_user_root={self.absolute_user_root}")
+    self.transformed_startup_options += self.user_startup_options
 
-    def _build_final_args(self) -> list[str]:
-        """Builds the final arguments for the subprocess."""
-        # final_args:
-        # bazel [startup_options] [additional_startup_options] command [transformed_command_args] -- [target_patterns]
+    if not self.known_startup_options.help:
+      self.transformed_startup_options.append(
+          f"--output_user_root={self.absolute_user_root}"
+      )
 
-        final_args = [self.bazel_path] + self.transformed_startup_options
+  def _build_final_args(self) -> list[str]:
+    """Builds the final arguments for the subprocess."""
+    # final_args:
+    # bazel [startup_options] [additional_startup_options] command [transformed_command_args] -- [target_patterns]
 
-        if self.command is not None:
-            final_args.append(self.command)
-        final_args += self.transformed_command_args
-        if self.dash_dash is not None:
-            final_args.append(self.dash_dash)
-        final_args += self.target_patterns
+    final_args = [self.bazel_path] + self.transformed_startup_options
 
-        return final_args
+    if self.command is not None:
+      final_args.append(self.command)
+    final_args += self.transformed_command_args
+    if self.dash_dash is not None:
+      final_args.append(self.dash_dash)
+    final_args += self.target_patterns
 
-    def _build_environ(self):
-        """Adds extra environment variables."""
-        env = os.environ.copy()
-        if "BUILD_NUMBER" not in env:
-            # Changing the environment causes rebuild. In order to *not* cause
-            # superfluous rebuilds, append a low-precision timestamp.
-            env["BUILD_NUMBER"] = f"eng.{os.environ.get('USER')}.{date.today()}"
-        return env
+    return final_args
 
-    def run(self) -> int:
-        """Runs the wrapper.
+  def _build_environ(self):
+    """Adds extra environment variables."""
+    env = os.environ.copy()
+    if "BUILD_NUMBER" not in env:
+      # Changing the environment causes rebuild. In order to *not* cause
+      # superfluous rebuilds, append a low-precision timestamp.
+      env["BUILD_NUMBER"] = f"eng.{os.environ.get('USER')}.{date.today()}"
+    return env
 
-        Returns:
-            doesn't return"""
-        final_args = self._build_final_args()
-        env = self._build_environ()
+  def run(self) -> int:
+    """Runs the wrapper.
 
-        os.execve(path=self.bazel_path, argv=final_args, env=env)
+    Returns:
+        doesn't return"""
+    final_args = self._build_final_args()
+    env = self._build_environ()
+
+    os.execve(path=self.bazel_path, argv=final_args, env=env)
 
 
 def _bazel_wrapper_main():
-    # <workspace_dir>/bootable/libbootloader/gbl/bazel.py
-    workspace_dir = (
-        pathlib.Path(__file__).resolve().parent.parent.parent.parent)
-    return BazelWrapper(workspace_dir=workspace_dir,
-                        bazel_args=sys.argv[1:]).run()
+  # <workspace_dir>/bootable/libbootloader/gbl/bazel.py
+  workspace_dir = pathlib.Path(__file__).resolve().parent.parent.parent.parent
+  return BazelWrapper(
+      workspace_dir=workspace_dir, bazel_args=sys.argv[1:]
+  ).run()
 
 
 if __name__ == "__main__":
-    sys.exit(_bazel_wrapper_main())
+  sys.exit(_bazel_wrapper_main())

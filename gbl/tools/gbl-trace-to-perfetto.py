@@ -145,7 +145,7 @@ def main():
     )
 
   print("Converting to trace event format...")
-  trace_bin = trace_bin[struct.calcsize(META_FORMAT):]
+  trace_bin = trace_bin[struct.calcsize(META_FORMAT) :]
 
   # Parses all trace entries and collect addresses that need to be symbolized.
   entries = []
@@ -212,26 +212,33 @@ def main():
         )
 
       # Construct events
-      traces.extend([
-          # Duration begin event
-          {
-              "name": syms[addr][0],
-              "cat": "function call",
-              "ph": "B",
-              "ts": ts,
-              "pid": 0,
-              "tid": 0,
-              "args": {
-                  "function address": f"{addr:#x}",
-                  "function definition": syms[addr][1],
-                  "call site address": f"{callsite_addr:#x}",
-                  "call site": callsite,
-                  "function stack usage": f"{func_stack} bytes",
+      traces.extend(
+          [
+              # Duration begin event
+              {
+                  "name": syms[addr][0],
+                  "cat": "function call",
+                  "ph": "B",
+                  "ts": ts,
+                  "pid": 0,
+                  "tid": 0,
+                  "args": {
+                      "function address": f"{addr:#x}",
+                      "function definition": syms[addr][1],
+                      "call site address": f"{callsite_addr:#x}",
+                      "call site": callsite,
+                      "function stack usage": f"{func_stack} bytes",
+                  },
               },
-          },
-          # Counter event for system stack usage
-          {"name": "", "ph": "C", "ts": ts, "args": {"stack usage": sys_stack}},
-      ])
+              # Counter event for system stack usage
+              {
+                  "name": "",
+                  "ph": "C",
+                  "ts": ts,
+                  "args": {"stack usage": sys_stack},
+              },
+          ]
+      )
 
       unmatched_entry.append((tick, addr))
     elif type == FUNCTION_EXIT:
@@ -246,22 +253,36 @@ def main():
       durs = func_stat["dur"].setdefault(addr, [])
       while len(durs) and durs[-1][0] >= entry_tick and durs[-1][1] <= tick:
         durs.pop()
-      durs.append([
-          entry_tick,  # entry tick
-          tick,  # exit tick
-          tracing_overhead,  # tracing time overhead
-          tracing_calls,  # number of tracing calls.
-      ])
-      traces.extend([
-          # Duration end event.
-          {"ph": "E", "ts": ts, "pid": 0, "tid": 0},
-          # Counter event for system stack usage
-          {"name": "", "ph": "C", "ts": ts, "args": {"stack usage": sys_stack}},
-      ])
+      durs.append(
+          [
+              entry_tick,  # entry tick
+              tick,  # exit tick
+              tracing_overhead,  # tracing time overhead
+              tracing_calls,  # number of tracing calls.
+          ]
+      )
+      traces.extend(
+          [
+              # Duration end event.
+              {"ph": "E", "ts": ts, "pid": 0, "tid": 0},
+              # Counter event for system stack usage
+              {
+                  "name": "",
+                  "ph": "C",
+                  "ts": ts,
+                  "args": {"stack usage": sys_stack},
+              },
+          ]
+      )
     elif type == HEAP_SNAPSHOT:
       traces.append(
           # Counter event for system heap usage
-          {"name": "", "ph": "C", "ts": ts, "args": {"heap usage": fields[0]}},
+          {
+              "name": "",
+              "ph": "C",
+              "ts": ts,
+              "args": {"heap usage": fields[0]},
+          },
       )
   print("Done")
 
@@ -303,42 +324,44 @@ def main():
     duration = tick_to_micros(duration, freq) * 1000 // 1 / 1000
     overhead = tick_to_micros(overhead, freq) * 1000 // 1 / 1000
     # Plot a bar like: |time without overhead | overhead |
-    traces.extend([
-        # Each bar is plotted as a thread timeline so they align from the start.
-        {
-            "name": "thread_name",
-            "ph": "M",
-            "pid": display_tab_id,
-            "tid": i,
-            "args": {"name": f" {percentage} by #Function"},
-        },
-        # | time without overhead |
-        {
-            "name": syms[addr][0] if addr != 0 else "overhead",
-            "cat": "total time",
-            "ph": "X",
-            "ts": start,
-            "dur": duration,
-            "pid": display_tab_id,
-            "tid": i,
-            "args": {
-                "function addr": f"{addr:#x}" if addr != 0 else "NA",
-                "function definition": syms[addr][1] if addr != 0 else "NA",
-                "number of calls": func_stat["count"].get(addr, 1),
+    traces.extend(
+        [
+            # Each bar is plotted as a thread timeline so they align from the start.
+            {
+                "name": "thread_name",
+                "ph": "M",
+                "pid": display_tab_id,
+                "tid": i,
+                "args": {"name": f" {percentage} by #Function"},
             },
-        },
-        # | overhead |
-        {
-            "name": "overhead",
-            "cat": "total time",
-            "ph": "X",
-            "ts": start + duration,
-            "dur": overhead,
-            "pid": display_tab_id,
-            "tid": i,
-            "args": {"number of calls": tracing_calls},
-        },
-    ])
+            # | time without overhead |
+            {
+                "name": syms[addr][0] if addr != 0 else "overhead",
+                "cat": "total time",
+                "ph": "X",
+                "ts": start,
+                "dur": duration,
+                "pid": display_tab_id,
+                "tid": i,
+                "args": {
+                    "function addr": f"{addr:#x}" if addr != 0 else "NA",
+                    "function definition": syms[addr][1] if addr != 0 else "NA",
+                    "number of calls": func_stat["count"].get(addr, 1),
+                },
+            },
+            # | overhead |
+            {
+                "name": "overhead",
+                "cat": "total time",
+                "ph": "X",
+                "ts": start + duration,
+                "dur": overhead,
+                "pid": display_tab_id,
+                "tid": i,
+                "args": {"number of calls": tracing_calls},
+            },
+        ]
+    )
 
   # Draw a bar plot for stack consumption by each function
 
@@ -361,28 +384,30 @@ def main():
   scale = (max_tick - min_tick) / total_stack[0][0]
   for i, (stack, addr) in enumerate(total_stack, display_tab_id):
     virtual_duration = tick_to_micros(stack * scale, freq)
-    traces.extend([
-        {
-            "name": "thread_name",
-            "ph": "M",
-            "pid": display_tab_id,
-            "tid": i,
-            "args": {"name": f"{stack} bytes by #Function"},
-        },
-        {
-            "name": f"{syms[addr][0]}",
-            "cat": "stack usage",
-            "ph": "X",
-            "ts": start,
-            "dur": virtual_duration,
-            "pid": display_tab_id,
-            "tid": i,
-            "args": {
-                "function addr": f"{addr:#x}",
-                "function definition": syms[addr][1],
+    traces.extend(
+        [
+            {
+                "name": "thread_name",
+                "ph": "M",
+                "pid": display_tab_id,
+                "tid": i,
+                "args": {"name": f"{stack} bytes by #Function"},
             },
-        },
-    ])
+            {
+                "name": f"{syms[addr][0]}",
+                "cat": "stack usage",
+                "ph": "X",
+                "ts": start,
+                "dur": virtual_duration,
+                "pid": display_tab_id,
+                "tid": i,
+                "args": {
+                    "function addr": f"{addr:#x}",
+                    "function definition": syms[addr][1],
+                },
+            },
+        ]
+    )
 
   # Draw a bar plot for total number of calls of each function.
   # This is mainly for evaluating trace size contributed by each function.
@@ -407,30 +432,32 @@ def main():
     )
     sz_percent = size / len(trace_bin) * 100
     virtual_duration = tick_to_micros(c_entry * scale, freq)
-    traces.extend([
-        {
-            "name": "thread_name",
-            "ph": "M",
-            "pid": display_tab_id,
-            "tid": i,
-            "args": {
-                "name": f"{c_entry} times / {sz_percent:.2f}% by #Function"
+    traces.extend(
+        [
+            {
+                "name": "thread_name",
+                "ph": "M",
+                "pid": display_tab_id,
+                "tid": i,
+                "args": {
+                    "name": f"{c_entry} times / {sz_percent:.2f}% by #Function"
+                },
             },
-        },
-        {
-            "name": f"{syms[addr][0]}",
-            "cat": "call count",
-            "ph": "X",
-            "ts": start,
-            "dur": virtual_duration,
-            "pid": display_tab_id,
-            "tid": i,
-            "args": {
-                "function address": f"{addr:#x}",
-                "function definition": syms[addr][1],
+            {
+                "name": f"{syms[addr][0]}",
+                "cat": "call count",
+                "ph": "X",
+                "ts": start,
+                "dur": virtual_duration,
+                "pid": display_tab_id,
+                "tid": i,
+                "args": {
+                    "function address": f"{addr:#x}",
+                    "function definition": syms[addr][1],
+                },
             },
-        },
-    ])
+        ]
+    )
 
   print(f"Serializing to json...")
   serialized = json.dumps(traces)

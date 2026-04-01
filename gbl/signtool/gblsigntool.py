@@ -153,7 +153,7 @@ class PEImage:
     self._optional_header_offset = (
         self._pe_header_offset + SIZEOF_IMAGE_PE_HEADER
     )
-    self._pe_header = PEHeader(self._buf[self._pe_header_offset:])
+    self._pe_header = PEHeader(self._buf[self._pe_header_offset :])
     self._checksum_offset = (
         self._optional_header_offset + OFFSET_OPTIONAL_HDR_CHECKSUM
     )
@@ -161,7 +161,7 @@ class PEImage:
         self._optional_header_offset + self._pe_header.size_of_optional_header()
     )
     self._optional_header = OptionalHeader(
-        self._buf[self._optional_header_offset:]
+        self._buf[self._optional_header_offset :]
     )
     if self._optional_header.number_of_data_entries() < 5:
       raise PEError('PE Optional header data directories table is too small')
@@ -172,7 +172,7 @@ class PEImage:
         self._optional_header_offset
         + self._optional_header.data_entry_offset(CERTIFICATE_TABLE_IDX)
     )
-    self._buf[certificate_table_offset:certificate_table_offset + 8] = (
+    self._buf[certificate_table_offset : certificate_table_offset + 8] = (
         8 * b'\x00'
     )
     if offset or size:
@@ -185,12 +185,12 @@ class PEImage:
       print('Erased existing SecureBoot certificates')
 
   def erase_checksum(self):
-    self._buf[self._checksum_offset:self._checksum_offset + 4] = 4 * b'\x00'
+    self._buf[self._checksum_offset : self._checksum_offset + 4] = 4 * b'\x00'
 
   def get_avb_footer(self):
     if len(self._buf) >= AvbFooter.SIZE:
       try:
-        return AvbFooter(self._buf[-AvbFooter.SIZE:])
+        return AvbFooter(self._buf[-AvbFooter.SIZE :])
       except (LookupError, struct.error):
         pass
     return None
@@ -206,7 +206,10 @@ class PEImage:
     )
     regions = [
         (0, self._checksum_offset),
-        (self._checksum_offset + 4, data_directory_certificate_table_offset),
+        (
+            self._checksum_offset + 4,
+            data_directory_certificate_table_offset,
+        ),
         (
             data_directory_certificate_table_end,
             self._optional_header.size_of_headers(),
@@ -247,7 +250,7 @@ def gbl_info(args):
     gbl_efi = os.path.join(temp_dir, 'gbl.efi')
     with open(gbl_efi, 'wb') as f:
       f.write(gbl_image._buf)
-    gbl_image._buf = gbl_image._buf[:avb_footer.original_image_size]
+    gbl_image._buf = gbl_image._buf[: avb_footer.original_image_size]
     print(
         'Authenticode digest (without AVB footer):',
         gbl_image.authenticode_digest(),
@@ -265,7 +268,7 @@ def gbl_sign_one(gbl_image, output, avbtool_args):
   gbl_image.erase_checksum()
   avb_footer = gbl_image.get_avb_footer()
   if avb_footer:
-    gbl_image._buf = gbl_image._buf[:avb_footer.original_image_size]
+    gbl_image._buf = gbl_image._buf[: avb_footer.original_image_size]
     print('Erased existing AVB footer')
   digest = gbl_image.authenticode_digest()
 
@@ -353,7 +356,7 @@ def gbl_remove(args):
   gbl_image.erase_checksum()
   avb_footer = gbl_image.get_avb_footer()
   if avb_footer:
-    gbl_image._buf = gbl_image._buf[:avb_footer.original_image_size]
+    gbl_image._buf = gbl_image._buf[: avb_footer.original_image_size]
     print('Erased existing AVB footer')
   with open(args.output, 'wb') as f:
     f.write(gbl_image._buf)
@@ -398,7 +401,9 @@ def main():
       'sign_archive', help='sign a GBL image archive'
   )
   sign_archive_command.add_argument(
-      'image_archive', metavar='IMAGE_ARCHIVE', help='zip archive of GBL images'
+      'image_archive',
+      metavar='IMAGE_ARCHIVE',
+      help='zip archive of GBL images',
   )
   sign_archive_command.add_argument(
       '-o', '--output', required=True, help='output archive name'
