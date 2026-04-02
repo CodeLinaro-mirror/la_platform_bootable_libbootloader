@@ -175,7 +175,7 @@ class PEImage:
     self._buf[certificate_table_offset : certificate_table_offset + 8] = (
         8 * b'\x00'
     )
-    if offset or size:
+    if offset:
       if offset > len(self._buf):
         print('WARNING: certificate table offset is past EOF')
         return
