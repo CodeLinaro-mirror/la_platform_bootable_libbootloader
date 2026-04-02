@@ -62,7 +62,7 @@ def unpack_word(buf, off):
   return struct.unpack_from('<H', buf, off)[0]
 
 
-def unpack_int(buf, off):
+def unpack_dword(buf, off):
   """Unpacks a little-endian 4-byte int."""
   return struct.unpack_from('<I', buf, off)[0]
 
@@ -85,7 +85,7 @@ class DOSHeader:
       raise PEError(f'Unexpected DOS magic: 0x{magic:04X}')
 
   def e_lfanew(self):
-    return unpack_word(self._buf, OFFSET_E_LFANEW)
+    return unpack_dword(self._buf, OFFSET_E_LFANEW)
 
 
 class PEHeader:
@@ -97,7 +97,7 @@ class PEHeader:
     if len(self._buf) < SIZEOF_IMAGE_PE_HEADER:
       raise PEError('Image size is too small for a PE header')
 
-    magic = unpack_int(self._buf, 0)
+    magic = unpack_dword(self._buf, 0)
     if magic != IMAGE_NT_SIGNATURE:
       raise PEError(f'Unexpected PE magic: 0x{magic:08X}')
 
@@ -127,7 +127,7 @@ class OptionalHeader:
       offset = OFFSET_OPTIONAL_HDR64_NUMBER_OF_RVA_AND_SIZES
     else:
       offset = OFFSET_OPTIONAL_HDR32_NUMBER_OF_RVA_AND_SIZES
-    return unpack_int(self._buf, offset)
+    return unpack_dword(self._buf, offset)
 
   def data_entry_offset(self, idx):
     if self._pe_plus:
@@ -139,7 +139,7 @@ class OptionalHeader:
     return struct.unpack_from('<II', self._buf, self.data_entry_offset(idx))
 
   def size_of_headers(self):
-    return unpack_int(self._buf, OFFSET_OPTIONAL_HDR_SIZE_OF_HEADERS)
+    return unpack_dword(self._buf, OFFSET_OPTIONAL_HDR_SIZE_OF_HEADERS)
 
 
 class PEImage:
@@ -217,8 +217,10 @@ class PEImage:
     ]
     for idx in range(self._pe_header.number_of_sections()):
       off = self._section_headers_offset + idx * 40
-      size = unpack_int(self._buf, off + OFFSET_SECTION_HEADER_SIZE_OF_RAW_DATA)
-      data = unpack_int(
+      size = unpack_dword(
+          self._buf, off + OFFSET_SECTION_HEADER_SIZE_OF_RAW_DATA
+      )
+      data = unpack_dword(
           self._buf, off + OFFSET_SECTION_HEADER_POINTER_TO_RAW_DATA
       )
       regions.append((data, data + size))
