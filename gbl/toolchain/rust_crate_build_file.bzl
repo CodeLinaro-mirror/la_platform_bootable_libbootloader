@@ -23,7 +23,10 @@ def rust_crate_build_file(
         features = [],
         edition = "2021",
         rustc_flags = [],
-        compile_data = []):
+        compile_data = [],
+        rustc_env = [],
+        license_bsd_type = [],
+        aliases = {}):
     """Generate BUILD file content for a rust crate
 
     This helper is suitable for crates that have straightforward build rules. Specifically, the
@@ -40,6 +43,9 @@ def rust_crate_build_file(
         edition (String): Rust edition.
         rustc_flags (List of strings): The `rustc_flags` field.
         compile_data (List of strings): The `compile_data` field.
+        rustc_env (List of strings): The `rustc_env` field.
+        license_bsd_type (List of strings): The `bsd_type` field for generate_license.
+        aliases (Dict of strings): The `aliases` field.
 
     Returns:
         A string for the BUILD file content.
@@ -50,7 +56,7 @@ def rust_crate_build_file(
     features = "[{}]".format(",".join(['"{}"'.format(ele) for ele in features]))
     rustc_flags = "[{}]".format(",".join(['"{}"'.format(ele) for ele in rustc_flags]))
     compile_data = "[{}]".format(",".join(['"{}"'.format(ele) for ele in compile_data]))
-
+    aliases_str = "{" + ",".join(['"{K}": "{V}"'.format(K = k, V = v) for k, v in aliases.items()]) + "}"
     return """
 load("@rules_rust//rust:defs.bzl", "{rule}")
 load("@gbl//licensing:licenses.bzl", "generate_license")
@@ -58,6 +64,7 @@ load("@gbl//licensing:licenses.bzl", "generate_license")
 generate_license(
     name = "license",
     package_name = "{name}",
+    bsd_type = {license_bsd_type},
 )
 
 {rule}(
@@ -70,7 +77,9 @@ generate_license(
     rustc_flags = {rustc_flags},
     visibility = ["//visibility:public"],
     deps = {deps},
+    aliases = {aliases},
     proc_macro_deps = {proc_macro_deps},
+    rustc_env = {rustc_env},
     applicable_licenses = [":license"],
 )
 """.format(
@@ -79,8 +88,11 @@ generate_license(
         features = features,
         rustc_flags = rustc_flags,
         deps = deps,
+        aliases = aliases_str,
         proc_macro_deps = proc_macro_deps,
         edition = edition,
-        compile_data = compile_data,
         rule = rule,
+        compile_data = compile_data,
+        license_bsd_type = license_bsd_type,
+        rustc_env = rustc_env,
     )

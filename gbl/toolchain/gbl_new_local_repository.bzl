@@ -155,7 +155,10 @@ def _gbl_rust_crate_repository_impl(repo_ctx):
             features = repo_ctx.attr.features,
             edition = repo_ctx.attr.edition,
             rustc_flags = repo_ctx.attr.rustc_flags,
+            rustc_env = repo_ctx.attr.rustc_env,
             compile_data = repo_ctx.attr.compile_data,
+            license_bsd_type = repo_ctx.attr.license_bsd_type,
+            aliases = repo_ctx.attr.aliases,
         ),
     )
 
@@ -174,8 +177,11 @@ gbl_rust_crate_repository = repository_rule(
         "crate_name": attr.string(doc = "name of the rust_library crate, same as name by default."),
         "deps": attr.string_list(doc = "The `deps` field."),
         "proc_macro_deps": attr.string_list(doc = "The `proc_macro_deps` field."),
-        "compile_data": attr.string_list(doc = "The `compile_data` field."),
         "edition": attr.string(doc = "Rust edition.", default = "2021"),
         "rustc_flags": attr.string_list(doc = "The `rustc_flags` field."),
+        "rustc_env": attr.string_dict(doc = "The `rustc_env` field."),
+        "compile_data": attr.string_list(doc = "The `compile_data` field."),
+        "license_bsd_type": attr.string_list(doc = "The `bsd_type` field for generate_license."),
+        "aliases": attr.string_dict(doc = "The `aliases` field."),
     },
 )

@@ -45,8 +45,10 @@ LICENSE_MAP = {
     "MODULE_LICENSE_BSD_3_CLAUSE": "@rules_license//licenses/spdx:BSD-3-Clause",
     "MODULE_LICENSE_BSD_LIKE": "@gbl//licensing:BSD-like",
     "MODULE_LICENSE_MIT": "@rules_license//licenses/spdx:MIT",
+    "MODULE_LICENSE_MPL": "@rules_license//licenses/spdx:MPL-2.0",
     "MODULE_LICENSE_PERMISSIVE": "@rules_license//licenses/generic:permissive",
     "MODULE_LICENSE_ZERO_BSD": "@rules_license//licenses/spdx:0BSD",
+    "MODULE_LICENSE_ZLIB": "@rules_license//licenses/spdx:Zlib",
 }
 
 # The known acceptable license kinds. Any target using a license kind other than

@@ -69,5 +69,8 @@ genrule(
             --log_output $@ \
             --disk $(location :test_gpt_disk)
     """,
-    tools = ["@gbl//tools/gpt_gen"],
+    tools = [
+        "@gbl//tools/gpt_gen",
+        "@vhost_device_vsock",
+    ],
 )
