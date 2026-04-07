@@ -2008,6 +2008,7 @@ pub(crate) mod test {
             logger.0,
             [
                 "max-download-size: 0x20000",
+                "is-userspace: no",
                 format!("version-bootloader: {}", expected_version_bootloader()).as_str(),
                 "slot-count: 2",
                 "current-slot: a",
@@ -2107,6 +2108,7 @@ pub(crate) mod test {
             logger.0,
             [
                 "max-download-size: 0x20000",
+                "is-userspace: no",
                 format!("version-bootloader: {}", expected_version_bootloader()).as_str(),
                 "max-fetch-size: 0x7fffffff",
                 "gbl-default-block: None",
@@ -3444,6 +3446,7 @@ pub(crate) mod test {
                 b"FAILNotFound",
                 b"FAILNotFound",
                 b"INFOmax-download-size: 0x20000",
+                b"INFOis-userspace: no",
                 format!("INFOversion-bootloader: {}", expected_version_bootloader()).as_bytes(),
                 b"INFOslot-count: 2",
                 b"INFOcurrent-slot: a",
@@ -3491,6 +3494,7 @@ pub(crate) mod test {
                 b"OKAY0x2000",
                 b"OKAY0x3000",
                 b"INFOmax-download-size: 0x20000",
+                b"INFOis-userspace: no",
                 format!("INFOversion-bootloader: {}", expected_version_bootloader()).as_bytes(),
                 b"INFOslot-count: 2",
                 b"INFOcurrent-slot: a",

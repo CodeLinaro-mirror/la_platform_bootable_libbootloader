@@ -36,6 +36,7 @@ use zerocopy::{error::SizeError, FromBytes, IntoBytes, Unaligned};
 
 const MAX_DOWNLOAD_SIZE: &'static str = "max-download-size";
 
+const IS_USERSPACE: &'static str = "is-userspace";
 const VERSION_BOOTLOADER: &'static str = "version-bootloader";
 
 const SLOT_COUNT: &'static str = "slot-count";
@@ -68,6 +69,7 @@ const UNLOCKED_CRITICAL: &'static str = "unlocked-critical";
 const STREAM_SEGMENT_SIZE: &'static str = "stream-segment-size";
 
 pub(crate) const GETVAR_ALL_FILTER: &'static [&'static str] = &[
+    IS_USERSPACE,
     VERSION_BOOTLOADER,
     SLOT_COUNT,
     CURRENT_SLOT,
@@ -187,6 +189,7 @@ where
         let args_str = args_str.map(|v| v.unwrap());
         Ok(match name.to_str()? {
             MAX_DOWNLOAD_SIZE => snprintf!(out, "{:#x}", self.max_download_size().await),
+            IS_USERSPACE => snprintf!(out, "no"),
             VERSION_BOOTLOADER => snprintf!(out, "gbl.{}", BUILD_NUMBER),
             SLOT_COUNT => snprintf!(out, "{}", self.gbl_ops.get_slot_count()?),
             CURRENT_SLOT => snprintf!(out, "{}", self.gbl_ops.get_current_slot()?.suffix.as_char()),
@@ -227,6 +230,7 @@ where
         let mut buf = [0u8; 32];
         let dl_sz = snprintf!(buf, "{:#x}", self.max_download_size().await);
         send.send_var_info(MAX_DOWNLOAD_SIZE, [], dl_sz).await?;
+        send.send_var_info(IS_USERSPACE, [], "no").await?;
         send.send_var_info(VERSION_BOOTLOADER, [], snprintf!(buf, "gbl.{BUILD_NUMBER}")).await?;
         match self.gbl_ops.get_slot_count() {
             Ok(slot_count) => {
