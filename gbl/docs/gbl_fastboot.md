@@ -20,9 +20,10 @@ GBL fastboot supports flexible access to storage using this format:
 
 The following variables are used to construct targets across various commands:
 
-- `<part>` (Required: production builds, Optional: dev builds): The name of the
-  partition to operate on. This must be a valid, non-empty partition name on
-  production builds.
+- `<part>` (Optional): The name of the partition to operate on. Omitting this
+  targets the raw block device entirely. On development (`gbl_dev`) builds, this
+  is fully unrestricted. However, on production builds, omitting the partition
+  name is restricted exclusively to the `fetch` command on unlocked devices.
 - `<storage_id>` (Optional): A hex string representing a unique integer ID
   assigned to each storage device detected by GBL. If `storage_id` is not given,
   GBL will check if a default storage ID is set via
@@ -75,11 +76,13 @@ the supported syntaxes for the partition name argument in fastboot.
   - `fastboot flash boot_a//200/200` -- Same as `"fastboot flash boot_a///"`,
     except that it only flashes in range `[512, 1024)`
 
-- Raw storage devices by ID
+- Raw storage devices via empty partition name
 
-  Note: Omitting the partition name is restricted to development builds compiled
-  with the `gbl_dev` feature enabled. Production builds will reject these
-  queries with a "partition name is required" error.
+  Note: On production builds, accessing the underlying block device directly by
+  omitting the partition name is only supported for the `fastboot fetch` command,
+  and additionally requires the device's bootloader to be unlocked. On development
+  builds (`gbl_dev`), omitting the partition name to access the raw block device is
+  fully permitted for `fetch`, `flash`, and `erase` operations regardless of lock state.
 
   ```
   /[<storage_id>]
@@ -87,29 +90,28 @@ the supported syntaxes for the partition name argument in fastboot.
   /[<storage_id>][/<offset>][/<size>]
   ```
 
-  This is similar to the case of partition except that `part` is an empty
-  string. It specifies range `[offset, offset+size)` of the raw data on the
-  storage device with ID `storage_id`. If `storage_id` is not given, GBL will
-  check if a default storage ID is set via
-  `fastboot oem gbl-set-default-block <storage_id>` and use the default ID if
-  set. Otherwise it is rejected. `offset` defaults to 0 if not given. `size`
-  defaults to the rest of the block after `offset` if not given. This semantic
-  applies to all storage devices that can be detected by GBL, whether or not
-  they are raw storage partitions or GPT devices.
+  This specifies the range `[offset, offset+size)` on the raw storage device. If
+  `storage_id` is omitted, it defaults to the `fastboot oem gbl-set-default-block`
+  value (or `0` if only one device exists). If multiple devices exist and no default
+  is set, the command is rejected. Both `<offset>` and `<size>` are optional,
+  defaulting to the start and the remainder of the block device, respectively.
+  This syntax applies equally to all detected GPT or raw storage devices.
 
   Examples:
-  - `fastboot flash /` -- If there is only one storage or a default storage ID
-    is set via `fastboot oem gbl-set-default-block <default ID>`, flashes in the
+  - `fastboot fetch /` -- If there is only one storage or a default storage ID
+    is set via `fastboot oem gbl-set-default-block <default ID>`, fetches the
     entire range of the storage.
-  - `fastboot flash /0x0` or `/0` -- Flashes in the entire range of storage
+  - `fastboot fetch /0/200` -- Fetches only in range `[512, end)` of storage
     device 0.
-  - `fastboot flash /0/200` -- Flashes only in range `[512, end)` of storage
-    device 0.
-  - `fastboot flash /0/200/200` -- Flashes only in range `[512, 1024)` of
-    storage device 0.
+  - `fastboot fetch ///` -- Same as `"fastboot fetch /"`.
+
+  On development builds (`gbl_dev`), omitting the partition name to access the raw block device is fully permitted for `flash` and `erase` operations as well. Examples:
+  - `fastboot flash /` -- If there is only one storage or a default storage ID is set via `fastboot oem gbl-set-default-block <default ID>`, flashes in the entire range of the storage.
+  - `fastboot flash /0x0` or `/0` -- Flashes in the entire range of storage device 0.
+  - `fastboot flash /0/200` -- Flashes only in range `[512, end)` of storage device 0.
+  - `fastboot flash /0/200/200` -- Flashes only in range `[512, 1024)` of storage device 0.
   - `fastboot flash ///` -- Same as `"fastboot flash /"`.
-  - `fastboot flash //200/200` -- Same as `"fastboot flash ///"`, except that it
-    only flashes in range `[512, 1024)`
+  - `fastboot flash //200/200` -- Same as `"fastboot flash ///"`, except that it only flashes in range `[512, 1024)`.
 
 Note: AOSP fastboot client tool introduces a special flash command syntax
 `fastboot flash vendor_boot_a:<part_size>` for performing vendor ramdisk

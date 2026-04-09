@@ -579,10 +579,6 @@ where
         let mut args = part.split('/');
         // Parses partition name.
         let part = next_arg(&mut args);
-        // Partition name is required unless using gbl_dev
-        if cfg!(not(feature = "gbl_dev")) && part.is_none() {
-            return Err("partition name is required".into());
-        }
         // Parses block device ID.
         let blk_id = self.check_next_arg_blk_id(&mut args)?;
         // Parses sub window offset.
@@ -661,11 +657,28 @@ where
     }
 
     /// Parses and resolves partition and wait until the corresponding IO can be obtained.
+    /// Also enforces security checks for raw block device access.
     pub(crate) async fn parse_and_get_partition_io<'s>(
         &mut self,
         part: &'s str,
+        is_fetch: bool,
     ) -> CommandResult<MultiPartitionIo<'a, B, MAX_IO_PARTS>> {
         let (part, blk_id, off, sz) = self.parse_partition_arg(part)?;
+
+        if part.is_none() && cfg!(not(feature = "gbl_dev")) {
+            if is_fetch {
+                let is_unlocked = matches!(
+                    self.gbl_ops.fastboot_read_lock_state(LockType::Device),
+                    Ok(LockState::Unlocked)
+                );
+                if !is_unlocked {
+                    return Err("fetching a raw partition is restricted to unlocked devices".into());
+                }
+            } else {
+                return Err("partition name is required".into());
+            }
+        }
+
         let mut parts_info = ArrayVec::new();
         for (id, p) in self.resolve_slotted_partitions(part, blk_id)? {
             let (start, end) = p.sub(off, sz)?;
@@ -1074,7 +1087,7 @@ where
             };
         }
 
-        let part_io = self.parse_and_get_partition_io(part).await?;
+        let part_io = self.parse_and_get_partition_io(part, false).await?;
         let (data, sz) = self.take_download().ok_or("No download")?;
         let mut task = Task::new(match is_sparse_image(&data) {
             Ok(v) => TaskWorkload::FlashSparse(part_io.sub(0, v.data_size())?, data),
@@ -1097,7 +1110,7 @@ where
             };
         }
 
-        let part_io = self.parse_and_get_partition_io(part).await?;
+        let part_io = self.parse_and_get_partition_io(part, false).await?;
         let mut task =
             Task::new(TaskWorkload::Erase(part_io, self.take_or_allocate_download_buffer().await));
         task.set_context(|f| write!(f, "erase:{part}"));
@@ -1197,7 +1210,7 @@ where
         size: u32,
         mut responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()> {
-        let mut part_io = self.parse_and_get_partition_io(part).await?;
+        let mut part_io = self.parse_and_get_partition_io(part, true).await?;
         let buffer = self.get_download_buffer().await;
         // 4MB batches (chosen empirically) or as large as the download buffer permits.
         let batch_sz = min(4 * 1024 * 1024, buffer.len() / 2);
@@ -1332,7 +1345,7 @@ where
         command: StreamCommand<&'d str>,
         mut responder: impl InfoSender,
     ) -> CommandResult<()> {
-        let part_io = self.parse_and_get_partition_io(command.partition.as_ref()).await?;
+        let part_io = self.parse_and_get_partition_io(command.partition.as_ref(), false).await?;
         let mut task = match command.operation {
             StreamOperation::Fill { size, payload } => {
                 let buffer = self.take_or_allocate_download_buffer().await;
@@ -2227,7 +2240,10 @@ pub(crate) mod test {
         if cfg!(feature = "gbl_dev") || part.unwrap_or("") != "" {
             assert_eq!(result.as_ref().unwrap(), expected);
         } else {
-            assert!(matches!(result.as_ref().unwrap_err().as_str(), "partition name is required"));
+            assert!(matches!(
+                result.as_ref().unwrap_err().as_str(),
+                "fetching a raw partition is restricted to unlocked devices"
+            ));
         }
     }
 
@@ -2270,6 +2286,38 @@ pub(crate) mod test {
         let size = 512;
         check_blk_upload(&mut gbl_fb, 0, off, size, disk_0);
         check_blk_upload(&mut gbl_fb, 1, off, size, disk_1);
+    }
+
+    #[test]
+    fn test_fetch_raw_block_unlocked() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        let disk_0 = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
+        let disk_1 = include_bytes!("../../../libstorage/test/gpt_test_2.bin");
+        storage.add_gpt_device(disk_0);
+        storage.add_gpt_device(disk_1);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        let off = 512;
+        let size = 512;
+
+        let expected_0 = disk_0[off.try_into().unwrap()..][..size.try_into().unwrap()].to_vec();
+        let expected_1 = disk_1[off.try_into().unwrap()..][..size.try_into().unwrap()].to_vec();
+
+        let part_arg_0 = format!("/0/{:#x}/{:#x}", off, size);
+        let part_arg_1 = format!("/1/{:#x}/{:#x}", off, size);
+
+        let res_unlocked_0 = fetch(&mut gbl_fb, part_arg_0, 0, size);
+        let res_unlocked_1 = fetch(&mut gbl_fb, part_arg_1, 0, size);
+
+        assert_eq!(res_unlocked_0.unwrap(), expected_0);
+        assert_eq!(res_unlocked_1.unwrap(), expected_1);
     }
 
     /// A helper for testing uploading GPT partition. It verifies that data read from GPT partition
@@ -2498,7 +2546,7 @@ pub(crate) mod test {
         let mut gbl_fb =
             GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
         let listener: SharedTestListener = Default::default();
-        listener.add_transport_input(b"flash:/200");
+        listener.add_transport_input(b"flash:");
         use fastboot::process_next_command;
         let _ = block_on(process_next_command(&mut &listener, &mut gbl_fb));
         let out = listener.transport_out_queue();
