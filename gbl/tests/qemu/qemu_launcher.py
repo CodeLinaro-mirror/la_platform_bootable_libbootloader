@@ -58,9 +58,9 @@ def launch_qemu(args):
     shutil.copyfile(args.efi, esp_part_dir / "bootaa64.efi")
     # Make sure a log file always eixsts
     (test_dir / "console.log").write_text("")
-    failed = False
+
     try:
-      cmd_args = [qemu, "-nographic", "-machine", "virt", "-cpu", "max"]
+      cmd_args = [qemu, "-nographic", "-cpu", "max"]
       cmd_args += ["-m", "256M"]  # 256mb is minimum requirement by edk2
       # Skips the 5 seconds delay spent waiting for user input in the boot menu
       cmd_args += ["-boot", "menu=on,splash-time=0"]
@@ -77,8 +77,20 @@ def launch_qemu(args):
           "-chardev",
           "socket,id=console,path=con_in.sock,server=on,wait=off,mux=on,logfile=console.log",
       ]
+
+      # Generate FDT
       subprocess.run(
-          cmd_args,
+          cmd_args + ["-machine", "virt,dumpdtb=fdt.dtb"],
+          check=True,
+          stderr=subprocess.STDOUT,
+          cwd=test_dir,
+          env=env,
+      )
+
+      # Launch GBL
+      failed = False
+      subprocess.run(
+          cmd_args + ["-machine", "virt"],
           timeout=args.timeout,
           check=True,
           stderr=subprocess.STDOUT,
