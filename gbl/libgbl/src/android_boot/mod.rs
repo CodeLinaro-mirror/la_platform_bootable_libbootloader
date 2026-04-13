@@ -30,7 +30,6 @@ use crate::{
     slots::Slot,
     GblOps, IntegrationError, Result,
 };
-use avb::IoError;
 use bootparams::{
     bootconfig::{extract_bootconfig, BootConfigBuilder},
     entry::CommandlineParser,
@@ -90,26 +89,14 @@ pub fn android_load_verify_fixup<'a, 'b>(
 ) -> Result<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
     let mut loader = BootBufferLoader::new(boot_buffer);
 
-    // Requests custom partitions to verify.
-    let requested_partitions = match ops.avb_read_partition_attributes() {
-        Ok(mut requested_partitions) => {
-            // Here we only care about the partitions that are requesting verification.
-            // Failing to do this would panic later since it's an error to create `LoadPartition`
-            // from a non-verifying `SpecializedPartition`.
-            requested_partitions.retain(|p| p.verification.is_some());
-            gbl_println!(
-                ops,
-                "FW requested {} extra partitions to be loaded/verified",
-                requested_partitions.len()
-            );
-            // Note: some of `requested_partitions` could potentially have names too long for
-            // libavb to support, but we should let libavb handle that itself.
-            requested_partitions
-        }
-        // Providing custom partitions is optional for FW.
-        Err(IoError::NotImplemented) => ArrayMaxSpecializedParts::new(),
-        Err(e) => return Err(e.into()),
-    };
+    // Get the list of device-specific partitions to verify.
+    let requested_partitions: ArrayMaxSpecializedParts<_> =
+        ops.avb_read_partition_attributes()?.filter(|p| p.verification.is_some()).collect();
+    gbl_println!(
+        ops,
+        "FW requested {} extra partitions to be loaded/verified",
+        requested_partitions.len()
+    );
 
     let mut partitions: ArrayMaxParts<(LoadPartition, Option<PartitionBuffer<_>>)> =
         ArrayMaxParts::new();

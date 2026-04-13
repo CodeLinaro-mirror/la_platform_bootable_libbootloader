@@ -30,6 +30,7 @@ use crate::{
     },
 };
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, Ops as AbrOps, SlotIndex};
+use arrayvec::ArrayVec;
 use bytes::buf::UninitSlice;
 use core::{
     ffi::CStr,
@@ -41,6 +42,7 @@ use gbl_async::block_on;
 use libprofile::ProfileBackend;
 #[cfg(feature = "fuchsia")]
 use libutils::aligned_subslice;
+use libutils::cstr_buffer;
 
 // Re-exports of types from other dependencies that appear in the APIs of this library.
 pub use avb::{
@@ -302,9 +304,56 @@ pub trait GblOps<'a> {
     // managed by GBL APIs.
 
     /// Returns the set of specialized partitions and their requested handling attributes.
-    fn avb_read_partition_attributes(
+    ///
+    /// This is the raw set of attributes provided by the platform; most callers will want to use
+    /// [avb_read_partition_attributes] instead which provides the defaults defined by GBL's docs.
+    fn avb_read_partition_attributes_raw(
         &mut self,
     ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>>;
+
+    /// Returns the set of specialized partitions with GBL defaults applied.
+    ///
+    /// These defaults are described in the UEFI protocol documentation at
+    /// `bootable/libbootloader/gbl/docs/gbl_efi_avb_protocol.md`. These are UEFI defaults so
+    /// theoretically could live in the UEFI backend implementation instead of here in the
+    /// platform-generic `Ops`, but it seems likely we want this behavior for all backends so
+    /// for now it's here.
+    ///
+    /// The defaults provided are:
+    /// * missing backend implementation does not return an error
+    /// * "userdata" and "metadata" are marked as FDR partitions unless opted out
+    ///
+    /// This function does *not* provide any default partitions to verify, since these partitions
+    /// may vary depending on the boot flow this is called from.
+    ///
+    /// Additionally, this function returns an iterator rather than an `ArrayVec` because it may
+    /// append additional items which would exceed the `ArrayMaxSpecializedParts` capacity.
+    fn avb_read_partition_attributes(
+        &mut self,
+    ) -> AvbIoResult<impl Iterator<Item = SpecializedPartition> + 'static> {
+        let attributes = match self.avb_read_partition_attributes_raw() {
+            Ok(attributes) => attributes,
+            Err(AvbIoError::NotImplemented) => Default::default(), // Hook is optional
+            Err(e) => return Err(e),
+        };
+
+        // If these partitions aren't explicitly provided, they are added to the end.
+        let mut default_partitions = ArrayVec::from([
+            SpecializedPartition {
+                name_buffer: cstr_buffer("userdata"),
+                fdr: true,
+                ..Default::default()
+            },
+            SpecializedPartition {
+                name_buffer: cstr_buffer("metadata"),
+                fdr: true,
+                ..Default::default()
+            },
+        ]);
+        default_partitions.retain(|p| !attributes.iter().any(|a| a.name_cstr() == p.name_cstr()));
+
+        Ok(attributes.into_iter().chain(default_partitions.into_iter()))
+    }
 
     /// Reads the AVB device status.
     fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus>;
@@ -744,10 +793,10 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
         self.ops.load_slot_interface(_fnmut, _boot_token)
     }
 
-    fn avb_read_partition_attributes(
+    fn avb_read_partition_attributes_raw(
         &mut self,
     ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>> {
-        self.ops.avb_read_partition_attributes()
+        self.ops.avb_read_partition_attributes_raw()
     }
 
     fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
@@ -1005,6 +1054,7 @@ pub(crate) mod test {
     use crate::{
         android_boot::device_tree::{PROP_BOOTARGS, RNG_SEED_SIZE_BYTES},
         device_tree::{DtComponentType, DtComponentsRegistry},
+        gbl_avb::Verification,
         partition::GblDisk,
         slots::Bootability,
     };
@@ -1128,7 +1178,7 @@ pub(crate) mod test {
         /// For return by `Self::get_random_bytes()`
         pub get_random_bytes_error: Option<Error>,
 
-        /// For return by `Self::avb_read_partition_attributes()`
+        /// For return by `Self::avb_read_partition_attributes_raw()`
         pub avb_partition_attributes: Option<AvbIoResult<Vec<SpecializedPartition>>>,
 
         /// For return by `Self::avb_read_device_status`
@@ -1379,7 +1429,7 @@ pub(crate) mod test {
             unimplemented!();
         }
 
-        fn avb_read_partition_attributes(
+        fn avb_read_partition_attributes_raw(
             &mut self,
         ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>> {
             Ok(self
@@ -1831,7 +1881,7 @@ pub(crate) mod test {
             Err(Error::Unsupported.into())
         }
 
-        fn avb_read_partition_attributes(
+        fn avb_read_partition_attributes_raw(
             &mut self,
         ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>> {
             Err(AvbIoError::NotImplemented)
@@ -2070,5 +2120,93 @@ pub(crate) mod test {
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.base_sp = Some(1);
         assert_eq!(gbl_ops.calculate_stack_usage(2), Some(usize::MAX));
+    }
+
+    #[test]
+    fn avb_read_partition_attributes_raw() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_partition_attributes = Some(AvbIoResult::Ok(vec![]));
+
+        // The raw value should not append any defaults, so should still be empty.
+        assert!(gbl_ops.avb_read_partition_attributes_raw().unwrap().is_empty());
+    }
+
+    const DEFAULT_USERDATA_ATTRIBUTES: SpecializedPartition = SpecializedPartition {
+        name_buffer: cstr_buffer("userdata"),
+        verification: None,
+        fdr: true,
+        critical: false,
+    };
+
+    const DEFAULT_METADATA_ATTRIBUTES: SpecializedPartition = SpecializedPartition {
+        name_buffer: cstr_buffer("metadata"),
+        verification: None,
+        fdr: true,
+        critical: false,
+    };
+
+    #[test]
+    fn avb_read_partition_attributes_not_implemented() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_partition_attributes = None;
+
+        assert_eq!(
+            gbl_ops.avb_read_partition_attributes().unwrap().collect::<Vec<_>>(),
+            vec![DEFAULT_USERDATA_ATTRIBUTES, DEFAULT_METADATA_ATTRIBUTES]
+        );
+    }
+
+    #[test]
+    fn avb_read_partition_attributes_empty() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_partition_attributes = Some(AvbIoResult::Ok(vec![]));
+
+        assert_eq!(
+            gbl_ops.avb_read_partition_attributes().unwrap().collect::<Vec<_>>(),
+            vec![DEFAULT_USERDATA_ATTRIBUTES, DEFAULT_METADATA_ATTRIBUTES]
+        );
+    }
+
+    #[test]
+    fn avb_read_partition_attributes_non_empty() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        // Unrelated partition attributes should be left in place.
+        let other_attributes = SpecializedPartition {
+            name_buffer: cstr_buffer("other_partition"),
+            verification: Some(Verification::Required),
+            fdr: true,
+            critical: true,
+        };
+        gbl_ops.avb_partition_attributes = Some(AvbIoResult::Ok(vec![other_attributes.clone()]));
+
+        assert_eq!(
+            gbl_ops.avb_read_partition_attributes().unwrap().collect::<Vec<_>>(),
+            vec![other_attributes, DEFAULT_USERDATA_ATTRIBUTES, DEFAULT_METADATA_ATTRIBUTES]
+        );
+    }
+
+    #[test]
+    fn avb_read_partition_attributes_default_fdr_override() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        // The device should be able to override the default FDR behavior.
+        let modified_userdata_attributes = SpecializedPartition {
+            name_buffer: cstr_buffer("userdata"),
+            fdr: false,
+            ..Default::default()
+        };
+        gbl_ops.avb_partition_attributes =
+            Some(AvbIoResult::Ok(vec![modified_userdata_attributes.clone()]));
+
+        assert_eq!(
+            gbl_ops.avb_read_partition_attributes().unwrap().collect::<Vec<_>>(),
+            vec![modified_userdata_attributes, DEFAULT_METADATA_ATTRIBUTES]
+        );
     }
 }

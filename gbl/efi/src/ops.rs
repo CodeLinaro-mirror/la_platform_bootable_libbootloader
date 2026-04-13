@@ -382,7 +382,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         unimplemented!();
     }
 
-    fn avb_read_partition_attributes(
+    fn avb_read_partition_attributes_raw(
         &mut self,
     ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>> {
         match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
@@ -1125,8 +1125,8 @@ mod test {
         assert!(write!(&mut ops, "{} {}", "foo", "bar").is_ok());
     }
 
-    /// Helper for testing `avb_read_partition_attributes`.
-    fn test_avb_read_partition_attributes(
+    /// Helper for testing `avb_read_partition_attributes_raw`.
+    fn test_avb_read_partition_attributes_raw(
         call_status: ProtocolCallStatus<&[SpecializedPartition]>,
     ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>> {
         let mut mock_efi = MockEfi::new();
@@ -1147,11 +1147,11 @@ mod test {
 
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        ops.avb_read_partition_attributes()
+        ops.avb_read_partition_attributes_raw()
     }
 
     #[test]
-    fn ops_avb_read_partition_attributes_success() {
+    fn ops_avb_read_partition_attributes_raw_success() {
         let partitions = [
             SpecializedPartition {
                 name_buffer: cstr_buffer("boot"),
@@ -1174,16 +1174,16 @@ mod test {
         ];
 
         let result =
-            test_avb_read_partition_attributes(ProtocolCallStatus::Success(&partitions[..]))
+            test_avb_read_partition_attributes_raw(ProtocolCallStatus::Success(&partitions[..]))
                 .unwrap();
 
         assert_eq!(&result[..], partitions);
     }
 
     #[test]
-    fn ops_avb_read_partition_attributes_protocol_error() {
+    fn ops_avb_read_partition_attributes_raw_protocol_error() {
         assert_eq!(
-            test_avb_read_partition_attributes(ProtocolCallStatus::ProtocolCallError(
+            test_avb_read_partition_attributes_raw(ProtocolCallStatus::ProtocolCallError(
                 Error::InvalidInput
             )),
             Err(AvbIoError::InvalidValueSize)
@@ -1191,9 +1191,9 @@ mod test {
     }
 
     #[test]
-    fn ops_avb_read_partition_attributes_protocol_not_found() {
+    fn ops_avb_read_partition_attributes_raw_protocol_not_found() {
         assert_eq!(
-            test_avb_read_partition_attributes(ProtocolCallStatus::ProtocolLookupError(
+            test_avb_read_partition_attributes_raw(ProtocolCallStatus::ProtocolLookupError(
                 Error::NotFound
             )),
             Err(AvbIoError::NotImplemented)

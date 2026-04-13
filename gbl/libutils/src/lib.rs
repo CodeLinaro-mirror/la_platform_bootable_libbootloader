@@ -162,14 +162,18 @@ macro_rules! snprintf {
 /// # Panics
 ///
 /// Panics if the given buffer size can't contain the contents.
-pub fn cstr_buffer<const N: usize>(contents: &str) -> [u8; N] {
+pub const fn cstr_buffer<const N: usize>(contents: &str) -> [u8; N] {
     let contents = contents.as_bytes();
 
     // Must be enough space for `contents` and a nul-terminator.
     assert!(contents.len() < N);
 
     let mut buffer = [0; N];
-    buffer[..contents.len()].copy_from_slice(contents);
+    let mut i = 0;
+    while i < contents.len() {
+        buffer[i] = contents[i];
+        i += 1;
+    }
     buffer
 }
 
