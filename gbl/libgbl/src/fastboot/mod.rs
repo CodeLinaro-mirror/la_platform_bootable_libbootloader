@@ -29,7 +29,10 @@ use crate::{
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message, AndroidBootMode},
     ops::{CommandExecType, RambootOps},
-    partition::{check_part_unique, GblDisk, MultiPartitionIo, Partition, PartitionIo, RawName},
+    partition::{
+        check_part_unique, split_partition_suffix, GblDisk, MultiPartitionIo, Partition,
+        PartitionIo, RawName,
+    },
     slots::Slot,
     GblOps, IntegrationError,
 };
@@ -615,20 +618,36 @@ where
         })
     }
 
-    /// Helper for finding partitions with special handling for slotted syntax. The following are
-    /// checked in order:
-    //
-    //  1. If there is an exact match of the partition, return the match.
-    //  2. If partition has format "<base>_ab", checks "<base>_a" and "<base>_b".
-    //  3. Otherwise checks "<base>_<current slot>".
-    fn resolve_slotted_partitions(
+    /// Resolves partition names with special handling for slotted syntax.
+    ///
+    /// The following are checked in order:
+    ///
+    ///  1. If there is an exact match of the partition, return the match.
+    ///  2. If partition has format "<base>_ab", checks "<base>_a" and "<base>_b".
+    ///  3. Otherwise checks "<base>_<current slot>".
+    ///
+    /// # Arguments
+    ///
+    /// * `part`: the given partition name, or `None` for raw disk access.
+    /// * `blk_id`: the block device to locate the partition on, or `None` for any.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    ///
+    /// * The base name of the partition without any slot suffix, or `None` for raw disk.
+    /// * The list of `(block device ID, Partition)` tuples corresponding to this partition.
+    fn resolve_slotted_partitions<'s>(
         &mut self,
-        part: Option<&str>,
+        part: Option<&'s str>,
         blk_id: Option<usize>,
-    ) -> Result<ArrayVec<(usize, Partition), MAX_IO_PARTS>, Error> {
+    ) -> Result<(Option<&'s str>, ArrayVec<(usize, Partition), MAX_IO_PARTS>), Error> {
         match self.find_partition(part, blk_id) {
             // If there is an exact match, returns as it is.
-            Ok(v) => return Ok((&[v][..]).try_into().unwrap()),
+            Ok(v) => Ok((
+                part.map(|p| split_partition_suffix(p).map(|(base, _)| base).unwrap_or(p)),
+                (&[v][..]).try_into().unwrap(),
+            )),
             // Checks slotted extension. Currently only support A/B two-slot scheme.
             Err(Error::NotFound) => match part {
                 // If the partition doesn't exist but ends with "_ab", expands to "_a" and "_b"
@@ -640,7 +659,7 @@ where
                         let part = RawName::new_formatted(format_args!("{base}_{suffix}"))?;
                         res.push(self.find_partition(Some(part.to_str()), blk_id)?);
                     }
-                    Ok(res)
+                    Ok((Some(base), res))
                 }
                 // Otherwise appends with current slot and checks again.
                 Some(p) => {
@@ -648,7 +667,7 @@ where
                     let slot = self.gbl_ops.get_current_slot()?.suffix.as_char();
                     let part = RawName::new_formatted(format_args!("{p}_{slot}"))?;
                     res.push(self.find_partition(Some(part.to_str()), blk_id)?);
-                    Ok(res)
+                    Ok((Some(p), res))
                 }
                 _ => Err(Error::NotFound),
             },
@@ -680,7 +699,8 @@ where
         }
 
         let mut parts_info = ArrayVec::new();
-        for (id, p) in self.resolve_slotted_partitions(part, blk_id)? {
+        let (_, parts) = self.resolve_slotted_partitions(part, blk_id)?;
+        for (id, p) in parts {
             let (start, end) = p.sub(off, sz)?;
             parts_info.push((id, start, end));
         }
@@ -1826,6 +1846,79 @@ pub(crate) mod test {
                 cb(&mut f.as_mut(), b).then(|| self.swap_remove(idx));
             }
         }
+    }
+
+    #[test]
+    fn test_resolve_slotted_partitions_exact_match() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", vec![0u8; KiB!(4)]);
+
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        let (base, res) = gbl_fb.resolve_slotted_partitions(Some("boot_a"), None).unwrap();
+        assert_eq!(base, Some("boot"));
+        assert_eq!(res.len(), 1);
+    }
+
+    #[test]
+    fn test_resolve_slotted_partitions_ab_expansion() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"vendor_a", vec![0u8; KiB!(4)]);
+        storage.add_raw_device(c"vendor_b", vec![0u8; KiB!(4)]);
+
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        let (base, res) = gbl_fb.resolve_slotted_partitions(Some("vendor_ab"), None).unwrap();
+        assert_eq!(base, Some("vendor"));
+        assert_eq!(res.len(), 2);
+    }
+
+    #[test]
+    fn test_resolve_slotted_partitions_fallback() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"system_a", vec![0u8; KiB!(4)]);
+
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        let (base, res) = gbl_fb.resolve_slotted_partitions(Some("system"), None).unwrap();
+        assert_eq!(base, Some("system"));
+        assert_eq!(res.len(), 1);
+    }
+
+    #[test]
+    fn test_resolve_slotted_partitions_none() {
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"raw_0", vec![0u8; KiB!(4)]);
+
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        let (base, res) = gbl_fb.resolve_slotted_partitions(None, Some(0)).unwrap();
+        assert_eq!(base, None);
+        assert_eq!(res.len(), 1);
     }
 
     #[test]

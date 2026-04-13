@@ -325,7 +325,7 @@ where
     /// Parses and finds the size of the given partition.
     pub(crate) fn partition_size<'s>(&mut self, part: &'s str) -> CommandResult<u64> {
         let (part, blk_id, off, sz) = self.parse_partition_arg(part)?;
-        let parts = self.resolve_slotted_partitions(part, blk_id)?;
+        let (_, parts) = self.resolve_slotted_partitions(part, blk_id)?;
         // Slotted partition-size only make sense if they are all the same. Because it may be used
         // to copy AVB footer.
         for (_, p) in &parts[1..] {
