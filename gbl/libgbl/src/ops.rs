@@ -1683,7 +1683,24 @@ pub(crate) mod test {
             lock_type: LockType,
             lock_state: LockState,
         ) -> Result<(), Error> {
+            // Add to the trace for cases where it's difficult to analyze the state until the end
+            // of the test (e.g. changing multiple times in a single fastboot session).
             self.write_lock_state_traces.push((lock_type, lock_state));
+
+            // If the user has simulated a device state error, locking fails.
+            if let Some(err) = &self.avb_device_status_error {
+                return Err(err.clone().into());
+            }
+
+            let locked = match lock_state {
+                LockState::Locked => true,
+                LockState::Unlocked => false,
+            };
+            match lock_type {
+                LockType::Device => self.avb_device_status.is_unlocked = !locked,
+                LockType::Critical => self.avb_device_status.is_unlocked_critical = !locked,
+            }
+
             Ok(())
         }
 

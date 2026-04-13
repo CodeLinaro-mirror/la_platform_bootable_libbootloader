@@ -26,6 +26,7 @@ use crate::{
     android_boot::{
         android_load_verify_fixup, get_boot_slot, load::sub_slice_range, BootBuffer, LoadedImages,
     },
+    gbl_avb::AvbDeviceStatus,
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message, AndroidBootMode},
     ops::{CommandExecType, RambootOps},
@@ -209,6 +210,35 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> Default for Task<'a, 'b, B, P> {
         // Creates a noop task. This is mainly used for type inference for inline declaration of
         // pre-allocated task pool.
         Self::new(TaskWorkload::None)
+    }
+}
+
+/// Lazily initializes an `AvbDeviceStatus` as needed.
+///
+/// This is useful for fastboot flows which may conditionally need to check device status several
+/// times. It reads the device status once on-demand, and then uses the cached value for any future
+/// accesses.
+///
+/// Make sure not to hold this object across multiple fastboot commands, since it does not re-check
+/// the lock state.
+#[derive(Default)]
+struct LazyAvbDeviceStatus {
+    status: Option<AvbDeviceStatus>,
+}
+
+impl LazyAvbDeviceStatus {
+    /// Returns the device status.
+    ///
+    /// Queries the backend if status is not yet known, otherwise returns the cached value.
+    ///
+    /// On failure, the cache remains unset and will be queried again on the next call.
+    fn get<'a, G: GblOps<'a>>(&mut self, ops: &mut G) -> CommandResult<&AvbDeviceStatus> {
+        match self.status {
+            Some(ref cached) => Ok(cached),
+            None => Ok(self
+                .status
+                .insert(ops.avb_read_device_status().map_err(|_| "failed to read lock state")?)),
+        }
     }
 }
 
@@ -675,22 +705,35 @@ where
         }
     }
 
-    /// Parses and resolves partition and wait until the corresponding IO can be obtained.
-    /// Also enforces security checks for raw block device access.
-    pub(crate) async fn parse_and_get_partition_io<'s>(
+    /// Converts a fastboot disk access target into an I/O object.
+    ///
+    /// This does a few things:
+    ///
+    /// 1. Parses the target, which could be a simple partition name or something more complex
+    ///    e.g. using the extended partition syntax.
+    /// 2. Checks for access permission to make sure the caller is allowed to read or write
+    ///    the target.
+    /// 3. Creates a [MultiPartitionIo] that can be used to access the corresponding disk bytes.
+    /// 4. Waits asynchronously until the [MultiPartitionIo] is ready to use.
+    ///
+    /// # Arguments
+    ///
+    /// * `target`: the provided flash/fetch target.
+    /// * `read_only`: true to restrict the IO to read-only.
+    async fn parse_and_get_partition_io<'s>(
         &mut self,
-        part: &'s str,
-        is_fetch: bool,
+        target: &'s str,
+        read_only: bool,
     ) -> CommandResult<MultiPartitionIo<'a, B, MAX_IO_PARTS>> {
-        let (part, blk_id, off, sz) = self.parse_partition_arg(part)?;
+        let (part, blk_id, off, sz) = self.parse_partition_arg(target)?;
+        let mut device_status = LazyAvbDeviceStatus::default();
 
+        // Currently raw disk access is only allowed for:
+        //   * dev builds
+        //   * unlocked prod builds for read-only access (i.e. `fastboot fetch`)
         if part.is_none() && cfg!(not(feature = "gbl_dev")) {
-            if is_fetch {
-                let is_unlocked = matches!(
-                    self.gbl_ops.fastboot_read_lock_state(LockType::Device),
-                    Ok(LockState::Unlocked)
-                );
-                if !is_unlocked {
+            if read_only {
+                if !device_status.get(self.gbl_ops)?.is_unlocked {
                     return Err("fetching a raw partition is restricted to unlocked devices".into());
                 }
             } else {
@@ -699,13 +742,52 @@ where
         }
 
         let mut parts_info = ArrayVec::new();
-        let (_, parts) = self.resolve_slotted_partitions(part, blk_id)?;
+        let (basename, parts) = self.resolve_slotted_partitions(part, blk_id)?;
+
+        // If we're writing a partition, get the attributes so we know:
+        //  1. Whether this partition is critically-locked
+        //  2. Whether we need to trigger FDR after modifying this partition
+        if !read_only {
+            // TODO(b/483148938) - handle the FDR flag.
+            let (_fdr, critical) = match basename {
+                Some(basename) => self
+                    .gbl_ops
+                    .avb_read_partition_attributes()?
+                    .find(|p| p.name_cstr().to_bytes() == basename.as_bytes())
+                    .map(|p| (p.fdr, p.critical))
+                    .unwrap_or((false, false)),
+                // Raw disk access.
+                None => (
+                    // No FDR.
+                    // Raw disk access is advanced usage, it's up the caller to know if they're
+                    // messing with userdata or not, and auto-triggering FDR on non-secure disk
+                    // modification is a developer convenience, not security load-bearing.
+                    false,
+                    // Critical only if the device has defined any critical partitions.
+                    // If we have critically-protected partitions, we must also critically-protect
+                    // raw disk access or else it defeats the purpose since raw disk writes could
+                    // get around the critical lock. We could try to lookup which partition(s) this
+                    // raw access hits and be more precise with the lock, but we should wait until
+                    // we have a use case before adding that complexity.
+                    self.gbl_ops.avb_read_partition_attributes()?.any(|p| p.critical),
+                ),
+            };
+
+            // Enforce the critical lock.
+            if critical && !device_status.get(self.gbl_ops)?.is_unlocked_critical {
+                return Err("partition is critical-locked".into());
+            }
+        }
+
         for (id, p) in parts {
             let (start, end) = p.sub(off, sz)?;
             parts_info.push((id, start, end));
         }
         let _guard = TraceGuard::new(false);
         loop {
+            // TODO(b/483148938) - if this partition requires FDR, we should trigger FDR
+            // after modifications are complete. We may also want to consider enforcing the
+            // `read_only` flag if it was passed in - could we do this at compile time?
             match crate::partition::create_multi_partition_io(self.disks, parts_info.clone()) {
                 Err(Error::NotReady) => yield_now().await,
                 v => return Ok(v?),
@@ -1740,7 +1822,7 @@ pub(crate) mod test {
             default_test_gbl_ops, read_test_data,
         },
         constants::{KiB, MiB, KERNEL_ALIGNMENT},
-        gbl_avb::{AvbDeviceStatus, LoadPartition},
+        gbl_avb::{LoadPartition, SpecializedPartition},
         misc::test::read_bootloader_message,
         ops::{
             test::{
@@ -1762,6 +1844,7 @@ pub(crate) mod test {
     use libbuild_number::BUILD_NUMBER;
     use liberror::Error;
     use libtestutils::AlignedBuffer;
+    use libutils::cstr_buffer;
     use spin::{Mutex, MutexGuard};
     use std::{
         cell::RefCell,
@@ -2644,6 +2727,167 @@ pub(crate) mod test {
         let _ = block_on(process_next_command(&mut &listener, &mut gbl_fb));
         let out = listener.transport_out_queue();
         assert_eq!(out[0], b"FAILpartition name is required");
+    }
+
+    const FAIL_MESSAGE_CRITICAL_LOCK: &[u8] = b"FAILpartition is critical-locked";
+    const FAIL_MESSAGE_NOT_FOUND: &[u8] = b"FAILNotFound";
+
+    /// Attempts to flash 4KiB of 0xAA to `part` and returns the response.
+    fn fb_flash(fb: &mut impl FastbootImplementation, part: &str) -> Vec<u8> {
+        set_download(fb, &[0xAAu8; KiB!(4)]);
+
+        let listener: SharedTestListener = Default::default();
+        listener.add_transport_input(format!("flash:{part}").as_bytes());
+        block_on(fastboot::process_next_command(&mut &listener, fb)).unwrap();
+        listener.transport_out_queue()[0].clone()
+    }
+
+    /// Runs `fastboot flashing unlock_critical` and returns the response.
+    fn fb_unlock_critical(fb: &mut impl FastbootImplementation) -> Vec<u8> {
+        let listener: SharedTestListener = Default::default();
+        listener.add_transport_input(format!("flashing unlock_critical").as_bytes());
+        block_on(fastboot::process_next_command(&mut &listener, fb)).unwrap();
+        listener.transport_out_queue()[0].clone()
+    }
+
+    #[test]
+    fn test_flash_partition_critical_slotted() {
+        const INITIAL_CONTENTS: [u8; KiB!(4)] = [0x11u8; KiB!(4)];
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"critical_a", INITIAL_CONTENTS);
+        storage.add_raw_device(c"critical_b", INITIAL_CONTENTS);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(1));
+        // Mark the "critical" partition as critically-locked.
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("critical"),
+            critical: true,
+            ..Default::default()
+        }]));
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        // All these variations should be guarded by the critical lock.
+        assert_eq!(fb_flash(&mut gbl_fb, "critical"), FAIL_MESSAGE_CRITICAL_LOCK);
+        assert_eq!(fb_flash(&mut gbl_fb, "critical_a"), FAIL_MESSAGE_CRITICAL_LOCK);
+        assert_eq!(fb_flash(&mut gbl_fb, "critical_b"), FAIL_MESSAGE_CRITICAL_LOCK);
+        assert_eq!(fb_flash(&mut gbl_fb, "critical_ab"), FAIL_MESSAGE_CRITICAL_LOCK);
+
+        // Make sure the disk was not actually modified.
+        assert_eq!(
+            fetch(&mut gbl_fb, "critical_a".into(), 0, INITIAL_CONTENTS.len()).unwrap(),
+            INITIAL_CONTENTS
+        );
+        assert_eq!(
+            fetch(&mut gbl_fb, "critical_b".into(), 0, INITIAL_CONTENTS.len()).unwrap(),
+            INITIAL_CONTENTS
+        );
+
+        // Unlock the critical lock, then flashing should work.
+        assert_eq!(fb_unlock_critical(&mut gbl_fb), b"OKAY");
+
+        check_flash_part(&mut gbl_fb, "critical", &[0x55u8; KiB!(4)]);
+        check_flash_part(&mut gbl_fb, "critical_a", &[0x55u8; KiB!(4)]);
+        check_flash_part(&mut gbl_fb, "critical_b", &[0x55u8; KiB!(4)]);
+        // check_flash_part() doesn't work on `*_ab` because it attempts to read the data back
+        // to confirm flashing, but it doesn't make sense to read multiple partitions at a time.
+        // Just check that we get the success response here.
+        assert_eq!(fb_flash(&mut gbl_fb, "critical_ab"), b"OKAY");
+    }
+
+    #[test]
+    fn test_flash_partition_critical_unslotted() {
+        const INITIAL_CONTENTS: [u8; KiB!(4)] = [0x11u8; KiB!(4)];
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"critical", INITIAL_CONTENTS);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(1));
+        // Mark the "critical" partition as critically-locked.
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("critical"),
+            critical: true,
+            ..Default::default()
+        }]));
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        // The exact name should be guarded by the critical lock.
+        assert_eq!(fb_flash(&mut gbl_fb, "critical"), FAIL_MESSAGE_CRITICAL_LOCK);
+
+        // Slotted variations do not exist.
+        assert_eq!(fb_flash(&mut gbl_fb, "critical_a"), FAIL_MESSAGE_NOT_FOUND);
+        assert_eq!(fb_flash(&mut gbl_fb, "critical_b"), FAIL_MESSAGE_NOT_FOUND);
+        assert_eq!(fb_flash(&mut gbl_fb, "critical_ab"), FAIL_MESSAGE_NOT_FOUND);
+
+        // Make sure the disk was not actually modified.
+        assert_eq!(
+            fetch(&mut gbl_fb, "critical".into(), 0, INITIAL_CONTENTS.len()).unwrap(),
+            INITIAL_CONTENTS
+        );
+
+        // Unlock the critical lock, then flashing should work.
+        assert_eq!(fb_unlock_critical(&mut gbl_fb), b"OKAY");
+
+        check_flash_part(&mut gbl_fb, "critical", &[0x55u8; KiB!(4)]);
+    }
+
+    // We only allow raw disk writes in dev builds.
+    #[cfg(feature = "gbl_dev")]
+    #[test]
+    fn test_flash_partition_raw_not_critical() {
+        const INITIAL_CONTENTS: [u8; KiB!(8)] = [0x11u8; KiB!(8)];
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"raw", INITIAL_CONTENTS);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(1));
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        // If there are no critical partitions, then raw disk write is not critical either.
+        check_flash_part(&mut gbl_fb, "/0/100", &[0x55u8; KiB!(4)]);
+    }
+
+    // We only allow raw disk writes in dev builds.
+    #[cfg(feature = "gbl_dev")]
+    #[test]
+    fn test_flash_partition_raw_critical() {
+        const INITIAL_CONTENTS: [u8; KiB!(8)] = [0x11u8; KiB!(8)];
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"raw", INITIAL_CONTENTS);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.current_slot = Some(Ok(1));
+        // If any partition is critically-locked - even partitions that don't currently exist
+        // on disk - then raw disk access is critically-locked.
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("critical"),
+            critical: true,
+            ..Default::default()
+        }]));
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        assert_eq!(fb_flash(&mut gbl_fb, "/0/100"), FAIL_MESSAGE_CRITICAL_LOCK);
+
+        // Unlock the critical lock, then raw disk flashing should work.
+        assert_eq!(fb_unlock_critical(&mut gbl_fb), b"OKAY");
+
+        check_flash_part(&mut gbl_fb, "/0/100", &[0x55u8; KiB!(4)]);
     }
 
     /// A helper to invoke OEM commands.

@@ -301,6 +301,10 @@ format.
 If no partition attributes are needed, `NumPartitions` can be set to 0 or
 `EFI_UNSUPPORTED` can be returned - both have the same effect.
 
+Implementations must avoid providing duplicate entries with the same `BaseName`.
+This could provide inconsistent behavior, and GBL makes no guarantee which entry
+will be used in this case.
+
 ### Status Codes Returned
 
 | Return Code            | Semantics                                                                                               |
