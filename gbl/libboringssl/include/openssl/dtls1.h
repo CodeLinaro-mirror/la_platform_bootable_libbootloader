@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2026 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,32 +14,8 @@
  * limitations under the License.
  *
  */
-
-#ifndef __STDLIB_INTTYPES_H__
-#define __STDLIB_INTTYPES_H__
-
-#ifdef __UINT32_FMTx__
-#define PRIx32 __UINT32_FMTx__
-#else
-#define PRIx32 "x"
-#endif
-
-#ifdef __UINT32_FMTX__
-#define PRIX32 __UINT32_FMTX__
-#else
-#define PRIX32 "X"
-#endif
-
-#ifdef __UINT64_FMTu__
-#define PRIu64 __UINT64_FMTu__
-#else
-#define PRIu64 "llu"
-#endif
-
-#ifdef __UINT64_FMTx__
-#define PRIx64 __UINT64_FMTx__
-#else
-#define PRIx64 "llx"
-#endif
-
-#endif  // __STDLIB_INTTYPES_H__
+// This is an empty stub header.
+// It is needed because the BoringSSL Rust wrapper (src/rust/bssl-sys/wrapper.h)
+// includes this file. However, since GBL builds a slimmed-down bare-metal
+// variant of BoringSSL (omitting TLS/SSL protocol modules), the original header
+// is omitted.

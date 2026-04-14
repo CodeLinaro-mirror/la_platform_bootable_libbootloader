@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -12,34 +12,15 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 
-#ifndef __STDLIB_INTTYPES_H__
-#define __STDLIB_INTTYPES_H__
+#ifndef __ERRNO_H__
+#define __ERRNO_H__
 
-#ifdef __UINT32_FMTx__
-#define PRIx32 __UINT32_FMTx__
-#else
-#define PRIx32 "x"
-#endif
+__BEGIN_DECLS
 
-#ifdef __UINT32_FMTX__
-#define PRIX32 __UINT32_FMTX__
-#else
-#define PRIX32 "X"
-#endif
+extern int errno;
 
-#ifdef __UINT64_FMTu__
-#define PRIu64 __UINT64_FMTu__
-#else
-#define PRIu64 "llu"
-#endif
+__END_DECLS
 
-#ifdef __UINT64_FMTx__
-#define PRIx64 __UINT64_FMTx__
-#else
-#define PRIx64 "llx"
-#endif
-
-#endif  // __STDLIB_INTTYPES_H__
+#endif  // __ERRNO_H__

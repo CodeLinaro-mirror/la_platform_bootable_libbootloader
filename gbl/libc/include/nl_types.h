@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2026 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,31 +15,21 @@
  *
  */
 
-#ifndef __STDLIB_INTTYPES_H__
-#define __STDLIB_INTTYPES_H__
+#ifndef __NL_TYPES_H__
+#define __NL_TYPES_H__
 
-#ifdef __UINT32_FMTx__
-#define PRIx32 __UINT32_FMTx__
-#else
-#define PRIx32 "x"
-#endif
+#include <gbl/defs.h>
 
-#ifdef __UINT32_FMTX__
-#define PRIX32 __UINT32_FMTX__
-#else
-#define PRIX32 "X"
-#endif
+__BEGIN_DECLS
 
-#ifdef __UINT64_FMTu__
-#define PRIu64 __UINT64_FMTu__
-#else
-#define PRIu64 "llu"
-#endif
+typedef void* nl_catd;
+#define NL_SETD 1
+#define NL_CAT_LOCALE 1
 
-#ifdef __UINT64_FMTx__
-#define PRIx64 __UINT64_FMTx__
-#else
-#define PRIx64 "llx"
-#endif
+nl_catd catopen(const char* name, int oflag);
+char* catgets(nl_catd catd, int set_id, int msg_id, const char* s);
+int catclose(nl_catd catd);
 
-#endif  // __STDLIB_INTTYPES_H__
+__END_DECLS
+
+#endif  // __NL_TYPES_H__

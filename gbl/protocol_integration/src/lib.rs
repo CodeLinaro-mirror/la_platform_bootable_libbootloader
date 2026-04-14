@@ -67,6 +67,8 @@ use libutils::base_type_name;
 extern crate avb_sysdeps;
 /// Pull in the sysdeps required by boringssl so the linker can find them.
 extern crate boringssl_sysdeps;
+/// Pull in the getentropy implementation.
+extern crate efi_rng;
 
 type TestEntry = (fn(&EfiEntry) -> Result<()>, &'static str);
 

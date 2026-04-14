@@ -49,6 +49,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -77,7 +78,7 @@ uint64_t _aulldiv(uint64_t a, uint64_t b) { return a / b; }
 // Formats unsigned `value` in base `base` into `buffer`.
 //
 // Returns number of characters written to the result buffer.
-static size_t format_number_unsigned(unsigned long long value, char *buffer,
+static size_t format_number_unsigned(unsigned long long value, char* buffer,
                                      size_t buffer_len, unsigned int base) {
   if (buffer_len == 0) return 0;
 
@@ -107,7 +108,7 @@ static size_t format_number_unsigned(unsigned long long value, char *buffer,
 // Formats signed `value` in base `base` into `buffer`.
 //
 // Returns number of characters written to the result buffer.
-static size_t format_number_signed(long long value, char *buffer,
+static size_t format_number_signed(long long value, char* buffer,
                                    size_t buffer_len, unsigned int base) {
   size_t used = 0;
   unsigned long long abs = 0;
@@ -128,7 +129,7 @@ static size_t format_number_signed(long long value, char *buffer,
 // Formats nul-terminated string `s` into `buffer`.
 //
 // Returns number of characters written to the result buffer.
-static size_t format_string(const char *s, char *buffer, size_t buffer_len) {
+static size_t format_string(const char* s, char* buffer, size_t buffer_len) {
   size_t used = 0;
   while (*s && used < buffer_len) {
     buffer[used++] = *s++;
@@ -139,7 +140,7 @@ static size_t format_string(const char *s, char *buffer, size_t buffer_len) {
 // Formats a single character `c` into `buffer`.
 //
 // Returns number of characters written to the result buffer.
-static size_t format_character(char c, char *buffer, size_t buffer_len) {
+static size_t format_character(char c, char* buffer, size_t buffer_len) {
   size_t used = 0;
   if (buffer_len) {
     buffer[used++] = c;
@@ -151,7 +152,7 @@ static size_t format_character(char c, char *buffer, size_t buffer_len) {
 // segments to represent the number. Can be asterisk symbol or dec number.
 //
 // Returns number of processed symbols in the format string.
-static size_t skip_format_number(const char *fmt) {
+static size_t skip_format_number(const char* fmt) {
   if (*fmt == '*') return 1;
 
   size_t used = 0;
@@ -166,13 +167,13 @@ static size_t skip_format_number(const char *fmt) {
 // but ignored.
 //
 // Returns number of processed symbols in the format string.
-static size_t skip_width(const char *fmt) { return skip_format_number(fmt); }
+static size_t skip_width(const char* fmt) { return skip_format_number(fmt); }
 
 // Precision segment isn't supported by this implementation. It's getting
 // parsed, but ignored.
 //
 // Returns number of processed symbols in the format string.
-static size_t skip_precision(const char *fmt) {
+static size_t skip_precision(const char* fmt) {
   if (*fmt == '.') {
     return 1 + skip_format_number(fmt + 1);
   }
@@ -183,7 +184,7 @@ static size_t skip_precision(const char *fmt) {
 // parsed, but ignored. Skipped symbols: '-', '+', ' ', '#', '0'.
 //
 // Returns number of processed symbols in the format string.
-static size_t skip_flags(const char *fmt) {
+static size_t skip_flags(const char* fmt) {
   size_t used = 0;
   while (strchr("-+ #0", *fmt) != NULL) {
     fmt++;
@@ -195,7 +196,7 @@ static size_t skip_flags(const char *fmt) {
 // Parse length modifiers flags.
 //
 // Returns number of processed symbols in the format string.
-static size_t parse_length_modifiers(const char *fmt, unsigned int *out_flags) {
+static size_t parse_length_modifiers(const char* fmt, unsigned int* out_flags) {
   size_t used = 0;
   switch (*fmt) {
     case 'l':
@@ -239,7 +240,7 @@ static size_t parse_length_modifiers(const char *fmt, unsigned int *out_flags) {
 // symbol error.
 //
 // Returns number of processed symbols in the error message.
-static size_t append_cannot_handle_error(char *buffer, size_t buffer_len,
+static size_t append_cannot_handle_error(char* buffer, size_t buffer_len,
                                          char current) {
   size_t used = 0;
   used += format_string(
@@ -253,8 +254,8 @@ static size_t append_cannot_handle_error(char *buffer, size_t buffer_len,
 //
 // Only `buffer_len` bytes will be formatted. The rest of `fmt` string and
 // provided `args` will be ignored.
-static void gbl_printf_buffer(const char *fmt, va_list args, char *buffer,
-                              size_t buffer_len) {
+static size_t gbl_printf_buffer(const char* fmt, va_list args, char* buffer,
+                                size_t buffer_len) {
   // Ensure can nul terminate.
   const size_t buffer_available = buffer_len - 1;
 
@@ -277,7 +278,7 @@ static void gbl_printf_buffer(const char *fmt, va_list args, char *buffer,
 
         switch (*fmt) {
           case 's':
-            i += format_string(va_arg(args, char *), buffer + i,
+            i += format_string(va_arg(args, char*), buffer + i,
                                buffer_available - i);
             fmt++;
             continue;
@@ -338,11 +339,53 @@ static void gbl_printf_buffer(const char *fmt, va_list args, char *buffer,
 
 out:
   buffer[i] = 0;
+  return i;
 }
 
 // Generic output format implementation to be exposed to 3d party C code.
-void gbl_printf(const char *fmt, va_list args) {
+void gbl_printf(const char* fmt, va_list args) {
   char output_buffer[PRINT_BUFFER_SIZE];
   gbl_printf_buffer(fmt, args, output_buffer, sizeof(output_buffer));
   gbl_print_string(output_buffer);
 }
+
+int vsnprintf(char* str, size_t size, const char* format, va_list ap) {
+  return (int)gbl_printf_buffer(format, ap, str, size);
+}
+
+int snprintf(char* str, size_t size, const char* format, ...) {
+  va_list ap;
+  va_start(ap, format);
+  int ret = vsnprintf(str, size, format, ap);
+  va_end(ap);
+  return ret;
+}
+
+#ifdef __GBL_LIBC_STUBS__
+FILE* stdin = (FILE*)1;
+FILE* stdout = (FILE*)2;
+FILE* stderr = (FILE*)3;
+
+int fprintf(FILE* stream, const char* format, ...) { return -1; }
+int vasprintf(char** strp, const char* fmt, va_list ap) { return -1; }
+int vsscanf(const char* str, const char* format, va_list ap) { return -1; }
+int sscanf(const char* str, const char* format, ...) { return -1; }
+void perror(const char* s) {}
+char* strerror(int errnum) { return "unknown"; }
+
+FILE* fopen(const char* path, const char* mode) { return NULL; }
+int fclose(FILE* fp) { return -1; }
+size_t fread(void* ptr, size_t size, size_t nmemb, FILE* stream) { return 0; }
+size_t fwrite(const void* ptr, size_t size, size_t nmemb, FILE* stream) {
+  return 0;
+}
+int fseek(FILE* stream, long offset, int whence) { return -1; }
+long ftell(FILE* stream) { return -1; }
+int feof(FILE* stream) { return 0; }
+int ferror(FILE* stream) { return 0; }
+int fflush(FILE* stream) { return -1; }
+char* fgets(char* s, int size, FILE* stream) { return NULL; }
+int fputs(const char* str, FILE* stream) { return -1; }
+int remove(const char* filename) { return -1; }
+int puts(const char* s) { return -1; }
+#endif  // __GBL_LIBC_STUBS__

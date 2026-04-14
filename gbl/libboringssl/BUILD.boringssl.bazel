@@ -1,4 +1,4 @@
-# Copyright (C) 2025 The Android Open Source Project
+# Copyright 2025 The BoringSSL Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,24 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@gbl//licensing:licenses.bzl", "generate_license")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load(
-    "@boringssl//:src/gen/sources.bzl",
+    ":src/gen/sources.bzl",
     "bcm_internal_headers",
+    "bcm_sources",
     "crypto_headers",
     "crypto_internal_headers",
+    "crypto_sources",
+    "rust_bssl_crypto_sources",
 )
-load("@gbl//licensing:licenses.bzl", "generate_license")
-load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
-load("@rules_cc//cc:defs.bzl", "cc_library")
-
-# We use these boringssl-defined lists of header files, but our package root is
-# at the top-level external/boringssl vs the internal package root of
-# external/boringssl/src, so we need to add src/ to make the paths work.
-src_bcm_internal_headers = ["src/" + h for h in bcm_internal_headers]
-
-src_crypto_headers = ["src/" + h for h in crypto_headers]
-
-src_crypto_internal_headers = ["src/" + h for h in crypto_internal_headers]
 
 package(
     default_applicable_licenses = [":license"],
@@ -41,98 +34,61 @@ generate_license(
     package_name = "boringssl",
 )
 
-aarch64_asm_sources = [
-    "src/gen/bcm/sha1-armv8-win.S",
-    "src/gen/bcm/sha256-armv8-win.S",
-    "src/gen/bcm/sha512-armv8-win.S",
-    "src/crypto/cpu_aarch64_sysreg.cc",
-    "@gbl//libboringssl:crypto.cpp",
-]
+exports_files([
+    "LICENSE",
+    "src/rust/bssl-sys/wrapper.h",
+])
 
-x86_64_asm_sources = [
-    # TODO(b/425395210): define minimum extension support, fix x86_64 assembly build
-    # "src/gen/bcm/sha1-x86_64-win.asm",
-    # "src/gen/bcm/sha256-x86_64-win.asm",
-    # "src/gen/bcm/sha512-x86_64-win.asm",
-]
-
-riscv64_asm_sources = []
-
-crypto_sources = [
-    "@gbl//libboringssl:bcm.cpp",
-    "src/crypto/sha/sha1.cc",
-    "src/crypto/sha/sha256.cc",
-    "src/crypto/sha/sha512.cc",
-    "src/crypto/curve25519/curve25519.cc",
-    "src/crypto/thread_none.cc",
-]
-
-aarch64_flags = [
-    "-DOPENSSL_AARCH64",
-    "-Xclang -target-feature",
-    "-Xclang -sve",
-]
-
-x86_64_flags = [
-    # TODO(b/425395210): define minimum extension support.
-    "-DOPENSSL_X86_64",
+boringssl_baremetal_copts = [
+    "-DBORINGSSL_IMPLEMENTATION",
+    "-DANDROID_BAREMETAL",
+    "-DOPENSSL_SMALL",
+    "-DOPENSSL_NO_FILESYSTEM",
+    "-DOPENSSL_NO_POSIX_IO",
+    "-DOPENSSL_NO_SOCK",
+    "-DOPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED",
+    "-DOPENSSL_STATIC_ARMCAP",
+    "-D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE",
+    "-UOPENSSL_WINDOWS",
+    "-U_WIN32",
+    "-U_MSC_VER",
+    "-std=c++17",
+    "-fno-exceptions",
+    "-fno-rtti",
+    "-Wno-macro-redefined",
     "-DOPENSSL_NO_ASM",
-]
-
-riscv64_flags = [
-    "-DOPENSSL_NO_ASM",
-]
+] + select({
+    "@platforms//cpu:aarch64": [
+        "-DOPENSSL_AARCH64",
+        "-Xclang",
+        "-target-feature",
+        "-Xclang",
+        "-sve",
+    ],
+    "@platforms//cpu:x86_64": [
+        "-DOPENSSL_X86_64",
+        "-msse2",
+    ],
+    "@platforms//cpu:riscv64": [
+    ],
+    "//conditions:default": [
+    ],
+})
 
 cc_library(
-    name = "libcrypto_c_baremetal",
-    srcs = crypto_sources + select(
-        {
-            "@platforms//cpu:aarch64": aarch64_asm_sources,
-            "@platforms//cpu:x86_64": x86_64_asm_sources,
-            "@platforms//cpu:riscv64": riscv64_asm_sources,
-            "//conditions:default": [],
-        },
-    ),
-    hdrs = src_crypto_internal_headers + src_crypto_headers + src_bcm_internal_headers,
-    copts = [
-        "-Werror",
-        "-Wno-unused-parameter",
-        "-Wno-unused-command-line-argument",
-        "-Wno-error=format",
-        "-fvisibility=hidden",
-        "-fno-lto",
-        "-DOPENSSL_SMALL",
-        "-DANDROID_BAREMETAL",
-        "-DBORINGSSL_IMPLEMENTATION",
-        "-DBORINGSSL_SHARED_LIBRARY",
-        "-DBORINGSSL_NO_STATIC_INITIALIZER",
-    ] + select(
-        {
-            "@platforms//cpu:aarch64": aarch64_flags,
-            "@platforms//cpu:x86_64": x86_64_flags,
-            "@platforms//cpu:riscv64": riscv64_flags,
-            "//conditions:default": [
-                "-DOPENSSL_NO_ASM",
-            ],
-        },
-    ),
-    cxxopts = [
-        "-Wall",
-        "-Werror",
-        "-std=c++17",
-    ],
+    name = "crypto_baremetal",
+    srcs = ["src/" + f for f in bcm_sources + crypto_sources + bcm_internal_headers + crypto_internal_headers],
+    hdrs = ["src/" + f for f in crypto_headers] + ["src/rust/bssl-sys/wrapper.h"],
+    copts = boringssl_baremetal_copts,
     includes = [
         "src",
-        "src/crypto",
         "src/include",
     ],
-    deps = select({
-        "@gbl//toolchain:gbl_rust_host_x86_64": [],
-        "//conditions:default": ["@gbl//libc:headers"],
-    }),
+    visibility = ["//visibility:public"],
 )
 
-link_static_cc_library(
-    name = "libcrypto_c_baremetal_static",
-    cc_library = ":libcrypto_c_baremetal",
+filegroup(
+    name = "rust_bssl_crypto_sources",
+    srcs = ["src/" + f for f in rust_bssl_crypto_sources],
+    visibility = ["//visibility:public"],
 )

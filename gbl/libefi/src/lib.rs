@@ -70,7 +70,7 @@ thread_local! {
 /// * It is the responsibility of whatever code initializes the global efi entry
 ///   to guarantee that it is well formed and valid for as long as any caller might
 ///   see it, usually 'static or for the duration of the unit test.
-pub(crate) unsafe fn with_global_efi_entry<F, T>(mut func: F) -> Result<T>
+pub unsafe fn with_global_efi_entry<F, T>(mut func: F) -> Result<T>
 where
     F: FnMut(&'static EfiEntry) -> T,
 {
@@ -91,7 +91,7 @@ where
     Ok(func(entry))
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(target_os = "linux")))]
 pub mod libc;
 
 #[cfg(not(test))]

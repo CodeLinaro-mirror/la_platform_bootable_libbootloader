@@ -18,20 +18,53 @@
 #ifndef __STDLIB_STDIO_H__
 #define __STDLIB_STDIO_H__
 
-// Required by LLVM libc++ `char_traits.h` pulled in by
-// `boringssl/include/openssl/span.h`.
+#include <stdarg.h>
+#include <stddef.h>
+
+#include <gbl/defs.h>
+
+__BEGIN_DECLS
+
+// Required by LLVM libc++ char_traits.h pulled in by
+// boringssl/include/openssl/span.h.
 //
 // Related bug: https://github.com/llvm/llvm-project/issues/85158
 #define EOF (-1)
 
-// Required by LLVM libc++ `char_traits.h` pulled in by
-// `boringssl/include/openssl/span.h`.
+// Required by LLVM libc++ char_traits.h pulled in by
+// boringssl/include/openssl/span.h.
 //
 // Related bug: https://github.com/llvm/llvm-project/issues/85335
 int remove(const char *filename);
 
 // Need to compile boringssl/include/openssl/err.h, but never getting used.
 typedef int FILE;
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
+
 int fputs(const char *str, FILE *stream);
+void perror(const char *s);
+
+int snprintf(char *str, size_t size, const char *format, ...);
+int vsnprintf(char *str, size_t size, const char *format, va_list ap);
+int fprintf(FILE *stream, const char *format, ...);
+int vasprintf(char **strp, const char *fmt, va_list ap);
+int vsscanf(const char *str, const char *format, va_list ap);
+int sscanf(const char *str, const char *format, ...);
+
+// Stubs for BoringSSL
+FILE *fopen(const char *path, const char *mode);
+int fclose(FILE *fp);
+size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
+int fseek(FILE *stream, long offset, int whence);
+long ftell(FILE *stream);
+int feof(FILE *stream);
+int ferror(FILE *stream);
+int fflush(FILE *stream);
+char *fgets(char *s, int size, FILE *stream);
+
+__END_DECLS
 
 #endif  // __STDLIB_STDIO_H__
