@@ -535,17 +535,6 @@ pub trait GblOps<'a> {
         cb: impl FnMut(&mut Self, &[&CStr], &CStr),
     ) -> Result<(), Error>;
 
-    /// Query the current lock state
-    ///
-    /// # Args
-    ///
-    /// * `lock_type`: The type of lock to query.
-    ///
-    /// # Returns
-    ///
-    /// Ok(LockState::Locked) if locked, Ok(LockState::Unlocked) if unlocked.
-    fn fastboot_read_lock_state(&mut self, lock_type: LockType) -> Result<LockState, Error>;
-
     /// Handler for `fastboot flashing lock|unlock` and
     /// `fastboot flashing lock_critical|unlock_critical`.
     ///
@@ -1010,11 +999,6 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
     }
 
     fn avb_write_lock_state(&mut self, _: LockType, _: LockState) -> Result<(), Error> {
-        // Ramboot should not need this.
-        unreachable!();
-    }
-
-    fn fastboot_read_lock_state(&mut self, _: LockType) -> Result<LockState, Error> {
         // Ramboot should not need this.
         unreachable!();
     }
@@ -1704,18 +1688,6 @@ pub(crate) mod test {
             Ok(())
         }
 
-        fn fastboot_read_lock_state(&mut self, lock_type: LockType) -> Result<LockState, Error> {
-            let status = self.avb_read_device_status()?;
-
-            let unlocked = match lock_type {
-                LockType::Device => status.is_unlocked,
-                LockType::Critical => status.is_unlocked_critical,
-            };
-
-            let lock_state = if unlocked { LockState::Unlocked } else { LockState::Locked };
-            Ok(lock_state)
-        }
-
         fn fastboot_get_unlock_ability(&mut self) -> Result<Unlockability, Error> {
             Ok(self
                 .avb_read_device_status()
@@ -2079,10 +2051,6 @@ pub(crate) mod test {
         }
 
         fn avb_write_lock_state(&mut self, _: LockType, _: LockState) -> Result<(), Error> {
-            Err(Error::Unsupported)
-        }
-
-        fn fastboot_read_lock_state(&mut self, _: LockType) -> Result<LockState, Error> {
             Err(Error::Unsupported)
         }
 

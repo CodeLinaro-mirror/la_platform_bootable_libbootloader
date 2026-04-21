@@ -787,13 +787,6 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         }
     }
 
-    fn fastboot_read_lock_state(&mut self, lock_type: LockType) -> Result<LockState> {
-        // TODO(b/467368252): clean up AVB queries and return type
-        self.avb_read_device_status()
-            .map(|s| s.lock_state(lock_type))
-            .map_err(avb_error_to_efi_error)
-    }
-
     fn avb_write_lock_state(&mut self, lock_type: LockType, lock_state: LockState) -> Result<()> {
         let lock_type = match lock_type {
             LockType::Device => efi_types::GBL_EFI_AVB_LOCK_TYPE_DEVICE,
@@ -1594,57 +1587,6 @@ mod test {
         avb_get_unlock_ability(
             efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKABLE,
             Unlockability::Allowed,
-        );
-    }
-
-    fn avb_read_lock_state(
-        status_flags: GblEfiAvbDeviceStatus,
-        lock_type: LockType,
-        lock_state: LockState,
-    ) {
-        let mut mock_efi = MockEfi::new();
-        let mut avb = GblAvbProtocol::default();
-        avb.read_device_status_result = Some(Ok(status_flags));
-        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
-
-        let installed = mock_efi.install();
-        let mut ops = Ops::new(installed.entry(), &[], None, 0);
-        assert_eq!(ops.fastboot_read_lock_state(lock_type), Ok(lock_state));
-    }
-
-    #[test]
-    fn test_avb_read_lock_state_device_unlocked() {
-        avb_read_lock_state(
-            efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED,
-            LockType::Device,
-            LockState::Unlocked,
-        );
-    }
-
-    #[test]
-    fn test_avb_read_lock_state_device_locked() {
-        avb_read_lock_state(
-            !efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED,
-            LockType::Device,
-            LockState::Locked,
-        );
-    }
-
-    #[test]
-    fn test_avb_read_lock_state_critical_unlocked() {
-        avb_read_lock_state(
-            efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL,
-            LockType::Critical,
-            LockState::Unlocked,
-        );
-    }
-
-    #[test]
-    fn test_avb_read_lock_state_critical_locked() {
-        avb_read_lock_state(
-            !efi_types::GBL_EFI_AVB_DEVICE_STATUS_UNLOCKED_CRITICAL,
-            LockType::Critical,
-            LockState::Locked,
         );
     }
 

@@ -18,7 +18,6 @@ use crate::android_boot::STANDARD_PARTITIONS;
 use arrayvec::ArrayVec;
 use avb_bindgen::AVB_MAX_NUMBER_OF_LOADED_PARTITIONS;
 use core::ffi::CStr;
-use fastboot::{LockState, LockType};
 
 pub(crate) mod ops;
 pub mod state;
@@ -59,22 +58,6 @@ pub struct AvbDeviceStatus {
     pub is_dm_verity_error: bool,
     /// Indicates if the device is unlockable.
     pub is_unlockable: bool,
-}
-
-impl AvbDeviceStatus {
-    /// Returns whether the indicated lock is locked or unlocked.
-    pub const fn lock_state(&self, lock_type: LockType) -> LockState {
-        let unlocked = match lock_type {
-            LockType::Device => self.is_unlocked,
-            LockType::Critical => self.is_unlocked_critical,
-        };
-
-        if unlocked {
-            LockState::Unlocked
-        } else {
-            LockState::Locked
-        }
-    }
 }
 
 /// Represents AVB vbmeta property.

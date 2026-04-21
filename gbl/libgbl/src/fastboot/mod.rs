@@ -1050,10 +1050,10 @@ where
 
     /// Helper for checking whether device is unlocked.
     fn check_unlocked(&mut self) -> CommandResult<()> {
-        match self.gbl_ops.fastboot_read_lock_state(LockType::Device) {
+        match self.gbl_ops.avb_read_device_status() {
             Err(e) => Err(format_args!("Failed to get unlock status {e}").into()),
-            Ok(LockState::Locked) => Err("Device is not unlocked".into()),
-            _ => Ok(()),
+            Ok(status) if status.is_unlocked => Ok(()),
+            _ => Err("Device is not unlocked".into()),
         }
     }
 

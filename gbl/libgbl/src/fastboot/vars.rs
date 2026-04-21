@@ -165,6 +165,14 @@ impl From<Slot> for FastbootSlotInfo {
     }
 }
 
+/// Returns "yes" if true, "no" if false.
+fn yes_no_str(value: bool) -> &'static str {
+    match value {
+        true => "yes",
+        false => "no",
+    }
+}
+
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
 impl<'a: 'c, 'b: 'c, 'c, 'd, G, B, S, T, P, C, F> GblFastboot<'a, 'b, 'c, 'd, G, B, S, T, P, C, F>
 where
@@ -273,15 +281,18 @@ where
         send.send_var_info(STREAM_SEGMENT_SIZE, [], self.get_var_stream_segment_size(&mut buf)?)
             .await?;
 
-        for (lock_var, lock_type) in [
-            (UNLOCKED, fastboot::LockType::Device),
-            (UNLOCKED_CRITICAL, fastboot::LockType::Critical),
-        ] {
-            match self.gbl_ops.fastboot_read_lock_state(lock_type).map(|v| v.as_unlocked_str()) {
-                Err(e) => gbl_println!(self.gbl_ops, "Failed to get {lock_var}: {e}"),
-                Ok(v) => send.send_var_info(lock_var, [], v).await?,
-            };
-        }
+        match self.gbl_ops.avb_read_device_status() {
+            Ok(device_status) => {
+                send.send_var_info(UNLOCKED, [], yes_no_str(device_status.is_unlocked)).await?;
+                send.send_var_info(
+                    UNLOCKED_CRITICAL,
+                    [],
+                    yes_no_str(device_status.is_unlocked_critical),
+                )
+                .await?;
+            }
+            Err(e) => gbl_println!(self.gbl_ops, "failed to read lock state: {e}"),
+        };
 
         // Gets platform specific variables
         let tasks = self.tasks();
@@ -539,11 +550,13 @@ where
         lock_type: fastboot::LockType,
         out: &'s mut [u8],
     ) -> CommandResult<&'s str> {
-        Ok(snprintf!(
-            out,
-            "{}",
-            self.gbl_ops.fastboot_read_lock_state(lock_type)?.as_unlocked_str()
-        ))
+        let status =
+            self.gbl_ops.avb_read_device_status().map_err(|_| "failed to read lock state")?;
+        let unlocked = match lock_type {
+            fastboot::LockType::Device => status.is_unlocked,
+            fastboot::LockType::Critical => status.is_unlocked_critical,
+        };
+        Ok(snprintf!(out, "{}", yes_no_str(unlocked)))
     }
 
     /// "fastboot getvar slot-successful:<slot-suffix>"
