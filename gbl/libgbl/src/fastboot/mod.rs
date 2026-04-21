@@ -31,8 +31,8 @@ use crate::{
     misc::{read_bootloader_message_to, write_bootloader_message, AndroidBootMode},
     ops::{CommandExecType, RambootOps},
     partition::{
-        check_part_unique, split_partition_suffix, GblDisk, MultiPartitionIo, Partition,
-        PartitionIo, RawName,
+        check_part_unique, split_partition_suffix, AccessMode, GblDisk, MultiPartitionIo,
+        Partition, PartitionIo, RawName, ReadOnly, ReadWrite,
     },
     slots::Slot,
     GblOps, IntegrationError,
@@ -99,13 +99,13 @@ const MAX_IO_PARTS: usize = 2;
 /// Represents the workload of a GBL Fastboot async task.
 enum TaskWorkload<'a, 'b, B: BlockIo, P: BufferPool> {
     /// Image flashing task. (partition io, downloaded data, data size)
-    Flash(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>, usize),
+    Flash(MultiPartitionIo<'a, B, MAX_IO_PARTS, ReadWrite>, ScopedBuffer<'b, P>, usize),
     /// Sparse image flashing task. (partition io, downloaded data)
-    FlashSparse(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>),
+    FlashSparse(MultiPartitionIo<'a, B, MAX_IO_PARTS, ReadWrite>, ScopedBuffer<'b, P>),
     /// Fill a partition range with a 32 bit value. (partition io, fill buffer, value)
-    Fill(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>, u32),
+    Fill(MultiPartitionIo<'a, B, MAX_IO_PARTS, ReadWrite>, ScopedBuffer<'b, P>, u32),
     /// Image erase task.
-    Erase(MultiPartitionIo<'a, B, MAX_IO_PARTS>, ScopedBuffer<'b, P>),
+    Erase(MultiPartitionIo<'a, B, MAX_IO_PARTS, ReadWrite>, ScopedBuffer<'b, P>),
     None,
 }
 
@@ -720,11 +720,10 @@ where
     ///
     /// * `target`: the provided flash/fetch target.
     /// * `read_only`: true to restrict the IO to read-only.
-    async fn parse_and_get_partition_io<'s>(
+    async fn parse_and_get_partition_io<'s, A: AccessMode>(
         &mut self,
         target: &'s str,
-        read_only: bool,
-    ) -> CommandResult<MultiPartitionIo<'a, B, MAX_IO_PARTS>> {
+    ) -> CommandResult<MultiPartitionIo<'a, B, MAX_IO_PARTS, A>> {
         let (part, blk_id, off, sz) = self.parse_partition_arg(target)?;
         let mut device_status = LazyAvbDeviceStatus::default();
 
@@ -732,7 +731,7 @@ where
         //   * dev builds
         //   * unlocked prod builds for read-only access (i.e. `fastboot fetch`)
         if part.is_none() && cfg!(not(feature = "gbl_dev")) {
-            if read_only {
+            if A::IS_READ_ONLY {
                 if !device_status.get(self.gbl_ops)?.is_unlocked {
                     return Err("fetching a raw partition is restricted to unlocked devices".into());
                 }
@@ -747,7 +746,7 @@ where
         // If we're writing a partition, get the attributes so we know:
         //  1. Whether this partition is critically-locked
         //  2. Whether we need to trigger FDR after modifying this partition
-        if !read_only {
+        if !A::IS_READ_ONLY {
             // TODO(b/483148938) - handle the FDR flag.
             let (_fdr, critical) = match basename {
                 Some(basename) => self
@@ -786,9 +785,11 @@ where
         let _guard = TraceGuard::new(false);
         loop {
             // TODO(b/483148938) - if this partition requires FDR, we should trigger FDR
-            // after modifications are complete. We may also want to consider enforcing the
-            // `read_only` flag if it was passed in - could we do this at compile time?
-            match crate::partition::create_multi_partition_io(self.disks, parts_info.clone()) {
+            // after modifications are complete.
+            match crate::partition::create_multi_partition_io::<_, _, A>(
+                self.disks,
+                parts_info.clone(),
+            ) {
                 Err(Error::NotReady) => yield_now().await,
                 v => return Ok(v?),
             }
@@ -1189,7 +1190,7 @@ where
             };
         }
 
-        let part_io = self.parse_and_get_partition_io(part, false).await?;
+        let part_io = self.parse_and_get_partition_io::<ReadWrite>(part).await?;
         let (data, sz) = self.take_download().ok_or("No download")?;
         let mut task = Task::new(match is_sparse_image(&data) {
             Ok(v) => TaskWorkload::FlashSparse(part_io.sub(0, v.data_size())?, data),
@@ -1212,7 +1213,7 @@ where
             };
         }
 
-        let part_io = self.parse_and_get_partition_io(part, false).await?;
+        let part_io = self.parse_and_get_partition_io::<ReadWrite>(part).await?;
         let mut task =
             Task::new(TaskWorkload::Erase(part_io, self.take_or_allocate_download_buffer().await));
         task.set_context(|f| write!(f, "erase:{part}"));
@@ -1312,7 +1313,7 @@ where
         size: u32,
         mut responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()> {
-        let mut part_io = self.parse_and_get_partition_io(part, true).await?;
+        let mut part_io = self.parse_and_get_partition_io::<ReadOnly>(part).await?;
         let buffer = self.get_download_buffer().await;
         // 4MB batches (chosen empirically) or as large as the download buffer permits.
         let batch_sz = min(4 * 1024 * 1024, buffer.len() / 2);
@@ -1447,7 +1448,8 @@ where
         command: StreamCommand<&'d str>,
         mut responder: impl InfoSender,
     ) -> CommandResult<()> {
-        let part_io = self.parse_and_get_partition_io(command.partition.as_ref(), false).await?;
+        let part_io =
+            self.parse_and_get_partition_io::<ReadWrite>(command.partition.as_ref()).await?;
         let mut task = match command.operation {
             StreamOperation::Fill { size, payload } => {
                 let buffer = self.take_or_allocate_download_buffer().await;
