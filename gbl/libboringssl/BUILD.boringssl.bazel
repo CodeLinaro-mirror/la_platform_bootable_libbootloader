@@ -13,7 +13,9 @@
 # limitations under the License.
 
 load("@gbl//licensing:licenses.bzl", "generate_license")
+load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_library")
 load(
     ":src/gen/sources.bzl",
     "bcm_internal_headers",
@@ -37,6 +39,9 @@ generate_license(
 exports_files([
     "LICENSE",
     "src/rust/bssl-sys/wrapper.h",
+    "src/rust/bssl-crypto/src/ecdsa.rs",
+    "src/rust/bssl-crypto/src/ec.rs",
+    "src/rust/bssl-crypto/src/scoped.rs",
 ])
 
 boringssl_baremetal_copts = [
@@ -91,4 +96,17 @@ filegroup(
     name = "rust_bssl_crypto_sources",
     srcs = ["src/" + f for f in rust_bssl_crypto_sources],
     visibility = ["//visibility:public"],
+)
+
+rust_library(
+    name = "bssl_crypto",
+    srcs = [":rust_bssl_crypto_sources"],
+    crate_name = "bssl_crypto",
+    crate_root = "src/rust/bssl-crypto/src/lib.rs",
+    edition = "2021",
+    rustc_flags = ANDROID_RUST_LINTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@gbl//libboringssl:bssl-sys",
+    ],
 )

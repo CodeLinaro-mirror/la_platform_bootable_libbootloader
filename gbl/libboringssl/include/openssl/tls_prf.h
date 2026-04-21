@@ -14,7 +14,26 @@
  * limitations under the License.
  *
  */
-// This is an empty stub header.
-// It is needed because the BoringSSL Rust wrapper (src/rust/bssl-sys/wrapper.h)
-// includes this file. However, since GBL builds a slimmed-down bare-metal variant
-// of BoringSSL (omitting TLS/SSL protocol modules), the original header is omitted.
+#include <openssl/base.h>
+
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
+/*
+ * CRYPTO_tls1_prf is needed because the official BoringSSL Rust library
+ * (bssl-crypto), which GBL compiles directly, contains `tls12_prf.rs` that
+ * references this symbol. Since GBL builds a baremetal libcrypto without SSL,
+ * we stub/declare it here to satisfy bindgen without pulling in full TLS/SSL
+ * protocol modules.
+ */
+OPENSSL_EXPORT int CRYPTO_tls1_prf(const EVP_MD* digest, uint8_t* out,
+                                   size_t out_len, const uint8_t* secret,
+                                   size_t secret_len, const uint8_t* label,
+                                   size_t label_len, const uint8_t* seed1,
+                                   size_t seed1_len, const uint8_t* seed2,
+                                   size_t seed2_len);
+
+#if defined(__cplusplus)
+}  // extern C
+#endif

@@ -15,7 +15,7 @@
 load("@gbl//toolchain:gbl_toolchain.bzl", "link_static_cc_library")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 
 package(
@@ -27,12 +27,24 @@ exports_files(glob(["**/*"]))
 
 rust_library(
     name = "sysdeps",
-    srcs = glob(["**/*.rs"]),
+    srcs = ["@boringssl//:rust_bssl_crypto_sources"],
     crate_name = "boringssl_sysdeps",
     edition = "2021",
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
-        "@gbl//libc",
+        ":bssl-sys",
+    ],
+)
+
+rust_test(
+    name = "sysdeps_test",
+    # BoringSSL baremetal is built with OPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED.
+    # Running the unit tests in parallel threads causes memory corruption and a segfault.
+    args = ["--test-threads=1"],
+    crate = ":sysdeps",
+    rustc_flags = ANDROID_RUST_LINTS,
+    deps = [
+        "@boringssl//:crypto_baremetal",
     ],
 )
 
@@ -52,7 +64,7 @@ cc_library(
 )
 
 rust_bindgen(
-    name = "bssl_sys_bindgen",
+    name = "bssl-sys-raw__bindgen",
     bindgen_flags = [
         "--use-core",
         "--no-layout-tests",
@@ -62,37 +74,34 @@ rust_bindgen(
         "--raw-line=#![allow(non_snake_case)]",
         "--raw-line=#![allow(non_upper_case_globals)]",
         "--ctypes-prefix=core::ffi",
+        "--default-enum-style=rust",
+        "--default-macro-constant-type=signed",
     ],
     cc_lib = ":crypto_with_stubs",
     header = "@boringssl//:src/rust/bssl-sys/wrapper.h",
+    wrap_static_fns = True,
 )
 
-rust_library(
-    name = "bssl-sys-raw",
-    srcs = [":bssl_sys_bindgen"],
-    crate_name = "bssl_sys_raw",
-    edition = "2021",
-    rustc_flags = ANDROID_RUST_LINTS,
+filegroup(
+    name = "bssl-sys-raw__bindgen_c_thunks",
+    srcs = [":bssl-sys-raw__bindgen"],
+    output_group = "bindgen_c_thunks",
+)
+
+cc_library(
+    name = "bssl-sys-raw__bindgen_c_thunks_library",
+    srcs = [":bssl-sys-raw__bindgen_c_thunks"],
+    copts = ["-I."],
+    deps = [":crypto_with_stubs"],
 )
 
 rust_library(
     name = "bssl-sys",
-    srcs = ["src/bssl_sys.rs"],
+    srcs = [":bssl-sys-raw__bindgen"],
     crate_name = "bssl_sys",
     edition = "2021",
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
-        ":bssl-sys-raw",
-    ],
-)
-
-rust_library(
-    name = "bssl-crypto",
-    srcs = ["@boringssl//:rust_bssl_crypto_sources"],
-    crate_name = "bssl_crypto",
-    edition = "2021",
-    rustc_flags = ANDROID_RUST_LINTS,
-    deps = [
-        ":bssl-sys",
+        ":bssl-sys-raw__bindgen_c_thunks_library",
     ],
 )
