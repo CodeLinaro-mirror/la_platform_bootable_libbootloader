@@ -505,7 +505,8 @@ impl<'a, B: BlockIo, A: AccessMode> MultiPartitionIo<'a, B, 1, A> {
     }
 }
 
-/// Single-partition read-write implementation.
+/// Single-partition read-write implementation. Only needed for tests.
+#[cfg(test)]
 impl<'a, B: BlockIo> MultiPartitionIo<'a, B, 1, ReadWrite> {
     /// Gets the block device.
     pub fn dev(&mut self) -> &mut Disk<RefMut<'a, B>, RefMut<'a, [u8]>> {
@@ -551,9 +552,8 @@ pub fn check_part_unique(
 /// Creates a `MultiPartitionIo` given a list of (disk index, start, end) tuples.
 pub fn create_multi_partition_io<'a, B: BlockIo, const N: usize, A: AccessMode>(
     devs: &'a [GblDisk<Disk<B, impl DerefMut<Target = [u8]>>, Gpt<impl DerefMut<Target = [u8]>>>],
-    parts_info: ArrayVec<(usize, u64, u64), N>,
+    mut parts_info: ArrayVec<(usize, u64, u64), N>,
 ) -> Result<MultiPartitionIo<'a, B, N, A>, Error> {
-    let mut parts_info = parts_info.clone();
     parts_info.sort();
     let mut parts = ArrayVec::new();
     let mut disks = ArrayVec::new();

@@ -740,8 +740,7 @@ where
             }
         }
 
-        let mut parts_info = ArrayVec::new();
-        let (basename, parts) = self.resolve_slotted_partitions(part, blk_id)?;
+        let (basename, block_ids_and_parts) = self.resolve_slotted_partitions(part, blk_id)?;
 
         // If we're writing a partition, get the attributes so we know:
         //  1. Whether this partition is critically-locked
@@ -778,18 +777,23 @@ where
             }
         }
 
-        for (id, p) in parts {
-            let (start, end) = p.sub(off, sz)?;
-            parts_info.push((id, start, end));
-        }
         let _guard = TraceGuard::new(false);
         loop {
+            // Determine the exact byte range on each disk we're going to use.
+            //
+            // We re-create this list on each loop so that we can pass ownership into
+            // `create_multi_partition_io()`, otherwise we'd have to clone it. Since N is small
+            // it probably doesn't matter either way, but a potential stack overflow is much worse
+            // than a negligible amount of extra time for fastboot operations.
+            let mut parts_info = ArrayVec::new();
+            for (id, part) in &block_ids_and_parts {
+                let (start, end) = part.sub(off, sz)?;
+                parts_info.push((*id, start, end));
+            }
+
             // TODO(b/483148938) - if this partition requires FDR, we should trigger FDR
             // after modifications are complete.
-            match crate::partition::create_multi_partition_io::<_, _, A>(
-                self.disks,
-                parts_info.clone(),
-            ) {
+            match crate::partition::create_multi_partition_io::<_, _, A>(self.disks, parts_info) {
                 Err(Error::NotReady) => yield_now().await,
                 v => return Ok(v?),
             }
