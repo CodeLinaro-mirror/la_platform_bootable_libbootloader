@@ -400,7 +400,7 @@ mod test {
         let mut ops = create_gbl_ops(&storage);
 
         // Set all AVB ops to return `NotImplemented`.
-        ops.avb_device_status_error = Some(IoError::NotImplemented);
+        ops.avb_device_status.set_err(IoError::NotImplemented);
         ops.avb_cert_read_permanent_attributes_not_implemented = true;
         ops.avb_cert_read_permanent_attributes_hash_not_implemented = true;
         ops.avb_ops.rollbacks.insert(TEST_ROLLBACK_INDEX_LOCATION, Err(IoError::NotImplemented));
@@ -427,7 +427,7 @@ mod test {
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
 
-        ops.avb_device_status_error = Some(IoError::NotImplemented);
+        ops.avb_device_status.set_err(IoError::NotImplemented);
 
         assert!(test_verify_zircon(&mut ops, true, KernelState::Valid).is_err());
     }

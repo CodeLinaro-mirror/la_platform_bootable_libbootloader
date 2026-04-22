@@ -1174,7 +1174,7 @@ mod test {
     #[test]
     fn read_is_device_unlocked_error_handled() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        gbl_ops.avb_device_status_error = Some(IoError::Io);
+        gbl_ops.avb_device_status.set_err(IoError::Io);
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         assert_eq!(avb_ops.read_is_device_unlocked(), Err(IoError::Io));
@@ -1183,7 +1183,7 @@ mod test {
     #[test]
     fn read_is_device_unlocked_not_implemented() {
         let mut gbl_ops = FakeGblOps::new(&[]);
-        gbl_ops.avb_device_status_error = Some(IoError::NotImplemented);
+        gbl_ops.avb_device_status.set_err(IoError::NotImplemented);
 
         let mut avb_ops = GblAvbOps::new(&mut gbl_ops, None, &mut [], false);
         // Dev should report unlocked, prod should fail.

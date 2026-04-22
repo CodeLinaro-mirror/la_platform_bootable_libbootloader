@@ -5287,8 +5287,7 @@ pub(crate) mod test {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![vec![0u8; KiB!(1)]; 1];
         let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.avb_device_status_error = None;
-        gbl_ops.avb_device_status = status;
+        *gbl_ops.avb_device_status = status;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
         listener.add_transport_input(command.as_bytes());

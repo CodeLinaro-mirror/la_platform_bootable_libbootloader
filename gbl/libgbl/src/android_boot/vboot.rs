@@ -369,8 +369,8 @@ mod test {
         }
         let mut ops = FakeGblOps::new(&storage);
         match device_status {
-            Ok(ref device_status) => ops.avb_device_status = device_status.clone(),
-            Err(ref e) => ops.avb_device_status_error = Some(e.clone()),
+            Ok(ref device_status) => *ops.avb_device_status = device_status.clone(),
+            Err(ref e) => ops.avb_device_status.set_err(e.clone()),
         };
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, fw_rollback_result)]);
         let mut out_status = None;

@@ -1059,6 +1059,7 @@ pub(crate) mod test {
     use std::{
         collections::{HashMap, VecDeque},
         ffi::CString,
+        fmt::Debug,
     };
     #[cfg(feature = "fuchsia")]
     use zbi::{ZbiFlags, ZbiType};
@@ -1136,6 +1137,58 @@ pub(crate) mod test {
         Info(String),
     }
 
+    /// A wrapper around [Result] for tests.
+    ///
+    /// Usage is similar to [Result], but adds:
+    ///   * a [Default] implementation, so users can `#[derive(Default)]`
+    ///   * [Deref]/[DerefMut] which automatically unwraps the [Result]
+    ///
+    /// The latter behavior is so that the most common test patters are simple and clear, so
+    /// that modifying the contained value looks like this:
+    ///
+    /// ```
+    /// # Automatic deref to internal type so we can modify fields directly
+    /// my_result.field_a = 20;
+    ///
+    /// # Without this, it would look something like:
+    /// my_result.0.as_mut().unwrap().field_a = 20;
+    /// ```
+    ///
+    /// If a test attempts to deref while the [Result] is an error value, it will panic.
+    pub struct DefaultOk<T, E>(pub Result<T, E>);
+
+    impl<T: Default, E> Default for DefaultOk<T, E> {
+        fn default() -> Self {
+            Self(Ok(T::default()))
+        }
+    }
+
+    impl<T: Default, E> DefaultOk<T, E> {
+        /// Assigns an error.
+        pub fn set_err(&mut self, err: E) {
+            self.0 = Err(err);
+        }
+    }
+
+    impl<T: Default, E: Debug> Deref for DefaultOk<T, E> {
+        type Target = T;
+        fn deref(&self) -> &Self::Target {
+            match &self.0 {
+                Ok(val) => val,
+                Err(e) => panic!("Attempted to deref an error: {:?}", e),
+            }
+        }
+    }
+
+    impl<T: Default, E: Debug> DerefMut for DefaultOk<T, E> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            match &mut self.0 {
+                Ok(val) => val,
+                Err(e) => panic!("Attempted to deref an error: {:?}", e),
+            }
+        }
+    }
+
     /// Fake [GblOps] implementation for testing.
     #[derive(Default)]
     pub(crate) struct FakeGblOps<'a> {
@@ -1166,10 +1219,7 @@ pub(crate) mod test {
         pub avb_partition_attributes: Option<AvbIoResult<Vec<SpecializedPartition>>>,
 
         /// For return by `Self::avb_read_device_status`
-        pub avb_device_status_error: Option<AvbIoError>,
-
-        /// For return by `Self::avb_read_device_status` in case `avb_device_status_error` is None
-        pub avb_device_status: AvbDeviceStatus,
+        pub avb_device_status: DefaultOk<AvbDeviceStatus, AvbIoError>,
 
         /// For return by `Self::avb_validate_vbmeta_public_key`
         pub avb_key_validation_status: Option<AvbIoResult<KeyValidationStatus>>,
@@ -1425,10 +1475,7 @@ pub(crate) mod test {
         }
 
         fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
-            match self.avb_device_status_error {
-                Some(ref err) => Err(err.clone()),
-                None => Ok(self.avb_device_status.clone()),
-            }
+            self.avb_device_status.0.clone()
         }
 
         fn avb_read_rollback_index(&mut self, rollback_index_location: usize) -> AvbIoResult<u64> {
@@ -1672,7 +1719,7 @@ pub(crate) mod test {
             self.write_lock_state_traces.push((lock_type, lock_state));
 
             // If the user has simulated a device state error, locking fails.
-            if let Some(err) = &self.avb_device_status_error {
+            if let Err(err) = &self.avb_device_status.0 {
                 return Err(err.clone().into());
             }
 
