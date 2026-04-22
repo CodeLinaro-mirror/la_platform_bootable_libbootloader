@@ -311,6 +311,12 @@ impl Protocol<'_, GblAvbProtocol> {
             )
         }
     }
+
+    /// Wraps `GBL_EFI_AVB_PROTOCOL.FactoryDataReset()`.
+    pub fn factory_data_reset(&self) -> Result<()> {
+        // Safety: `self.interface_ptr()` points to a valid object established by `Protocol::new()`.
+        unsafe { efi_call!(self.interface().factory_data_reset, self.interface_ptr()) }
+    }
 }
 
 #[cfg(test)]
@@ -318,9 +324,9 @@ mod test {
     use super::*;
     use crate::{test::run_test_with_mock_protocol, Error};
     use efi_types::defs::{
-        EfiStatus, GblEfiAvbBootColorFlags, GblEfiAvbDeviceStatus, EFI_STATUS_BUFFER_TOO_SMALL,
-        EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_OUT_OF_RESOURCES, EFI_STATUS_SUCCESS,
-        GBL_EFI_AVB_BOOT_COLOR_RED,
+        EfiStatus, GblEfiAvbBootColorFlags, GblEfiAvbDeviceStatus, EFI_STATUS_ACCESS_DENIED,
+        EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_INVALID_PARAMETER, EFI_STATUS_OUT_OF_RESOURCES,
+        EFI_STATUS_SUCCESS, GBL_EFI_AVB_BOOT_COLOR_RED,
     };
     use libutils::cstr_buffer;
     use std::{
@@ -1015,6 +1021,36 @@ mod test {
                 avb_protocol.write_persistent_value(EXPECTED_NAME, Some(EXPECTED_VALUE)),
                 Err(Error::InvalidInput),
             );
+        });
+    }
+
+    #[test]
+    fn factory_data_reset_success() {
+        /// C callback implementation that returns success.
+        unsafe extern "efiapi" fn c_return_success(_: *mut GblEfiAvbProtocol) -> EfiStatus {
+            EFI_STATUS_SUCCESS
+        }
+
+        let c_interface =
+            GblEfiAvbProtocol { factory_data_reset: Some(c_return_success), ..Default::default() };
+
+        run_test_with_mock_protocol(c_interface, |avb_protocol| {
+            assert_eq!(avb_protocol.factory_data_reset(), Ok(()));
+        });
+    }
+
+    #[test]
+    fn factory_data_reset_error() {
+        /// C callback implementation that returns success.
+        unsafe extern "efiapi" fn c_return_error(_: *mut GblEfiAvbProtocol) -> EfiStatus {
+            EFI_STATUS_ACCESS_DENIED
+        }
+
+        let c_interface =
+            GblEfiAvbProtocol { factory_data_reset: Some(c_return_error), ..Default::default() };
+
+        run_test_with_mock_protocol(c_interface, |avb_protocol| {
+            assert_eq!(avb_protocol.factory_data_reset(), Err(Error::AccessDenied));
         });
     }
 }

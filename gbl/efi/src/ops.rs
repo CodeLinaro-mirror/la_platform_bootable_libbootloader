@@ -578,6 +578,14 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         }
     }
 
+    fn factory_data_reset(&mut self) -> Result<()> {
+        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
+        {
+            Ok(protocol) => protocol.factory_data_reset(),
+            Err(e) => Err(e),
+        }
+    }
+
     fn avf_is_supported(&mut self) -> Result<bool> {
         match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvfProtocol>()
         {
@@ -1636,6 +1644,43 @@ mod test {
                 value: value_with_nul.as_ptr(),
             }
         );
+    }
+
+    #[test]
+    fn ops_factory_data_reset_success() {
+        let mut mock_efi = MockEfi::new();
+        let mut avb = GblAvbProtocol::default();
+        avb.factory_data_reset_result = Some(Ok(()));
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.factory_data_reset(), Ok(()));
+    }
+
+    #[test]
+    fn ops_factory_data_reset_failure() {
+        let mut mock_efi = MockEfi::new();
+        let mut avb = GblAvbProtocol::default();
+        avb.factory_data_reset_result = Some(Err(Error::DeviceError));
+        mock_efi.boot_services.expect_find_first_and_open::<GblAvbProtocol>().return_const(Ok(avb));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.factory_data_reset(), Err(Error::DeviceError));
+    }
+
+    #[test]
+    fn ops_factory_data_reset_not_found() {
+        let mut mock_efi = MockEfi::new();
+        mock_efi
+            .boot_services
+            .expect_find_first_and_open::<GblAvbProtocol>()
+            .return_once(|| Err(Error::NotFound));
+
+        let installed = mock_efi.install();
+        let mut ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.factory_data_reset(), Err(Error::NotFound));
     }
 
     #[test]

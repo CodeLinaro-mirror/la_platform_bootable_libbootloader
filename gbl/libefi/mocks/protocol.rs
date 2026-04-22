@@ -281,6 +281,8 @@ pub mod gbl_efi_avb {
         pub handle_verification_result_result: Option<Result<()>>,
         /// Expected return value from `write_lock_state`.
         pub write_lock_state_result: Option<Result<()>>,
+        /// Expected return value from `factory_data_reset`.
+        pub factory_data_reset_result: Option<Result<()>>,
     }
 
     impl GblAvbProtocol {
@@ -348,6 +350,11 @@ pub mod gbl_efi_avb {
             _state: GblEfiAvbLockState,
         ) -> Result<()> {
             self.write_lock_state_result.unwrap()
+        }
+
+        /// Wraps `GBL_EFI_AVB_PROTOCOL.FactoryDataReset()`.
+        pub fn factory_data_reset(&self) -> Result<()> {
+            self.factory_data_reset_result.unwrap()
         }
     }
 }

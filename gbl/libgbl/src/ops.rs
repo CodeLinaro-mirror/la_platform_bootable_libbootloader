@@ -420,6 +420,9 @@ pub trait GblOps<'a> {
         partitions: Option<impl Iterator<Item = AvbPartition<'b>>>,
     ) -> AvbIoResult<()>;
 
+    /// Performs a factory data reset.
+    fn factory_data_reset(&mut self) -> Result<(), Error>;
+
     /// Check AVF vendor implementations are provided.
     fn avf_is_supported(&mut self) -> Result<bool, Error>;
 
@@ -912,6 +915,11 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
         self.ops.avb_handle_verification_result(status, digest, properties, partitions)
     }
 
+    fn factory_data_reset(&mut self) -> Result<(), Error> {
+        // Ramboot should never call this interface.
+        unreachable!();
+    }
+
     fn avb_validate_vbmeta_public_key(
         &self,
         public_key: &[u8],
@@ -1220,6 +1228,9 @@ pub(crate) mod test {
 
         /// For return by `Self::avb_read_device_status`
         pub avb_device_status: DefaultOk<AvbDeviceStatus, AvbIoError>,
+
+        /// Tracks the number of times `Self::factory_data_reset` is called, or returns the error.
+        pub factory_data_reset_count: DefaultOk<usize, Error>,
 
         /// For return by `Self::avb_validate_vbmeta_public_key`
         pub avb_key_validation_status: Option<AvbIoResult<KeyValidationStatus>>,
@@ -1552,6 +1563,16 @@ pub(crate) mod test {
                     partitions.map(|p| p.collect()),
                 ),
                 _ => Ok(()),
+            }
+        }
+
+        fn factory_data_reset(&mut self) -> Result<(), Error> {
+            match &mut self.factory_data_reset_count.0 {
+                Ok(count) => {
+                    *count += 1;
+                    Ok(())
+                }
+                Err(e) => Err(*e),
             }
         }
 
@@ -2023,6 +2044,10 @@ pub(crate) mod test {
             Err(AvbIoError::NotImplemented)
         }
 
+        fn factory_data_reset(&mut self) -> Result<(), Error> {
+            Err(Error::Unsupported)
+        }
+
         fn avb_validate_vbmeta_public_key(
             &self,
             _: &[u8],
@@ -2152,6 +2177,21 @@ pub(crate) mod test {
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.base_sp = Some(1);
         assert_eq!(gbl_ops.calculate_stack_usage(2), Some(usize::MAX));
+    }
+
+    #[test]
+    fn fake_gbl_ops_factory_data_reset() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        assert_eq!(*gbl_ops.factory_data_reset_count, 0);
+        gbl_ops.factory_data_reset().unwrap();
+        assert_eq!(*gbl_ops.factory_data_reset_count, 1);
+        gbl_ops.factory_data_reset().unwrap();
+        assert_eq!(*gbl_ops.factory_data_reset_count, 2);
+
+        gbl_ops.factory_data_reset_count.set_err(Error::Unsupported);
+        assert_eq!(gbl_ops.factory_data_reset(), Err(Error::Unsupported));
     }
 
     #[test]
