@@ -1,86 +1,104 @@
-# Gemini Guidelines for GBL (Generic Bootloader)
+# Generic Bootloader (GBL)
 
-This document provides guidelines for interacting with the GBL codebase using
-the Gemini CLI.
+GBL is a UEFI application encapsulating the Android and Fuchsia boot process,
+providing a standardized, platform-agnostic bootloader core.
 
-## Project Overview
+## Architecture & Design
 
-GBL, or Generic Bootloader, is a UEFI application designed to standardize the
-boot process for Android and Fuchsia operating systems. It encapsulates common
-boot logic, reducing duplication in board-specific firmware.
+- **Design:** Connects to EFI APIs through a platform hook model.
+- **Goal:** Reduce code duplication in board-specific firmware.
+- **Tech Stack:**
+  - **Rust:** Core logic (safety-critical).
+  - **C:** Hardware interactions and foundational libraries.
+  - **Bazel:** Build system.
+  - **Clang:** Compiler (via `<monorepo-root>/prebuilts/`).
 
-The primary source code for GBL is located within the
-`bootable/libbootloader/gbl` directory. Third-party dependencies and prebuilts
-are generally located in higher-level `external/` or `prebuilts/` directories
-and should not be modified directly.
+## Directory Structure Map
 
-## Code Structure
-
-- `docs/`: Contains user-facing documentation, primarily for device makers who
-  are writing UEFI firmware to run GBL.
-- `efi/`: Contains the final UEFI application binary.
-- `lib*/`: These directories contain independent libraries. The primary goal is
-  code modularity rather than widespread reuse.
-- `libefi/`: Contains the glue to connect the platform-agnostic libgbl to
-  EFI-specific platform hooks.
-- `libefi_types/`: EFI C type declarations and Rust wrappers. This should only
-  contain types and wrappers, not logic.
-- `libgbl/`: This is the core, platform-agnostic logic for GBL. It uses a
-  platform hook model and does not call any EFI APIs directly.
-
-## Building and Testing
-
-For quick reference, the most common commands are:
-
-- **Build all EFI applications:**
-  ```bash
-  ./bazel.sh run //bootable/libbootloader:gbl_efi_dist
-  ```
-- **Run all unittests:**
-  ```bash
-  ./bazel.sh test @gbl//tests
-  ```
+- `docs/`: User-facing documentation (for device makers).
+- `efi/`: UEFI application binaries.
+- `lib*/`: Independent libraries prioritized for modularity.
+- `libefi/`: EFI platform hooks connecting core logic to the UEFI environment.
+- `libefi_types/`: EFI C declarations and Rust wrappers (No logic).
+- `libgbl/`: Core platform-agnostic logic.
 
 ## Engineering Standards
 
-- **Environment:** GBL targets a bare-metal UEFI environment. The code must be
-  `#![cfg_attr(not(test), no_std)]`. Rely on `core` and `alloc`.
-- **Testing:** Unit tests run in a hosted environment with `std` enabled. Tests
-  heavily mock UEFI services.
-- **Global State:** Because the test runner is multi-threaded, take care when
-  testing code that interacts with global states (like panic hooks). Use `Arc`,
-  `Mutex`, or `thread_local!` to avoid race conditions.
-- **Error Handling:**
-  - **Production:** Avoid `panic!`, `unwrap()`, or `expect()` in production
-    code. These can cause silent hangs in a UEFI environment.
-  - **Pattern:** Favor the `Result` type for recoverable errors. Use the
-    `report_error_and_reset` pattern for fatal failures, ensuring a GBL-specific
-    error tag is provided.
+### 1. Environment Constraints
 
-## Code Style and Formatting
+- **Target:** Bare-metal UEFI.
+- **Rust `no_std`:** Production code MUST declare
+  `#![cfg_attr(not(test), no_std)]`. Rely exclusively on `core` and `alloc`.
+- **Memory Allocation:** Dynamic allocations (hooked into UEFI) are available
+  but highly discouraged in production, where stack allocation or a scratch
+  buffer (for large data) is preferred.
+- **Memory Allocation in unit tests:** Dynamic allocations are perfectly
+  acceptable.
 
-- **Rust:** Format with `rustfmt`.
-- **Python:** Format with `pyink`.
-- **C++:** Format with `clang-format` adhering to the Google C++ Style Guide.
-- **Markdown:** Format with `prettier`.
+### 2. Testing Constraints
 
-## Contribution Workflow
+- **Target:** Hosted environment with `std` enabled.
+- **Strategy:** Heavily mock UEFI services.
+- **Concurrency:** The test runner is multi-threaded. Use `Arc`, `Mutex`,
+  `atomics`, or `thread_local!` when testing code that interacts with global
+  state (e.g., panic hooks) to prevent race conditions.
 
-This project follows standard Android contribution practices.
+### 3. Error Handling
 
-- **Development:** Use the `repo` tool for managing branches.
-- **Code Reviews:** Submit changes for review via Gerrit with `repo upload`.
-- **Commit Messages:** Format commit messages according to the standard Android
-  convention. All commit messages must include a `Bug:` tag. A `Test:` tag is
-  not required.
+- **No Panics:** Avoid `panic!`, `unwrap()`, or `expect()` in production. These
+  cause silent hangs in UEFI.
+- **Recoverable Errors:** Return `Result`.
+- **Fatal Errors:** Use the `report_error_and_reset` pattern and ensure a
+  GBL-specific error tag is provided.
 
-  **Example:**
+## Building and Testing
 
-  ```
-  gbl: Resolve boot failure on device XYZ
+The GBL build script is at `bootable/libbootloader/gbl/bazel.sh` relative to the
+repo root.
 
-  This change addresses a null pointer dereference in the EFI
-  protocol handling, which caused a boot hang.
+### Building the EFI application
 
-  Bug: b/123456789
-  ```
+```bash
+./bazel.sh run //bootable/libbootloader:gbl_efi_dist
+```
+
+### Running unit tests
+
+```bash
+./bazel.sh test @gbl//tests
+```
+
+## Formatting
+
+Always format code using the following tools before committing.
+
+- **Rust:** `rustfmt <file>`
+- **Python:** `pyink <file_or_directory>`
+- **C++:** Adhere to Google C++ Style. Use `clang-format -i <file>`.
+- **Markdown:** `prettier --write <file>`
+
+## Contribution Guidelines
+
+Follow these standard Android Open Source Project (AOSP) practices for all
+contributions.
+
+### 1. Workflow
+
+- **Branching:** Use the `repo` tool.
+- **Code Review:** Submit via Gerrit using `repo upload`.
+
+### 2. Commit Messages
+
+All commit messages must strictly adhere to the Android convention. A `Bug:` tag
+is **mandatory**.
+
+**Format Example:**
+
+```text
+gbl: Resolve boot failure on device XYZ
+
+This change addresses a null pointer dereference in the EFI
+protocol handling, which caused a boot hang.
+
+Bug: 123456789
+```
