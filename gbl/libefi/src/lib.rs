@@ -296,7 +296,7 @@ impl<'a> SystemTable<'a> {
     /// Gets the `EFI_SYSTEM_TABLE.ConOut` field.
     pub fn con_out(&self) -> Result<Protocol<'a, SimpleTextOutputProtocol>> {
         // SAFETY: `EFI_SYSTEM_TABLE.ConOut` is a pointer to EfiSimpleTextOutputProtocol structure
-        // by definition. It lives until ExitBootService and thus as long as `self.efi_entry` or,
+        // by definition. It lives until ExitBootServices and thus as long as `self.efi_entry` or,
         // 'a
         Ok(unsafe {
             Protocol::<SimpleTextOutputProtocol>::new(
@@ -432,12 +432,16 @@ impl<'a> BootServices<'a> {
                 &mut out_handle,
                 self.efi_entry.image_handle().0,
                 null_mut(),
+                // Cannot open exclusively because firmware may require the protocol as well.
                 EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL
             )?;
         }
-        // SAFETY: `EFI_SYSTEM_TABLE.OpenProtocol` returns a valid pointer to `T::InterfaceType`
-        // on success. The pointer remains valid until closed by
-        // `EFI_BOOT_SERVICES.CloseProtocol()` when Protocol goes out of scope.
+        // SAFETY:
+        // * `EFI_SYSTEM_TABLE.OpenProtocol` returns a valid pointer to
+        //   `T::InterfaceType` on success.
+        // * The pointer remains valid until ExitBootServices.
+        // * Due to the 'a lifetime, the returned protocol will always be dropped
+        //   before ExitBootServices.
         Ok(unsafe {
             Protocol::<T>::new(
                 handle,
@@ -445,21 +449,6 @@ impl<'a> BootServices<'a> {
                 self.efi_entry,
             )
         })
-    }
-
-    /// Wrapper of `EFI_BOOT_SERVICES.CloseProtocol()`.
-    #[allow(dead_code)]
-    fn close_protocol<T: ProtocolImpl>(&self, handle: DeviceHandle) -> Result<()> {
-        // SAFETY: EFI_BOOT_SERVICES method call.
-        unsafe {
-            efi_call!(
-                self.boot_services.close_protocol,
-                handle.0,
-                &T::GUID,
-                self.efi_entry.image_handle().0,
-                null_mut()
-            )
-        }
     }
 
     /// Call `EFI_BOOT_SERVICES.LocateHandle()` with fixed
@@ -523,8 +512,8 @@ impl<'a> BootServices<'a> {
 
     /// Search and open the first found target EFI protocol.
     pub fn find_first_and_open<T: ProtocolImpl>(&self) -> Result<Protocol<'a, T>> {
-        // We don't use EFI_BOOT_SERVICES.LocateProtocol() because it doesn't give device handle
-        // which is required to close the protocol.
+        // The `open_protocol` and Protocol structure need a device handle,
+        // so we can't use EFI_BOOT_SERVICES.LocateProtocol().
         //
         // Try locating handles first using an automatically allocated array.
         // If the array isn't big enough, fall back to dynamically allocating the array.
@@ -1370,7 +1359,6 @@ mod test {
     pub struct EfiCallTraces {
         pub check_event_trace: CheckEventTrace,
         pub close_event_trace: CloseEventTrace,
-        pub close_protocol_trace: CloseProtocolTrace,
         // Special case
         pub console_out_trace: ConsoleOutTrace,
         pub create_event_trace: CreateEventTrace,
@@ -1455,35 +1443,6 @@ mod test {
             unsafe { *intf = intf_handle };
 
             status
-        })
-    }
-
-    /// EFI_BOOT_SERVICE.CloseProtocol() test implementation.
-    #[derive(Default)]
-    pub struct CloseProtocolTrace {
-        // Capture `handle`, `protocol_guid`, `agent_handle`
-        pub inputs: VecDeque<(DeviceHandle, EfiGuid, EfiHandle)>,
-    }
-
-    /// Mock of the `EFI_BOOT_SERVICE.CloseProtocol` C API in test environment.
-    ///
-    /// # Safety
-    ///
-    ///   Caller should guarantee that `protocol_guid` points to valid memory location.
-    unsafe extern "efiapi" fn close_protocol(
-        handle: EfiHandle,
-        protocol_guid: *const EfiGuid,
-        agent_handle: EfiHandle,
-        _: EfiHandle,
-    ) -> EfiStatus {
-        EFI_CALL_TRACES.with(|traces| {
-            traces.borrow_mut().close_protocol_trace.inputs.push_back((
-                DeviceHandle(handle),
-                // SAFETY: function safety docs require valid `protocol_guid`.
-                unsafe { *protocol_guid },
-                agent_handle,
-            ));
-            EFI_STATUS_SUCCESS
         })
     }
 
@@ -1859,7 +1818,6 @@ mod test {
         let mut boot_services: EfiBootService = Default::default();
         boot_services.free_pool = Some(free_pool);
         boot_services.open_protocol = Some(open_protocol);
-        boot_services.close_protocol = Some(close_protocol);
         boot_services.handle_protocol = Some(handle_protocol);
         boot_services.locate_handle_buffer = Some(locate_handle_buffer);
         boot_services.locate_handle = Some(locate_handle);
@@ -1916,7 +1874,7 @@ mod test {
     }
 
     #[test]
-    fn test_open_close_protocol() {
+    fn test_open_protocol() {
         run_test(|image_handle, systab_ptr| {
             let efi_entry = EfiEntry { image_handle, systab_ptr };
 
@@ -1948,15 +1906,8 @@ mod test {
                             image_handle
                         ),]
                     );
-
-                    // close_protocol not called yet.
-                    assert_eq!(trace.borrow_mut().close_protocol_trace.inputs, []);
                 });
             }
-
-            // Close protocol is called as `protocol` goes out of scope.
-            EFI_CALL_TRACES
-                .with(|trace| assert_eq!(trace.borrow_mut().close_protocol_trace.inputs, []));
         })
     }
 
