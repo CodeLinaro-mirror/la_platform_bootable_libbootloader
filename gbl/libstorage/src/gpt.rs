@@ -29,6 +29,7 @@ use core::{
 use crc32fast::Hasher;
 use gbl_async::block_on;
 use liberror::{Error, GptError};
+use libutils::buffer_pool::BufferPool;
 use safemath::SafeNum;
 use zerocopy::{
     ByteSlice, FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout, Ref, SplitByteSlice,
@@ -749,7 +750,7 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
     /// Helper function for loading and validating GPT header and entries.
     async fn load_and_validate_gpt(
         &mut self,
-        disk: &mut Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
+        disk: &mut Disk<impl BlockIo, impl BufferPool>,
         hdr_type: HeaderType,
     ) -> Result<()> {
         let blk_sz = disk.io().info().block_size;
@@ -786,7 +787,7 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
     /// * Returns Err() if disk IO encounters error.
     pub(crate) async fn load_and_sync(
         &mut self,
-        disk: &mut Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
+        disk: &mut Disk<impl BlockIo, impl BufferPool>,
         repair: bool,
     ) -> Result<GptSyncResult> {
         let blk_sz = disk.io().info().block_size;
@@ -930,7 +931,7 @@ pub fn new_gpt_max() -> GptMax {
 ///    storage.
 /// * `gpt`: The output [Gpt] to update.
 pub(crate) async fn update_gpt(
-    disk: &mut Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
+    disk: &mut Disk<impl BlockIo, impl BufferPool>,
     mbr_primary: &mut [u8],
     resize: bool,
     gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
@@ -982,7 +983,7 @@ pub(crate) async fn update_gpt(
 
 /// Erases GPT if there is one on the device.
 pub(crate) async fn erase_gpt(
-    disk: &mut Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
+    disk: &mut Disk<impl BlockIo, impl BufferPool>,
     gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
 ) -> Result<()> {
     match disk.sync_gpt(gpt, false).await?.res() {
@@ -1033,12 +1034,12 @@ impl<D: Debug, G: Debug> Debug for GptBuilder<D, G> {
 // * B: The type for the GPT buffer in `Self::gpt`.
 // * D: The type for `Self::disk` which can dereference to a Disk<T, S>.
 // * G: The type for `Self::gpt` which can dereference to a Gpt<B>.
-impl<'a, T, S, B, D, G> GptBuilder<D, G>
+impl<'a, T, P, B, D, G> GptBuilder<D, G>
 where
     T: BlockIo,
-    S: DerefMut<Target = [u8]>,
+    P: BufferPool,
     B: DerefMut<Target = [u8]>,
-    D: DerefMut<Target = Disk<T, S>>,
+    D: DerefMut<Target = Disk<T, P>>,
     G: DerefMut<Target = Gpt<B>>,
 {
     /// Creates a new instance.

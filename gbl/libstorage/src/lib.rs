@@ -18,15 +18,22 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(async_fn_in_trait)]
 
+extern crate alloc;
+use arrayvec::ArrayVec;
 use bytes::buf::UninitSlice;
 use core::{
     cell::RefMut,
-    cmp::{max, min},
+    cmp::min,
+    iter,
     ops::{Bound, DerefMut, Index, IndexMut, RangeBounds},
 };
 use gbl_async::block_on;
 use liberror::{Error, Result};
-use libutils::aligned_subslice;
+use libutils::{
+    aligned_subslice,
+    buffer_pool::{BufferPool, PoolRef},
+    shared::Shared,
+};
 use safemath::SafeNum;
 
 // Selective export of submodule types.
@@ -391,7 +398,7 @@ fn check_range<'a>(
     }
 }
 
-/// Computes the required scratch size for initializing a [AsyncBlockDevice].
+/// Computes the required scratch size for initializing an [AsyncBlockDevice].
 pub fn scratch_size(io: &mut impl BlockIo) -> Result<usize> {
     let info = io.info();
     let block_alignment = match info.block_size {
@@ -401,54 +408,43 @@ pub fn scratch_size(io: &mut impl BlockIo) -> Result<usize> {
     Ok(((SafeNum::from(info.alignment) - 1) * 2 + block_alignment).try_into()?)
 }
 
-/// `Disk` contains a BlockIO and scratch buffer and provides APIs for reading/writing with
-/// arbitrary ranges and alignment.
-pub struct Disk<T, S> {
+/// `Disk` contains a BlockIO and scratch buffer pool and provides APIs for
+/// reading/writing with arbitrary ranges and alignment.
+pub struct Disk<T, P> {
     io: T,
-    scratch: S,
+    pool: Shared<P>,
 }
 
-impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
-    /// Creates a new instance with the given IO and scratch buffer.
+impl<T: BlockIo, const N: usize, B: FromIterator<u8> + DerefMut<Target = [u8]>>
+    Disk<T, ArrayVec<Option<B>, N>>
+{
+    /// Same as `Self::new()` but allocates the necessary scratch buffers.
+    pub fn new_alloc_scratch(mut io: T) -> Result<Self> {
+        let scratch_size = scratch_size(&mut io)?;
+        let pool = ArrayVec::from_iter(
+            (0..N).map(|_| Some(B::from_iter(iter::repeat(0).take(scratch_size)))),
+        );
+        Self::new(io, pool)
+    }
+}
+
+impl<T: BlockIo, P: BufferPool> Disk<T, P> {
+    /// Creates a new instance with the given IO and scratch buffer pool.
     ///
-    /// * The scratch buffer is internally used for handling partial block read/write and unaligned
-    ///   input/output user buffers.
+    /// * The scratch buffer pool is internally used for handling partial block
+    ///   read/write and unaligned input/output user buffers.
     ///
-    /// * The necessary size for the scratch buffer depends on `BlockInfo::alignment`,
+    /// * The necessary size for the scratch buffers depends on `BlockInfo::alignment`,
     ///   `BlockInfo::block_size`. It can be computed using the helper API `scratch_size()`. If the
     ///   block device has no alignment requirement, i.e. both alignment and block size are 1, the
     ///   total required scratch size is 0.
-    pub fn new(mut io: T, scratch: S) -> Result<Self> {
-        let sz = scratch_size(&mut io)?;
-        match scratch.len() < sz {
-            true => Err(Error::BufferTooSmall(Some(sz))),
-            _ => Ok(Self { io, scratch }),
+    pub fn new(mut io: T, pool: P) -> Result<Self> {
+        let scratch_size = scratch_size(&mut io)?;
+        if !pool.check_buffer_sizes(scratch_size) {
+            Err(Error::BufferTooSmall(Some(scratch_size)))
+        } else {
+            Ok(Self { io, pool: pool.into() })
         }
-    }
-
-    /// Same as `Self::new()` but allocates the necessary scratch buffer.
-    ///
-    /// T must implement Extend<u8> and Default. It should typically be a vector like type.
-    ///
-    /// Allocation is done by extending T one element at a time. In most cases, we don't expect
-    /// block size or alignment to be large values and this is only done once. thus this should be
-    /// low cost. However if that is not the case, it is recommended to use `Self::new()` with
-    /// pre-allocated scratch buffer.
-    pub fn new_alloc_scratch(mut io: T) -> Result<Self>
-    where
-        S: Extend<u8> + Default,
-    {
-        let mut scratch = S::default();
-        // Extends the scratch buffer to the required size.
-        // Can call `extend_reserve()` first once it becomes stable.
-        (0..max(scratch.len(), scratch_size(&mut io)?) - scratch.len())
-            .for_each(|_| scratch.extend([0u8]));
-        Self::new(io, scratch)
-    }
-
-    /// Creates a `Disk<&mut T, &mut [u8]>` instance that borrows the internal fields.
-    pub fn as_borrowed(&mut self) -> Disk<&mut T, &mut [u8]> {
-        Disk::new(&mut self.io, &mut self.scratch[..]).unwrap()
     }
 
     /// Gets the [BlockInfo]
@@ -473,7 +469,8 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
         offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
-        read_async(&mut self.io, offset, out, &mut self.scratch).await
+        let mut scratch = self.pool.allocate_async().await;
+        read_async(&mut self.io, offset, out, &mut scratch).await
     }
 
     /// Writes data to the device.
@@ -487,7 +484,8 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
     ///
     /// * Returns success when exactly `data.len()` number of bytes are written.
     pub async fn write(&mut self, offset: u64, data: &mut [u8]) -> Result<()> {
-        write_async(&mut self.io, offset, data, &mut self.scratch).await
+        let mut scratch = self.pool.allocate_async().await;
+        write_async(&mut self.io, offset, data, &mut scratch).await
     }
 
     /// Fills a disk range with the given byte value
@@ -538,14 +536,16 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
     ///
     /// * `offset`: Offset in number of bytes.
     /// * `size`: Number of bytes erase.
-    /// * `scratch`: A scratch buffer that will be used for partial block erase when offset and
-    ///   size are not multiples of block size. The buffer must be at least the erase block size.
+    /// * `erase_scratch`: A scratch buffer that will be used for partial block erase
+    ///   when offset and size are not multiples of block size.
+    ///   The buffer must be at least the erase block size.
     ///
     ///  # Returns
     ///
     /// * Return Err(Error::BufferTooSmall(_)) if `scratch` is less than block size.
-    pub async fn erase(&mut self, offset: u64, size: u64, scratch: &mut [u8]) -> Result<()> {
-        erase_async(&mut self.io, offset, size, scratch, &mut self.scratch).await
+    pub async fn erase(&mut self, offset: u64, size: u64, erase_scratch: &mut [u8]) -> Result<()> {
+        let mut scratch = self.pool.allocate_async().await;
+        erase_async(&mut self.io, offset, size, erase_scratch, &mut scratch).await
     }
 
     /// Loads and syncs GPT from a block device.
@@ -645,37 +645,27 @@ impl<T: BlockIo, S: DerefMut<Target = [u8]>> Disk<T, S> {
         self.write(offset, data).await
     }
 
-    /// Returns a `Disk` instance that forces all internal IOs to only go through
-    /// `BlockIo::read_blocks_sync()` and `BlockIo::write_block_sync()`.
-    ///
-    /// This is typically used when `T` has non-default and optimized implementation of
-    /// `BlockIo::read_blocks_sync()` and `BlockIo::write_block_sync()`  and caller only needs
-    /// blocking IO.
-    pub fn as_sync(&mut self) -> Disk<BlockIoSync<&mut T>, &mut [u8]> {
-        Disk::new(BlockIoSync(&mut self.io), &mut self.scratch[..]).unwrap()
-    }
-
-    /// Same as `Self::as_sync()` but consumes Self.
-    pub fn into_sync(self) -> Disk<BlockIoSync<T>, S> {
-        Disk::new(BlockIoSync(self.io), self.scratch).unwrap()
+    /// Consumes `self` and returns a synchronous-only Disk.
+    pub fn into_sync(self) -> Disk<BlockIoSync<T>, P> {
+        let Self { io, pool } = self;
+        Disk::new(BlockIoSync(io), pool.into_value()).unwrap()
     }
 }
 
-impl<'a, T: BlockIo> Disk<RefMut<'a, T>, RefMut<'a, [u8]>> {
-    /// Converts a `RefMut<Disk<T, S>>` to `Disk<RefMut<T>, RefMut<[u8]>>`. The scratch buffer
-    /// generic type is eliminated in the return.
-    pub fn transpose_ref_mut(val: RefMut<'a, Disk<T, impl DerefMut<Target = [u8]>>>) -> Self {
-        let (io, scratch) = RefMut::map_split(val, |v| (&mut v.io, &mut v.scratch[..]));
-        Disk::new(io, scratch).unwrap()
+impl<'a, T: BlockIo, P: BufferPool> Disk<RefMut<'a, T>, PoolRef<'a, P>> {
+    /// Converts a `RefMut<Disk<T, P>>` to `Disk<RefMut<T>, PoolRef<P>>`.
+    pub fn transpose_ref_mut(val: RefMut<'a, Disk<T, P>>) -> Self {
+        let (io, pool) = RefMut::map_split(val, |v| (&mut v.io, &mut v.pool));
+        Disk::new(io, PoolRef::new(RefMut::map(pool, |s| s.get_mut()))).unwrap()
     }
 }
 
-impl<T, S> Disk<RamBlockIo<T>, S>
+impl<T, B: FromIterator<u8> + DerefMut<Target = [u8]>, const N: usize>
+    Disk<RamBlockIo<T>, ArrayVec<Option<B>, N>>
 where
     T: DerefMut<Target = [u8]>,
-    S: DerefMut<Target = [u8]> + Extend<u8> + Default,
 {
-    /// Creates a new ram disk instance with allocated scratch buffer.
+    /// Creates a new ram disk instance with allocated scratch buffer pool.
     pub fn new_ram_alloc(block_size: u64, alignment: u64, storage: T) -> Result<Self> {
         let ram_blk = RamBlockIo::new(block_size, alignment, storage);
         Self::new_alloc_scratch(ram_blk)
@@ -725,7 +715,7 @@ mod test {
     const READ_WRITE_BLOCKS_UPPER_BOUND: usize = 6;
 
     // Type alias of the [Disk] type used by unittests.
-    pub(crate) type TestDisk = Disk<RamBlockIo<Vec<u8>>, Vec<u8>>;
+    pub(crate) type TestDisk = Disk<RamBlockIo<Vec<u8>>, ArrayVec<Option<Box<[u8]>>, 2>>;
 
     /// Helper to test the [CheckedGet] trait on [UninitSlice].
     ///
@@ -1158,8 +1148,11 @@ mod test {
     #[test]
     fn test_scratch_too_small() {
         let mut io = RamBlockIo::new(512, 512, vec![]);
-        let scratch = vec![0u8; scratch_size(&mut io).unwrap() - 1];
-        assert!(TestDisk::new(io, scratch).is_err());
+        let scratch_size = scratch_size(&mut io).unwrap() - 1;
+        let pool = ArrayVec::from_iter(
+            (0..2).map(|_| Some(Box::from_iter(iter::repeat(0).take(scratch_size)))),
+        );
+        assert!(TestDisk::new(io, pool).is_err());
     }
 
     #[test]

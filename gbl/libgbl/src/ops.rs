@@ -42,7 +42,7 @@ use gbl_async::block_on;
 use libprofile::ProfileBackend;
 #[cfg(feature = "fuchsia")]
 use libutils::aligned_subslice;
-use libutils::cstr_buffer;
+use libutils::{buffer_pool::BufferPool, cstr_buffer};
 
 // Re-exports of types from other dependencies that appear in the APIs of this library.
 pub use avb::{
@@ -182,7 +182,7 @@ pub trait GblOps<'a> {
     fn disks(
         &self,
     ) -> &'a [GblDisk<
-        Disk<impl BlockIo + 'a, impl DerefMut<Target = [u8]> + 'a>,
+        Disk<impl BlockIo + 'a, impl BufferPool + 'a>,
         Gpt<impl DerefMut<Target = [u8]> + 'a>,
     >];
 
@@ -750,7 +750,7 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
     fn disks(
         &self,
     ) -> &'a [GblDisk<
-        Disk<impl BlockIo + 'a, impl DerefMut<Target = [u8]> + 'a>,
+        Disk<impl BlockIo + 'a, impl BufferPool + 'a>,
         Gpt<impl DerefMut<Target = [u8]> + 'a>,
     >] {
         self.ops.disks()
@@ -1071,7 +1071,8 @@ pub(crate) mod test {
     use zbi::{ZbiFlags, ZbiType};
 
     /// Type of [GblDisk] in tests.
-    pub(crate) type TestGblDisk = GblDisk<Disk<RamBlockIo<Vec<u8>>, Vec<u8>>, GptMax>;
+    pub(crate) type TestGblDisk =
+        GblDisk<Disk<RamBlockIo<Vec<u8>>, ArrayVec<Option<Box<[u8]>>, 2>>, GptMax>;
 
     /// A small test helper to invoke closures and keep a shared invocation count.
     ///
@@ -1458,7 +1459,7 @@ pub(crate) mod test {
         fn disks(
             &self,
         ) -> &'a [GblDisk<
-            Disk<impl BlockIo + 'a, impl DerefMut<Target = [u8]> + 'a>,
+            Disk<impl BlockIo + 'a, impl BufferPool + 'a>,
             Gpt<impl DerefMut<Target = [u8]> + 'a>,
         >] {
             self.partitions
@@ -1943,7 +1944,7 @@ pub(crate) mod test {
         fn disks(
             &self,
         ) -> &'a [GblDisk<
-            Disk<impl BlockIo + 'a, impl DerefMut<Target = [u8]> + 'a>,
+            Disk<impl BlockIo + 'a, impl BufferPool + 'a>,
             Gpt<impl DerefMut<Target = [u8]> + 'a>,
         >] {
             &[] as &[TestGblDisk]

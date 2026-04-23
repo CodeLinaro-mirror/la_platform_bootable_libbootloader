@@ -74,6 +74,7 @@ use libgbl::{
     GblOps, Os, Result as GblResult,
 };
 use libprofile::ProfileBackend;
+use libutils::buffer_pool::BufferPool;
 use spin::Mutex;
 use static_assertions::{const_assert, const_assert_eq};
 #[cfg(feature = "fuchsia")]
@@ -328,7 +329,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     fn disks(
         &self,
     ) -> &'b [GblDisk<
-        Disk<impl BlockIo + 'b, impl DerefMut<Target = [u8]> + 'b>,
+        Disk<impl BlockIo + 'b, impl BufferPool + 'b>,
         Gpt<impl DerefMut<Target = [u8]> + 'b>,
     >] {
         self.disks

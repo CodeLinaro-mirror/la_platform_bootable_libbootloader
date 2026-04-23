@@ -30,7 +30,10 @@ use gbl_storage::{
     Partition as GptPartition,
 };
 use liberror::Error;
-use libutils::FormattedBytes;
+use libutils::{
+    buffer_pool::{BufferPool, PoolRef},
+    FormattedBytes,
+};
 use safemath::SafeNum;
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -170,10 +173,10 @@ pub struct GblDisk<D, G> {
     info_cache: BlockInfo,
 }
 
-impl<B, S, T> GblDisk<Disk<B, S>, Gpt<T>>
+impl<B, P, T> GblDisk<Disk<B, P>, Gpt<T>>
 where
     B: BlockIo,
-    S: DerefMut<Target = [u8]>,
+    P: BufferPool,
     T: DerefMut<Target = [u8]>,
 {
     /// Creates a new instance using the same disk and partition table where all IOs only go through
@@ -183,7 +186,7 @@ where
     pub fn as_sync(
         &self,
     ) -> Result<
-        GblDisk<Disk<BlockIoSync<RefMut<'_, B>>, RefMut<'_, [u8]>>, Gpt<RefMut<'_, [u8]>>>,
+        GblDisk<Disk<BlockIoSync<RefMut<'_, B>>, PoolRef<'_, P>>, Gpt<RefMut<'_, [u8]>>>,
         Error,
     > {
         let disk = Disk::transpose_ref_mut(self.get_disk()?).into_sync();
@@ -201,13 +204,13 @@ where
     }
 
     /// Creates a new instance as a GPT device.
-    pub fn new_gpt(mut disk: Disk<B, S>, gpt: Gpt<T>) -> Self {
+    pub fn new_gpt(mut disk: Disk<B, P>, gpt: Gpt<T>) -> Self {
         let info_cache = disk.io().info();
         Self { disk: disk.into(), info_cache, partitions: PartitionTable::Gpt(gpt).into() }
     }
 
     /// Creates a new instance as a raw storage partition.
-    pub fn new_raw(mut disk: Disk<B, S>, name: &CStr) -> Result<Self, Error> {
+    pub fn new_raw(mut disk: Disk<B, P>, name: &CStr) -> Result<Self, Error> {
         let info_cache = disk.io().info();
         Ok(Self {
             disk: disk.into(),
@@ -230,7 +233,7 @@ where
     }
 
     /// Borrows disk mutably.
-    fn get_disk(&self) -> Result<RefMut<'_, Disk<B, S>>, Error> {
+    fn get_disk(&self) -> Result<RefMut<'_, Disk<B, P>>, Error> {
         self.disk.try_borrow_mut().map_err(|_| Error::NotReady)
     }
 
@@ -242,7 +245,7 @@ where
     /// Gets an instance of `PartitionIo` for a partition.
     ///
     /// If `part` is `None`, an IO for the whole block device is returned.
-    pub fn partition_io(&self, part: Option<&str>) -> Result<PartitionIo<'_, B>, Error> {
+    pub fn partition_io(&self, part: Option<&str>) -> Result<PartitionIo<'_, B, P>, Error> {
         let (part_start, part_end) = self.find_partition(part)?.absolute_range()?;
         Ok(PartitionIo {
             disks: [Disk::transpose_ref_mut(self.get_disk()?)].into(),
@@ -349,7 +352,7 @@ where
     /// Creates an instance of GptBuilder.
     pub fn gpt_builder(
         &self,
-    ) -> Result<GptBuilder<RefMut<'_, Disk<B, S>>, RefMut<'_, Gpt<T>>>, Error> {
+    ) -> Result<GptBuilder<RefMut<'_, Disk<B, P>>, RefMut<'_, Gpt<T>>>, Error> {
         let mut parts = self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?;
         match parts.deref_mut() {
             PartitionTable::Raw(_, _) => Err(Error::Unsupported),
@@ -389,18 +392,20 @@ impl AccessMode for ReadOnly {
 }
 
 /// An alias to `MultiPartitionIo` with `N = 1`.
-pub type PartitionIo<'a, B, A = ReadWrite> = MultiPartitionIo<'a, B, 1, A>;
+pub type PartitionIo<'a, B, P, A = ReadWrite> = MultiPartitionIo<'a, B, P, 1, A>;
 
 /// `MultiPartitionIo` provides read/write APIs to one or more partitions.
-pub struct MultiPartitionIo<'a, B: BlockIo, const N: usize, A = ReadWrite> {
-    disks: ArrayVec<Disk<RefMut<'a, B>, RefMut<'a, [u8]>>, N>,
+pub struct MultiPartitionIo<'a, B: BlockIo, P: BufferPool, const N: usize, A = ReadWrite> {
+    disks: ArrayVec<Disk<RefMut<'a, B>, PoolRef<'a, P>>, N>,
     // (Index in `disks`, partition start, partition end)
     parts: ArrayVec<(usize, u64, u64), N>,
     _mode: PhantomData<A>,
 }
 
 /// Common implementation for any [AccessMode].
-impl<'a, B: BlockIo, const N: usize, A: AccessMode> MultiPartitionIo<'a, B, N, A> {
+impl<'a, B: BlockIo, P: BufferPool, const N: usize, A: AccessMode>
+    MultiPartitionIo<'a, B, P, N, A>
+{
     /// Checks the read/write parameters and returns the absolute offsets for read/write in each
     /// partition.
     fn check_rw_range(
@@ -458,7 +463,7 @@ impl<'a, B: BlockIo, const N: usize, A: AccessMode> MultiPartitionIo<'a, B, N, A
 }
 
 /// [ReadWrite] implementation.
-impl<'a, B: BlockIo, const N: usize> MultiPartitionIo<'a, B, N, ReadWrite> {
+impl<'a, B: BlockIo, P: BufferPool, const N: usize> MultiPartitionIo<'a, B, P, N, ReadWrite> {
     /// Writes to the partition.
     pub async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
         let abs_offs = self.check_rw_range(off, data.len())?;
@@ -496,7 +501,7 @@ impl<'a, B: BlockIo, const N: usize> MultiPartitionIo<'a, B, N, ReadWrite> {
 }
 
 /// Single-partition implementation.
-impl<'a, B: BlockIo, A: AccessMode> MultiPartitionIo<'a, B, 1, A> {
+impl<'a, B: BlockIo, P: BufferPool, A: AccessMode> MultiPartitionIo<'a, B, P, 1, A> {
     /// Returns the size of the partition.
     pub fn size(&self) -> u64 {
         let (_, start, end) = self.parts[0];
@@ -507,16 +512,16 @@ impl<'a, B: BlockIo, A: AccessMode> MultiPartitionIo<'a, B, 1, A> {
 
 /// Single-partition read-write implementation. Only needed for tests.
 #[cfg(test)]
-impl<'a, B: BlockIo> MultiPartitionIo<'a, B, 1, ReadWrite> {
+impl<'a, B: BlockIo, P: BufferPool> MultiPartitionIo<'a, B, P, 1, ReadWrite> {
     /// Gets the block device.
-    pub fn dev(&mut self) -> &mut Disk<RefMut<'a, B>, RefMut<'a, [u8]>> {
+    pub fn dev(&mut self) -> &mut Disk<RefMut<'a, B>, PoolRef<'a, P>> {
         &mut self.disks[0]
     }
 }
 
 // Implements `SparseRawWriter` for tuple (array of flash offsets, MultiPartitionIo)
-impl<'a, B: BlockIo, const N: usize> SparseRawWriter
-    for (&ArrayVec<u64, N>, &mut MultiPartitionIo<'a, B, N, ReadWrite>)
+impl<'a, B: BlockIo, P: BufferPool, const N: usize> SparseRawWriter
+    for (&ArrayVec<u64, N>, &mut MultiPartitionIo<'a, B, P, N, ReadWrite>)
 {
     async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
         for ((disk_idx, _, _), abs_off) in self.1.parts.iter().zip(self.0.iter()) {
@@ -532,10 +537,7 @@ impl<'a, B: BlockIo, const N: usize> SparseRawWriter
 ///
 /// Returns a pair `(<block device index>, `Partition`)` if the partition exists and is unique.
 pub fn check_part_unique(
-    devs: &'_ [GblDisk<
-        Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
-        Gpt<impl DerefMut<Target = [u8]>>,
-    >],
+    devs: &'_ [GblDisk<Disk<impl BlockIo, impl BufferPool>, Gpt<impl DerefMut<Target = [u8]>>>],
     part: &str,
 ) -> Result<(usize, Partition), Error> {
     let mut filtered = devs
@@ -550,10 +552,10 @@ pub fn check_part_unique(
 }
 
 /// Creates a `MultiPartitionIo` given a list of (disk index, start, end) tuples.
-pub fn create_multi_partition_io<'a, B: BlockIo, const N: usize, A: AccessMode>(
-    devs: &'a [GblDisk<Disk<B, impl DerefMut<Target = [u8]>>, Gpt<impl DerefMut<Target = [u8]>>>],
+pub fn create_multi_partition_io<'a, B: BlockIo, P: BufferPool, const N: usize, A: AccessMode>(
+    devs: &'a [GblDisk<Disk<B, P>, Gpt<impl DerefMut<Target = [u8]>>>],
     mut parts_info: ArrayVec<(usize, u64, u64), N>,
-) -> Result<MultiPartitionIo<'a, B, N, A>, Error> {
+) -> Result<MultiPartitionIo<'a, B, P, N, A>, Error> {
     parts_info.sort();
     let mut parts = ArrayVec::new();
     let mut disks = ArrayVec::new();
@@ -572,10 +574,7 @@ pub fn create_multi_partition_io<'a, B: BlockIo, const N: usize, A: AccessMode>(
 
 /// Checks that a partition is unique among all block devices and reads from it.
 pub async fn read_unique_partition<'a>(
-    devs: &'_ [GblDisk<
-        Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
-        Gpt<impl DerefMut<Target = [u8]>>,
-    >],
+    devs: &'_ [GblDisk<Disk<impl BlockIo, impl BufferPool>, Gpt<impl DerefMut<Target = [u8]>>>],
     part: &str,
     off: u64,
     out: impl Into<&'a mut UninitSlice>,
@@ -585,10 +584,7 @@ pub async fn read_unique_partition<'a>(
 
 /// Same as `read_unique_partition` but IO is blocking.
 pub fn read_unique_partition_sync<'a>(
-    devs: &'_ [GblDisk<
-        Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
-        Gpt<impl DerefMut<Target = [u8]>>,
-    >],
+    devs: &'_ [GblDisk<Disk<impl BlockIo, impl BufferPool>, Gpt<impl DerefMut<Target = [u8]>>>],
     part: &str,
     off: u64,
     out: impl Into<&'a mut UninitSlice>,
@@ -600,10 +596,7 @@ pub fn read_unique_partition_sync<'a>(
 
 /// Checks that a partition is unique among all block devices and writes to it.
 pub async fn write_unique_partition(
-    devs: &'_ [GblDisk<
-        Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
-        Gpt<impl DerefMut<Target = [u8]>>,
-    >],
+    devs: &'_ [GblDisk<Disk<impl BlockIo, impl BufferPool>, Gpt<impl DerefMut<Target = [u8]>>>],
     part: &str,
     off: u64,
     data: &mut [u8],
@@ -613,10 +606,7 @@ pub async fn write_unique_partition(
 
 /// Syncs all GPT type partition devices.
 pub async fn sync_gpt(
-    devs: &'_ [GblDisk<
-        Disk<impl BlockIo, impl DerefMut<Target = [u8]>>,
-        Gpt<impl DerefMut<Target = [u8]>>,
-    >],
+    devs: &'_ [GblDisk<Disk<impl BlockIo, impl BufferPool>, Gpt<impl DerefMut<Target = [u8]>>>],
 ) -> Result<(), Error> {
     for ele in &devs[..] {
         ele.sync_gpt().await?;
@@ -674,13 +664,10 @@ pub(crate) mod test {
     }
 
     /// Searches and creates a `MultiPartitionIo` given a list of partitions.
-    fn find_multi_partition_io<'a, B: BlockIo, const N: usize, A: AccessMode>(
-        devs: &'a [GblDisk<
-            Disk<B, impl DerefMut<Target = [u8]>>,
-            Gpt<impl DerefMut<Target = [u8]>>,
-        >],
+    fn find_multi_partition_io<'a, B: BlockIo, P: BufferPool, const N: usize, A: AccessMode>(
+        devs: &'a [GblDisk<Disk<B, P>, Gpt<impl DerefMut<Target = [u8]>>>],
         parts: &[impl AsRef<str>; N],
-    ) -> Result<MultiPartitionIo<'a, B, N, A>, Error> {
+    ) -> Result<MultiPartitionIo<'a, B, P, N, A>, Error> {
         let mut parts_info = ArrayVec::new();
         for part in parts.iter().map(|v| v.as_ref()) {
             let (id, p) = check_part_unique(devs, part)?;
@@ -821,7 +808,7 @@ pub(crate) mod test {
         let parts = &["boot_a", "vendor_boot_a", "raw_0", "raw_1"];
         let mut data = [0x11u8; 1024];
         {
-            let mut io = find_multi_partition_io::<_, _, ReadWrite>(&devs, parts).unwrap();
+            let mut io = find_multi_partition_io::<_, _, _, ReadWrite>(&devs, parts).unwrap();
             block_on(io.write(1024, &mut data)).unwrap();
         }
 
@@ -894,21 +881,21 @@ pub(crate) mod test {
 
         let parts = &["boot_a", "boot_b"];
         assert!(BOOT_A_SZ <= BOOT_B_SZ);
-        assert!(find_multi_partition_io::<_, _, ReadWrite>(&devs, parts)
+        assert!(find_multi_partition_io::<_, _, _, ReadWrite>(&devs, parts)
             .unwrap()
             .sub(0, BOOT_A_SZ + 1)
             .is_err());
-        assert!(find_multi_partition_io::<_, _, ReadWrite>(&devs, parts)
+        assert!(find_multi_partition_io::<_, _, _, ReadWrite>(&devs, parts)
             .unwrap()
             .sub(1, BOOT_A_SZ)
             .is_err());
 
         let parts = &["raw_0", "raw_1"];
-        assert!(find_multi_partition_io::<_, _, ReadWrite>(&devs, parts)
+        assert!(find_multi_partition_io::<_, _, _, ReadWrite>(&devs, parts)
             .unwrap()
             .sub(1, 3 * 1024)
             .is_err());
-        assert!(find_multi_partition_io::<_, _, ReadWrite>(&devs, parts)
+        assert!(find_multi_partition_io::<_, _, _, ReadWrite>(&devs, parts)
             .unwrap()
             .sub(0, 3 * 1024 + 1)
             .is_err());
@@ -942,7 +929,7 @@ pub(crate) mod test {
         devs.add_raw_device(c"raw_1", vec![0u8; sparse_raw.len() + 1024]);
         {
             let mut io =
-                find_multi_partition_io::<_, _, ReadWrite>(&devs, &["raw_0", "raw_1"]).unwrap();
+                find_multi_partition_io::<_, _, _, ReadWrite>(&devs, &["raw_0", "raw_1"]).unwrap();
             io = io.sub(1, u64::try_from(sparse_raw.len()).unwrap() + 1).unwrap();
             block_on(io.write_sparse(1, &mut sparse)).unwrap();
         }
@@ -1086,7 +1073,7 @@ pub(crate) mod test {
         let mut devs = FakeGblOpsStorage::default();
         devs.add_raw_device(c"raw_0", [0x55u8; 4 * 1024]);
         devs.add_raw_device(c"raw_1", [0x55u8; 4 * 1024]);
-        assert!(find_multi_partition_io::<_, _, ReadWrite>(&devs, &["raw_0", "raw_1", "raw_0"])
+        assert!(find_multi_partition_io::<_, _, _, ReadWrite>(&devs, &["raw_0", "raw_1", "raw_0"])
             .is_err());
     }
 
@@ -1096,7 +1083,7 @@ pub(crate) mod test {
         devs.add_raw_device(c"raw_0", [0x55u8; 4 * 1024]);
         devs.add_raw_device(c"raw_1", [0x55u8; 4 * 1024]);
         let mut io =
-            find_multi_partition_io::<_, _, ReadWrite>(&devs, &["raw_0", "raw_1"]).unwrap();
+            find_multi_partition_io::<_, _, _, ReadWrite>(&devs, &["raw_0", "raw_1"]).unwrap();
         assert!(block_on(io.read(0, &mut [0u8; 1024][..])).is_err());
     }
 

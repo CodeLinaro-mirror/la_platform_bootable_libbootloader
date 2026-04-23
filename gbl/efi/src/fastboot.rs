@@ -369,8 +369,9 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, G: GblOps<'a>>(
     // We currently only consider 1 parallel flash + 1 parallel download.
     // This can be made configurable if necessary.
     const GBL_FB_N: usize = 2;
-    let mut bufs = Vec::from_iter(buffer.chunks_exact_mut(buffer.len() / GBL_FB_N));
-    let bufs = &(&mut bufs[..]).into();
+    let mut bufs: ArrayVec<Option<&mut [u8]>, GBL_FB_N> =
+        ArrayVec::from_iter(buffer.chunks_exact_mut(buffer.len() / GBL_FB_N).map(|b| Some(b)));
+    let bufs = &(bufs.as_mut_slice()).into();
     let mut fut = Box::pin(fb.run(bufs, VecPinFut::default(), &mut transport_protocols, tcp));
     block_on_mut(&mut fut);
 }

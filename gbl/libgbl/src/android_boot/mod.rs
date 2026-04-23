@@ -19,9 +19,8 @@ use crate::{
     device_tree::SelectedDtComponentsMetadata,
     fastboot::{
         boot_items::{BootItem, BootItemContainer},
-        run_gbl_fastboot, run_gbl_fastboot_stack, split_loaded_android, BufferPool,
-        GblFastbootResult, GblFbData, GblGenericTransport, GblTcpStream, LoadedImageInfo,
-        PinFutContainer, Shared,
+        run_gbl_fastboot, run_gbl_fastboot_stack, split_loaded_android, GblFastbootResult,
+        GblFbData, GblGenericTransport, GblTcpStream, LoadedImageInfo, PinFutContainer,
     },
     gbl_avb::{ArrayMaxParts, ArrayMaxSpecializedParts, LoadPartition, Verification},
     gbl_println,
@@ -30,16 +29,17 @@ use crate::{
     slots::Slot,
     GblOps, IntegrationError, Result,
 };
+use arrayvec::ArrayVec;
 use bootparams::{
     bootconfig::{extract_bootconfig, BootConfigBuilder},
     entry::CommandlineParser,
 };
-use core::{array::from_fn, ffi::CStr, fmt::Write, mem::take, ops::Range};
+use core::{ffi::CStr, fmt::Write, mem::take, ops::Range};
 use fdt::Fdt;
 use gbl_async::block_on;
 use libbuild_number::BUILD_NUMBER;
 use liberror::Error;
-use libutils::aligned_subslice;
+use libutils::{aligned_subslice, buffer_pool::BufferPool, shared::Shared};
 use misc::AndroidBootMode;
 
 mod avf;
@@ -485,13 +485,10 @@ where
             return self.run_n::<1>(download, transports, tcp);
         }
         // Splits into N download buffers.
-        let mut arr: [_; N] = from_fn(|_| Default::default());
-        for (i, v) in download.chunks_exact_mut(download.len() / N).enumerate() {
-            arr[i] = v;
-        }
-        let bufs = &mut arr[..];
+        let pool: ArrayVec<_, N> =
+            ArrayVec::from_iter(download.chunks_exact_mut(download.len() / N).map(|b| Some(b)));
         let data = GblFbData { boot_buffer: self.boot_buffer, load_result: self.load_result };
-        *self.result = block_on(run_gbl_fastboot_stack::<N>(self.ops, bufs, transports, tcp, data));
+        *self.result = block_on(run_gbl_fastboot_stack::<N>(self.ops, pool, transports, tcp, data));
         self.ops
     }
 

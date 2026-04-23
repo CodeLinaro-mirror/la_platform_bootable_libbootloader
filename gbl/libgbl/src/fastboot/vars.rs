@@ -190,11 +190,11 @@ fn yes_no_str(value: bool) -> &'static str {
 }
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
-impl<'a: 'c, 'b: 'c, 'c, 'd, G, B, S, T, P, C, F> GblFastboot<'a, 'b, 'c, 'd, G, B, S, T, P, C, F>
+impl<'a: 'c, 'b: 'c, 'c, 'd, G, B, P2, T, P, C, F> GblFastboot<'a, 'b, 'c, 'd, G, B, P2, T, P, C, F>
 where
     G: GblOps<'a>,
     B: BlockIo,
-    S: DerefMut<Target = [u8]>,
+    P2: BufferPool,
     T: DerefMut<Target = [u8]>,
     P: BufferPool,
     C: PinFutContainerTyped<'c, F>,

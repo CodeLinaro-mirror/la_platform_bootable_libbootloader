@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
+use arrayvec::ArrayVec;
 use bytes::buf::UninitSlice;
 use core::cmp::max;
 use efi::{
@@ -107,7 +108,8 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
 }
 
 /// The [GblDisk] type in the GBL EFI context.
-pub type EfiGblDisk<'a> = GblDisk<Disk<EfiBlockDeviceIo<'a>, Vec<u8>>, Gpt<Vec<u8>>>;
+pub type EfiGblDisk<'a> =
+    GblDisk<Disk<EfiBlockDeviceIo<'a>, ArrayVec<Option<Box<[u8]>>, 2>>, Gpt<Vec<u8>>>;
 
 /// Finds and returns all EFI devices supporting either EFI_BLOCK_IO or EFI_BLOCK_IO2 protocol.
 #[profile(backend = EfiProfileBackend::new(efi_entry))]

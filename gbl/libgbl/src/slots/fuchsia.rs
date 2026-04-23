@@ -301,6 +301,7 @@ impl<'a> SlotBlock<AbrData> {
 mod test {
     use super::*;
     use crate::slots::{partition::CacheStatus, Cursor};
+    use arrayvec::ArrayVec;
     use gbl_async::block_on;
     use gbl_storage::{new_gpt_max, Disk, RamBlockIo};
 
@@ -605,7 +606,7 @@ mod test {
         assert_eq!(sb.slots_iter().next().unwrap().bootability, Bootability::Successful);
     }
 
-    type TestDisk = Disk<RamBlockIo<Vec<u8>>, Vec<u8>>;
+    type TestDisk = Disk<RamBlockIo<Vec<u8>>, ArrayVec<Option<Box<[u8]>>, 2>>;
 
     #[test]
     fn test_writeback() {

@@ -21,13 +21,14 @@ package(
 
 rust_library(
     name = "libutils",
-    srcs = [
-        "src/lib.rs",
-    ],
+    srcs = glob([
+        "src/**/*.rs",
+    ]),
     edition = "2021",
     rustc_flags = ANDROID_RUST_LINTS,
     visibility = ["//visibility:public"],
     deps = [
+        "@gbl//libasync",
         "@gbl//liberror",
         "@gbl//libsafemath",
     ],

@@ -20,6 +20,12 @@ use core::{arch::asm, cmp::min, ffi::CStr, str::from_utf8};
 use liberror::{Error, Result};
 use safemath::SafeNum;
 
+/// A generic, shared buffer pool.
+pub mod buffer_pool;
+
+/// Shared object guarded by a RefCell
+pub mod shared;
+
 /// Returns the largest aligned subslice.
 ///
 /// This function drops as many bytes as needed from the front of the given slice to ensure the
