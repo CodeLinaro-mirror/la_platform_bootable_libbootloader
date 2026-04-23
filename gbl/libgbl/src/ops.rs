@@ -20,7 +20,7 @@ use crate::{
     error::Result as GblResult,
     gbl_avb::{
         state::{KeyValidationStatus, VerificationStatus},
-        ArrayMaxSpecializedParts, AvbDeviceStatus, AvbPartition, AvbProperty, LoadPartition,
+        ArrayMaxSpecializedParts, AvbDeviceStatus, AvbPartition, AvbProperty, Fdr, LoadPartition,
         SpecializedPartition,
     },
     gbl_println,
@@ -341,12 +341,12 @@ pub trait GblOps<'a> {
         let mut default_partitions = ArrayVec::from([
             SpecializedPartition {
                 name_buffer: cstr_buffer("userdata"),
-                fdr: true,
+                fdr: Fdr::Yes,
                 ..Default::default()
             },
             SpecializedPartition {
                 name_buffer: cstr_buffer("metadata"),
-                fdr: true,
+                fdr: Fdr::Yes,
                 ..Default::default()
             },
         ]);
@@ -1046,34 +1046,60 @@ pub(crate) mod test {
     use crate::{
         android_boot::device_tree::{PROP_BOOTARGS, RNG_SEED_SIZE_BYTES},
         device_tree::{DtComponentType, DtComponentsRegistry},
-        gbl_avb::Verification,
+        gbl_avb::{Critical, Verification},
         partition::GblDisk,
         slots::Bootability,
     };
     use avb::{CertOps, Ops};
     use avb_test::TestOps as AvbTestOps;
     use bootparams::commandline::CommandlineBuilder;
-    use core::{
-        cell::RefMut,
-        fmt::Write,
-        ops::{Deref, DerefMut},
-        time::Duration,
-    };
     use fdt::Fdt;
     use gbl_async::block_on;
     use gbl_storage::{new_gpt_max, Disk, GptMax, RamBlockIo};
     use libprofile::{ProfileTimer, Reporter};
     use libutils::snprintf;
     use std::{
+        cell::{Cell, RefMut},
         collections::{HashMap, VecDeque},
         ffi::CString,
         fmt::Debug,
+        fmt::Write,
+        ops::{Deref, DerefMut},
+        time::Duration,
     };
     #[cfg(feature = "fuchsia")]
     use zbi::{ZbiFlags, ZbiType};
 
     /// Type of [GblDisk] in tests.
     pub(crate) type TestGblDisk = GblDisk<Disk<RamBlockIo<Vec<u8>>, Vec<u8>>, GptMax>;
+
+    /// A small test helper to invoke closures and keep a shared invocation count.
+    ///
+    /// Supports interior mutability so that the main test logic can access the count while async
+    /// tasks that might modify it are pending.
+    pub(crate) struct CounterCallback {
+        count: Cell<usize>,
+    }
+
+    impl CounterCallback {
+        /// Creates a new [CounterCallback] initialized to 0.
+        pub fn new() -> Self {
+            Self { count: Cell::new(0) }
+        }
+
+        /// Returns the current number of times the callback has been invoked.
+        pub fn count(&self) -> usize {
+            self.count.get()
+        }
+
+        /// Returns a closure that increments the callback count.
+        pub fn handler(&self) -> impl FnMut() -> Result<(), Error> + '_ {
+            move || {
+                self.count.set(self.count.get() + 1);
+                Ok(())
+            }
+        }
+    }
 
     /// Backing storage for [FakeGblOps].
     ///
@@ -1229,8 +1255,9 @@ pub(crate) mod test {
         /// For return by `Self::avb_read_device_status`
         pub avb_device_status: DefaultOk<AvbDeviceStatus, AvbIoError>,
 
-        /// Tracks the number of times `Self::factory_data_reset` is called, or returns the error.
-        pub factory_data_reset_count: DefaultOk<usize, Error>,
+        /// Custom handler for `factory_data_reset()`.
+        /// If not set, `factory_data_reset()` will be a no-op returning `Ok(())`.
+        pub factory_data_reset_handler: Option<&'a mut dyn FnMut() -> Result<(), Error>>,
 
         /// Custom handler for `avb_read_device_status`
         /// This allows simulating a sequence where the device appears unlocked for Fastboot
@@ -1583,12 +1610,9 @@ pub(crate) mod test {
         }
 
         fn factory_data_reset(&mut self) -> Result<(), Error> {
-            match &mut self.factory_data_reset_count.0 {
-                Ok(count) => {
-                    *count += 1;
-                    Ok(())
-                }
-                Err(e) => Err(*e),
+            match self.factory_data_reset_handler {
+                Some(ref mut func) => (*func)(),
+                None => Ok(()),
             }
         }
 
@@ -2196,17 +2220,29 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn fake_gbl_ops_factory_data_reset() {
+    fn fake_gbl_ops_factory_data_reset_default() {
         let storage = FakeGblOpsStorage::default();
         let mut gbl_ops = FakeGblOps::new(&storage);
 
-        assert_eq!(*gbl_ops.factory_data_reset_count, 0);
+        // Default behavior should be a no-op success.
         gbl_ops.factory_data_reset().unwrap();
-        assert_eq!(*gbl_ops.factory_data_reset_count, 1);
-        gbl_ops.factory_data_reset().unwrap();
-        assert_eq!(*gbl_ops.factory_data_reset_count, 2);
+    }
 
-        gbl_ops.factory_data_reset_count.set_err(Error::Unsupported);
+    #[test]
+    fn fake_gbl_ops_factory_data_reset_handler() {
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+
+        // Callback side effects should execute.
+        let counter = CounterCallback::new();
+        let mut fdr_handler = counter.handler();
+        gbl_ops.factory_data_reset_handler = Some(&mut fdr_handler);
+        gbl_ops.factory_data_reset().unwrap();
+        assert_eq!(counter.count(), 1);
+
+        // Handler errors should propagate up.
+        let mut err_handler = || Err(Error::Unsupported);
+        gbl_ops.factory_data_reset_handler = Some(&mut err_handler);
         assert_eq!(gbl_ops.factory_data_reset(), Err(Error::Unsupported));
     }
 
@@ -2223,15 +2259,15 @@ pub(crate) mod test {
     const DEFAULT_USERDATA_ATTRIBUTES: SpecializedPartition = SpecializedPartition {
         name_buffer: cstr_buffer("userdata"),
         verification: None,
-        fdr: true,
-        critical: false,
+        fdr: Fdr::Yes,
+        critical: Critical::No,
     };
 
     const DEFAULT_METADATA_ATTRIBUTES: SpecializedPartition = SpecializedPartition {
         name_buffer: cstr_buffer("metadata"),
         verification: None,
-        fdr: true,
-        critical: false,
+        fdr: Fdr::Yes,
+        critical: Critical::No,
     };
 
     #[test]
@@ -2267,8 +2303,8 @@ pub(crate) mod test {
         let other_attributes = SpecializedPartition {
             name_buffer: cstr_buffer("other_partition"),
             verification: Some(Verification::Required),
-            fdr: true,
-            critical: true,
+            fdr: Fdr::Yes,
+            critical: Critical::Yes,
         };
         gbl_ops.avb_partition_attributes = Some(AvbIoResult::Ok(vec![other_attributes.clone()]));
 
@@ -2286,7 +2322,7 @@ pub(crate) mod test {
         // The device should be able to override the default FDR behavior.
         let modified_userdata_attributes = SpecializedPartition {
             name_buffer: cstr_buffer("userdata"),
-            fdr: false,
+            fdr: Fdr::No,
             ..Default::default()
         };
         gbl_ops.avb_partition_attributes =

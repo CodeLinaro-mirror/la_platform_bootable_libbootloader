@@ -26,7 +26,7 @@ use crate::{
     android_boot::{
         android_load_verify_fixup, get_boot_slot, load::sub_slice_range, BootBuffer, LoadedImages,
     },
-    gbl_avb::AvbDeviceStatus,
+    gbl_avb::{Critical, Fdr},
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message, AndroidBootMode},
     ops::{CommandExecType, RambootOps},
@@ -212,35 +212,6 @@ impl<'a, 'b, B: BlockIo, P: BufferPool> Default for Task<'a, 'b, B, P> {
         // Creates a noop task. This is mainly used for type inference for inline declaration of
         // pre-allocated task pool.
         Self::new(TaskWorkload::None)
-    }
-}
-
-/// Lazily initializes an `AvbDeviceStatus` as needed.
-///
-/// This is useful for fastboot flows which may conditionally need to check device status several
-/// times. It reads the device status once on-demand, and then uses the cached value for any future
-/// accesses.
-///
-/// Make sure not to hold this object across multiple fastboot commands, since it does not re-check
-/// the lock state.
-#[derive(Default)]
-struct LazyAvbDeviceStatus {
-    status: Option<AvbDeviceStatus>,
-}
-
-impl LazyAvbDeviceStatus {
-    /// Returns the device status.
-    ///
-    /// Queries the backend if status is not yet known, otherwise returns the cached value.
-    ///
-    /// On failure, the cache remains unset and will be queried again on the next call.
-    fn get<'a, G: GblOps<'a>>(&mut self, ops: &mut G) -> CommandResult<&AvbDeviceStatus> {
-        match self.status {
-            Some(ref cached) => Ok(cached),
-            None => Ok(self
-                .status
-                .insert(ops.avb_read_device_status().map_err(|_| "failed to read lock state")?)),
-        }
     }
 }
 
@@ -722,12 +693,21 @@ where
     ///
     /// * `target`: the provided flash/fetch target.
     /// * `read_only`: true to restrict the IO to read-only.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    ///
+    /// * The [MultiPartitionIo] for disk access
+    /// * An [Fdr] indicating whether we need to FDR after modifying these partitions
+    ///
+    /// If FDR is required, the caller must call [sync_tasks_and_fdr] after registering the I/O
+    /// task to ensure proper sequencing and disk consistency.
     async fn parse_and_get_partition_io<'s, A: AccessMode>(
         &mut self,
         target: &'s str,
-    ) -> CommandResult<MultiPartitionIo<'a, B, MAX_IO_PARTS, A>> {
+    ) -> CommandResult<(MultiPartitionIo<'a, B, MAX_IO_PARTS, A>, Fdr)> {
         let (part, blk_id, off, sz) = self.parse_partition_arg(target)?;
-        let mut device_status = LazyAvbDeviceStatus::default();
 
         // Currently raw disk access is only allowed for:
         //   * dev builds
@@ -738,39 +718,53 @@ where
 
         let (basename, block_ids_and_parts) = self.resolve_slotted_partitions(part, blk_id)?;
 
-        // If we're writing a partition, get the attributes so we know:
-        //  1. Whether this partition is critically-locked
-        //  2. Whether we need to trigger FDR after modifying this partition
-        if !A::IS_READ_ONLY {
-            // TODO(b/483148938) - handle the FDR flag.
-            let (_fdr, critical) = match basename {
+        let (fdr, critical) = if A::IS_READ_ONLY {
+            // Read-only access never requires FDR or critical lock.
+            (Fdr::No, Critical::No)
+        } else {
+            // Write access may require FDR or critical lock, check partition attributes.
+            match basename {
                 Some(basename) => self
                     .gbl_ops
                     .avb_read_partition_attributes()?
                     .find(|p| p.name_cstr().to_bytes() == basename.as_bytes())
                     .map(|p| (p.fdr, p.critical))
-                    .unwrap_or((false, false)),
+                    .unwrap_or((Fdr::No, Critical::No)),
                 // Raw disk access.
                 None => (
                     // No FDR.
                     // Raw disk access is advanced usage, it's up the caller to know if they're
                     // messing with userdata or not, and auto-triggering FDR on non-secure disk
                     // modification is a developer convenience, not security load-bearing.
-                    false,
+                    Fdr::No,
                     // Critical only if the device has defined any critical partitions.
                     // If we have critically-protected partitions, we must also critically-protect
                     // raw disk access or else it defeats the purpose since raw disk writes could
                     // get around the critical lock. We could try to lookup which partition(s) this
                     // raw access hits and be more precise with the lock, but we should wait until
                     // we have a use case before adding that complexity.
-                    self.gbl_ops.avb_read_partition_attributes()?.any(|p| p.critical),
+                    if self
+                        .gbl_ops
+                        .avb_read_partition_attributes()?
+                        .any(|p| p.critical == Critical::Yes)
+                    {
+                        Critical::Yes
+                    } else {
+                        Critical::No
+                    },
                 ),
-            };
-
-            // Enforce the critical lock.
-            if critical && !device_status.get(self.gbl_ops)?.is_unlocked_critical {
-                return Err("partition is critical-locked".into());
             }
+        };
+
+        // Enforce the critical lock.
+        if critical == Critical::Yes
+            && !self
+                .gbl_ops
+                .avb_read_device_status()
+                .map_err(|_| "failed to read lock state")?
+                .is_unlocked_critical
+        {
+            return Err("partition is critical-locked".into());
         }
 
         let _guard = TraceGuard::new(false);
@@ -787,11 +781,9 @@ where
                 parts_info.push((*id, start, end));
             }
 
-            // TODO(b/483148938) - if this partition requires FDR, we should trigger FDR
-            // after modifications are complete.
             match crate::partition::create_multi_partition_io::<_, _, A>(self.disks, parts_info) {
                 Err(Error::NotReady) => yield_now().await,
-                v => return Ok(v?),
+                v => return Ok((v?, fdr)),
             }
         }
     }
@@ -813,8 +805,13 @@ where
 
     /// Helper for scheduling an async task.
     ///
-    /// * If `Self::enable_async_task` is true, the method will add the task to the background task
-    ///   list. Otherwise it simply runs the task.
+    /// If `Self::enable_async_task` is true, the method will add the task to the background task
+    /// list. Otherwise it simply runs the task.
+    ///
+    /// # Arguments
+    ///
+    /// * `task`:  the [Task] to run
+    /// * `responder`: an object to send `INFO` messages back to the host with
     async fn schedule_task(
         &mut self,
         task: &mut Task<'a, 'b, B, P>,
@@ -903,7 +900,7 @@ where
         Ok(())
     }
 
-    /// Syncs all storage devices and reboots.
+    /// Syncs all tasks and reboots.
     async fn sync_tasks_and_reboot(
         &mut self,
         mode: RebootMode,
@@ -928,6 +925,19 @@ where
         resp.send_info(msg).await?;
         resp.send_okay("").await?;
         self.gbl_ops.reboot()?
+    }
+
+    /// Syncs all tasks and performs factory data reset.
+    ///
+    /// It is important to sync tasks first rather than calling `gbl_ops.factory_data_reset()`
+    /// directly because we allow devices to modify the disk as part of FDR if they want, e.g. to
+    /// re-initialize user data partitions to a default state using the newly-rotated keys. We don't
+    /// want to be modying the disk ourselves concurrently or we might end up in an inconsistent
+    /// state.
+    async fn sync_tasks_and_fdr(&mut self, responder: &mut impl InfoSender) -> CommandResult<()> {
+        gbl_println!(self.gbl_ops, "Performing FDR");
+        self.sync_tasks(responder, "FDR").await;
+        Ok(self.gbl_ops.factory_data_reset()?)
     }
 
     /// Appends a staged payload as bootloader file.
@@ -1211,7 +1221,7 @@ where
         self.check_unlocked()?;
         let disks = self.disks;
 
-        // Checks if we are flashing new GPT partition table
+        // Checks if we are flashing new GPT partition table.
         if let Some((blk_idx, resize)) = self.parse_flash_gpt_args(part)? {
             self.wait_partition_io(blk_idx, None).await?;
             let (mut gpt, size) = self.take_download().ok_or("No GPT downloaded")?;
@@ -1223,14 +1233,18 @@ where
             };
         }
 
-        let part_io = self.parse_and_get_partition_io::<ReadWrite>(part).await?;
+        let (part_io, fdr) = self.parse_and_get_partition_io::<ReadWrite>(part).await?;
         let (data, sz) = self.take_download().ok_or("No download")?;
         let mut task = Task::new(match is_sparse_image(&data) {
             Ok(v) => TaskWorkload::FlashSparse(part_io.sub(0, v.data_size())?, data),
             _ => TaskWorkload::Flash(part_io.sub(0, sz.try_into().unwrap())?, data, sz),
         });
         task.set_context(|f| write!(f, "flash:{part}"));
-        Ok(self.schedule_task(&mut task, &mut responder).await?)
+        self.schedule_task(&mut task, &mut responder).await?;
+        if fdr == Fdr::Yes {
+            self.sync_tasks_and_fdr(&mut responder).await?;
+        }
+        Ok(())
     }
 
     async fn erase(&mut self, part: &str, mut responder: impl InfoSender) -> CommandResult<()> {
@@ -1247,11 +1261,15 @@ where
             };
         }
 
-        let part_io = self.parse_and_get_partition_io::<ReadWrite>(part).await?;
+        let (part_io, fdr) = self.parse_and_get_partition_io::<ReadWrite>(part).await?;
         let mut task =
             Task::new(TaskWorkload::Erase(part_io, self.take_or_allocate_download_buffer().await));
         task.set_context(|f| write!(f, "erase:{part}"));
-        Ok(self.schedule_task(&mut task, &mut responder).await?)
+        self.schedule_task(&mut task, &mut responder).await?;
+        if fdr == Fdr::Yes {
+            self.sync_tasks_and_fdr(&mut responder).await?;
+        }
+        Ok(())
     }
 
     async fn download(
@@ -1348,7 +1366,11 @@ where
         mut responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()> {
         self.check_unlocked()?;
-        let mut part_io = self.parse_and_get_partition_io::<ReadOnly>(part).await?;
+        let (mut part_io, fdr) = self.parse_and_get_partition_io::<ReadOnly>(part).await?;
+        // FDR should never be required for read-only - this would indicate a bug in GBL.
+        if fdr != Fdr::No {
+            return Err("Internal error: FDR requested during fetch".into());
+        }
         let buffer = self.get_download_buffer().await;
         // 4MB batches (chosen empirically) or as large as the download buffer permits.
         let batch_sz = min(4 * 1024 * 1024, buffer.len() / 2);
@@ -1485,7 +1507,7 @@ where
         mut responder: impl InfoSender,
     ) -> CommandResult<()> {
         self.check_unlocked()?;
-        let part_io =
+        let (part_io, fdr) =
             self.parse_and_get_partition_io::<ReadWrite>(command.partition.as_ref()).await?;
         let mut task = match command.operation {
             StreamOperation::Fill { size, payload } => {
@@ -1522,7 +1544,11 @@ where
         };
 
         task.set_context(|f| write!(f, "flash:{0}:{1}", command.partition, command.offset));
-        Ok(self.schedule_task(&mut task, &mut responder).await?)
+        self.schedule_task(&mut task, &mut responder).await?;
+        if fdr == Fdr::Yes {
+            self.sync_tasks_and_fdr(&mut responder).await?;
+        }
+        Ok(())
     }
 
     async fn boot(&mut self, resp: impl InfoSender + OkaySender) -> CommandResult<()> {
@@ -1868,12 +1894,12 @@ pub(crate) mod test {
             default_test_gbl_ops, read_test_data,
         },
         constants::{KiB, MiB, KERNEL_ALIGNMENT},
-        gbl_avb::{LoadPartition, SpecializedPartition},
+        gbl_avb::{AvbDeviceStatus, LoadPartition, SpecializedPartition},
         misc::test::read_bootloader_message,
         ops::{
             test::{
-                into_refmut_bytes, slot, slot_successful, slot_unbootable, FakeGblOps,
-                FakeGblOpsStorage, SenderMessage,
+                into_refmut_bytes, slot, slot_successful, slot_unbootable, CounterCallback,
+                FakeGblOps, FakeGblOpsStorage, SenderMessage,
             },
             FastbootPartitionType, PartitionBuffer,
         },
@@ -2779,7 +2805,7 @@ pub(crate) mod test {
         // Mark the "critical" partition as critically-locked.
         gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
             name_buffer: cstr_buffer("critical"),
-            critical: true,
+            critical: Critical::Yes,
             ..Default::default()
         }]));
         let tasks = vec![].into();
@@ -2828,7 +2854,7 @@ pub(crate) mod test {
         // Mark the "critical" partition as critically-locked.
         gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
             name_buffer: cstr_buffer("critical"),
-            critical: true,
+            critical: Critical::Yes,
             ..Default::default()
         }]));
         let tasks = vec![].into();
@@ -2893,7 +2919,7 @@ pub(crate) mod test {
         // on disk - then raw disk access is critically-locked.
         gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
             name_buffer: cstr_buffer("critical"),
-            critical: true,
+            critical: Critical::Yes,
             ..Default::default()
         }]));
         let tasks = vec![].into();
@@ -3219,6 +3245,146 @@ pub(crate) mod test {
             storage[2].partition_io(None).unwrap().dev().io().storage,
             [vec![0xaau8; KiB!(1)], vec![0x55u8; KiB!(1)], vec![0xaau8; KiB!(10)]].concat()
         );
+    }
+
+    // Ideally we would break these into separate test cases, but the setup boilerplate is too large
+    // so for now we do it in the same test.
+    #[test]
+    fn test_fdr_logic() {
+        const INITIAL_CONTENTS: [u8; KiB!(4)] = [0x11u8; KiB!(4)];
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"userdata", INITIAL_CONTENTS);
+        storage.add_raw_device(c"boot", INITIAL_CONTENTS);
+        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let counter = CounterCallback::new();
+        let mut fdr_handler = counter.handler();
+        gbl_ops.factory_data_reset_handler = Some(&mut fdr_handler);
+        // Mark "userdata" as requiring FDR.
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("userdata"),
+            fdr: Fdr::Yes,
+            ..Default::default()
+        }]));
+        gbl_ops.avb_device_status.is_unlocked = true;
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let resp: TestResponder = Default::default();
+
+        // 1. FDR does not trigger on FDR partition fetch.
+        let _ = fetch(&mut gbl_fb, "userdata".into(), 0, INITIAL_CONTENTS.len()).unwrap();
+        assert_eq!(counter.count(), 0);
+
+        // 2. FDR does not trigger on non-FDR partition modification.
+        set_download(&mut gbl_fb, &[0x22u8; KiB!(4)]);
+        block_on(gbl_fb.flash("boot", &resp)).unwrap();
+        assert_eq!(counter.count(), 0);
+
+        // 3. FDR does trigger on FDR partition flash.
+        set_download(&mut gbl_fb, &[0x33u8; KiB!(4)]);
+        block_on(gbl_fb.flash("userdata", &resp)).unwrap();
+        assert_eq!(counter.count(), 1);
+
+        // 4. FDR does trigger on FDR partition erase.
+        block_on(gbl_fb.erase("userdata", &resp)).unwrap();
+        assert_eq!(counter.count(), 2);
+
+        // 5. FDR does trigger on FDR partition stream flash.
+        let stream_data = [0x44u8; KiB!(4)];
+        let checksum = crc32fast::hash(&stream_data);
+        set_download(&mut gbl_fb, &stream_data);
+        let stream_cmd = format!("stream-flash:userdata:0:{:#x}", checksum);
+        block_on(gbl_fb.stream(stream_cmd.as_str().try_into().unwrap(), &resp)).unwrap();
+        assert_eq!(counter.count(), 3);
+
+        // 6. FDR does trigger on FDR partition stream fill.
+        let stream_cmd = "stream-fill:userdata:0:0x100:0xF005500F";
+        block_on(gbl_fb.stream(stream_cmd.try_into().unwrap(), &resp)).unwrap();
+        assert_eq!(counter.count(), 4);
+
+        // 7. FDR does not trigger on GPT partition flashing.
+        //
+        // Currently we do not trigger FDR when re-flashing GPT, even though this might result in
+        // modified user data partition contents. This is OK because flashing the GPT is a full
+        // reset, and the user is expected to immediately re-flash all necessary partitions, so in
+        // the common case FDR will be performed shortly.
+        //
+        // Additionally, performing FDR on non-secure disk modification is a developer convenience
+        // to ensure consistent state, not security load-bearing, so if someone does use flash a GPT
+        // to modify user data contents without performing FDR it's OK; the OS will recognize on the
+        // next boot that user data is invalid and take action accordingly.
+        let gpt = include_bytes!("../../../libstorage/test/gpt_test_2.bin");
+        set_download(&mut gbl_fb, &gpt[..34 * 512]);
+        block_on(gbl_fb.flash("gpt/2", &resp)).unwrap();
+        assert_eq!(counter.count(), 4);
+    }
+
+    #[test]
+    fn test_fdr_blocks_on_async_tasks() {
+        const INITIAL_CONTENTS: [u8; KiB!(4)] = [0x11u8; KiB!(4)];
+        let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
+        let mut storage = FakeGblOpsStorage::default();
+        // Add blocking devices so they don't finish in a single poll.
+        storage.add_raw_device(c"userdata", INITIAL_CONTENTS);
+        storage[0].get_blk_io().unwrap().set_blocking(true);
+        storage.add_raw_device(c"boot", INITIAL_CONTENTS);
+        storage[1].get_blk_io().unwrap().set_blocking(true);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let counter = CounterCallback::new();
+        let mut fdr_handler = counter.handler();
+        gbl_ops.factory_data_reset_handler = Some(&mut fdr_handler);
+        // Mark "userdata" as requiring FDR.
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("userdata"),
+            fdr: Fdr::Yes,
+            ..Default::default()
+        }]));
+        gbl_ops.avb_device_status.is_unlocked = true;
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let tasks = gbl_fb.tasks();
+        let resp: TestResponder = Default::default();
+
+        // Enable async IO.
+        assert!(poll(&mut pin!(oem(&mut gbl_fb, "gbl-enable-async-task", &resp))).unwrap().is_ok());
+
+        // Schedule an async flash to `boot`.
+        set_download(&mut gbl_fb, &[0x22u8; KiB!(4)]);
+        block_on(gbl_fb.flash("boot", &resp)).unwrap();
+
+        {
+            // Schedule an async flash to `userdata`.
+            // We can't use `block_on()` here because the FDR sync logic would spin until the
+            // pool drains and all tasks complete, so we manually schedule and poll it once.
+            set_download(&mut gbl_fb, &[0x33u8; KiB!(4)]);
+            let mut flash_fut = pin!(gbl_fb.flash("userdata", &resp));
+            assert!(poll(&mut flash_fut).is_none());
+
+            // FDR should not trigger until after all pending tasks have completed.
+            assert_eq!(counter.count(), 0);
+
+            // Info message should indicate 2 blocked tasks.
+            assert_eq!(
+                resp.info_messages.try_lock().unwrap().last().unwrap(),
+                "FDR waiting on 2 I/O task(s)"
+            );
+
+            // Run the pending tasks to completion.
+            tasks.borrow_mut().run();
+
+            // Complete the flash future.
+            assert!(poll(&mut flash_fut).unwrap().is_ok());
+        }
+
+        // FDR should have been called after I/O completed.
+        assert_eq!(counter.count(), 1);
     }
 
     #[test]

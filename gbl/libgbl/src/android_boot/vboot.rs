@@ -333,7 +333,9 @@ mod test {
         android_boot::tests::{
             read_test_data, EXPECTED_AVB_PROPS, TEST_ROLLBACK_INDEX, TEST_ROLLBACK_INDEX_LOCATION,
         },
-        gbl_avb::{AvbDeviceStatus, AvbPartition, AvbProperty, SpecializedPartition},
+        gbl_avb::{
+            AvbDeviceStatus, AvbPartition, AvbProperty, Critical, Fdr, SpecializedPartition,
+        },
         ops::{
             test::{slot, slot_successful, FakeGblOps, FakeGblOpsStorage},
             Slot,
@@ -431,8 +433,8 @@ mod test {
         let fw = SpecializedPartition {
             name_buffer: cstr_buffer("fw"),
             verification: Some(Verification::Required),
-            fdr: false,
-            critical: false,
+            fdr: Fdr::No,
+            critical: Critical::No,
         };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
@@ -476,8 +478,8 @@ mod test {
         let not_presented = SpecializedPartition {
             name_buffer: cstr_buffer("not_presented"),
             verification: Some(Verification::Required),
-            fdr: false,
-            critical: false,
+            fdr: Fdr::No,
+            critical: Critical::No,
         };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
@@ -519,8 +521,8 @@ mod test {
         let not_presented = SpecializedPartition {
             name_buffer: cstr_buffer("not_presented"),
             verification: Some(Verification::IfExists),
-            fdr: false,
-            critical: false,
+            fdr: Fdr::No,
+            critical: Critical::No,
         };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
@@ -641,8 +643,8 @@ mod test {
         let fw = SpecializedPartition {
             name_buffer: cstr_buffer("fw"),
             verification: Some(Verification::Required),
-            fdr: false,
-            critical: false,
+            fdr: Fdr::No,
+            critical: Critical::No,
         };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();
@@ -684,14 +686,14 @@ mod test {
         let fw = SpecializedPartition {
             name_buffer: cstr_buffer("fw"),
             verification: Some(Verification::Required),
-            fdr: false,
-            critical: false,
+            fdr: Fdr::No,
+            critical: Critical::No,
         };
         let not_presented = SpecializedPartition {
             name_buffer: cstr_buffer("not_presented"),
             verification: Some(Verification::Required),
-            fdr: false,
-            critical: false,
+            fdr: Fdr::No,
+            critical: Critical::No,
         };
         let mut partitions_to_verify = PartitionsToVerify::default();
         partitions_to_verify.try_push(LoadPartition::Boot).unwrap();

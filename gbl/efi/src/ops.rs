@@ -1097,7 +1097,7 @@ mod test {
     use efi_types::defs::EFI_DT_FIXUP_PROTOCOL_REVISION;
     use libgbl::{
         device_tree::{DtComponentSourceMetadata, SelectedDtComponent, SelectedDtComponents},
-        gbl_avb::Verification,
+        gbl_avb::{Critical, Fdr, Verification},
     };
     use libutils::cstr_buffer;
     use mockall::predicate::eq;
@@ -1157,20 +1157,20 @@ mod test {
             SpecializedPartition {
                 name_buffer: cstr_buffer("boot"),
                 verification: Some(Verification::Required),
-                fdr: false,
-                critical: false,
+                fdr: Fdr::No,
+                critical: Critical::No,
             },
             SpecializedPartition {
                 name_buffer: cstr_buffer("vendor_boot"),
                 verification: Some(Verification::IfExists),
-                fdr: true,
-                critical: true,
+                fdr: Fdr::Yes,
+                critical: Critical::Yes,
             },
             SpecializedPartition {
                 name_buffer: cstr_buffer(&"a".repeat(28)),
                 verification: None,
-                fdr: true,
-                critical: false,
+                fdr: Fdr::Yes,
+                critical: Critical::No,
             },
         ];
 

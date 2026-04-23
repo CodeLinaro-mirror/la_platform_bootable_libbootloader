@@ -87,6 +87,41 @@ pub enum Verification {
     IfExists,
 }
 
+/// Indicates whether a partition is linked to FDR or not.
+///
+/// Linked to FDR goes both directions:
+///
+/// * when performing FDR (e.g. during lock/unlock), these partitions should be erased first
+/// * when modifying these partitions, we should automatically trigger FDR afterwards
+///
+/// Generally all partitions that contain user data should be FDR-linked, but devices may want
+/// to additionally FDR-link other partitions that contain other transient state.
+///
+/// Note however that this state should be viewed as a developer convenience only, not security
+/// load-bearing e.g. performing an FDR must not rely on the state of non-secure storage.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Fdr {
+    /// Partition is not linked to FDR.
+    No,
+    /// Partition is linked to FDR.
+    Yes,
+}
+
+/// Indicates whether a partition should be critically-locked.
+///
+/// Any partition that is necessary to get into fastboot should be critically-locked. The idea
+/// is that as long as the critical lock is active, the user is protected against permanently
+/// bricking their device via fastboot flashing since they can always reboot back into fastboot
+/// and re-flash new images. But once the critical lock is disengaged, it's possible to overwrite
+/// those partitions and permanently brick a device.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Critical {
+    /// Partition is not guarded by the critical lock.
+    No,
+    /// Partition is guarded by the critical lock.
+    Yes,
+}
+
 /// A partition which has specialized handling requirements.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SpecializedPartition {
@@ -101,10 +136,10 @@ pub struct SpecializedPartition {
     /// How to verify this partition, or `None` if this partition does not need to be verified.
     pub verification: Option<Verification>,
     /// Whether this partition is linked to FDR.
-    pub fdr: bool,
+    pub fdr: Fdr,
     /// Whether this partition should be critically-locked.
     /// Critical partitions must not be modifiable from fastboot while the critical lock is set.
-    pub critical: bool,
+    pub critical: Critical,
 }
 
 impl SpecializedPartition {
@@ -124,8 +159,8 @@ impl Default for SpecializedPartition {
         SpecializedPartition {
             name_buffer: [0; SPECIALIZED_PARTITION_NAME_MAX_SIZE],
             verification: None,
-            fdr: false,
-            critical: false,
+            fdr: Fdr::No,
+            critical: Critical::No,
         }
     }
 }

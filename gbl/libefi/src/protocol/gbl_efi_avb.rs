@@ -29,7 +29,7 @@ use efi_types::{
     GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS, GBL_EFI_AVB_PROTOCOL_REVISION,
 };
 use liberror::{Error, Result};
-use libgbl::gbl_avb::{SpecializedPartition, Verification};
+use libgbl::gbl_avb::{Critical, Fdr, SpecializedPartition, Verification};
 
 /// `GBL_EFI_AVB_PROTOCOL` implementation.
 pub struct GblAvbProtocol;
@@ -135,9 +135,15 @@ impl Protocol<'_, GblAvbProtocol> {
             };
 
             // Translate the other bitflags.
-            partition.fdr = (partition_ffi.flags & GBL_EFI_AVB_PARTITION_FLAG_FDR) != 0;
+            partition.fdr = match partition_ffi.flags & GBL_EFI_AVB_PARTITION_FLAG_FDR {
+                0 => Fdr::No,
+                _ => Fdr::Yes,
+            };
             partition.critical =
-                (partition_ffi.flags & GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL) != 0;
+                match partition_ffi.flags & GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL {
+                    0 => Critical::No,
+                    _ => Critical::Yes,
+                };
         }
 
         Ok(partitions)
@@ -450,12 +456,12 @@ mod test {
                 },
                 SpecializedPartition {
                     name_buffer: cstr_buffer("fdr"),
-                    fdr: true,
+                    fdr: Fdr::Yes,
                     ..Default::default()
                 },
                 SpecializedPartition {
                     name_buffer: cstr_buffer("critical"),
-                    critical: true,
+                    critical: Critical::Yes,
                     ..Default::default()
                 },
             ]
@@ -483,14 +489,14 @@ mod test {
             [
                 SpecializedPartition {
                     name_buffer: cstr_buffer("fdr_and_critical"),
-                    fdr: true,
-                    critical: true,
+                    fdr: Fdr::Yes,
+                    critical: Critical::Yes,
                     ..Default::default()
                 },
                 SpecializedPartition {
                     name_buffer: cstr_buffer("verify_and_critical"),
                     verification: Some(Verification::Required),
-                    critical: true,
+                    critical: Critical::Yes,
                     ..Default::default()
                 },
             ]

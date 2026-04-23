@@ -712,7 +712,7 @@ pub(crate) mod tests {
         fastboot::test::{make_expected_transport_out, SharedTestListener},
         gbl_avb::{
             state::{BootStateColor, KeyValidationStatus},
-            AvbPartition, AvbProperty, SpecializedPartition,
+            AvbPartition, AvbProperty, Critical, Fdr, SpecializedPartition,
         },
         misc::test::read_bootloader_message,
         ops::{
@@ -1341,12 +1341,12 @@ pub(crate) mod tests {
                     },
                     SpecializedPartition {
                         name_buffer: cstr_buffer("fdr"),
-                        fdr: true,
+                        fdr: Fdr::Yes,
                         ..Default::default()
                     },
                     SpecializedPartition {
                         name_buffer: cstr_buffer("critical"),
-                        critical: true,
+                        critical: Critical::Yes,
                         ..Default::default()
                     },
                 ],
