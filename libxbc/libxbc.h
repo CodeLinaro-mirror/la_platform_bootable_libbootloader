@@ -18,7 +18,8 @@
 #define LIBXBC_H_
 
 // memcpy and strncmp
-#include <common.h>
+#include <linux/types.h>
+#include <linux/string.h>
 
 /*
  * Add a string of boot config parameters to memory appended by the trailer.
