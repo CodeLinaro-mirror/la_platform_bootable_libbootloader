@@ -104,3 +104,23 @@ impl_hasher!(
     avb_sha256_update,
     avb_sha256_final
 );
+
+/// Implements `liblp::HashOps` for `Sha256` to enable parsing super partition metadata.
+///
+/// The `liblp` crate requires a SHA256 hasher to verify metadata checksums when parsing
+/// the Logical Partition (LP) metadata from the super partition. By implementing this
+/// trait, we can reuse the existing AVB-based `Sha256` hasher instead of creating a
+/// separate implementation.
+impl liblp::HashOps for Sha256 {
+    fn sha256_init(&mut self) {
+        *self = Self::new();
+    }
+
+    fn sha256_update(&mut self, data: &[u8]) {
+        self.update(data);
+    }
+
+    fn sha256_final(&mut self) -> [u8; 32] {
+        self.finish()
+    }
+}

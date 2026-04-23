@@ -45,7 +45,7 @@ use misc::AndroidBootMode;
 mod avf;
 use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region, inject_vmdtbo};
 
-mod hasher;
+pub(crate) mod hasher;
 
 pub mod device_tree;
 use device_tree::{

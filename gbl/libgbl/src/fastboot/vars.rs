@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::{
+    android_boot::hasher::{Hasher, Sha256},
     fastboot::{BufferPool, GblFastboot, PinFutContainerTyped},
     gbl_println,
     partition::{check_part_unique, split_partition_suffix, Partition, RawName},
@@ -31,6 +32,7 @@ use gbl_async::{block_on, select, yield_now};
 use gbl_storage::BlockIo;
 use libbuild_number::BUILD_NUMBER;
 use liberror::Error;
+use liblp::LpMetadataPartition;
 use libutils::{next_arg, snprintf, FromHexStr};
 use zerocopy::{error::SizeError, FromBytes, IntoBytes, Unaligned};
 
@@ -101,6 +103,20 @@ struct PartHasSlot(RawName, u8);
 impl PartHasSlot {
     const NO: u8 = 0;
     const YES: u8 = 1;
+}
+
+/// Extracts the partition name from `LpMetadataPartition`.
+///
+/// # Safety
+/// The `partition.name` field is `[i8; 36]` (C char array). We reinterpret it as `[u8; 36]`
+/// to parse as UTF-8. This is safe because we only read the bytes and the representation
+/// of `i8` and `u8` is identical for ASCII characters used in partition names.
+fn lp_partition_name(partition: &LpMetadataPartition) -> Option<&str> {
+    let name_bytes: &[u8] = unsafe {
+        core::slice::from_raw_parts(partition.name.as_ptr() as *const u8, partition.name.len())
+    };
+    let end = name_bytes.iter().position(|&b| b == 0).unwrap_or(name_bytes.len());
+    core::str::from_utf8(&name_bytes[..end]).ok()
 }
 
 /// A vector backed by a borrowed slice.
@@ -210,7 +226,7 @@ where
             SLOT_RETRY_COUNT => {
                 snprintf!(out, "{}", self.get_fastboot_slot_info(args_str)?.retry_count)
             }
-            HAS_SLOT => self.get_var_has_slot(args_str, out)?,
+            HAS_SLOT => self.get_var_has_slot(args_str, out).await?,
             MAX_FETCH_SIZE => snprintf!(out, "{}", MAX_FETCH_SIZE_VAL),
             PARTITION_START => self.get_var_partition_start(args_str, out)?,
             PARTITION_SIZE => self.get_var_partition_size(args_str, out)?,
@@ -581,54 +597,145 @@ where
     /// Builds a lookup table that tells us whether a partition has slot or not.
     ///
     /// Returns a `&[PartHasSlot]`.
-    fn get_part_has_slot_table(&mut self) -> Result<&[PartHasSlot], Error> {
+    async fn get_part_has_slot_table(&mut self) -> Result<&[PartHasSlot], Error> {
         let default_slot = self.slots_iter()?.next().ok_or("Missing slot info")??.suffix.as_char();
+
+        let dynamic_parts = self.get_dynamic_partition_names().await.unwrap_or_default();
+        let dynamic_partition_count = dynamic_parts.len();
+
         // The table size could theoretically be as large as the number of total partitions, so
         // stack allocation would be insufficient. We instead dynamically allocate a memory slice
         // on the boot_buffer scratch pad.
-        let partition_count =
+        let partition_count: usize =
             self.disks.iter().map(|b| b.num_partitions().unwrap_or_default()).sum();
+        let total_partitions = partition_count + dynamic_partition_count;
         let buf = <[PartHasSlot]>::mut_from_prefix_with_elems(
             self.data.boot_buffer.scratch(),
-            partition_count,
+            total_partitions,
         )
         .map_err(|e| match e.into() {
             SizeError { .. } => {
-                Error::BufferTooSmall(Some(partition_count * size_of::<PartHasSlot>()))
+                Error::BufferTooSmall(Some(total_partitions * size_of::<PartHasSlot>()))
             }
         })?
         .0;
         let mut part_has_slot = SliceVec::new(buf);
-        for blk in self.disks.iter() {
-            for part_idx in 0..blk.num_partitions().unwrap_or_default() {
-                let part = blk.get_partition_by_idx(part_idx)?;
-                let part = part.name()?;
-                match split_partition_suffix(part) {
-                    None => match part_has_slot.iter().position(|p| p.0.to_str() == part) {
-                        None => part_has_slot.push(PartHasSlot(part.try_into()?, PartHasSlot::NO)),
-                        Some(pos) => part_has_slot[pos].1 = PartHasSlot::NO,
-                    },
-                    Some((name, suffix)) if suffix == default_slot => {
-                        if part_has_slot.iter().all(|p| p.0.to_str() != name) {
-                            part_has_slot.push(PartHasSlot(name.try_into()?, PartHasSlot::YES));
+        let gpt_parts = self.disks.iter().flat_map(|blk| {
+            (0..blk.num_partitions().unwrap_or_default()).filter_map(move |idx| {
+                let part = blk.get_partition_by_idx(idx).ok()?;
+                let name = part.name().ok()?;
+                RawName::try_from(name).ok()
+            })
+        });
+
+        let all_parts = gpt_parts.chain(dynamic_parts.into_iter());
+        for raw_part in all_parts {
+            let part_name = raw_part.to_str();
+            match split_partition_suffix(part_name) {
+                None => match part_has_slot.iter().position(|p| p.0.to_str() == part_name) {
+                    None => {
+                        if let Ok(raw_name) = part_name.try_into() {
+                            part_has_slot.push(PartHasSlot(raw_name, PartHasSlot::NO));
                         }
                     }
-                    _ => {}
+                    Some(pos) => part_has_slot[pos].1 = PartHasSlot::NO,
+                },
+                Some((name, suffix)) if suffix == default_slot => {
+                    if part_has_slot.iter().all(|p| p.0.to_str() != name) {
+                        if let Ok(base_name) = name.try_into() {
+                            part_has_slot.push(PartHasSlot(base_name, PartHasSlot::YES));
+                        }
+                    }
                 }
+                _ => {}
             }
         }
+
         Ok(part_has_slot.into())
     }
 
+    /// Reads the super partition and extracts dynamic partition names from LP metadata.
+    ///
+    /// Returns an empty list if super partition doesn't exist or metadata parsing fails.
+    /// TODO(b/502083075) Add unit tests to check dynamic partitions names in super.
+    async fn get_dynamic_partition_names(
+        &mut self,
+    ) -> Result<arrayvec::ArrayVec<RawName, 32>, Error> {
+        // 256KB is sufficient to read LP geometry + metadata (primary + backup).
+        const SUPER_METADATA_SIZE: usize = 256 * 1024;
+        let mut result = arrayvec::ArrayVec::new();
+
+        let Ok((blk_idx, _)) = check_part_unique(self.disks, "super") else {
+            return Ok(result);
+        };
+
+        let (buffer, _) = <[u8]>::mut_from_prefix_with_elems(
+            self.data.boot_buffer.scratch(),
+            SUPER_METADATA_SIZE,
+        )
+        .map_err(|e| match e.into() {
+            SizeError { .. } => Error::BufferTooSmall(Some(SUPER_METADATA_SIZE)),
+        })?;
+
+        let disk = &self.disks[blk_idx];
+
+        let mut io;
+        loop {
+            match disk.partition_io(Some("super")) {
+                Ok(pio) => {
+                    io = pio;
+                    break;
+                }
+                Err(Error::NotReady) => {
+                    // Disk is busy, yield and retry.
+                    yield_now().await;
+                }
+                Err(e) => {
+                    gbl_println!(self.gbl_ops, "Failed to get partition_io for super: {e}");
+                    return Ok(result);
+                }
+            }
+        }
+
+        if io.read(0, &mut buffer[..]).await.is_err() {
+            gbl_println!(self.gbl_ops, "Failed to read super partition");
+            return Ok(result);
+        }
+
+        let mut hasher = Sha256::new();
+        let Ok(metadata) = liblp::parse(buffer, &mut hasher) else {
+            return Ok(result);
+        };
+
+        for raw_name in metadata
+            .partitions
+            .iter()
+            .filter_map(lp_partition_name)
+            .filter_map(|name| RawName::try_from(name).ok())
+        {
+            if result.try_push(raw_name).is_err() {
+                gbl_println!(
+                    self.gbl_ops,
+                    "Warning: dynamic partition list truncated at {} entries, more partitions exist in super",
+                    result.len()
+                );
+                break;
+            }
+        }
+
+        Ok(result)
+    }
+
     /// "fastboot getvar has-slot:<partition-name-without-slot-suffix>"
-    fn get_var_has_slot<'t, 's>(
+    async fn get_var_has_slot<'t, 's>(
         &mut self,
         mut args: impl Iterator<Item = &'t str> + Clone,
         out: &'s mut [u8],
     ) -> CommandResult<&'s str> {
         let part = args.next().ok_or("Missing partition")?;
         let has_slot = self
-            .get_part_has_slot_table()?
+            .get_part_has_slot_table()
+            .await?
             .iter()
             .find_map(
                 |PartHasSlot(name, has_slot)| {
@@ -649,7 +756,7 @@ where
         &mut self,
         responder: &mut impl VarInfoSender,
     ) -> CommandResult<()> {
-        let res = self.get_part_has_slot_table();
+        let res = self.get_part_has_slot_table().await;
         // Variable may be optional. Continues instead of erroring out.
         if let Some(e) = res.clone().err() {
             gbl_println!(self.gbl_ops, "Failed to get slot_info for partitions, {e}");
