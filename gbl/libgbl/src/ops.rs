@@ -24,7 +24,7 @@ use crate::{
         SpecializedPartition,
     },
     gbl_println,
-    metrics::{GblMetrics, GblTime},
+    metrics::{FirmwareVersionMetrics, GblMetrics, GblTime},
     partition::{
         check_part_unique, read_unique_partition, read_unique_partition_sync,
         write_unique_partition, GblDisk,
@@ -680,6 +680,9 @@ pub trait GblOps<'a> {
     /// synchronization. The caller should treat the return type as a `MutexGuard` and ensure
     /// minimal lifetime (drop as soon as possible) to avoid deadlocks.
     fn get_metrics(&self) -> Option<impl DerefMut<Target = GblMetrics> + '_>;
+
+    /// Returns firmware version metrics.
+    fn get_firmware_version_metrics(&self) -> FirmwareVersionMetrics;
 }
 
 /// Prints the stack usage at the callsite.
@@ -1056,6 +1059,10 @@ impl<'r, 'a: 'r, T: GblOps<'a>> GblOps<'a> for RambootOps<'r, T> {
 
     fn get_metrics(&self) -> Option<impl DerefMut<Target = GblMetrics> + '_> {
         self.ops.get_metrics()
+    }
+
+    fn get_firmware_version_metrics(&self) -> FirmwareVersionMetrics {
+        self.ops.get_firmware_version_metrics()
     }
 }
 
@@ -1967,6 +1974,10 @@ pub(crate) mod test {
         fn get_metrics(&self) -> Option<impl DerefMut<Target = GblMetrics> + '_> {
             None::<Box<GblMetrics>>
         }
+
+        fn get_firmware_version_metrics(&self) -> FirmwareVersionMetrics {
+            FirmwareVersionMetrics::default()
+        }
     }
 
     /// Helper for creating a slot object.
@@ -2266,6 +2277,10 @@ pub(crate) mod test {
 
         fn get_metrics(&self) -> Option<impl DerefMut<Target = GblMetrics> + '_> {
             self.0.get_metrics()
+        }
+
+        fn get_firmware_version_metrics(&self) -> FirmwareVersionMetrics {
+            self.0.get_firmware_version_metrics()
         }
     }
 

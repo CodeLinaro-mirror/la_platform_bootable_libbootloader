@@ -72,6 +72,23 @@ impl GblMetrics {
     }
 }
 
+/// Represents a firmware version.
+pub struct FirmwareVersion {
+    /// Major version.
+    pub major: u16,
+    /// Minor version.
+    pub minor: u16,
+}
+
+impl core::fmt::Display for FirmwareVersion {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+/// Type alias for tracking firmware versions.
+pub type FirmwareVersionMetrics = ArrayVec<(&'static str, FirmwareVersion), 32>;
+
 #[cfg(test)]
 mod tests {
     use super::*;

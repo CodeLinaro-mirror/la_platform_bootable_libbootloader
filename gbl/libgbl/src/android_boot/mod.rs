@@ -24,7 +24,7 @@ use crate::{
     },
     gbl_avb::{ArrayMaxParts, ArrayMaxSpecializedParts, LoadPartition, Verification},
     gbl_println,
-    metrics::{GblMetrics, GblTime},
+    metrics::{FirmwareVersionMetrics, GblMetrics, GblTime},
     misc::{read_bootloader_message_to, write_bootloader_message},
     ops::{OneShotBootMode, PartitionBuffer},
     slots::{slotted_part, Slot},
@@ -382,6 +382,17 @@ fn add_perf_metrics(
     Ok(())
 }
 
+/// Serializes GBL firmware version metrics to bootconfig using flat syntax.
+fn add_firmware_version_metrics(
+    builder: &mut BootConfigBuilder,
+    proto_metrics: &FirmwareVersionMetrics,
+) -> Result<()> {
+    for (name, version) in proto_metrics.iter() {
+        writeln!(builder, "androidboot.gbl.fw_version.{name}={version}",).map_err(Error::from)?;
+    }
+    Ok(())
+}
+
 /// Helper for performing platform custom bootconfig fixup.
 ///
 /// # Args
@@ -431,6 +442,8 @@ fn finalize_bootconfig<'a, 'b, 'c>(
     {
         add_perf_metrics(&mut builder, &metrics, time)?;
     }
+
+    add_firmware_version_metrics(&mut builder, &ops.get_firmware_version_metrics())?;
 
     Ok(builder.config_bytes().len())
 }
@@ -776,6 +789,7 @@ pub(crate) mod tests {
             state::{BootStateColor, KeyValidationStatus},
             AvbPartition, AvbProperty, Critical, Fdr, SpecializedPartition,
         },
+        metrics::FirmwareVersion,
         misc::test::read_bootloader_message,
         ops::{
             test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage, FakeGblTime},
@@ -3089,6 +3103,27 @@ pub(crate) mod tests {
             b"androidboot.gbl.perf.boot_time=900
 androidboot.gbl.perf.avb=200
 androidboot.gbl.perf.io.boot=300
+"
+        );
+    }
+
+    #[test]
+    fn test_add_firmware_version_metrics() {
+        let mut buffer = vec![0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+        let proto_metrics = FirmwareVersionMetrics::from_iter([
+            ("gbl_avb", FirmwareVersion { major: 1, minor: 0 }),
+            ("gbl_avf", FirmwareVersion { major: 2, minor: 1 }),
+        ]);
+
+        add_firmware_version_metrics(&mut builder, &proto_metrics).unwrap();
+
+        let bootconfig = builder.config_bytes();
+        let content_len = bootconfig.len() - BOOTCONFIG_TRAILER_SIZE;
+        assert_eq!(
+            &bootconfig[..content_len],
+            b"androidboot.gbl.fw_version.gbl_avb=1.0
+androidboot.gbl.fw_version.gbl_avf=2.1
 "
         );
     }
