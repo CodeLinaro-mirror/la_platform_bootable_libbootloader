@@ -17,7 +17,7 @@
 use crate::{efi_println, DeviceHandle, EfiEntry};
 use core::{
     ops::{Deref, DerefMut},
-    ptr::{null_mut, NonNull},
+    ptr::NonNull,
 };
 use efi_types::{defs::EfiGuid, protocol::Client, Identified};
 
@@ -295,7 +295,7 @@ impl<T: Identified + MaybeVersioned> ProtocolImpl for Client<T> {
 /// A generic type for representing an EFI protocol.
 #[derive(Debug)]
 pub struct Protocol<'a, T: ProtocolImpl> {
-    // The handle to the device offering the protocol. It's needed for closing the protocol.
+    // The handle to the device offering the protocol.
     device: DeviceHandle,
     // The protocol implementation.
     interface: T::ImplType,
@@ -398,24 +398,6 @@ impl<'a, T: Identified + MaybeVersioned> DerefMut for Protocol<'a, Client<T>> {
     }
 }
 
-impl<T: ProtocolImpl> Drop for Protocol<'_, T> {
-    fn drop(&mut self) {
-        // If the device handle is not specified when creating the Protocol<T>, treat the
-        // handle as a static permanent reference and don't close it. An example is
-        // `EFI_SYSTEM_TABLE.ConOut`.
-        if self.device.0 != null_mut() {
-            // Currently we open all protocols using flags BY_HANDLE_PROTOCOL. The flag allows a
-            // protocol to be opened for multiple copies, which is needed if a UEFI protocol
-            // implementation also require access for other protocols. But if any one of them is
-            // closed, all other opened copies will be affected. Therefore for now we don't close
-            // the protocol on drop. In the future when we start using other flags such as
-            // EXCLUSIVE, we should perform protocol close based on the open flags.
-
-            // self.efi_entry.system_table().boot_services().close_protocol::<T>(self.device).unwrap();
-        }
-    }
-}
-
 /// Macro to perform an EFI protocol function call.
 ///
 /// In the first variant, the first argument is the function pointer,
@@ -506,33 +488,10 @@ macro_rules! efi_call {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::test::*;
-    use core::ptr::{from_mut, NonNull};
     use efi_types::{
-        defs::EfiBlockIoProtocol, EfiStatus, EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_DEVICE_ERROR,
-        EFI_STATUS_SUCCESS,
+        EfiStatus, EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_DEVICE_ERROR, EFI_STATUS_SUCCESS,
     };
     use liberror::Error;
-
-    #[test]
-    fn test_dont_close_protocol_without_device_handle() {
-        run_test(|image_handle, systab_ptr| {
-            let efi_entry = EfiEntry { image_handle, systab_ptr };
-            let mut block_io: EfiBlockIoProtocol = Default::default();
-            // SAFETY: `block_io` is a EfiBlockIoProtocol and out lives the created Protocol.
-            unsafe {
-                Protocol::<block_io::BlockIoProtocol>::new(
-                    DeviceHandle(null_mut()),
-                    NonNull::new(from_mut(&mut block_io)).unwrap(),
-                    &efi_entry,
-                );
-            }
-            efi_call_traces().with(|traces| {
-                assert_eq!(traces.borrow_mut().close_protocol_trace.inputs.len(), 0);
-            });
-        })
-    }
 
     #[test]
     fn efi_call_success() {
