@@ -43,6 +43,7 @@ pub mod fastboot;
 #[cfg(feature = "fuchsia")]
 pub mod fuchsia_boot;
 pub mod gbl_avb;
+pub mod metrics;
 pub mod misc;
 pub mod ops;
 pub mod partition;

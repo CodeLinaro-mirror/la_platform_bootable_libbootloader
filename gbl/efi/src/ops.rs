@@ -14,7 +14,11 @@
 
 //! Implements [Gbl::Ops] for the EFI environment.
 
-use crate::{efi, efi_blocks::EfiGblDisk, utils::get_efi_fdt};
+use crate::{
+    efi,
+    efi_blocks::EfiGblDisk,
+    utils::{get_efi_fdt, EfiTime},
+};
 #[cfg(feature = "fuchsia")]
 use alloc::vec::Vec;
 use arrayvec::ArrayVec;
@@ -31,6 +35,7 @@ use efi::{
         gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_os_configuration::GblOsConfigurationProtocol,
         random_number_generator::{RandomNumberGeneratorProtocol, RngAlgorithm as EfiRngAlgorithm},
+        timestamp::TimestampProtocol,
         Protocol, Versioned,
     },
     utils::parse_fw_api_level,
@@ -64,6 +69,7 @@ use libgbl::{
         LoadPartition, SpecializedPartition,
     },
     gbl_println,
+    metrics::{GblMetrics, GblTime},
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootPartitionType,
         InfoSender, LockState, LockType, OkaySender, OneShotBootMode, PartitionBuffer,
@@ -125,6 +131,8 @@ pub struct Ops<'a, 'b> {
     pub os: Option<Os>,
     pub base_sp: usize,
     pause_fastboot: bool,
+    time: Option<EfiTime<'a>>,
+    metrics: Mutex<GblMetrics>,
 }
 
 impl<'a, 'b> Ops<'a, 'b> {
@@ -135,6 +143,17 @@ impl<'a, 'b> Ops<'a, 'b> {
         os: Option<Os>,
         base_sp: usize,
     ) -> Self {
+        let time = if cfg!(not(test)) {
+            efi_entry
+                .system_table()
+                .boot_services()
+                .find_first_and_open::<TimestampProtocol>()
+                .ok()
+                .and_then(|ts| EfiTime::new(ts).ok())
+        } else {
+            None
+        };
+        let start_tick = time.as_ref().and_then(|t| t.current_tick().ok());
         Self {
             efi_entry,
             disks,
@@ -143,6 +162,8 @@ impl<'a, 'b> Ops<'a, 'b> {
             os,
             base_sp,
             pause_fastboot: false,
+            time,
+            metrics: Mutex::new(GblMetrics::new(start_tick)),
         }
     }
 
@@ -990,6 +1011,14 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
             &mut buf,
         )?;
         parse_fw_api_level(&buf[..size])
+    }
+
+    fn get_time(&self) -> Option<&impl GblTime> {
+        self.time.as_ref()
+    }
+
+    fn get_metrics(&self) -> Option<impl DerefMut<Target = GblMetrics> + '_> {
+        Some(self.metrics.lock())
     }
 }
 

@@ -16,6 +16,7 @@
 
 use crate::efi;
 use ::efi::{efi_println, EfiMemoryAttributesTable};
+use core::marker::PhantomData;
 use core::time::Duration;
 use efi::{
     protocol::{
@@ -25,6 +26,8 @@ use efi::{
         },
         loaded_image::LoadedImageProtocol,
         simple_text_input::SimpleTextInputProtocol,
+        timestamp::TimestampProtocol,
+        Protocol,
     },
     utils::Timeout,
     DeviceHandle, EfiEntry,
@@ -38,7 +41,7 @@ use efi_types::{
 };
 use fdt::FdtHeader;
 use liberror::Error;
-use libgbl::android_boot::BootBuffer;
+use libgbl::{android_boot::BootBuffer, metrics::GblTime};
 
 type Result<T> = core::result::Result<T, Error>;
 
@@ -272,5 +275,133 @@ impl Drop for FastbootBuffer<'_> {
     fn drop(&mut self) {
         self.buffer.take();
         gbl_clear_boot_buffer(self.entry, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD).unwrap();
+    }
+}
+
+/// EFI implementation of GblTime.
+pub(crate) struct EfiTime<'a> {
+    /// EFI timestamp protocol handle.
+    ts: Protocol<'a, TimestampProtocol>,
+    /// Timestamp frequency in Hz.
+    frequency: u64,
+    /// Timestamp maximum value before wrap-around.
+    end_value: u64,
+    // We need `PhantomData` here because in test builds, `Protocol` might be mocked
+    // in a way that drops the lifetime parameter `'a`, leading to an "unused lifetime" error.
+    _marker: PhantomData<&'a ()>,
+}
+
+impl<'a> EfiTime<'a> {
+    /// Creates a new instance of `EfiTime`.
+    pub(crate) fn new(ts: Protocol<'a, TimestampProtocol>) -> Result<Self> {
+        let props = ts.get_properties()?;
+        Ok(Self {
+            ts,
+            frequency: props.frequency,
+            end_value: props.end_value,
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl GblTime for EfiTime<'_> {
+    fn current_tick(&self) -> Result<u64> {
+        self.ts.get_timestamp()
+    }
+
+    fn elapsed_ticks(&self, start: u64) -> Result<u64> {
+        let end = self.current_tick()?;
+        if end >= start {
+            Ok(end - start)
+        } else {
+            Ok(self.end_value - start + end + 1)
+        }
+    }
+
+    fn ticks_to_us(&self, ticks: u64) -> u64 {
+        if self.frequency == 0 {
+            return 0;
+        }
+        ((ticks as u128 * 1_000_000) / self.frequency as u128) as u64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use efi_mocks::protocol::timestamp::MockTimestampProtocol;
+    use efi_types::EfiTimestampProperties;
+    use libgbl::metrics::GblTime;
+
+    #[test]
+    fn test_efi_time_new() {
+        let mut mock_ts = MockTimestampProtocol::new();
+        mock_ts
+            .expect_get_properties()
+            .returning(|| Ok(EfiTimestampProperties { frequency: 1000, end_value: 999_999 }));
+
+        let efi_time = EfiTime::new(mock_ts).unwrap();
+
+        assert_eq!(efi_time.frequency, 1000);
+        assert_eq!(efi_time.end_value, 999_999);
+    }
+
+    #[test]
+    fn test_efi_time_current_tick() {
+        let mut mock_ts = MockTimestampProtocol::new();
+        mock_ts.expect_get_timestamp().returning(|| Ok(1234));
+        let efi_time =
+            EfiTime { ts: mock_ts, frequency: 1000, end_value: 999_999, _marker: PhantomData };
+
+        let tick = efi_time.current_tick().unwrap();
+
+        assert_eq!(tick, 1234);
+    }
+
+    #[test]
+    fn test_efi_time_elapsed_ticks() {
+        let mut mock_ts = MockTimestampProtocol::new();
+        mock_ts.expect_get_timestamp().returning(|| Ok(500));
+        let efi_time =
+            EfiTime { ts: mock_ts, frequency: 1000, end_value: 999_999, _marker: PhantomData };
+
+        let elapsed = efi_time.elapsed_ticks(100).unwrap();
+
+        assert_eq!(elapsed, 400);
+    }
+
+    #[test]
+    fn test_efi_time_elapsed_ticks_wrap() {
+        let mut mock_ts = MockTimestampProtocol::new();
+        mock_ts.expect_get_timestamp().returning(|| Ok(100));
+        let efi_time =
+            EfiTime { ts: mock_ts, frequency: 1000, end_value: 999_999, _marker: PhantomData };
+
+        let elapsed = efi_time.elapsed_ticks(900_000).unwrap();
+
+        assert_eq!(elapsed, 100_100);
+    }
+
+    #[test]
+    fn test_efi_time_ticks_to_us() {
+        let mock_ts = MockTimestampProtocol::new();
+        let efi_time =
+            EfiTime { ts: mock_ts, frequency: 1000, end_value: 999_999, _marker: PhantomData };
+
+        let us = efi_time.ticks_to_us(1);
+
+        // 1000 Hz = 0.001 seconds per tick = 1000 us per tick
+        assert_eq!(us, 1000);
+    }
+
+    #[test]
+    fn test_efi_time_ticks_to_us_zero_freq() {
+        let mock_ts = MockTimestampProtocol::new();
+        let efi_time =
+            EfiTime { ts: mock_ts, frequency: 0, end_value: 999_999, _marker: PhantomData };
+
+        let us = efi_time.ticks_to_us(100);
+
+        assert_eq!(us, 0);
     }
 }

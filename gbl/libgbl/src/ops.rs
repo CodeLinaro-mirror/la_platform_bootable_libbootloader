@@ -24,6 +24,7 @@ use crate::{
         SpecializedPartition,
     },
     gbl_println,
+    metrics::{GblMetrics, GblTime},
     partition::{
         check_part_unique, read_unique_partition, read_unique_partition_sync,
         write_unique_partition, GblDisk,
@@ -669,6 +670,16 @@ pub trait GblOps<'a> {
 
     /// Gets the firmware api level.
     fn get_fw_api_level(&self) -> Result<u64, Error>;
+
+    /// Returns the hardware time interface.
+    fn get_time(&self) -> Option<&impl GblTime>;
+
+    /// Returns a guard for mutable metrics access.
+    ///
+    /// This method implements internal mutability, so the implementation should be aware of
+    /// synchronization. The caller should treat the return type as a `MutexGuard` and ensure
+    /// minimal lifetime (drop as soon as possible) to avoid deadlocks.
+    fn get_metrics(&self) -> Option<impl DerefMut<Target = GblMetrics> + '_>;
 }
 
 /// Prints the stack usage at the callsite.
@@ -738,7 +749,7 @@ impl<'a, T> RambootOps<'a, T> {
     }
 }
 
-impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
+impl<'r, 'a: 'r, T: GblOps<'a>> GblOps<'a> for RambootOps<'r, T> {
     fn console_out(&mut self) -> Option<&mut dyn Write> {
         self.ops.console_out()
     }
@@ -1038,6 +1049,14 @@ impl<'a, T: GblOps<'a>> GblOps<'a> for RambootOps<'_, T> {
     fn get_fw_api_level(&self) -> Result<u64, Error> {
         self.ops.get_fw_api_level()
     }
+
+    fn get_time(&self) -> Option<&impl GblTime> {
+        self.ops.get_time()
+    }
+
+    fn get_metrics(&self) -> Option<impl DerefMut<Target = GblMetrics> + '_> {
+        self.ops.get_metrics()
+    }
 }
 
 #[cfg(test)]
@@ -1221,6 +1240,23 @@ pub(crate) mod test {
                 Ok(val) => val,
                 Err(e) => panic!("Attempted to deref an error: {:?}", e),
             }
+        }
+    }
+
+    /// A fake implementation of [GblTime].
+    pub struct FakeGblTime;
+
+    impl GblTime for FakeGblTime {
+        fn current_tick(&self) -> Result<u64, Error> {
+            Err(Error::NotFound)
+        }
+
+        fn elapsed_ticks(&self, _start: u64) -> Result<u64, Error> {
+            Err(Error::NotFound)
+        }
+
+        fn ticks_to_us(&self, ticks: u64) -> u64 {
+            ticks
         }
     }
 
@@ -1903,6 +1939,14 @@ pub(crate) mod test {
         fn get_fw_api_level(&self) -> Result<u64, Error> {
             self.fw_api_level.unwrap_or(Err(Error::Unsupported))
         }
+
+        fn get_time(&self) -> Option<&impl GblTime> {
+            None::<&FakeGblTime>
+        }
+
+        fn get_metrics(&self) -> Option<impl DerefMut<Target = GblMetrics> + '_> {
+            None::<Box<GblMetrics>>
+        }
     }
 
     /// Helper for creating a slot object.
@@ -2194,6 +2238,14 @@ pub(crate) mod test {
 
         fn get_fw_api_level(&self) -> Result<u64, Error> {
             Err(Error::Unsupported)
+        }
+
+        fn get_time(&self) -> Option<&impl GblTime> {
+            self.0.get_time()
+        }
+
+        fn get_metrics(&self) -> Option<impl DerefMut<Target = GblMetrics> + '_> {
+            self.0.get_metrics()
         }
     }
 
