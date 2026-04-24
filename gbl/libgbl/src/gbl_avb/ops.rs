@@ -19,6 +19,7 @@ use crate::{
         state::{KeyValidationStatus, VerificationStatus},
         AvbDeviceStatus, AvbPartition, AvbProperty,
     },
+    metrics::GblTime,
     partition::split_partition_suffix,
     GblOps,
 };
@@ -339,14 +340,23 @@ impl<'a, 'b, 'c, 'p, T: GblOps<'p>> AvbOps<'a> for GblAvbOps<'a, 'b, 'c, T> {
             calculate_partition_read_range(partition_size.into(), offset, buffer.len())?;
         let read_size = read_range.len();
 
-        self.gbl_ops
+        let start = self.gbl_ops.get_time().and_then(|t| t.current_tick().ok());
+        let result = self
+            .gbl_ops
             .read_from_partition_sync(
                 part_str,
                 read_range.start.try_into().unwrap(),
                 &mut buffer[..read_size],
             )
-            .map_err(map_read_err)?;
+            .map_err(map_read_err);
+        if let Some(start) = start
+            && let Some(delta) = self.gbl_ops.get_time().and_then(|t| t.elapsed_ticks(start).ok())
+            && let Some(mut metrics) = self.gbl_ops.get_metrics()
+        {
+            metrics.add_io_timing_ticks(part_str, delta);
+        }
 
+        result?;
         Ok(read_size)
     }
 
@@ -363,7 +373,18 @@ impl<'a, 'b, 'c, 'p, T: GblOps<'p>> AvbOps<'a> for GblAvbOps<'a, 'b, 'c, T> {
             PreloadBufferState::ToLoad(v) => {
                 let out = v.get_mut(..num_bytes).ok_or(IoError::RangeOutsidePartition)?;
                 let part_str = cstr_to_str(partition, IoError::NoSuchPartition)?;
-                self.gbl_ops.read_from_partition_sync(part_str, 0, out).map_err(map_read_err)?;
+                let start = self.gbl_ops.get_time().and_then(|t| t.current_tick().ok());
+                let result =
+                    self.gbl_ops.read_from_partition_sync(part_str, 0, out).map_err(map_read_err);
+                if let Some(start) = start
+                    && let Some(delta) =
+                        self.gbl_ops.get_time().and_then(|t| t.elapsed_ticks(start).ok())
+                    && let Some(mut metrics) = self.gbl_ops.get_metrics()
+                {
+                    metrics.add_io_timing_ticks(part_str, delta);
+                }
+
+                result?;
                 // Note: we only take from v after everything is successful. If we take first and
                 // then there is error and we return early, the buffer is lost.
                 let buf = &mut take(v)[..num_bytes];

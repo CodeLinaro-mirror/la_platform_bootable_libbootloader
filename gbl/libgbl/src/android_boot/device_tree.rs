@@ -37,6 +37,7 @@ pub(crate) fn fdt_select<'b, 'a: 'b, 'c: 'b>(
     buffer: &'c mut [u8],
 ) -> Result<(SelectedDtComponents<'b>, &'c mut [u8])> {
     // TODO(b/385690995): Handle DTs selection from FIT structure.
+    // TODO(b/385690995): Track FIT usage in metrics.
     fdt_select_from_boot_partitions(ops, images, buffer)
 }
 
