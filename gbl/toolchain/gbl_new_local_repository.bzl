@@ -79,6 +79,28 @@ def _gbl_new_local_repository_common_impl(repo_ctx, build_file, build_file_conte
             if not repo_ctx.delete(path):
                 fail("{}: excluded file {} does not exist", _original_name(repo_ctx), path)
 
+    if hasattr(repo_ctx.attr, "exist_marker_path") and repo_ctx.attr.exist_marker_path != "":
+        marker_build_file = """
+load("@bazel_skylib//rules:common_settings.bzl", "bool_setting")
+
+bool_setting(
+    name = "exist",
+    build_setting_default = {},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "exists",
+    flag_values = {{":exist": "True"}},
+)
+
+config_setting(
+    name = "not_exists",
+    flag_values = {{":exist": "False"}},
+)
+""".format(path.exists)
+        repo_ctx.file("{}/BUILD".format(repo_ctx.attr.exist_marker_path), marker_build_file)
+
     # Symlink the provided build file or use the given build file content. Also
     # allow neither, in case the repo already contains a top-level BUILD file
     # that we can use as-is.
@@ -113,6 +135,10 @@ gbl_new_local_repository = repository_rule(
         "build_file": attr.label(doc = "Label of the build file to use"),
         "build_file_content": attr.string(doc = "Content of the build file to use"),
         "exclude_files": attr.string_list(doc = "List of files to exclude relative to root"),
+        "exist_marker_path": attr.string(
+            doc = "Optional path to create a marker BUILD file with `:exists` and `:not_exists` config settings indicating whether the source directory exists.",
+            default = "",
+        ),
     },
 )
 

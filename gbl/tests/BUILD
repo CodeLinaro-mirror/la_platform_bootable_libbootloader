@@ -32,7 +32,18 @@ test_suite(
 build_and_run_tests(
     name = "build_and_run_tests",
     # We need to re-specify the runtime data needed by tests.
-    data = ["@gbl//libgbl/testdata"],
+    data = [
+        "@gbl//libgbl/testdata",
+    ] + select(
+        {
+            # The vmm repo may not be added in all branches. Only enable the test when
+            # it exists.
+            # Put as data dependency so that this becomes a build-time test. The output produced
+            # is the log file.
+            "@vmm//repo_exists:exists": ["@gbl//tests/qemu:qemu_test"],
+            "//conditions:default": [],
+        },
+    ),
     tests = [
         "@gbl//:readme_test",
         "@gbl//efi:test",

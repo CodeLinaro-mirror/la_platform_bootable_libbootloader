@@ -121,7 +121,8 @@ use efi_types::{
         EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES, EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
         EFI_EVENT_TYPE_TIMER, EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL,
         EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE_COLD,
-        EFI_STATUS_DEVICE_ERROR, EFI_STATUS_SUCCESS, GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR,
+        EFI_RESET_TYPE_SHUTDOWN, EFI_STATUS_DEVICE_ERROR, EFI_STATUS_SUCCESS,
+        GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR,
     },
     tpl::TplControl,
 };
@@ -821,6 +822,11 @@ impl RuntimeServices {
     /// Performs a cold reset without status code or data.
     pub fn cold_reset(&self) -> Result<!> {
         self.reset_system(EFI_RESET_TYPE_COLD, EFI_STATUS_SUCCESS, None)
+    }
+
+    /// Shutdown the system.
+    pub fn shutdown(&self) -> Result<!> {
+        self.reset_system(EFI_RESET_TYPE_SHUTDOWN, EFI_STATUS_SUCCESS, None)
     }
 }
 
