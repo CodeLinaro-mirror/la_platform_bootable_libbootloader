@@ -2370,7 +2370,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[b"OKAY0x7fffffff", b"INFOSyncing storage...", b"OKAY",]),
+            make_expected_transport_out(&[b"OKAY0x7fffffff", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -2440,7 +2440,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[b"OKAY0x7fffffff", b"INFOSyncing storage...", b"OKAY",]),
+            make_expected_transport_out(&[b"OKAY0x7fffffff", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -2574,7 +2574,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[b"OKAY", b"INFOSyncing storage...", b"OKAY",]),
+            make_expected_transport_out(&[b"OKAY", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -2620,7 +2620,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[b"INFOSyncing storage...", b"OKAY",]),
+            make_expected_transport_out(&[b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -2855,21 +2855,19 @@ pub(crate) mod tests {
                 b"FAILImages not loaded. Run \"oem gbl-pause-fastboot-after-load\"",
                 b"FAILImages not loaded. Run \"oem gbl-pause-fastboot-after-load\"",
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
                 b"OKAY",
+                &listener.transport_out_queue()[6],
                 &listener.transport_out_queue()[7],
                 &listener.transport_out_queue()[8],
                 b"OKAY",
-                b"OKAY",
+                &listener.transport_out_queue()[10],
                 &listener.transport_out_queue()[11],
                 &listener.transport_out_queue()[12],
                 b"OKAY",
-                b"OKAY",
+                &listener.transport_out_queue()[14],
                 &listener.transport_out_queue()[15],
                 &listener.transport_out_queue()[16],
-                b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual USB output:\n{}",
@@ -2877,11 +2875,11 @@ pub(crate) mod tests {
         );
 
         // Checks that we have uploaded a valid device tree.
-        let fdt = &listener.transport_out_queue()[16];
+        let fdt = &listener.transport_out_queue()[15];
         let fdt = fdt::Fdt::new(fdt).unwrap();
         fdt.get_property("/chosen", c"linux,initrd-start").unwrap();
-        let kernel = listener.transport_out_queue()[8].to_vec();
-        let ramdisk = listener.transport_out_queue()[12].to_vec();
+        let kernel = listener.transport_out_queue()[7].to_vec();
+        let ramdisk = listener.transport_out_queue()[11].to_vec();
         checks_loaded_v2_slot_a_normal_mode(&ramdisk, &kernel);
     }
 
@@ -2915,12 +2913,10 @@ pub(crate) mod tests {
             listener.transport_out_queue(),
             make_expected_transport_out(&[
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
                 b"FAILLoad didn't succeed: AvbSlotVerifyError(Verification(None))",
                 b"FAILLoad didn't succeed: AvbSlotVerifyError(Verification(None))",
                 b"FAILLoad didn't succeed: AvbSlotVerifyError(Verification(None))",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual USB output:\n{}",

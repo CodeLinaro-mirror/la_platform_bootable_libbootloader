@@ -838,17 +838,46 @@ where
         })
     }
 
-    /// Waits for all block devices to be ready.
-    async fn sync_all_blocks(&self) -> CommandResult<()> {
-        for (idx, _) in self.disks.iter().enumerate() {
-            let _ = self.wait_partition_io(idx, None).await;
+    /// Waits for all async tasks to complete.
+    ///
+    /// Currently GBL fastboot only allows processing one command at a time, so any other
+    /// transports will be blocked until this completes. One benefit of this is that new tasks
+    /// can't be added while we're waiting here for the task pool to drain.
+    ///
+    /// INFO messages will be sent to the host if any async tasks are currently running that
+    /// require blocking on; otherwise this will return immediately without any INFO.
+    ///
+    /// # Arguments
+    ///
+    /// * `responder`: an object to send `INFO` messages back to the host with
+    /// * `tag`: a string to tag the `INFO` message with
+    async fn sync_tasks(&mut self, responder: &mut impl InfoSender, tag: &str) {
+        let mut num_tasks = 0;
+        loop {
+            let new_num_tasks = self.tasks.borrow_mut().poll_all();
+            if new_num_tasks == 0 {
+                break;
+            }
+            if new_num_tasks != num_tasks {
+                if let Err(e) = responder
+                    .send_formatted_info(|f| {
+                        write!(f, "{tag} waiting on {new_num_tasks} I/O task(s)").unwrap()
+                    })
+                    .await
+                {
+                    // We're probably broken if we can't transmit an INFO message, but just log
+                    // the error and hope we can recover when we get back to the main loop.
+                    gbl_println!(self.gbl_ops, "sync_tasks() failed to send INFO message: {}", e);
+                }
+                num_tasks = new_num_tasks;
+            }
+            yield_now().await;
         }
-        Ok(())
     }
 
     /// Implementation for "fastboot oem gbl-sync-tasks".
-    async fn oem_sync_tasks(&self, mut _responder: impl InfoSender) -> CommandResult<()> {
-        self.sync_all_blocks().await?;
+    async fn oem_sync_tasks(&mut self, responder: &mut impl InfoSender) -> CommandResult<()> {
+        self.sync_tasks(responder, "Sync").await;
         Ok(())
     }
 
@@ -880,8 +909,7 @@ where
         mode: RebootMode,
         mut resp: impl InfoSender + OkaySender,
     ) -> CommandResult<!> {
-        resp.send_info("Syncing storage...").await?;
-        self.sync_all_blocks().await?;
+        self.sync_tasks(&mut resp, "Reboot").await;
         let msg = match mode {
             RebootMode::Normal => "Rebooting...",
             RebootMode::Bootloader => {
@@ -939,8 +967,12 @@ where
     }
 
     /// Sets active slot.
-    async fn set_active_slot(&mut self, suffix: char) -> CommandResult<()> {
-        self.sync_all_blocks().await?;
+    async fn set_active_slot(
+        &mut self,
+        suffix: char,
+        responder: &mut impl InfoSender,
+    ) -> CommandResult<()> {
+        self.sync_tasks(responder, "set_active").await;
 
         #[cfg(feature = "fuchsia")]
         if self.gbl_ops.expected_os_is_fuchsia()? {
@@ -1349,18 +1381,18 @@ where
     }
 
     async fn r#continue(&mut self, mut resp: impl InfoSender) -> CommandResult<()> {
-        resp.send_info("Syncing storage...").await?;
-        Ok(self.sync_all_blocks().await?)
+        self.sync_tasks(&mut resp, "Continue").await;
+        Ok(())
     }
 
-    async fn set_active(&mut self, slot: &str, _: impl InfoSender) -> CommandResult<()> {
+    async fn set_active(&mut self, slot: &str, mut resp: impl InfoSender) -> CommandResult<()> {
         self.check_unlocked()?;
         if slot.len() > 1 {
             return Err("Slot suffix must be one character".into());
         }
 
         let slot_ch = slot.chars().next().ok_or("Invalid slot")?;
-        self.set_active_slot(slot_ch).await?;
+        self.set_active_slot(slot_ch, &mut resp).await?;
         self.result.last_set_active_slot = Some(slot_ch);
         Ok(())
     }
@@ -1374,7 +1406,7 @@ where
         let cmd = args.next().ok_or("Missing command")?;
         self.stage_data_type = None;
         match cmd {
-            "gbl-sync-tasks" => self.oem_sync_tasks(responder).await,
+            "gbl-sync-tasks" => self.oem_sync_tasks(&mut responder).await,
             "gbl-enable-async-task" => {
                 self.enable_async_task = true;
                 Ok(())
@@ -3048,7 +3080,6 @@ pub(crate) mod test {
         let boot_buffer = Default::default();
         let mut gbl_fb =
             GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
-        let tasks = gbl_fb.tasks();
         let resp: TestResponder = Default::default();
 
         // Enable async IO.
@@ -3062,15 +3093,14 @@ pub(crate) mod test {
         block_on(gbl_fb.erase("raw_1//800", &resp)).unwrap();
         check_var(&mut gbl_fb, "block-device", "1:status", "IO pending");
 
-        {
-            // "oem gbl-sync-tasks" should block.
-            let oem_sync_blk_fut = &mut pin!(oem(&mut gbl_fb, "gbl-sync-tasks", &resp));
-            assert!(poll(oem_sync_blk_fut).is_none());
-            // Schedules the disk IO tasks to completion.
-            tasks.borrow_mut().run();
-            // "oem gbl-sync-tasks" should now be able to finish.
-            assert!(poll(oem_sync_blk_fut).unwrap().is_ok());
-        }
+        // "oem gbl-sync-tasks" should bring the disks back to idle.
+        //
+        // It's difficult to test blocking here because the test disk only blocks once per
+        // "erase" operation, which happens when they are first scheduled. So when `gbl-sync-tasks`
+        // polls everything in the queue, it completes on the very first poll and never blocks.
+        // We would have to add additional yields into the erase backend if we wanted to test
+        // blocking here, but ensuring that the disks go back to idle should be sufficient.
+        assert!(poll(&mut pin!(oem(&mut gbl_fb, "gbl-sync-tasks", &resp))).unwrap().is_ok());
 
         // The two blocks should be in the idle state.
         check_var(&mut gbl_fb, "block-device", "0:status", "idle");
@@ -3267,7 +3297,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_reboot_sync_all_blocks() {
+    fn test_reboot_sync_tasks() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
@@ -3294,7 +3324,7 @@ pub(crate) mod test {
         // There is a pending flash task. Reboot should wait.
         assert!(poll(&mut reboot_fut).is_none());
         assert!(!(*resp.okay_sent.try_lock().unwrap()));
-        assert_eq!(resp.info_messages.try_lock().unwrap()[1], "Syncing storage...");
+        assert_eq!(resp.info_messages.try_lock().unwrap()[1], "Reboot waiting on 1 I/O task(s)");
         // Schedules the disk IO tasks to completion.
         tasks.borrow_mut().run();
         // The reboot can now complete.
@@ -3304,7 +3334,7 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_continue_sync_all_blocks() {
+    fn test_continue_sync_tasks() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
@@ -3329,7 +3359,7 @@ pub(crate) mod test {
         // There is a pending flash task. Continue should wait.
         assert!(poll(&mut continue_fut).is_none());
         assert!(!(*resp.okay_sent.try_lock().unwrap()));
-        assert_eq!(resp.info_messages.try_lock().unwrap()[1], "Syncing storage...");
+        assert_eq!(resp.info_messages.try_lock().unwrap()[1], "Continue waiting on 1 I/O task(s)");
         // Schedules the disk IO tasks to completion.
         tasks.borrow_mut().run();
         // The continue can now complete.
@@ -3512,7 +3542,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.tcp_out_queue(),
-            make_expected_tcp_out(&[b"OKAY0x20000", b"INFOSyncing storage...", b"OKAY"]),
+            make_expected_tcp_out(&[b"OKAY0x20000", b"OKAY"]),
             "\nActual TCP output:\n{}",
             listener.dump_tcp_out_queue()
         );
@@ -3604,11 +3634,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"FAILBuffer too small 0x400. Needs 0x401",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"FAILBuffer too small 0x400. Needs 0x401", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -3677,7 +3703,6 @@ pub(crate) mod test {
                 b"DATA00000003",
                 b"OKAY",
                 b"FAILMissing file name",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -3707,11 +3732,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"FAILNo file staged",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"FAILNo file staged", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -3745,7 +3766,6 @@ pub(crate) mod test {
                 b"OKAY",
                 format!("INFO{}", FakeGblOps::GBL_OEM_CMD_INFO_MSG).as_bytes(),
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -3935,7 +3955,6 @@ pub(crate) mod test {
                 )
                 .as_bytes(),
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -3991,7 +4010,6 @@ pub(crate) mod test {
                 b"INFOUpdating GPT...",
                 b"OKAY",
                 b"OKAY0x15a00",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4023,11 +4041,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"FAILNo GPT downloaded",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"FAILNo GPT downloaded", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -4066,7 +4080,6 @@ pub(crate) mod test {
                 b"OKAY",
                 b"INFOUpdating GPT...",
                 b"FAILGptError(\n    IncorrectMagic(\n        6075990659671082682,\n    ),\n)",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4112,7 +4125,6 @@ pub(crate) mod test {
                 b"FAILBlock ID is required for flashing GPT",
                 b"FAILInvalid block ID",
                 b"FAILUnknown argument",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4151,7 +4163,6 @@ pub(crate) mod test {
                 b"OKAY",
                 b"INFOUpdating GPT...",
                 b"FAILBlock device is not for GPT",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4196,7 +4207,6 @@ pub(crate) mod test {
                 b"FAILNotFound",
                 b"OKAY0x1000",
                 b"OKAY0x1800",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4226,11 +4236,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"FAILBlock device is not for GPT",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"FAILBlock device is not for GPT", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -4280,7 +4286,6 @@ pub(crate) mod test {
                 b"INFOAn async task is launched. To sync manually, run \"oem gbl-sync-tasks\".",
                 b"OKAY",
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4331,11 +4336,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"FAILInvalid slot index for Fuchsia A/B/R",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"FAILInvalid slot index for Fuchsia A/B/R", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -4365,13 +4366,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"OKAYa",
-                b"OKAY",
-                b"OKAYb",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"OKAYa", b"OKAY", b"OKAYb", b"OKAY",]),
             "\nActual USB output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -4398,11 +4393,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"FAILSlot suffix must be one character",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"FAILSlot suffix must be one character", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -4433,14 +4424,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"INFOSyncing storage...",
-                expected_info,
-                b"OKAY",
-                b"FAILAborted",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[expected_info, b"OKAY", b"FAILAborted", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -4505,11 +4489,9 @@ pub(crate) mod test {
         assert_eq!(
             listener.transport_out_queue(),
             make_expected_transport_out(&[
-                b"INFOSyncing storage...",
                 b"INFORebooting to bootloader...",
                 b"OKAY",
                 b"FAILAborted",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4544,11 +4526,9 @@ pub(crate) mod test {
         assert_eq!(
             listener.transport_out_queue(),
             make_expected_transport_out(&[
-                b"INFOSyncing storage...",
                 b"INFORebooting to recovery...",
                 b"OKAY",
                 b"FAILAborted",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4587,13 +4567,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"DATA00001000",
-                b"OKAY",
-                b"OKAY",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"DATA00001000", b"OKAY", b"OKAY", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -4639,7 +4613,6 @@ pub(crate) mod test {
                 b"DATA00006080",
                 b"OKAY",
                 b"FAILOutOfRange",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4823,7 +4796,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[b"OKAY123", b"INFOSyncing storage...", b"OKAY",]),
+            make_expected_transport_out(&[b"OKAY123", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -4865,7 +4838,6 @@ pub(crate) mod test {
                 &vec![0x55u8; 1024],
                 &vec![0x55u8; 1024],
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4915,7 +4887,6 @@ pub(crate) mod test {
                 &vec![0x55u8; 1024],
                 &vec![0x55u8; 1024],
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -4946,11 +4917,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"FAILNo data staged.",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"FAILNo data staged.", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -4981,7 +4948,6 @@ pub(crate) mod test {
             listener.transport_out_queue(),
             make_expected_transport_out(&[
                 b"FAILCannot upload more than 0x7fffffff bytes of data",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -5018,7 +4984,6 @@ pub(crate) mod test {
                 b"DATA0000000a",
                 b"\0\0\0\0\0\0\0\0\0\0",
                 b"FAILStaged data size changed when uploading",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -5049,14 +5014,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                b"OKAY",
-                b"OKAY",
-                b"OKAY",
-                b"OKAY",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ]),
+            make_expected_transport_out(&[b"OKAY", b"OKAY", b"OKAY", b"OKAY", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -5120,7 +5078,6 @@ pub(crate) mod test {
                 b"OKAYok",
                 b"INFOfail info",
                 b"FAILfail",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -5159,7 +5116,7 @@ pub(crate) mod test {
         ));
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[b"OKAY", b"INFOSyncing storage...", b"OKAY",]),
+            make_expected_transport_out(&[b"OKAY", b"OKAY",]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -5209,7 +5166,6 @@ pub(crate) mod test {
                 b"OKAY",
                 b"OKAY",
                 b"FAILCommand not allowed.",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -5256,7 +5212,6 @@ pub(crate) mod test {
                 b"INFO2: raw_0, [0x0, 0x1000), 0x1000",
                 b"INFO3: raw_1, [0x0, 0x2000), 0x2000",
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -5294,7 +5249,6 @@ pub(crate) mod test {
                 b"FAILboot_b and boot_a has different partition sizes",
                 b"OKAY0x1000",
                 b"OKAY0x3000",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -5321,11 +5275,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.transport_out_queue(),
-            make_expected_transport_out(&[
-                expected_str.as_bytes(),
-                b"INFOSyncing storage...",
-                b"OKAY"
-            ]),
+            make_expected_transport_out(&[expected_str.as_bytes(), b"OKAY"]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
@@ -5409,7 +5359,6 @@ pub(crate) mod test {
                 b"OKAY",
                 b"FAILMissing tag",
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -5464,7 +5413,6 @@ pub(crate) mod test {
                 b"DATA0000000e",
                 b"OKAY",
                 b"FAILDevice is locked",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -5524,7 +5472,6 @@ pub(crate) mod test {
                 b"OKAY",
                 b"INFOUploading 2048 bytes...",
                 b"DATA00000800",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual Transport output:\n{}",
@@ -5578,7 +5525,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.tcp_out_queue(),
-            make_expected_tcp_out(&[b"OKAY0x20000", b"INFOSyncing storage...", b"OKAY"]),
+            make_expected_tcp_out(&[b"OKAY0x20000", b"OKAY"]),
             "\nActual TCP output:\n{}",
             listener.dump_tcp_out_queue()
         );
@@ -5605,7 +5552,7 @@ pub(crate) mod test {
 
         assert_eq!(
             listener.tcp_out_queue(),
-            make_expected_tcp_out(&[b"OKAY0x20000", b"INFOSyncing storage...", b"OKAY"]),
+            make_expected_tcp_out(&[b"OKAY0x20000", b"OKAY"]),
             "\nActual TCP output:\n{}",
             listener.dump_tcp_out_queue()
         );
@@ -5683,7 +5630,6 @@ pub(crate) mod test {
                 b"OKAY",
                 b"DATA00000800",
                 b"OKAY",
-                b"INFOSyncing storage...",
                 b"OKAY",
             ]),
             "\nActual USB output:\n{}",
@@ -5870,45 +5816,33 @@ pub(crate) mod test {
     fn test_fastboot_flash_fail_when_locked() {
         check_fastboot_locked(
             &[b"download:0x4", b"test", b"flash:boot_a", b"continue"],
-            &[
-                b"DATA00000004",
-                b"OKAY",
-                b"FAILDevice is locked",
-                b"INFOSyncing storage...",
-                b"OKAY",
-            ],
+            &[b"DATA00000004", b"OKAY", b"FAILDevice is locked", b"OKAY"],
         );
     }
 
     #[test]
     fn test_fastboot_erase_fail_when_locked() {
-        check_fastboot_locked(
-            &[b"erase:boot_a", b"continue"],
-            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
-        );
+        check_fastboot_locked(&[b"erase:boot_a", b"continue"], &[b"FAILDevice is locked", b"OKAY"]);
     }
 
     #[test]
     fn test_fastboot_fetch_fail_when_locked() {
         check_fastboot_locked(
             &[b"fetch:boot_a:0:0x200", b"continue"],
-            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
+            &[b"FAILDevice is locked", b"OKAY"],
         );
     }
 
     #[test]
     fn test_fastboot_boot_fail_when_locked() {
-        check_fastboot_locked(
-            &[b"boot", b"continue"],
-            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
-        );
+        check_fastboot_locked(&[b"boot", b"continue"], &[b"FAILDevice is locked", b"OKAY"]);
     }
 
     #[test]
     fn test_fastboot_flashing_lock_critical_fail_when_locked() {
         check_fastboot_locked(
             &[b"flashing lock_critical", b"continue"],
-            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
+            &[b"FAILDevice is locked", b"OKAY"],
         );
     }
 
@@ -5916,7 +5850,7 @@ pub(crate) mod test {
     fn test_fastboot_flashing_unlock_critical_fail_when_locked() {
         check_fastboot_locked(
             &[b"flashing unlock_critical", b"continue"],
-            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
+            &[b"FAILDevice is locked", b"OKAY"],
         );
     }
 }
