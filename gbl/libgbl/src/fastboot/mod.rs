@@ -58,6 +58,8 @@ use fastboot::{
     RebootMode, StreamCommand, StreamOperation, Unlockability, UploadBuilder, Uploader,
     VarInfoSender, MAX_COMMAND_SIZE,
 };
+
+const ERR_DEVICE_LOCKED: &str = "Device is locked";
 use gbl_async::{join, join_mut, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
@@ -730,14 +732,8 @@ where
         // Currently raw disk access is only allowed for:
         //   * dev builds
         //   * unlocked prod builds for read-only access (i.e. `fastboot fetch`)
-        if part.is_none() && cfg!(not(feature = "gbl_dev")) {
-            if A::IS_READ_ONLY {
-                if !device_status.get(self.gbl_ops)?.is_unlocked {
-                    return Err("fetching a raw partition is restricted to unlocked devices".into());
-                }
-            } else {
-                return Err("partition name is required".into());
-            }
+        if part.is_none() && !(cfg!(feature = "gbl_dev") || A::IS_READ_ONLY) {
+            return Err("partition name is required".into());
         }
 
         let (basename, block_ids_and_parts) = self.resolve_slotted_partitions(part, blk_id)?;
@@ -1058,7 +1054,7 @@ where
         match self.gbl_ops.avb_read_device_status() {
             Err(e) => Err(format_args!("Failed to get unlock status {e}").into()),
             Ok(status) if status.is_unlocked => Ok(()),
-            _ => Err("Device is not unlocked".into()),
+            _ => Err(ERR_DEVICE_LOCKED.into()),
         }
     }
 
@@ -1180,6 +1176,7 @@ where
     }
 
     async fn flash(&mut self, part: &str, mut responder: impl InfoSender) -> CommandResult<()> {
+        self.check_unlocked()?;
         let disks = self.disks;
 
         // Checks if we are flashing new GPT partition table
@@ -1205,6 +1202,7 @@ where
     }
 
     async fn erase(&mut self, part: &str, mut responder: impl InfoSender) -> CommandResult<()> {
+        self.check_unlocked()?;
         let disks = self.disks;
 
         // Checks if we are erasing GPT partition table.
@@ -1317,6 +1315,7 @@ where
         size: u32,
         mut responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()> {
+        self.check_unlocked()?;
         let mut part_io = self.parse_and_get_partition_io::<ReadOnly>(part).await?;
         let buffer = self.get_download_buffer().await;
         // 4MB batches (chosen empirically) or as large as the download buffer permits.
@@ -1355,6 +1354,7 @@ where
     }
 
     async fn set_active(&mut self, slot: &str, _: impl InfoSender) -> CommandResult<()> {
+        self.check_unlocked()?;
         if slot.len() > 1 {
             return Err("Slot suffix must be one character".into());
         }
@@ -1452,6 +1452,7 @@ where
         command: StreamCommand<&'d str>,
         mut responder: impl InfoSender,
     ) -> CommandResult<()> {
+        self.check_unlocked()?;
         let part_io =
             self.parse_and_get_partition_io::<ReadWrite>(command.partition.as_ref()).await?;
         let mut task = match command.operation {
@@ -1493,6 +1494,7 @@ where
     }
 
     async fn boot(&mut self, resp: impl InfoSender + OkaySender) -> CommandResult<()> {
+        self.check_unlocked()?;
         let (img, sz) = self.take_download().ok_or("No boot image staged")?;
         // Re-sync preloaded partitions. Device state or disk content might have changed due to
         // flashing etc.
@@ -1510,6 +1512,12 @@ where
         lock_type: LockType,
         lock_state: LockState,
     ) -> CommandResult<()> {
+        // NOTE: This creates a usability edge case: if a user has unlocked both DEVICE and
+        // CRITICAL locks, and then locks DEVICE first, they will be unable to lock CRITICAL
+        // because `check_unlocked()` enforces that the DEVICE lock must be unlocked.
+        if lock_type == LockType::Critical {
+            self.check_unlocked()?;
+        }
         Ok(self.gbl_ops.avb_write_lock_state(lock_type, lock_state)?)
     }
 
@@ -1824,7 +1832,7 @@ pub(crate) mod test {
     use super::*;
     use crate::{
         android_boot::tests::{
-            checks_loaded_v2_slot_a_normal_mode, checks_loaded_v2_slot_b_normal_mode,
+            checks_loaded_v2_slot_a_unlocked_mode, checks_loaded_v2_slot_b_unlocked_mode,
             default_test_gbl_ops, read_test_data,
         },
         constants::{KiB, MiB, KERNEL_ALIGNMENT},
@@ -2413,40 +2421,28 @@ pub(crate) mod test {
         assert!(fetch(&mut gbl_fb, "boot_a".into(), 0, 0x2001).is_err());
     }
 
-    /// A helper for checking the fetch result when no partition name is provided
-    fn check_fetch_no_part_name_result(
-        result: &CommandResult<Vec<u8>>,
-        expected: &[u8],
-        part: Option<&str>,
-    ) {
-        if cfg!(feature = "gbl_dev") || part.unwrap_or("") != "" {
-            assert_eq!(result.as_ref().unwrap(), expected);
-        } else {
-            assert!(matches!(
-                result.as_ref().unwrap_err().as_str(),
-                "fetching a raw partition is restricted to unlocked devices"
-            ));
-        }
-    }
-
     /// A helper for testing raw block upload. It verifies that data read from block device
-    /// `blk_id` in range [`off`, `off`+`size`) is the same as `disk[off..][..size]`
-    fn check_blk_upload(
+    /// `blk_id` in range [`off`, `off`+`size`) is the same as `disk[off..][..size]`.
+    fn check_upload(
         fb: &mut impl FastbootImplementation,
-        blk_id: u64,
+        part_and_block_id: &str,
         off: u64,
         size: u64,
-        disk: &[u8],
+        expected: CommandResult<&[u8]>,
     ) {
-        let expected = disk[off.try_into().unwrap()..][..size.try_into().unwrap()].to_vec();
-        // offset/size as part of the partition string.
-        let part = format!("/{:#x}/{:#x}/{:#x}", blk_id, off, size);
-        let result = fetch(fb, part, 0, size);
-        check_fetch_no_part_name_result(&result, &expected, None);
-        // offset/size as separate fetch arguments.
-        let part = format!("/{:#x}", blk_id);
-        let result = fetch(fb, part, off, size);
-        check_fetch_no_part_name_result(&result, &expected, None);
+        let result = fetch(fb, format!("{}/{:#x}/{:#x}", part_and_block_id, off, size), 0, size);
+
+        // The result should be the exact same when we pass offset/size as separate args rather than
+        // embedding them in the target string.
+        assert_eq!(result, fetch(fb, part_and_block_id.to_string(), off, size));
+
+        // For convenience the caller passes in the whole disk; verify that the fetched bytes match
+        // the indicated section.
+        assert_eq!(
+            result,
+            expected
+                .map(|disk| disk[off.try_into().unwrap()..][..size.try_into().unwrap()].to_vec())
+        );
     }
 
     #[test]
@@ -2458,6 +2454,7 @@ pub(crate) mod test {
         storage.add_gpt_device(disk_0);
         storage.add_gpt_device(disk_1);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2466,8 +2463,8 @@ pub(crate) mod test {
 
         let off = 512;
         let size = 512;
-        check_blk_upload(&mut gbl_fb, 0, off, size, disk_0);
-        check_blk_upload(&mut gbl_fb, 1, off, size, disk_1);
+        check_upload(&mut gbl_fb, "/0", off, size, Ok(disk_0));
+        check_upload(&mut gbl_fb, "/1", off, size, Ok(disk_1));
     }
 
     #[test]
@@ -2502,30 +2499,6 @@ pub(crate) mod test {
         assert_eq!(res_unlocked_1.unwrap(), expected_1);
     }
 
-    /// A helper for testing uploading GPT partition. It verifies that data read from GPT partition
-    /// `part` at disk `blk_id` in range [`off`, `off`+`size`) is the same as
-    /// `partition_data[off..][..size]`.
-    fn check_part_upload(
-        fb: &mut impl FastbootImplementation,
-        part: &str,
-        off: u64,
-        size: u64,
-        blk_id: Option<u64>,
-        partition_data: &[u8],
-    ) {
-        let expected =
-            partition_data[off.try_into().unwrap()..][..size.try_into().unwrap()].to_vec();
-        let blk_id = blk_id.map_or("".to_string(), |v| format!("{:#x}", v));
-        // offset/size as part of the partition string.
-        let gpt_part = format!("{}/{}/{:#x}/{:#x}", part, blk_id, off, size);
-        let result = fetch(fb, gpt_part, 0, size);
-        check_fetch_no_part_name_result(&result, &expected, Some(part));
-        // offset/size as separate fetch arguments.
-        let gpt_part = format!("{}/{}", part, blk_id);
-        let result = fetch(fb, gpt_part, off, size);
-        check_fetch_no_part_name_result(&result, &expected, Some(part));
-    }
-
     #[test]
     fn test_fetch_partition() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
@@ -2535,6 +2508,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0", [0xaau8; KiB!(4)]);
         storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2549,20 +2523,20 @@ pub(crate) mod test {
         let size = 512;
         let off = 512;
 
-        check_part_upload(&mut gbl_fb, "boot_a", off, size, Some(0), expect_boot_a);
-        check_part_upload(&mut gbl_fb, "boot_b", off, size, Some(0), expect_boot_b);
-        check_part_upload(&mut gbl_fb, "vendor_boot_a", off, size, Some(1), expect_vendor_boot_a);
-        check_part_upload(&mut gbl_fb, "vendor_boot_b", off, size, Some(1), expect_vendor_boot_b);
-        check_part_upload(&mut gbl_fb, "raw_0", off, size, Some(2), &[0xaau8; KiB!(4)]);
-        check_part_upload(&mut gbl_fb, "raw_1", off, size, Some(3), &[0x55u8; KiB!(8)]);
+        check_upload(&mut gbl_fb, "boot_a/0", off, size, Ok(expect_boot_a));
+        check_upload(&mut gbl_fb, "boot_b/0", off, size, Ok(expect_boot_b));
+        check_upload(&mut gbl_fb, "vendor_boot_a/1", off, size, Ok(expect_vendor_boot_a));
+        check_upload(&mut gbl_fb, "vendor_boot_b/1", off, size, Ok(expect_vendor_boot_b));
+        check_upload(&mut gbl_fb, "raw_0/2", off, size, Ok(&[0xaau8; KiB!(4)]));
+        check_upload(&mut gbl_fb, "raw_1/3", off, size, Ok(&[0x55u8; KiB!(8)]));
 
         // No block device id
-        check_part_upload(&mut gbl_fb, "boot_a", off, size, None, expect_boot_a);
-        check_part_upload(&mut gbl_fb, "boot_b", off, size, None, expect_boot_b);
-        check_part_upload(&mut gbl_fb, "vendor_boot_a", off, size, None, expect_vendor_boot_a);
-        check_part_upload(&mut gbl_fb, "vendor_boot_b", off, size, None, expect_vendor_boot_b);
-        check_part_upload(&mut gbl_fb, "raw_0", off, size, None, &[0xaau8; KiB!(4)]);
-        check_part_upload(&mut gbl_fb, "raw_1", off, size, None, &[0x55u8; KiB!(8)]);
+        check_upload(&mut gbl_fb, "boot_a/", off, size, Ok(expect_boot_a));
+        check_upload(&mut gbl_fb, "boot_b/", off, size, Ok(expect_boot_b));
+        check_upload(&mut gbl_fb, "vendor_boot_a/", off, size, Ok(expect_vendor_boot_a));
+        check_upload(&mut gbl_fb, "vendor_boot_b/", off, size, Ok(expect_vendor_boot_b));
+        check_upload(&mut gbl_fb, "raw_0/", off, size, Ok(&[0xaau8; KiB!(4)]));
+        check_upload(&mut gbl_fb, "raw_1/", off, size, Ok(&[0x55u8; KiB!(8)]));
     }
 
     /// A helper function to get a bit-flipped copy of the input data.
@@ -2616,6 +2590,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_1", [0x55u8; KiB!(8)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.current_slot = Some(Ok(1));
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2671,6 +2646,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_1_b", vec![0u8; raw.len()]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.current_slot = Some(Ok(1));
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2704,6 +2680,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"boot", [0xaau8; KiB!(4)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.current_slot = Some(Ok(1));
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2722,6 +2699,7 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 1]);
         let storage = FakeGblOpsStorage::default();
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -2764,6 +2742,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"critical_a", INITIAL_CONTENTS);
         storage.add_raw_device(c"critical_b", INITIAL_CONTENTS);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.current_slot = Some(Ok(1));
         // Mark the "critical" partition as critically-locked.
         gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
@@ -2812,6 +2791,7 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"critical", INITIAL_CONTENTS);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.current_slot = Some(Ok(1));
         // Mark the "critical" partition as critically-locked.
         gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
@@ -2854,6 +2834,7 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"raw", INITIAL_CONTENTS);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.current_slot = Some(Ok(1));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
@@ -2874,6 +2855,7 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"raw", INITIAL_CONTENTS);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.current_slot = Some(Ok(1));
         // If any partition is critically-locked - even partitions that don't currently exist
         // on disk - then raw disk access is critically-locked.
@@ -2920,6 +2902,7 @@ pub(crate) mod test {
         gpt_builder.add("sparse", [1u8; GPT_GUID_LEN], [1u8; GPT_GUID_LEN], 0, None).unwrap();
         block_on(gpt_builder.persist()).unwrap();
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
@@ -2974,6 +2957,7 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -3029,6 +3013,7 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         // Injects an error.
         storage[0].partition_io(None).unwrap().dev().io().error =
             liberror::Error::Other(Some("test")).into();
@@ -3057,6 +3042,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0", [0xaau8; 4096]);
         storage.add_raw_device(c"raw_1", [0x55u8; 4096]);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -3105,6 +3091,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0", [0xaau8; 4096]);
         storage[0].get_blk_io().unwrap().error = Some(Error::Unsupported);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -3125,6 +3112,7 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         // Injects an error.
         storage[0].get_blk_io().unwrap().error = Some(Error::Other(Some("test")));
         let tasks = vec![].into();
@@ -3151,6 +3139,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0_b", [0xaau8; KiB!(8)]);
         storage.add_raw_device(c"raw_1_b", [0x55u8; KiB!(12)]);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.current_slot = Some(Ok(1));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
@@ -3198,6 +3187,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw", raw_a);
         storage.add_raw_device(c"raw", raw_b);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -3220,35 +3210,41 @@ pub(crate) mod test {
         block_on(oem(&mut gbl_fb, "gbl-set-default-block 2", &resp)).unwrap();
         check_var(&mut gbl_fb, "gbl-default-block", "", "0x2");
         // The following fetch should succeed and fetch from "vendor_boot_a" on block 2.
-        check_part_upload(&mut gbl_fb, "vendor_boot_a", off, size, None, &vendor_boot_a);
+        check_upload(&mut gbl_fb, "vendor_boot_a/", off, size, Ok(&vendor_boot_a[..]));
 
         // Sets default block to #4 (raw_b)
         block_on(oem(&mut gbl_fb, "gbl-set-default-block 4", &resp)).unwrap();
         check_var(&mut gbl_fb, "gbl-default-block", "", "0x4");
         // The following fetch should succeed and fetch from "raw" on block 4.
-        check_part_upload(&mut gbl_fb, "raw", off, size, None, &raw_b);
+        check_upload(&mut gbl_fb, "raw/", off, size, Ok(&raw_b[..]));
 
         // Fetches with explicit storage ID shouldn't be affected.
-        check_part_upload(&mut gbl_fb, "boot_a", off, size, Some(0), boot_a);
-        check_part_upload(&mut gbl_fb, "raw", off, size, Some(3), &raw_a);
-        check_blk_upload(&mut gbl_fb, 1, off, size, disk_dup);
+        check_upload(&mut gbl_fb, "boot_a/0", off, size, Ok(&boot_a[..]));
+        check_upload(&mut gbl_fb, "raw/3", off, size, Ok(&raw_a[..]));
+        check_upload(&mut gbl_fb, "/1", off, size, Ok(&disk_dup[..]));
 
         // Fetching without storage ID should use default ID and thus the following should fail.
-        assert!(fetch(&mut gbl_fb, "boot_a".into(), 0, boot_a.len()).is_err());
+        check_upload(&mut gbl_fb, "boot_a/", off, size, Err("NotFound".into()));
 
         // Sets default block to #1 (unmodified `disk_dup`)
         block_on(oem(&mut gbl_fb, "gbl-set-default-block 1", &resp)).unwrap();
         check_var(&mut gbl_fb, "gbl-default-block", "", "0x1");
         // Fetches whole raw block but without block ID should use the default block.
-        check_part_upload(&mut gbl_fb, "", off, size, None, disk_dup);
+        check_upload(&mut gbl_fb, "/", off, size, Ok(&disk_dup[..]));
 
         // Unset default block
         block_on(oem(&mut gbl_fb, "gbl-unset-default-block", &resp)).unwrap();
         check_var(&mut gbl_fb, "gbl-default-block", "", "None");
         // Fetching non-unique partitions should now fail.
-        assert!(fetch(&mut gbl_fb, "raw".into(), 0, raw_a.len()).is_err());
-        assert!(fetch(&mut gbl_fb, "vendor_boot_a".into(), 0, vendor_boot_a.len()).is_err());
-        assert!(fetch(&mut gbl_fb, "/".into(), 0, 512).is_err());
+        check_upload(&mut gbl_fb, "raw/", off, size, Err("NotUnique".into()));
+        check_upload(&mut gbl_fb, "vendor_boot_a/", off, size, Err("NotUnique".into()));
+        check_upload(
+            &mut gbl_fb,
+            "/",
+            off,
+            size,
+            Err(Error::Other(Some("Must provide a partition")).into()),
+        );
     }
 
     #[test]
@@ -3276,6 +3272,7 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -3312,6 +3309,7 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -3527,6 +3525,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_1", [0u8; KiB!(8)]);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -3802,6 +3801,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut load_buffer = AlignedBuffer::new(MiB!(8), KERNEL_ALIGNMENT);
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -3865,7 +3865,7 @@ pub(crate) mod test {
                 b"INFOpartition-type:vendor_boot_b: raw",
                 b"INFOpartition-guid:vendor_boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
                 b"INFOstream-segment-size: 0x1000",
-                b"INFOunlocked: no",
+                b"INFOunlocked: yes",
                 b"INFOunlocked-critical: no",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
@@ -3922,7 +3922,7 @@ pub(crate) mod test {
                 b"INFOpartition-type:vendor_boot_b: raw",
                 b"INFOpartition-guid:vendor_boot_b: bdadfeca-879c-43e9-8f0d-8ef7da29b5e7",
                 b"INFOstream-segment-size: 0x1000",
-                b"INFOunlocked: no",
+                b"INFOunlocked: yes",
                 b"INFOunlocked-critical: no",
                 format!("INFO{}:1: {}:1", FakeGblOps::GBL_TEST_VAR, FakeGblOps::GBL_TEST_VAR_VAL)
                     .as_bytes(),
@@ -3955,6 +3955,7 @@ pub(crate) mod test {
         storage.add_gpt_device(&disk);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4005,6 +4006,7 @@ pub(crate) mod test {
         storage.add_gpt_device(&disk);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4038,6 +4040,7 @@ pub(crate) mod test {
         storage.add_gpt_device(&disk);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
         // Download a bad GPT.
@@ -4079,6 +4082,7 @@ pub(crate) mod test {
         storage.add_gpt_device(&disk_orig);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4123,6 +4127,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0", vec![0u8; KiB!(1024)]);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4161,6 +4166,7 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4204,6 +4210,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw_0", vec![0u8; KiB!(1024)]);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4236,6 +4243,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"durable_boot", [0x00u8; KiB!(4)]);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.os = Some(Os::Fuchsia);
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
@@ -4306,6 +4314,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"durable_boot", [0x00u8; KiB!(4)]);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.os = Some(Os::Fuchsia);
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
@@ -4338,6 +4347,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.os = Some(Os::Android);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4373,6 +4383,7 @@ pub(crate) mod test {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
         listener.add_transport_input(b"set_active:ab");
@@ -4557,6 +4568,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"fuchsia-fvm", [0x00u8; KiB!(4)]);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.os = Some(Os::Fuchsia);
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
@@ -4595,6 +4607,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw", vec![0u8; sparse_raw.len() - 1]);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
         listener.add_transport_input(b"oem gbl-enable-async-task");
@@ -4646,6 +4659,7 @@ pub(crate) mod test {
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let mut gbl_ops = default_test_gbl_ops(&storage);
         gbl_ops.current_slot = Some(Ok(idx));
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4682,14 +4696,14 @@ pub(crate) mod test {
     fn test_fastboot_boot_slot_a() {
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let (ramdisk, _, kernel, _) = test_fastboot_boot_slot(0, 'a', &mut load_buffer);
-        checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+        checks_loaded_v2_slot_a_unlocked_mode(ramdisk, kernel);
     }
 
     #[test]
     fn test_fastboot_boot_slot_b() {
         let mut load_buffer = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let (ramdisk, _, kernel, _) = test_fastboot_boot_slot(1, 'b', &mut load_buffer);
-        checks_loaded_v2_slot_b_normal_mode(ramdisk, kernel);
+        checks_loaded_v2_slot_b_unlocked_mode(ramdisk, kernel);
     }
 
     #[test]
@@ -4717,13 +4731,14 @@ pub(crate) mod test {
         };
 
         let mut gbl_ops = default_test_gbl_ops(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
         let buffers = vec![vec![0u8; KiB!(128)]; 2];
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
-        // "fastboot boot boot_v2_a.img" should fail.
-        let data = read_test_data("boot_v2_a.img");
+        // "fastboot boot" should fail because the image data is invalid.
+        let data = vec![0xAAu8; 100]; // Invalid data to force failure
         listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
         listener.add_transport_input(&data);
         listener.add_transport_input(b"boot");
@@ -4747,9 +4762,9 @@ pub(crate) mod test {
         assert_eq!(
             listener.transport_out_queue(),
             make_expected_transport_out(&[
-                b"DATA00004000",
+                b"DATA00000064",
                 b"OKAY",
-                b"FAILAvbSlotVerifyError(Verification(None))",
+                b"FAILUnificationError(BufferTooSmall(None))",
                 b"DATA00002000",
                 b"OKAY",
                 b"INFOBoot image as Android slot a",
@@ -5016,6 +5031,7 @@ pub(crate) mod test {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![vec![0u8; KiB!(1)]; 1];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
         listener.add_transport_input(b"flashing lock");
@@ -5151,6 +5167,8 @@ pub(crate) mod test {
         assert_eq!(download_trace, vec![vec![]]);
     }
 
+    // TODO(b/505924108): Add a test that the command exec override can allow commands
+    // that would normally be blocked by the lock state.
     #[test]
     fn test_fastboot_command_exec() {
         let mut storage = FakeGblOpsStorage::default();
@@ -5166,6 +5184,7 @@ pub(crate) mod test {
             }
         };
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.fastboot_command_exec_handler = Some(&mut handler);
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
@@ -5440,11 +5459,11 @@ pub(crate) mod test {
         assert_eq!(
             listener.transport_out_queue(),
             make_expected_transport_out(&[
-                b"FAILDevice is not unlocked",
-                b"FAILDevice is not unlocked",
+                b"FAILDevice is locked",
+                b"FAILDevice is locked",
                 b"DATA0000000e",
                 b"OKAY",
-                b"FAILDevice is not unlocked",
+                b"FAILDevice is locked",
                 b"INFOSyncing storage...",
                 b"OKAY",
             ]),
@@ -5461,6 +5480,7 @@ pub(crate) mod test {
         storage.add_raw_device(c"raw", [0u8; KiB!(2)]);
         let buffers = vec![vec![0u8; KiB!(2)]; 1];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let mut transport_out_err = |v: &[u8]| -> Result<(), Error> {
             // The response is from "getvar:partition-size:raw"
             (v == b"OKAY0x800").then_some(Err(Error::Disconnected)).unwrap_or(Ok(()))?;
@@ -5677,6 +5697,7 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         let buffers = vec![vec![0u8; KiB!(2)]; 1].into();
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
 
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
@@ -5732,6 +5753,7 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         let buffers = vec![vec![0u8; KiB!(2)]; 1].into();
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
 
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
@@ -5775,6 +5797,7 @@ pub(crate) mod test {
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
         let buffers = vec![vec![0u8; KiB!(2)]; 1].into();
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
 
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
@@ -5808,5 +5831,92 @@ pub(crate) mod test {
             "stream-fill:boot_a:0x400000:800:0xF005500F".try_into().unwrap(),
             "OutOfRange".into(),
         )
+    }
+
+    // Locked Command Tests
+    // These tests verify that restricted commands fail when the device is locked.
+
+    fn check_fastboot_locked(commands: &[&[u8]], expected: &[&[u8]]) {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", [0u8; KiB!(4)]);
+        let buffers = vec![vec![0u8; KiB!(1)]; 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = false;
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+
+        for cmd in commands {
+            listener.add_transport_input(cmd);
+        }
+
+        let mut general = vec![0u8; 1024];
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            GblFbData { boot_buffer: (&mut general[..]).into(), ..Default::default() },
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(expected),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_fastboot_flash_fail_when_locked() {
+        check_fastboot_locked(
+            &[b"download:0x4", b"test", b"flash:boot_a", b"continue"],
+            &[
+                b"DATA00000004",
+                b"OKAY",
+                b"FAILDevice is locked",
+                b"INFOSyncing storage...",
+                b"OKAY",
+            ],
+        );
+    }
+
+    #[test]
+    fn test_fastboot_erase_fail_when_locked() {
+        check_fastboot_locked(
+            &[b"erase:boot_a", b"continue"],
+            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
+        );
+    }
+
+    #[test]
+    fn test_fastboot_fetch_fail_when_locked() {
+        check_fastboot_locked(
+            &[b"fetch:boot_a:0:0x200", b"continue"],
+            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
+        );
+    }
+
+    #[test]
+    fn test_fastboot_boot_fail_when_locked() {
+        check_fastboot_locked(
+            &[b"boot", b"continue"],
+            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
+        );
+    }
+
+    #[test]
+    fn test_fastboot_flashing_lock_critical_fail_when_locked() {
+        check_fastboot_locked(
+            &[b"flashing lock_critical", b"continue"],
+            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
+        );
+    }
+
+    #[test]
+    fn test_fastboot_flashing_unlock_critical_fail_when_locked() {
+        check_fastboot_locked(
+            &[b"flashing unlock_critical", b"continue"],
+            &[b"FAILDevice is locked", b"INFOSyncing storage...", b"OKAY"],
+        );
     }
 }

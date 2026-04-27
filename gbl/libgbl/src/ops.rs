@@ -1232,6 +1232,15 @@ pub(crate) mod test {
         /// Tracks the number of times `Self::factory_data_reset` is called, or returns the error.
         pub factory_data_reset_count: DefaultOk<usize, Error>,
 
+        /// Custom handler for `avb_read_device_status`
+        /// This allows simulating a sequence where the device appears unlocked for Fastboot
+        /// but locked for AVB, which is currently needed by:
+        ///    1. `test_zircon_main_fastboot_boot_fail_on_corrupted_images`
+        ///    2. `test_zircon_main_fastboot_boot_fails_on_rollback_protection`
+        /// TODO(b/506730736): Remove this when fastboot boot via command override is supported.
+        pub avb_read_device_status_handler:
+            Option<&'a mut dyn FnMut() -> AvbIoResult<AvbDeviceStatus>>,
+
         /// For return by `Self::avb_validate_vbmeta_public_key`
         pub avb_key_validation_status: Option<AvbIoResult<KeyValidationStatus>>,
 
@@ -1486,6 +1495,13 @@ pub(crate) mod test {
         }
 
         fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
+            // Use a custom handler if set to support testing restricted fastboot commands on
+            // locked devices.
+            // See comments on `avb_read_device_status_handler` for details.
+            // TODO(b/506730736): Remove this when fastboot boot via command override is supported.
+            if let Some(ref mut f) = self.avb_read_device_status_handler {
+                return (*f)();
+            }
             self.avb_device_status.0.clone()
         }
 

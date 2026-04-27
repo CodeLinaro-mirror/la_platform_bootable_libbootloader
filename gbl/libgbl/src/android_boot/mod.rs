@@ -2117,6 +2117,24 @@ pub(crate) mod tests {
         assert_eq!(kernel, read_test_data("kernel_a.img"));
     }
 
+    /// Helper for checking V2 image loaded from slot A and in unlocked mode.
+    pub(crate) fn checks_loaded_v2_slot_a_unlocked_mode(ramdisk: &[u8], kernel: &[u8]) {
+        let expected_bootconfig = ExpectedBootconfigBuilder::new()
+            .vbmeta_size(read_test_data("vbmeta_v2_a.img").len())
+            .digest(read_test_data_as_str("vbmeta_v2_a.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("vbmeta_v2_a.boot.digest.txt"))
+            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .slot('a')
+            .dtb_idx(0)
+            .dtb_source("boot")
+            .unlocked(true)
+            .color(BootStateColor::Orange)
+            .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
+            .build();
+        check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
+        assert_eq!(kernel, read_test_data("kernel_a.img"));
+    }
+
     /// Helper for checking V2 image loaded from slot A and in recovery mode.
     fn checks_loaded_v2_slot_a_recovery_mode(ramdisk: &[u8], kernel: &[u8]) {
         let expected_bootconfig = ExpectedBootconfigBuilder::new()
@@ -2268,6 +2286,24 @@ pub(crate) mod tests {
             .slot('b')
             .dtb_idx(0)
             .dtb_source("boot")
+            .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
+            .build();
+        check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_b.img"), &expected_bootconfig);
+        assert_eq!(kernel, read_test_data("kernel_b.img"));
+    }
+
+    /// Helper for checking V2 image loaded from slot B and in unlocked mode.
+    pub(crate) fn checks_loaded_v2_slot_b_unlocked_mode(ramdisk: &[u8], kernel: &[u8]) {
+        let expected_bootconfig = ExpectedBootconfigBuilder::new()
+            .vbmeta_size(read_test_data("vbmeta_v2_b.img").len())
+            .digest(read_test_data_as_str("vbmeta_v2_b.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("vbmeta_v2_b.boot.digest.txt"))
+            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .slot('b')
+            .dtb_idx(0)
+            .dtb_source("boot")
+            .unlocked(true)
+            .color(BootStateColor::Orange)
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
         check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_b.img"), &expected_bootconfig);
@@ -2438,6 +2474,7 @@ pub(crate) mod tests {
         storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
+        ops.avb_device_status.is_unlocked = true;
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
 
         let listener: SharedTestListener = Default::default();
@@ -2465,7 +2502,7 @@ pub(crate) mod tests {
             listener.dump_transport_out_queue()
         );
 
-        checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+        checks_loaded_v2_slot_a_unlocked_mode(ramdisk, kernel);
     }
 
     #[test]
@@ -2474,6 +2511,7 @@ pub(crate) mod tests {
         storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
+        ops.avb_device_status.is_unlocked = true;
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
 
         let general = &mut AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
@@ -2507,7 +2545,7 @@ pub(crate) mod tests {
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
-        checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+        checks_loaded_v2_slot_a_unlocked_mode(ramdisk, kernel);
         assert_eq!(kernel.as_ptr(), kernel_addr);
         assert_eq!(ramdisk.as_ptr(), ramdisk_addr);
         assert_eq!(fdt.as_ptr(), fdt_addr);
@@ -2518,6 +2556,7 @@ pub(crate) mod tests {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
+        ops.avb_device_status.is_unlocked = true;
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
 
         let listener: SharedTestListener = Default::default();
@@ -2623,6 +2662,7 @@ pub(crate) mod tests {
         };
 
         let mut ops = default_test_gbl_ops(&storage);
+        ops.avb_device_status.is_unlocked = true;
         ops.get_partition_buffer_handler = Some(&get_partition_buffer_handler);
         ops.sync_partition_buffer_handler = Some(&mut sync_partition_buffer_handler);
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
@@ -2652,7 +2692,7 @@ pub(crate) mod tests {
             listener.dump_transport_out_queue()
         );
 
-        checks_loaded_v2_slot_a_normal_mode(ramdisk, kernel);
+        checks_loaded_v2_slot_a_unlocked_mode(ramdisk, kernel);
 
         assert_eq!(
             traces,
