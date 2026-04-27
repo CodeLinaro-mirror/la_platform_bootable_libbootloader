@@ -31,6 +31,7 @@ use gbl_async::block_on;
 use liberror::{Error, GptError};
 use libutils::buffer_pool::BufferPool;
 use safemath::SafeNum;
+use static_assertions::const_assert_eq;
 use zerocopy::{
     ByteSlice, FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout, Ref, SplitByteSlice,
 };
@@ -415,7 +416,12 @@ impl core::fmt::Display for GptEntry {
 // core::mem::offset_of!(GptHeader, crc32) is unstable feature and rejected by the compiler in our
 // settings. We pre-compute the value here.
 const GPT_CRC32_OFFSET: usize = 16;
+// Currently code implicitly assumes GPT entry size equals 128 bytes. Statically assert that
+// assumption for now. In the future, when GPT entry size is greater than 128 bytes then
+// GPT_ENTRY_SIZE must be updated to the next power of 2 and the entire code must be updated
+// to use GPT_ENTRY_SIZE instead of sizeof::<GptEntry>()
 const GPT_ENTRY_SIZE: usize = size_of::<GptEntry>();
+const_assert_eq!(GPT_ENTRY_SIZE, 128);
 /// Minimum partitions' entries in GPT header
 pub const GPT_MIN_NUM_ENTRIES: usize = 128;
 /// Maximum partitions' entries in GPT header
