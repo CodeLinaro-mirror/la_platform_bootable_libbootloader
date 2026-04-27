@@ -22,6 +22,12 @@ use liberror::Error;
 use safemath::SafeNum;
 
 /// `RamBlockIo` implements [BlockIo] backed by user provided buffer.
+///
+/// This also exposes a few useful features for testing such as:
+///
+/// * read/write counters
+/// * error injection
+/// * blocking/non-blocking
 pub struct RamBlockIo<T> {
     /// The storage block size in bytes.
     pub block_size: u64,
@@ -35,10 +41,17 @@ pub struct RamBlockIo<T> {
     pub num_reads: usize,
     /// Injected error to be returned by the next read/write/erase IO.
     pub error: Option<Error>,
+    /// Number of additional times to yield before performing I/O.
+    ///
+    /// This is private because tests should not depend on the exact number of yields. See
+    /// [set_blocking] for more info.
+    yields: usize,
 }
 
 impl<T: DerefMut<Target = [u8]>> RamBlockIo<T> {
     /// Creates a new instance.
+    ///
+    /// Initial state is to perform I/O operations successfully without blocking.
     pub fn new(block_size: u64, alignment: u64, storage: T) -> Self {
         assert_eq!(
             storage.len() % usize::try_from(block_size).unwrap(),
@@ -47,7 +60,27 @@ impl<T: DerefMut<Target = [u8]>> RamBlockIo<T> {
             storage.len(),
             block_size
         );
-        Self { block_size, alignment, storage, num_writes: 0, num_reads: 0, error: None }
+        Self { block_size, alignment, storage, num_writes: 0, num_reads: 0, error: None, yields: 0 }
+    }
+
+    /// Configures the blocking behavior.
+    ///
+    /// When set to true, the [RamBlockIo] will yield a large number of times prior to each I/O
+    /// operation. This is to allow tests to check behavior when tasks are blocked on I/O.
+    ///
+    /// Tests should generally not depend on the exact number of yields since they are
+    /// non-deterministic. Factors like buffer alignment can influence the number of I/O operations,
+    /// e.g. depending on where the allocator places a buffer, `fastboot flash` may end up issuing
+    /// anywhere from 1-3 I/O operations to handle partial pages, which will result in a varying
+    /// number of yields.
+    ///
+    /// Instead, tests should just use this API to indicate whether I/O operations should block
+    /// or not, and can safely assume that a blocking operation will yield enough times that it
+    /// will stay blocked until the test loops on completing it.
+    pub fn set_blocking(&mut self, blocking: bool) {
+        // 100 should be enough, if for some reason we have a test that does perform 100+ polls
+        // but still wants tasks to remain blocked we can increase this.
+        self.yields = if blocking { 100 } else { 0 };
     }
 
     /// Gets the underlying ramdisk storage.
@@ -73,7 +106,9 @@ impl<T: DerefMut<Target = [u8]>> RamBlockIo<T> {
         let buf = buf.into();
         assert!(is_buffer_aligned(&mut *buf, self.alignment).unwrap_or(false));
         assert!(is_aligned(buf.len(), self.block_size).unwrap_or(false));
-        yield_now().await;
+        for _ in 0..self.yields {
+            yield_now().await;
+        }
         self.check_custom_error()?;
         Ok((SafeNum::from(blk_offset) * self.block_size).try_into().unwrap())
     }
@@ -108,7 +143,9 @@ unsafe impl<T: DerefMut<Target = [u8]>> BlockIo for RamBlockIo<T> {
     }
 
     async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<(), Error> {
-        yield_now().await;
+        for _ in 0..self.yields {
+            yield_now().await;
+        }
         self.check_custom_error()?;
         let blk_sz = self.info().erase_block_size().unwrap();
         let off = (SafeNum::from(blk_offset) * blk_sz).try_into().unwrap();
