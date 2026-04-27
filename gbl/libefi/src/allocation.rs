@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{EfiEntry, RuntimeServices};
-use efi_types::{EFI_ALLOCATOR_TYPE_ALLOCATE_ANY_PAGES, EFI_MEMORY_TYPE_LOADER_DATA};
+use crate::{AllocationAddress, EfiEntry, RuntimeServices};
+use efi_types::EFI_MEMORY_TYPE_LOADER_DATA;
 
 #[cfg(feature = "gbl_tracing")]
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -169,8 +169,8 @@ impl EfiAllocator {
         let entry = self.state.efi_entry().ok_or(Error::InvalidState)?;
         let bs = entry.system_table_checked()?.boot_services_checked()?;
         let ptr = bs.allocate_pages(
-            EFI_ALLOCATOR_TYPE_ALLOCATE_ANY_PAGES,
             EFI_MEMORY_TYPE_LOADER_DATA,
+            AllocationAddress::Any,
             Self::pages(size)?,
         )?;
         Ok(ptr as _)

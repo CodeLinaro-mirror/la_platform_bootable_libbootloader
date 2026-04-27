@@ -61,6 +61,17 @@ use efi_types::{
 };
 pub use libutils::arch_timestamp;
 
+/// Address parameter for UEFI page allocation.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AllocationAddress {
+    /// Allocate at any available address.
+    Any,
+    /// Allocate at a fixed address.
+    Fixed(u64),
+    /// Allocate at an address no greater than the specified address.
+    Max(u64),
+}
+
 #[cfg(not(test))]
 mod allocation;
 
@@ -120,10 +131,12 @@ use core::{
 };
 use efi_types::{
     defs::{
-        EfiAllocatorType, EfiBootService, EfiConfigurationTable, EfiEvent, EfiGuid, EfiHandle,
+        EfiBootService, EfiConfigurationTable, EfiEvent, EfiGuid, EfiHandle,
         EfiMemoryAttributesTableHeader, EfiMemoryDescriptor, EfiMemoryType, EfiResetType,
         EfiRuntimeService, EfiStatus, EfiSystemTable, EfiTimerDelay, EfiTpl, GblEfiDebugErrorTag,
-        EFI_EVENT_TYPE_NOTIFY_SIGNAL, EFI_EVENT_TYPE_NOTIFY_WAIT, EFI_EVENT_TYPE_RUNTIME,
+        EFI_ALLOCATOR_TYPE_ALLOCATE_ADDRESS, EFI_ALLOCATOR_TYPE_ALLOCATE_ANY_PAGES,
+        EFI_ALLOCATOR_TYPE_ALLOCATE_MAX_ADDRESS, EFI_EVENT_TYPE_NOTIFY_SIGNAL,
+        EFI_EVENT_TYPE_NOTIFY_WAIT, EFI_EVENT_TYPE_RUNTIME,
         EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES, EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
         EFI_EVENT_TYPE_TIMER, EFI_INTERFACE_TYPE_EFI_NATIVE_INTERFACE,
         EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL, EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL,
@@ -446,14 +459,18 @@ impl<'a> BootServices<'a> {
     /// Wrapper of `EFI_BOOT_SERVICES.AllocatePool()`.
     pub fn allocate_pages(
         &self,
-        mem: EfiAllocatorType,
         pool: EfiMemoryType,
+        addr: AllocationAddress,
         pages: usize,
     ) -> Result<*mut core::ffi::c_void> {
-        let mut out: u64 = 0;
+        let (alloc_type, mut out) = match addr {
+            AllocationAddress::Any => (EFI_ALLOCATOR_TYPE_ALLOCATE_ANY_PAGES, 0),
+            AllocationAddress::Fixed(a) => (EFI_ALLOCATOR_TYPE_ALLOCATE_ADDRESS, a),
+            AllocationAddress::Max(a) => (EFI_ALLOCATOR_TYPE_ALLOCATE_MAX_ADDRESS, a),
+        };
         // SAFETY: `&mut out` points to a valid data and is for output only. It outlives the call
         // and will not be retained.
-        unsafe { efi_call!(self.boot_services.allocate_pages, mem, pool, pages, &mut out)? };
+        unsafe { efi_call!(self.boot_services.allocate_pages, alloc_type, pool, pages, &mut out)? };
         Ok(out as _)
     }
 
