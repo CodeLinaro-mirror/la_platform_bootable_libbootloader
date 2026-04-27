@@ -36,6 +36,20 @@ The following variables are used to construct targets across various commands:
 - `<size>` (Optional): A 64-bit integer that defaults to the rest of the
   partition after `offset` if not given.
 
+## Lock Policy
+
+To ensure device security, GBL Fastboot enforces that most data modification and
+extraction commands are only available when the device is **unlocked**:
+
+- `fastboot flash`
+- `fastboot erase`
+- `fastboot fetch`
+- `fastboot boot`
+- `fastboot flashing lock_critical`
+- `fastboot flashing unlock_critical`
+
+Attempts to run these commands on a locked device will result in a Fastboot failure.
+
 ## The Partition Argument
 
 Fastboot commands such as `fastboot flash`, `fastboot fetch` and
@@ -82,7 +96,8 @@ the supported syntaxes for the partition name argument in fastboot.
   omitting the partition name is only supported for the `fastboot fetch` command,
   and additionally requires the device's bootloader to be unlocked. On development
   builds (`gbl_dev`), omitting the partition name to access the raw block device is
-  fully permitted for `fetch`, `flash`, and `erase` operations regardless of lock state.
+  permitted for `fetch`, `flash`, and `erase` operations, but `flash` and `erase`
+  may require the critical lock if critical partitions are defined.
 
   ```
   /[<storage_id>]
@@ -209,8 +224,9 @@ $ cat zircon_a.zbi vbmeta_a > zircon_fastboot.img
 $ fastboot boot zircon_fastboot.img
 ```
 
-Note: In unlocked mode, it's possible to omit the vbmeta image. Verification
-will fail as expected, but boot will proceed since it is unlocked.
+Note: The `boot` command requires the device to be unlocked. In unlocked mode,
+it's possible to omit the vbmeta image. Verification will fail as expected, but
+boot will proceed since it is unlocked.
 
 ## Pause in Fastboot after Loading OS
 

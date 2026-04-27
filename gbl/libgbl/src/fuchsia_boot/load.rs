@@ -526,6 +526,7 @@ mod test {
         let listener = SharedTestListener::default();
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        ops.avb_device_status.is_unlocked = true;
         let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         let bootimg = read_test_data("zircon_fastboot_bootimg");
         set_next_boot_slot(&mut ops, slot);
@@ -566,11 +567,23 @@ mod test {
         test_zircon_main_fastboot_boot_succeed_on_valid_images(SlotIndex::R)
     }
 
+    // This test uses a call counter to return different lock states
+    // to Fastboot and AVB. This is fragile and relies on the exact order of calls
+    // (Fastboot first, AVB second). Revisit if implementation changes.
+    // TODO(b/506730736): Revisit this fragile call counter approach and support
+    // fastboot boot in locked mode via command override without re-implementing the
+    // boot flow.
     #[test]
     fn test_zircon_main_fastboot_boot_fail_on_corrupted_images() {
         let listener = SharedTestListener::default();
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        let mut calls = 0;
+        let mut handler = || {
+            calls += 1;
+            Ok(crate::gbl_avb::AvbDeviceStatus { is_unlocked: calls == 1, ..Default::default() })
+        };
+        ops.avb_read_device_status_handler = Some(&mut handler);
         let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
         let mut bootimg = read_test_data("zircon_fastboot_bootimg");
         bootimg[4096 + 64] = !bootimg[4096 + 64];
@@ -593,11 +606,22 @@ mod test {
         );
     }
 
+    // This test uses a call counter to return different lock states
+    // to Fastboot and AVB. This is fragile and relies on the exact order of calls
+    // (Fastboot first, AVB second). Revisit if implementation changes.
+    // TODO(b/506730736): Revisit this fragile call counter approach and support
+    // fastboot boot in locked mode via command override without re-implementing the boot flow.
     #[test]
     fn test_zircon_main_fastboot_boot_fails_on_rollback_protection() {
         let listener = SharedTestListener::default();
         let storage = create_storage();
         let mut ops = create_gbl_ops(&storage);
+        let mut calls = 0;
+        let mut handler = || {
+            calls += 1;
+            Ok(crate::gbl_avb::AvbDeviceStatus { is_unlocked: calls == 1, ..Default::default() })
+        };
+        ops.avb_read_device_status_handler = Some(&mut handler);
         ops.avb_ops
             .rollbacks
             .insert(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_VALUE + 1));
