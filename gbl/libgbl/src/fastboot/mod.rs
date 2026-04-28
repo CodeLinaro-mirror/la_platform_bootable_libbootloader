@@ -3314,7 +3314,6 @@ pub(crate) mod test {
     }
 
     #[test]
-    #[ignore = "b/507146423"]
     fn test_reboot_sync_tasks() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let mut storage = FakeGblOpsStorage::default();
@@ -3353,7 +3352,6 @@ pub(crate) mod test {
     }
 
     #[test]
-    #[ignore = "b/507146423"]
     fn test_continue_sync_tasks() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let mut storage = FakeGblOpsStorage::default();
