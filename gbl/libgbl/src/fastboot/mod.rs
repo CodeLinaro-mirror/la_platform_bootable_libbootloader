@@ -2929,7 +2929,9 @@ pub(crate) mod test {
         let sparse = include_bytes!("../../testdata/sparse_test.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        storage[0].get_blk_io().unwrap().set_blocking(true);
         storage.add_gpt_device(vec![0u8; sparse_raw.len() + 67 * 512]);
+        storage[1].get_blk_io().unwrap().set_blocking(true);
         let mut gpt_builder = storage[1].gpt_builder().unwrap();
         gpt_builder.add("sparse", [1u8; GPT_GUID_LEN], [1u8; GPT_GUID_LEN], 0, None).unwrap();
         block_on(gpt_builder.persist()).unwrap();
@@ -2987,7 +2989,9 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        storage[0].get_blk_io().unwrap().set_blocking(true);
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
+        storage[1].get_blk_io().unwrap().set_blocking(true);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
@@ -3044,6 +3048,7 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        storage[0].get_blk_io().unwrap().set_blocking(true);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
         // Injects an error.
@@ -3071,8 +3076,11 @@ pub(crate) mod test {
     fn test_async_erase() {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let mut storage = FakeGblOpsStorage::default();
+        // Add blocking devices so they don't finish in a single poll.
         storage.add_raw_device(c"raw_0", [0xaau8; 4096]);
+        storage[0].get_blk_io().unwrap().set_blocking(true);
         storage.add_raw_device(c"raw_1", [0x55u8; 4096]);
+        storage[1].get_blk_io().unwrap().set_blocking(true);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
@@ -3080,6 +3088,7 @@ pub(crate) mod test {
         let boot_buffer = Default::default();
         let mut gbl_fb =
             GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let tasks = gbl_fb.tasks();
         let resp: TestResponder = Default::default();
 
         // Enable async IO.
@@ -3093,14 +3102,22 @@ pub(crate) mod test {
         block_on(gbl_fb.erase("raw_1//800", &resp)).unwrap();
         check_var(&mut gbl_fb, "block-device", "1:status", "IO pending");
 
-        // "oem gbl-sync-tasks" should bring the disks back to idle.
-        //
-        // It's difficult to test blocking here because the test disk only blocks once per
-        // "erase" operation, which happens when they are first scheduled. So when `gbl-sync-tasks`
-        // polls everything in the queue, it completes on the very first poll and never blocks.
-        // We would have to add additional yields into the erase backend if we wanted to test
-        // blocking here, but ensuring that the disks go back to idle should be sufficient.
-        assert!(poll(&mut pin!(oem(&mut gbl_fb, "gbl-sync-tasks", &resp))).unwrap().is_ok());
+        {
+            // "oem gbl-sync-tasks" should block until the I/O tasks complete.
+            let oem_sync_blk_fut = &mut pin!(oem(&mut gbl_fb, "gbl-sync-tasks", &resp));
+            assert!(poll(oem_sync_blk_fut).is_none());
+
+            // Info message should indicate 2 blocked tasks.
+            assert_eq!(
+                resp.info_messages.try_lock().unwrap().last().unwrap(),
+                "Sync waiting on 2 I/O task(s)"
+            );
+
+            // Run the pending tasks to completion.
+            tasks.borrow_mut().run();
+            // The blocked future can now finish.
+            assert!(poll(oem_sync_blk_fut).unwrap().is_ok());
+        }
 
         // The two blocks should be in the idle state.
         check_var(&mut gbl_fb, "block-device", "0:status", "idle");
@@ -3302,6 +3319,7 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        storage[0].get_blk_io().unwrap().set_blocking(true);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
@@ -3340,6 +3358,7 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![vec![0u8; KiB!(128)]; 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        storage[0].get_blk_io().unwrap().set_blocking(true);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
