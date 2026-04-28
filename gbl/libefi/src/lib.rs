@@ -399,6 +399,11 @@ impl<'a> SystemTable<'a> {
             },
         }
     }
+
+    /// Returns a raw pointer to the underlying `EfiSystemTable`.
+    pub fn as_ptr(&self) -> *const EfiSystemTable {
+        self.table
+    }
 }
 
 /// Watchdog timer code wrapper to be passed to `EFI_BOOT_SERVICE.SetWatchdogTimer()`.

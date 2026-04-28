@@ -74,6 +74,7 @@ pub fn efi_android_boot(
         const EFI_PAGE_SIZE: u64 = efi_types::EFI_PAGE_SIZE as u64;
 
         let fdt = Fdt::new(&fdt[..])?;
+        let systab_addr = entry.system_table().as_ptr() as usize;
         let efi_mmap = efi::exit_boot_services(entry, remains)?;
         // SAFETY: We currently target at Cuttlefish emulator where images are provided valid.
         unsafe {
@@ -81,7 +82,24 @@ pub fn efi_android_boot(
                 kernel,
                 ramdisk,
                 fdt.get_property("chosen", PROP_BOOTARGS).unwrap(),
-                |e820_entries| {
+                |e820_entries, efi_info| {
+                    // "EL64" Signature tells the kernel it's a 64-bit EFI boot
+                    efi_info.efi_loader_signature = 0x34364c45;
+                    // Pass the physical address of the UEFI System Table
+                    efi_info.efi_systab = (systab_addr & 0xFFFFFFFF).try_into().unwrap();
+                    efi_info.efi_systab_hi = (systab_addr >> 32).try_into().unwrap();
+
+                    // Get the memory map.
+                    let mmap_ptr = efi_mmap.buffer().as_ptr() as usize;
+
+                    // Pass the Memory Map pointers and metadata
+                    efi_info.efi_memdesc_version =
+                        efi_mmap.descriptor_version().try_into().unwrap();
+                    efi_info.efi_memdesc_size = efi_mmap.descriptor_size().try_into().unwrap();
+                    efi_info.efi_memmap_size = efi_mmap.buffer().len().try_into().unwrap();
+                    efi_info.efi_memmap = (mmap_ptr & 0xFFFFFFFF).try_into().unwrap();
+                    efi_info.efi_memmap_hi = (mmap_ptr >> 32).try_into().unwrap();
+
                     let mut idx = 0;
                     for mem in efi_mmap.into_iter() {
                         let cur_type = crate::utils::efi_to_e820_mem_type(mem.memory_type);
