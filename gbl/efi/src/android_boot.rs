@@ -80,18 +80,37 @@ pub fn efi_android_boot(
                 ramdisk,
                 fdt.get_property("chosen", PROP_BOOTARGS).unwrap(),
                 |e820_entries| {
-                    // Convert EFI memory type to e820 memory type.
-                    if efi_mmap.len() > e820_entries.len() {
-                        return Err(Error::MemoryMapCallbackError(-1));
+                    let mut idx = 0;
+                    for mem in efi_mmap.into_iter() {
+                        let cur_type = crate::utils::efi_to_e820_mem_type(mem.memory_type);
+                        // Coalesce adjacent memory regions of similar type.
+                        // We intentionally check only against the previous entry (`idx - 1`) based on
+                        // the expectation that the EFI memory map is mostly sorted. This strikes a
+                        // balance between time efficiency and compaction.
+                        if idx != 0
+                            && (e820_entries[idx - 1].type_ == cur_type)
+                            && ((e820_entries[idx - 1].addr + e820_entries[idx - 1].size)
+                                == mem.physical_start)
+                        {
+                            e820_entries[idx - 1].size += mem.number_of_pages * 4096;
+                        } else {
+                            if idx >= e820_entries.len() {
+                                return Err(Error::MemoryMapCallbackError(-1));
+                            }
+
+                            e820_entries[idx] = boot::x86::e820entry {
+                                addr: mem.physical_start,
+                                size: mem.number_of_pages * EFI_PAGE_SIZE,
+                                type_: cur_type,
+                            };
+                            idx += 1;
+                        }
                     }
-                    for (idx, mem) in efi_mmap.into_iter().enumerate() {
-                        e820_entries[idx] = boot::x86::e820entry {
-                            addr: mem.physical_start,
-                            size: mem.number_of_pages * EFI_PAGE_SIZE,
-                            type_: crate::utils::efi_to_e820_mem_type(mem.memory_type),
-                        };
-                    }
-                    Ok(efi_mmap.len().try_into().unwrap())
+
+                    // Sort the memory map entries by address as required by linux boot protocol.
+                    e820_entries[0..idx].sort_unstable_by_key(|e820_entry| e820_entry.addr);
+
+                    Ok(idx.try_into().unwrap())
                 },
                 0x9_0000,
             )?;
