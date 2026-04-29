@@ -32,9 +32,9 @@ use crate::{
     ops::{CommandExecType, RambootOps},
     partition::{
         check_part_unique, split_partition_suffix, AccessMode, GblDisk, MultiPartitionIo,
-        Partition, PartitionIo, RawName, ReadOnly, ReadWrite,
+        Partition, PartitionIo, ReadOnly, ReadWrite,
     },
-    slots::Slot,
+    slots::{slotted_part, Slot, Suffix},
     GblOps, IntegrationError,
 };
 pub use abr::{mark_slot_active, set_one_shot_bootloader, set_one_shot_recovery, SlotIndex};
@@ -68,7 +68,7 @@ use libutils::{
     buffer_pool::{BufferPool, ScopedBuffer},
     next_arg,
     shared::Shared,
-    snprintf, FormattedBytes, FromHexStr,
+    FormattedBytes, FromHexStr,
 };
 use safemath::SafeNum;
 use trace::{gbl_trace_get_enable, TraceGuard};
@@ -686,17 +686,19 @@ where
                     None => (target, resolve_mode),
                 };
 
-                let slots: ArrayVec<char, MAX_IO_PARTS> = match resolve_mode {
-                    ResolveMode::AllSlots => ['a', 'b'].into(),
+                let slots: ArrayVec<Suffix, MAX_IO_PARTS> = match resolve_mode {
+                    ResolveMode::AllSlots => {
+                        [Suffix::from_char('a').unwrap(), Suffix::from_char('b').unwrap()].into()
+                    }
                     ResolveMode::CurrentSlot => {
-                        [self.gbl_ops.get_current_slot()?.suffix.as_char()].into_iter().collect()
+                        [self.gbl_ops.get_current_slot()?.suffix].into_iter().collect()
                     }
                 };
 
                 let mut res = ArrayVec::new();
                 for slot in slots {
-                    let full = RawName::new_formatted(format_args!("{base}_{slot}"))?;
-                    res.push(self.find_partition(Some(full.to_str()), blk_id)?);
+                    let full = slotted_part(base, Some(slot));
+                    res.push(self.find_partition(Some(full.as_str()), blk_id)?);
                 }
                 Ok((Some(base), res))
             }
@@ -1051,9 +1053,9 @@ where
     /// Helper for "fastboot boot" in Android image.
     async fn boot_android(&mut self, img: &[u8], mut resp: impl InfoSender) -> CommandResult<()> {
         let slot = get_boot_slot(self.gbl_ops)?;
-        let mut boot_part = [0u8; 16];
-        let boot_part = snprintf!(boot_part, "boot_{}", slot.suffix.as_char());
-        let mut ramboot_ops = RambootOps { ops: self.gbl_ops, ram_partitions: &[(boot_part, img)] };
+        let boot_part = slotted_part("boot", slot.map(|s| s.suffix));
+        let mut ramboot_ops =
+            RambootOps { ops: self.gbl_ops, ram_partitions: &[(boot_part.as_str(), img)] };
         let boot_buffer = self.data.boot_buffer.as_borrowed();
         let (ramdisk, fdt, kernel, _) =
             android_load_verify_fixup(&mut ramboot_ops, slot, false, boot_buffer)?;
@@ -1062,8 +1064,9 @@ where
             fdt: fdt.as_ptr_range(),
             kernel: kernel.as_ptr_range(),
         };
-        resp.send_formatted_info(|f| {
-            write!(f, "Boot image as Android slot {}", slot.suffix.as_char()).unwrap()
+        resp.send_formatted_info(|f| match slot {
+            Some(s) => write!(f, "Boot image as Android slot {}", s.suffix.as_char()).unwrap(),
+            None => write!(f, "Boot image as Android slotless").unwrap(),
         })
         .await?;
         Ok(())

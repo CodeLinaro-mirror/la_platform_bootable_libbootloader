@@ -23,6 +23,8 @@ pub mod android;
 /// Generic functionality for partition backed ABR schemes
 pub mod partition;
 
+use arrayvec::ArrayString;
+use core::fmt::Write;
 use core::mem::size_of;
 use liberror::Error;
 
@@ -425,6 +427,19 @@ impl Drop for Cursor<'_> {
     }
 }
 
+/// Returns a slotted partition name.
+pub(crate) fn slotted_part(
+    part: &str,
+    slot: Option<Suffix>,
+) -> ArrayString<{ crate::partition::RAW_PARTITION_NAME_LEN }> {
+    let mut res = ArrayString::new_const();
+    match slot {
+        None => write!(res, "{part}").unwrap(),
+        Some(s) => write!(res, "{part}_{}", s.as_char()).unwrap(),
+    }
+    res
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -445,5 +460,13 @@ mod test {
         let normal_buffer: SuffixBytes = normal.into();
         let normal_cstr = CStr::from_bytes_until_nul(&normal_buffer);
         assert_eq!(normal_cstr, Ok(c"a"));
+    }
+
+    use crate::ops::test::slot;
+    #[test]
+    fn test_slotted_part() {
+        assert_eq!(slotted_part("boot", Some(slot('a').suffix)).as_ref(), "boot_a");
+        assert_eq!(slotted_part("boot", Some(slot('b').suffix)).as_ref(), "boot_b");
+        assert_eq!(slotted_part("boot", None).as_ref(), "boot");
     }
 }
