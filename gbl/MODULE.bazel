@@ -85,6 +85,13 @@ gbl_new_local_repository(
     path = "external/avb",
 )
 
+gbl_new_local_repository(
+    name = "vmm",
+    build_file_content = """exports_files(glob(["**/*"]))""",
+    exist_marker_path = "repo_exists",
+    path = "prebuilts/vmm",
+)
+
 gbl_rust_crate_repository(
     name = "uuid",
     path = "external/rust/android-crates-io/crates/uuid",
