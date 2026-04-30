@@ -410,7 +410,7 @@ impl<'a, B: BlockIo, P: BufferPool, const N: usize, A: AccessMode>
 
     /// Reads from the partition.
     pub async fn read<'b>(
-        &mut self,
+        &self,
         off: u64,
         out: impl Into<&'b mut UninitSlice>,
     ) -> Result<(), Error> {
@@ -445,7 +445,7 @@ impl<'a, B: BlockIo, P: BufferPool, const N: usize, A: AccessMode>
 /// [ReadWrite] implementation.
 impl<'a, B: BlockIo, P: BufferPool, const N: usize> MultiPartitionIo<'a, B, P, N, ReadWrite> {
     /// Writes to the partition.
-    pub async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
+    pub async fn write(&self, off: u64, data: &mut [u8]) -> Result<(), Error> {
         let abs_offs = self.check_rw_range(off, data.len())?;
         for ((disk_idx, _, _), abs_off) in self.parts.iter().zip(abs_offs.iter()) {
             self.disks[*disk_idx].write(*abs_off, data).await?;
@@ -454,7 +454,7 @@ impl<'a, B: BlockIo, P: BufferPool, const N: usize> MultiPartitionIo<'a, B, P, N
     }
 
     /// Writes sparse image to the partition.
-    pub async fn write_sparse(&mut self, off: u64, img: &mut [u8]) -> Result<(), Error> {
+    pub async fn write_sparse(&self, off: u64, img: &mut [u8]) -> Result<(), Error> {
         let sz = is_sparse_image(img).map_err(|_| Error::InvalidInput)?.data_size();
         let abs_offs = self.check_rw_range(off, sz)?;
         write_sparse_image(img, &mut (&abs_offs, self)).await?;
@@ -462,7 +462,7 @@ impl<'a, B: BlockIo, P: BufferPool, const N: usize> MultiPartitionIo<'a, B, P, N
     }
 
     /// Writes zeroes to the partition.
-    pub async fn zeroize(&mut self, scratch: &mut [u8]) -> Result<(), Error> {
+    pub async fn zeroize(&self, scratch: &mut [u8]) -> Result<(), Error> {
         for (disk_idx, start, end) in self.parts.iter() {
             self.disks[*disk_idx]
                 .fill(*start, end.checked_sub(*start).unwrap(), 0, scratch)
@@ -472,6 +472,9 @@ impl<'a, B: BlockIo, P: BufferPool, const N: usize> MultiPartitionIo<'a, B, P, N
     }
 
     /// Performs io-specific erase.
+    ///
+    /// Takes `&mut self` as a receiver because the entire partition is erased.
+    /// Concurrent I/O during an erase is likely not what was intended.
     pub async fn erase(&mut self, scratch: &mut [u8]) -> Result<(), Error> {
         for (disk_idx, start, end) in self.parts.iter() {
             self.disks[*disk_idx].erase(*start, end.checked_sub(*start).unwrap(), scratch).await?;
@@ -501,7 +504,7 @@ impl<'a, B: BlockIo, P: BufferPool> MultiPartitionIo<'a, B, P, 1, ReadWrite> {
 
 // Implements `SparseRawWriter` for tuple (array of flash offsets, MultiPartitionIo)
 impl<'a, B: BlockIo, P: BufferPool, const N: usize> SparseRawWriter
-    for (&ArrayVec<u64, N>, &mut MultiPartitionIo<'a, B, P, N, ReadWrite>)
+    for (&ArrayVec<u64, N>, &MultiPartitionIo<'a, B, P, N, ReadWrite>)
 {
     async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
         for ((disk_idx, _, _), abs_off) in self.1.parts.iter().zip(self.0.iter()) {
@@ -611,7 +614,8 @@ pub(crate) mod test {
     use super::*;
     use crate::ops::test::{FakeGblOpsStorage, TestGblDisk};
     use core::fmt::Debug;
-    use gbl_async::block_on;
+    use gbl_async::join;
+    use libutils::constants::KiB;
 
     /// Absolute start/end offset and size of "boot_a/b" partitions in
     /// "../../libstorage/test/gpt_test_1.bin"
@@ -714,7 +718,7 @@ pub(crate) mod test {
 
         // Reads using the `sub()` and then read approach.
         let mut out = vec![0u8; to_usize(sz)];
-        let mut io = blk.partition_io(part).unwrap().sub(off, sz).unwrap();
+        let io = blk.partition_io(part).unwrap().sub(off, sz).unwrap();
         block_on(io.read(0, &mut out[..])).unwrap();
         assert_eq!(out, part_content[to_usize(off)..][..out.len()].to_vec());
     }
@@ -788,7 +792,7 @@ pub(crate) mod test {
         let parts = &["boot_a", "vendor_boot_a", "raw_0", "raw_1"];
         let mut data = [0x11u8; 1024];
         {
-            let mut io = find_multi_partition_io::<_, _, _, ReadWrite>(&devs, parts).unwrap();
+            let io = find_multi_partition_io::<_, _, _, ReadWrite>(&devs, parts).unwrap();
             block_on(io.write(1024, &mut data)).unwrap();
         }
 
@@ -807,7 +811,7 @@ pub(crate) mod test {
         let gpt = gpt_disk(&disk[..]);
         assert_eq!(block_on(gpt.sync_gpt()).unwrap(), Some(GptSyncResult::BothValid));
 
-        let mut part_io = gpt.partition_io(Some("boot_a")).unwrap();
+        let part_io = gpt.partition_io(Some("boot_a")).unwrap();
         assert!(block_on(part_io.read(BOOT_A_END, &mut vec![0u8; 1][..])).is_err());
         assert!(block_on(part_io.read(BOOT_A_OFF, &mut vec![0u8; to_usize(BOOT_A_SZ) + 1][..]))
             .is_err());
@@ -816,7 +820,7 @@ pub(crate) mod test {
             .is_err());
 
         let raw = raw_disk(c"raw", &disk);
-        let mut part_io = raw.partition_io(Some("raw")).unwrap();
+        let part_io = raw.partition_io(Some("raw")).unwrap();
         assert!(block_on(part_io.read(GPT_DISK_1_SZ, &mut vec![0u8; 1][..])).is_err());
         assert!(block_on(part_io.read(0, &mut vec![0u8; to_usize(GPT_DISK_1_SZ) + 1][..])).is_err());
         assert!(block_on(part_io.write(GPT_DISK_1_SZ, &mut vec![0u8; 1][..])).is_err());
@@ -1062,8 +1066,7 @@ pub(crate) mod test {
         let mut devs = FakeGblOpsStorage::default();
         devs.add_raw_device(c"raw_0", [0x55u8; 4 * 1024]);
         devs.add_raw_device(c"raw_1", [0x55u8; 4 * 1024]);
-        let mut io =
-            find_multi_partition_io::<_, _, _, ReadWrite>(&devs, &["raw_0", "raw_1"]).unwrap();
+        let io = find_multi_partition_io::<_, _, _, ReadWrite>(&devs, &["raw_0", "raw_1"]).unwrap();
         assert!(block_on(io.read(0, &mut [0u8; 1024][..])).is_err());
     }
 
@@ -1080,5 +1083,50 @@ pub(crate) mod test {
         assert_eq!(split_partition_suffix("boot_0"), None);
         assert_eq!(split_partition_suffix("boot_"), None);
         assert_eq!(split_partition_suffix("boot__"), None);
+    }
+
+    #[test]
+    fn test_partition_io_concurrent_reads() {
+        let mut devs = FakeGblOpsStorage::default();
+        devs.add_gpt_device(include_bytes!("../../libstorage/test/gpt_test_1.bin"));
+        let part_io = devs.deref()[0].partition_io(Some("boot_a")).unwrap();
+
+        let mut read_1_buf = vec![0u8; KiB!(2)];
+        let mut read_2_buf = vec![0u8; KiB!(2)];
+
+        block_on(async {
+            let read_1_fut = part_io.read(0, read_1_buf.as_mut_slice());
+            let read_2_fut = part_io.read(KiB!(2), read_2_buf.as_mut_slice());
+
+            let (res_1, res_2) = join(read_1_fut, read_2_fut).await;
+            assert!(res_1.is_ok());
+            assert!(res_2.is_ok());
+        });
+    }
+
+    #[test]
+    fn test_partition_io_concurrent_writes() {
+        let mut devs = FakeGblOpsStorage::default();
+        devs.add_gpt_device(include_bytes!("../../libstorage/test/gpt_test_1.bin"));
+
+        let part_io = devs.deref()[0].partition_io(Some("boot_a")).unwrap();
+        let mut read_buf = vec![0u8; KiB!(2)];
+        let mut write_1_buf = vec![1u8; KiB!(2)];
+        let mut write_2_buf = vec![2u8; KiB!(2)];
+
+        block_on(async {
+            let write_1_fut = part_io.write(0, write_1_buf.as_mut_slice());
+            let write_2_fut = part_io.write(KiB!(2), write_2_buf.as_mut_slice());
+
+            let (res_1, res_2) = join(write_1_fut, write_2_fut).await;
+            assert!(res_1.is_ok());
+            assert!(res_2.is_ok());
+
+            part_io.read(0, read_buf.as_mut_slice()).await.unwrap();
+            assert_eq!(read_buf, write_1_buf);
+
+            part_io.read(KiB!(2), read_buf.as_mut_slice()).await.unwrap();
+            assert_eq!(read_buf, write_2_buf);
+        });
     }
 }

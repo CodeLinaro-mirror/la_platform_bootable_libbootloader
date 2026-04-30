@@ -1521,7 +1521,7 @@ where
         mut responder: impl UploadBuilder + InfoSender,
     ) -> CommandResult<()> {
         self.check_unlocked()?;
-        let (mut part_io, fdr) = self.parse_and_get_partition_io::<ReadOnly>(part).await?;
+        let (part_io, fdr) = self.parse_and_get_partition_io::<ReadOnly>(part).await?;
         // FDR should never be required for read-only - this would indicate a bug in GBL.
         if fdr != Fdr::No {
             return Err("Internal error: FDR requested during fetch".into());

@@ -141,7 +141,7 @@ pub(crate) trait SparseRawWriter {
 /// Write a sparse image in `sparse_img`.
 ///
 /// # Args
-//
+///
 /// * `sparse_img`: The input buffer containing the sparse image. The API modifes input buffer for
 ///   internal optimization.
 /// * `writer`: An implementation of `SparseRawWriter`.
@@ -341,7 +341,8 @@ mod test {
         let mut sparse_header: SparseHeader = copy_from(&sparse[..]).unwrap();
         sparse_header.magic = 0;
         copy_to(&sparse_header, &mut sparse[..]);
-        assert!(block_on(write_sparse_image(&mut sparse[..], &mut vec![])).is_err());
+        let mut out = vec![];
+        assert!(block_on(write_sparse_image(&mut sparse[..], &mut out)).is_err());
     }
 
     #[test]
@@ -350,7 +351,8 @@ mod test {
         let mut sparse_header: SparseHeader = copy_from(&sparse[..]).unwrap();
         sparse_header.major_version = SPARSE_HEADER_MAJOR_VER + 1;
         copy_to(&sparse_header, &mut sparse[..]);
-        assert!(block_on(write_sparse_image(&mut sparse[..], &mut vec![])).is_err());
+        let mut out = vec![];
+        assert!(block_on(write_sparse_image(&mut sparse[..], &mut out)).is_err());
     }
 
     #[test]
@@ -359,6 +361,7 @@ mod test {
         let mut sparse_header: SparseHeader = copy_from(&sparse[..]).unwrap();
         sparse_header.minor_version = SPARSE_HEADER_MINOR_VER + 1;
         copy_to(&sparse_header, &mut sparse[..]);
-        assert!(block_on(write_sparse_image(&mut sparse[..], &mut vec![])).is_err());
+        let mut out = vec![];
+        assert!(block_on(write_sparse_image(&mut sparse[..], &mut out)).is_err());
     }
 }

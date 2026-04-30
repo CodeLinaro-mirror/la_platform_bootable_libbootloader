@@ -169,8 +169,8 @@ unsafe impl<T: DerefMut<Target = [u8]>> BlockIo for RamBlockIo<T> {
 
     async fn write_blocks(&self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
         let offset = self.checks(blk_offset, &mut *data).await?;
-
         self.num_accesses.borrow_mut().1 += 1;
+
         Ok(self.storage.borrow_mut()[offset..][..data.len()].copy_from_slice(data))
     }
 

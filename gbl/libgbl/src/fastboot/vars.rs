@@ -669,7 +669,7 @@ where
 
         let disk = &self.disks[blk_idx];
 
-        let mut io;
+        let io;
         loop {
             match disk.partition_io(Some("super")) {
                 Ok(pio) => {
