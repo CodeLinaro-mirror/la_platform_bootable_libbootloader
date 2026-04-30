@@ -12,26 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
 package(
     default_applicable_licenses = ["@gbl//licensing:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 
-genrule(
-    name = "qemu_test",
-    srcs = [
-        "qemu_launcher.py",
-        "@gbl//tests/qemu/gbl_launcher:gbl_launcher_aarch64",
-        "@vmm//:qemu/x86_64-linux-gnu/bin/gbl-qemu-system-aarch64",
-        "@vmm//:qemu/x86_64-linux-gnu/usr/share/qemu/edk2-aarch64-code.fd",
-    ],
-    outs = ["output_result.txt"],
-    cmd = """
-        python3 $(location qemu_launcher.py) \
-            $(location @gbl//tests/qemu/gbl_launcher:gbl_launcher_aarch64) \
-            --qemu $(location @vmm//:qemu/x86_64-linux-gnu/bin/gbl-qemu-system-aarch64) \
-            --bios $(location @vmm//:qemu/x86_64-linux-gnu/usr/share/qemu/edk2-aarch64-code.fd) \
-            --log_output $@
-    """,
-    tools = ["@gbl//tools/gpt_gen"],
+rust_binary(
+    name = "gpt_gen",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = ["@clap"],
 )

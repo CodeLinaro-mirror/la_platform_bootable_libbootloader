@@ -437,6 +437,73 @@ gbl_rust_crate_repository(
     path = "external/rust/android-crates-io/crates/base64",
 )
 
+gbl_rust_crate_repository(
+    name = "strsim",
+    path = "external/rust/android-crates-io/crates/strsim",
+)
+
+gbl_rust_crate_repository(
+    name = "anstyle",
+    path = "external/rust/android-crates-io/crates/anstyle",
+)
+
+gbl_rust_crate_repository(
+    name = "clap_lex",
+    path = "external/rust/android-crates-io/crates/clap_lex",
+)
+
+gbl_rust_crate_repository(
+    name = "clap_builder",
+    compile_data = ["README.md"],
+    features = [
+        "error-context",
+        "help",
+        "std",
+        "string",
+        "suggestions",
+        "usage",
+    ],
+    path = "external/rust/android-crates-io/crates/clap_builder",
+    deps = [
+        "@anstyle",
+        "@clap_lex",
+        "@strsim",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "heck",
+    path = "external/rust/android-crates-io/crates/heck",
+)
+
+gbl_rust_crate_repository(
+    name = "clap_derive",
+    compile_data = ["README.md"],
+    path = "external/rust/android-crates-io/crates/clap_derive",
+    rule = "rust_proc_macro",
+    deps = [
+        "@heck",
+        "@proc_macro2",
+        "@quote",
+        "@syn",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "clap",
+    compile_data = ["examples/demo.md"],
+    features = [
+        "derive",
+        "error-context",
+        "help",
+        "std",
+        "usage",
+    ],
+    path = "external/rust/android-crates-io/crates/clap",
+    proc_macro_deps = ["@clap_derive"],
+    deps = ["@clap_builder"],
+)
+
 # Set up a repo to export LLVM tool/library/header/sysroot paths
 gbl_llvm_prebuilts = use_repo_rule("@gbl//toolchain:gbl_workspace_util.bzl", "gbl_llvm_prebuilts")
 

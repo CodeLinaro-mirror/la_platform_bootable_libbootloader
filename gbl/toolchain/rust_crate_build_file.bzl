@@ -22,7 +22,8 @@ def rust_crate_build_file(
         proc_macro_deps = [],
         features = [],
         edition = "2021",
-        rustc_flags = []):
+        rustc_flags = [],
+        compile_data = []):
     """Generate BUILD file content for a rust crate
 
     This helper is suitable for crates that have straightforward build rules. Specifically, the
@@ -38,6 +39,7 @@ def rust_crate_build_file(
         features (List of strings): The `features` field.
         edition (String): Rust edition.
         rustc_flags (List of strings): The `rustc_flags` field.
+        compile_data (List of strings): The `compile_data` field.
 
     Returns:
         A string for the BUILD file content.
@@ -47,6 +49,7 @@ def rust_crate_build_file(
     proc_macro_deps = "[{}]".format(",".join(['"{}"'.format(ele) for ele in proc_macro_deps]))
     features = "[{}]".format(",".join(['"{}"'.format(ele) for ele in features]))
     rustc_flags = "[{}]".format(",".join(['"{}"'.format(ele) for ele in rustc_flags]))
+    compile_data = "[{}]".format(",".join(['"{}"'.format(ele) for ele in compile_data]))
 
     return """
 load("@rules_rust//rust:defs.bzl", "{rule}")
@@ -63,6 +66,7 @@ generate_license(
     srcs = glob(["**/*.rs"]),
     crate_features = {features},
     edition = "{edition}",
+    compile_data = {compile_data},
     rustc_flags = {rustc_flags},
     visibility = ["//visibility:public"],
     deps = {deps},
@@ -77,5 +81,6 @@ generate_license(
         deps = deps,
         proc_macro_deps = proc_macro_deps,
         edition = edition,
+        compile_data = compile_data,
         rule = rule,
     )
