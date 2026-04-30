@@ -117,8 +117,13 @@ pub struct GptHeader {
 }
 
 impl GptHeader {
-    /// Casts a bytes slice into a mutable GptHeader structure.
-    pub fn from_bytes_mut(bytes: &mut [u8]) -> &mut GptHeader {
+    /// Casts a byte slice into a GptHeader structure.
+    pub fn from_bytes(bytes: &[u8]) -> &Self {
+        Ref::into_ref(Ref::<_, GptHeader>::new_from_prefix(bytes).unwrap().0)
+    }
+
+    /// Casts a byte slice into a mutable GptHeader structure.
+    pub fn from_bytes_mut(bytes: &mut [u8]) -> &mut Self {
         Ref::into_mut(Ref::<_, GptHeader>::new_from_prefix(bytes).unwrap().0)
     }
 
@@ -210,7 +215,7 @@ fn check_header_fields(header: &GptHeader) -> Result<()> {
 /// * `io`: An implementation of [BlockIo],
 /// * `header`: The GPT header to verify.
 /// * `is_primary`: If the header is a primary header.
-fn check_header(io: &mut impl BlockIo, header: &GptHeader, is_primary: bool) -> Result<()> {
+fn check_header(io: &impl BlockIo, header: &GptHeader, is_primary: bool) -> Result<()> {
     let num_blks = SafeNum::from(io.info().num_blocks);
 
     // GPT spec requires that at least 128 entries worth of space be reserved.
@@ -750,7 +755,7 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
     /// Helper function for loading and validating GPT header and entries.
     async fn load_and_validate_gpt(
         &mut self,
-        disk: &mut Disk<impl BlockIo, impl BufferPool>,
+        disk: &Disk<impl BlockIo, impl BufferPool>,
         hdr_type: HeaderType,
     ) -> Result<()> {
         let blk_sz = disk.io().info().block_size;
@@ -787,7 +792,7 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
     /// * Returns Err() if disk IO encounters error.
     pub(crate) async fn load_and_sync(
         &mut self,
-        disk: &mut Disk<impl BlockIo, impl BufferPool>,
+        disk: &Disk<impl BlockIo, impl BufferPool>,
         repair: bool,
     ) -> Result<GptSyncResult> {
         let blk_sz = disk.io().info().block_size;
@@ -938,7 +943,7 @@ pub fn new_gpt_max() -> GptMax {
 ///    storage.
 /// * `gpt`: The output [Gpt] to update.
 pub(crate) async fn update_gpt(
-    disk: &mut Disk<impl BlockIo, impl BufferPool>,
+    disk: &Disk<impl BlockIo, impl BufferPool>,
     mbr_primary: &mut [u8],
     resize: bool,
     gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
@@ -990,7 +995,7 @@ pub(crate) async fn update_gpt(
 
 /// Erases GPT if there is one on the device.
 pub(crate) async fn erase_gpt(
-    disk: &mut Disk<impl BlockIo, impl BufferPool>,
+    disk: &Disk<impl BlockIo, impl BufferPool>,
     gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
 ) -> Result<()> {
     match disk.sync_gpt(gpt, false).await?.res() {
@@ -1046,7 +1051,7 @@ where
     T: BlockIo,
     P: BufferPool,
     B: DerefMut<Target = [u8]>,
-    D: DerefMut<Target = Disk<T, P>>,
+    D: Deref<Target = Disk<T, P>>,
     G: DerefMut<Target = Gpt<B>>,
 {
     /// Creates a new instance.
@@ -1061,7 +1066,7 @@ where
     /// * Returns Ok((Self, true)) if an instance is created and the disk has a valid GPT.
     /// * Returns Ok((Self, false)) if an instance is created but disk does not have a valid GPT.
     /// * Returns Err() otherwise.
-    pub fn new(mut disk: D, mut gpt: G) -> Result<(Self, bool)> {
+    pub fn new(disk: D, mut gpt: G) -> Result<(Self, bool)> {
         if disk.block_info().num_blocks < min_required_blocks(disk.block_info().block_size)? {
             return Err(Error::GptError(GptError::DiskTooSmall));
         }
@@ -1312,7 +1317,7 @@ pub(crate) mod test {
     #[test]
     fn test_load_and_sync() {
         for (_, data) in get_gpt_test_1_data() {
-            let (mut dev, mut gpt) = test_disk_and_gpt(data);
+            let (dev, mut gpt) = test_disk_and_gpt(data);
             block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
 
             assert_eq!(gpt.partition_iter().unwrap().count(), 2);
@@ -1335,7 +1340,7 @@ pub(crate) mod test {
             let mut buffer = AlignedBuffer::new(size, 8);
             let buffer = &mut buffer[1..];
             assert_ne!(buffer.as_ptr() as usize % 2, 0);
-            let mut disk = test_disk(data);
+            let disk = test_disk(data);
             let mut gpt = Gpt::new(buffer).unwrap();
             block_on(disk.sync_gpt(&mut gpt, true)).unwrap();
         }
@@ -1349,7 +1354,7 @@ pub(crate) mod test {
     #[test]
     fn test_gpt_buffer_not_enough_for_all_entries() {
         fn test_gpt_buffer_not_enough_for_all_entries_impl<const N: usize>(data: &[u8]) {
-            let mut dev = test_disk(data);
+            let dev = test_disk(data);
             let mut gpt = new_gpt_n::<N>();
             assert_eq!(gpt.max_entries(), N);
             assert!(block_on(dev.sync_gpt(&mut gpt, true)).unwrap().res().is_err());
@@ -1367,7 +1372,7 @@ pub(crate) mod test {
     #[test]
     fn test_good_gpt_no_repair_write() {
         for (entries_count, data) in get_gpt_test_1_data() {
-            let (mut dev, mut gpt) = test_disk_and_gpt(data);
+            let (dev, mut gpt) = test_disk_and_gpt(data);
             assert_eq!(gpt.max_entries(), 256);
             assert_eq!(block_on(dev.sync_gpt(&mut gpt, false)).unwrap(), GptSyncResult::BothValid);
             assert_eq!(gpt.entries_count(), Ok(entries_count));
@@ -1376,7 +1381,7 @@ pub(crate) mod test {
 
     #[test]
     fn test_good_gpt_too_big_unsupported() {
-        let (mut dev, mut gpt) = test_disk_and_gpt(include_bytes!("../test/gpt_too_big.bin"));
+        let (dev, mut gpt) = test_disk_and_gpt(include_bytes!("../test/gpt_too_big.bin"));
         assert_eq!(
             block_on(dev.sync_gpt(&mut gpt, true)).unwrap(),
             GptSyncResult::NoValidGpt {
@@ -1394,7 +1399,7 @@ pub(crate) mod test {
 
     #[test]
     fn test_gpt_invalid_returns_errors() {
-        let (mut dev, mut gpt) = test_disk_and_gpt(include_bytes!("../test/gpt_too_big.bin"));
+        let (dev, mut gpt) = test_disk_and_gpt(include_bytes!("../test/gpt_too_big.bin"));
         let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
         assert!(matches!(sync_res, GptSyncResult::NoValidGpt { .. }));
         assert!(gpt.check_valid().is_err());
@@ -1416,18 +1421,18 @@ pub(crate) mod test {
             (&mut disk[MBR_SIZE..]).split_at_mut(GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE);
         let mut header = GptHeader::from_bytes_mut(header);
         modify_primary(&mut header, Ref::<_, [GptEntry]>::new_slice(entries).unwrap());
-        let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
-        assert_ne!(dev.io().storage(), disk_orig);
+        let (dev, mut gpt) = test_disk_and_gpt(&disk);
+        assert_ne!(dev.io().storage().deref(), disk_orig);
         let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
         assert_eq!(sync_res, GptSyncResult::PrimaryRestored(expect_primary_err));
-        assert_eq!(dev.io().storage(), disk_orig);
+        assert_eq!(dev.io().storage().deref(), disk_orig);
 
         // Syncs without restoring primary.
-        let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
-        assert_ne!(dev.io().storage(), disk_orig);
+        let (dev, mut gpt) = test_disk_and_gpt(&disk);
+        assert_ne!(dev.io().storage().deref(), disk_orig);
         let sync_res = block_on(dev.sync_gpt(&mut gpt, false)).unwrap();
         assert_eq!(sync_res, GptSyncResult::PrimaryError(expect_primary_err));
-        assert_eq!(dev.io().storage(), disk);
+        assert_eq!(dev.io().storage().deref(), disk);
 
         // Restores from primary to secondary.
         let mut disk = disk_orig.to_vec();
@@ -1441,18 +1446,18 @@ pub(crate) mod test {
             )
             .unwrap();
         modify_secondary(&mut header, Ref::<_, [GptEntry]>::new_slice(&mut entries[..]).unwrap());
-        let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
-        assert_ne!(dev.io().storage(), disk_orig);
+        let (dev, mut gpt) = test_disk_and_gpt(&disk);
+        assert_ne!(dev.io().storage().deref(), disk_orig);
         let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
         assert_eq!(sync_res, GptSyncResult::SecondaryRestored(expect_secondary_err));
-        assert_eq!(dev.io().storage(), disk_orig);
+        assert_eq!(dev.io().storage().deref(), disk_orig);
 
         // Syncs without restoring secondary.
-        let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
-        assert_ne!(dev.io().storage(), disk_orig);
+        let (dev, mut gpt) = test_disk_and_gpt(&disk);
+        assert_ne!(dev.io().storage().deref(), disk_orig);
         let sync_res = block_on(dev.sync_gpt(&mut gpt, false)).unwrap();
         assert_eq!(sync_res, GptSyncResult::SecondaryError(expect_secondary_err));
-        assert_eq!(dev.io().storage(), disk);
+        assert_eq!(dev.io().storage().deref(), disk);
     }
 
     #[test]
@@ -1737,7 +1742,7 @@ pub(crate) mod test {
             );
             secondary_hdr.revision = !secondary_hdr.revision;
             secondary_hdr.update_crc();
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
             assert_eq!(
                 block_on(dev.sync_gpt(&mut gpt, true)).unwrap(),
                 GptSyncResult::SecondaryRestored(Error::GptError(GptError::DifferentFromPrimary)),
@@ -1751,7 +1756,7 @@ pub(crate) mod test {
             let mut disk = data.to_vec();
             // MBR + (header + 0 * entries) * 2 - 1
             disk.resize(MBR_SIZE + GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE * 2 - BLOCK_SIZE, 0);
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
             let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
             assert_eq!(
                 sync_res,
@@ -1767,7 +1772,7 @@ pub(crate) mod test {
     fn test_uninitialized_gpt() {
         for (_, data) in get_gpt_test_1_data() {
             // Load a good GPT first.
-            let (mut dev, mut gpt) = test_disk_and_gpt(&data);
+            let (dev, mut gpt) = test_disk_and_gpt(&data);
             assert_eq!(block_on(dev.sync_gpt(&mut gpt, true)).unwrap(), GptSyncResult::BothValid);
             gpt.find_partition("boot_a").unwrap();
             // Corrupt GPT.
@@ -1786,15 +1791,15 @@ pub(crate) mod test {
             disk[MBR_BLKS..][..GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE].fill(0);
             disk.last_chunk_mut::<BLOCK_SIZE>().unwrap().fill(0);
 
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
 
-            assert_ne!(dev.io().storage(), data);
+            assert_ne!(dev.io().storage().deref(), data);
             let size: SafeNum =
                 gpt_entries_size(entries_count) + MBR_SIZE + GPT_HEADER_NO_ENTRIES_SIZE;
             let len: usize = size.round_up(BLOCK_SIZE).try_into().unwrap();
             let mut mbr_primary = data[..len].to_vec();
             block_on(dev.update_gpt(&mut mbr_primary, false, &mut gpt)).unwrap();
-            assert_eq!(dev.io().storage(), data);
+            assert_eq!(dev.io().storage().deref(), data);
         }
     }
 
@@ -1811,13 +1816,13 @@ pub(crate) mod test {
             secondary_hdr.revision = !secondary_hdr.revision;
             secondary_hdr.update_crc();
 
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
 
-            assert_ne!(dev.io().storage(), disk_orig);
+            assert_ne!(dev.io().storage().deref(), disk_orig);
             let mut mbr_primary =
                 disk_orig[..mbr_gpt_header_size_block_align(entries_count)].to_vec();
             block_on(dev.update_gpt(&mut mbr_primary, false, &mut gpt)).unwrap();
-            assert_eq!(dev.io().storage(), disk_orig);
+            assert_eq!(dev.io().storage().deref(), disk_orig);
         }
     }
 
@@ -1831,22 +1836,20 @@ pub(crate) mod test {
             // Doubles the disk size.
             disk.resize(disk_orig.len() * 2, 0);
 
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
 
-            assert_ne!(dev.io().storage, disk_orig);
+            assert_ne!(dev.io().storage().deref(), disk_orig);
             let mut mbr_primary =
                 disk_orig[..mbr_gpt_header_size_block_align(entries_count)].to_vec();
             block_on(dev.update_gpt(&mut mbr_primary, true, &mut gpt)).unwrap();
             let expected_last =
                 (disk.len() - gpt_header_size_block_align(entries_count)) / BLOCK_SIZE - 1;
 
-            let (primary, secondary) = dev
-                .io()
-                .storage()
-                .split_last_chunk_mut::<GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE>()
-                .unwrap();
-            let primary_hdr = GptHeader::from_bytes_mut(&mut primary[MBR_SIZE..]);
-            let secondary_hdr = GptHeader::from_bytes_mut(secondary);
+            let storage = dev.io.storage();
+            let (primary, secondary) =
+                storage.split_last_chunk::<GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE>().unwrap();
+            let primary_hdr = GptHeader::from_bytes(&primary[MBR_SIZE..]);
+            let secondary_hdr = GptHeader::from_bytes(secondary);
             // Header's last usable block is updated.
             assert_eq!({ primary_hdr.last }, expected_last.try_into().unwrap());
             assert_eq!({ primary_hdr.backup }, (disk.len() / BLOCK_SIZE - 1).try_into().unwrap());
@@ -1864,9 +1867,9 @@ pub(crate) mod test {
             // Doubles the disk size.
             disk.resize(disk_orig.len() * 2, 0);
 
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
 
-            assert_ne!(dev.io().storage, disk_orig);
+            assert_ne!(dev.io().storage().deref(), disk_orig);
             let mut mbr_primary =
                 disk_orig[..mbr_gpt_header_size_block_align(entries_count)].to_vec();
             block_on(dev.update_gpt(&mut mbr_primary, true, &mut gpt)).unwrap();
@@ -1889,7 +1892,7 @@ pub(crate) mod test {
                 + mbr_gpt_header_size_block_align(entries_count)
                 + gpt_header_size_block_align(entries_count);
             let len_blks = len / BLOCK_SIZE;
-            let (mut dev, mut gpt) = test_disk_and_gpt(&vec![0u8; (len_blks - 1) * BLOCK_SIZE]);
+            let (dev, mut gpt) = test_disk_and_gpt(&vec![0u8; (len_blks - 1) * BLOCK_SIZE]);
             let mut mbr_primary = data[..gpt_header_size_block_align(entries_count)].to_vec();
             assert!(block_on(dev.update_gpt(&mut mbr_primary, true, &mut gpt)).is_err());
         }
@@ -1899,7 +1902,7 @@ pub(crate) mod test {
     fn test_update_gpt_buffer_truncated() {
         for (entries_count, data) in get_gpt_test_1_data() {
             let mut disk = data.to_vec();
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
 
             // Less than 1 MBR block.
             let actual_size = SafeNum::from(MBR_SIZE);
@@ -1942,7 +1945,7 @@ pub(crate) mod test {
     fn test_update_gpt_check_header_fail() {
         for (entries_count, data) in get_gpt_test_1_data() {
             let disk = data;
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
             let (_, len) = get_primary_size_len(entries_count);
             let mut mbr_primary = disk[..len].to_vec();
             // Corrupts the first byte of the GPT header.
@@ -1958,7 +1961,7 @@ pub(crate) mod test {
     fn test_update_gpt_check_entries_fail() {
         for (entries_count, data) in get_gpt_test_1_data() {
             let disk = data;
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
             let size: SafeNum =
                 gpt_entries_size(entries_count) + MBR_SIZE + GPT_HEADER_NO_ENTRIES_SIZE;
             let len: usize = size.round_up(BLOCK_SIZE).try_into().unwrap();
@@ -1978,22 +1981,26 @@ pub(crate) mod test {
 
     #[test]
     fn test_erase_gpt_no_gpt() {
-        let (mut dev, mut gpt) = test_disk_and_gpt(&[0u8; 1024 * 1024]);
+        let (dev, mut gpt) = test_disk_and_gpt(&[0u8; 1024 * 1024]);
         block_on(dev.erase_gpt(&mut gpt)).unwrap();
     }
 
     #[test]
     fn test_erase_gpt() {
         for (entries_count, data) in get_gpt_test_1_data() {
-            let (mut dev, mut gpt) = test_disk_and_gpt(data);
+            let (dev, mut gpt) = test_disk_and_gpt(data);
             block_on(dev.erase_gpt(&mut gpt)).unwrap();
             let size: SafeNum = gpt_entries_size(entries_count) + GPT_HEADER_NO_ENTRIES_SIZE;
             let len: usize = size.round_up(BLOCK_SIZE).try_into().unwrap();
             let mut expected_vec = Vec::with_capacity(len);
             expected_vec.resize(len, 0u8);
-            assert_eq!(dev.io().storage[MBR_SIZE..][..len], expected_vec);
-            let dev_size = dev.io().storage.len();
-            assert_eq!(dev.io().storage.split_at_checked(dev_size - len).unwrap().1, expected_vec);
+            assert_eq!(dev.io().storage().deref()[MBR_SIZE..][..len], expected_vec);
+            // New scope to simplify lifetime for dev.io().storage()
+            {
+                let storage = dev.io().storage();
+                let dev_size = storage.len();
+                assert_eq!(storage.split_at_checked(dev_size - len).unwrap().1, expected_vec);
+            }
             assert!(matches!(
                 block_on(dev.sync_gpt(&mut gpt, true)).unwrap(),
                 GptSyncResult::NoValidGpt { .. }
@@ -2005,8 +2012,8 @@ pub(crate) mod test {
     fn test_zero_partition_size() {
         for (_entries_count, data) in get_gpt_test_1_data() {
             let disk = data.to_vec();
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
-            let (mut builder, _) = GptBuilder::new(&mut dev, &mut gpt).unwrap();
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (mut builder, _) = GptBuilder::new(&dev, &mut gpt).unwrap();
             assert_eq!(builder.remove("boot_a"), Ok(true));
             assert_eq!(builder.remove("boot_b"), Ok(true));
             builder.add("boot_b", [1u8; GPT_GUID_LEN], [1u8; GPT_GUID_LEN], 0, Some(0)).unwrap();
@@ -2026,15 +2033,15 @@ pub(crate) mod test {
             // Makes partition non-sorted.
             entries.swap(0, 1);
             header.update_entries_crc(entries.as_bytes());
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
             block_on(dev.sync_gpt(&mut gpt, true)).unwrap().res().unwrap();
         }
     }
 
     #[test]
     fn test_gpt_builder_initialize_gpt_if_no_valid_gpt() {
-        let (mut dev, mut gpt) = test_disk_and_gpt(vec![0u8; 1024 * 1024]);
-        let (builder, valid) = GptBuilder::new(&mut dev, &mut gpt).unwrap();
+        let (dev, mut gpt) = test_disk_and_gpt(vec![0u8; 1024 * 1024]);
+        let (builder, valid) = GptBuilder::new(&dev, &mut gpt).unwrap();
         assert!(!valid);
         block_on(builder.persist()).unwrap();
         // A new GPT is created.
@@ -2045,8 +2052,8 @@ pub(crate) mod test {
     #[test]
     fn test_gpt_builder_remove_partition() {
         for (_entries_count, data) in get_gpt_test_1_data() {
-            let (mut dev, mut gpt) = test_disk_and_gpt(data);
-            let (mut builder, valid) = GptBuilder::new(&mut dev, &mut gpt).unwrap();
+            let (dev, mut gpt) = test_disk_and_gpt(data);
+            let (mut builder, valid) = GptBuilder::new(&dev, &mut gpt).unwrap();
             assert!(valid);
             assert_eq!(builder.remove("boot_b"), Ok(true));
             assert_eq!(builder.remove("non-existent"), Ok(false));
@@ -2063,8 +2070,8 @@ pub(crate) mod test {
     #[test]
     fn test_gpt_builder_add_partition_find_first() {
         for (entries_count, data) in get_gpt_test_1_data() {
-            let (mut dev, mut gpt) = test_disk_and_gpt(data);
-            let (mut builder, _) = GptBuilder::new(&mut dev, &mut gpt).unwrap();
+            let (dev, mut gpt) = test_disk_and_gpt(data);
+            let (mut builder, _) = GptBuilder::new(&dev, &mut gpt).unwrap();
             assert!(builder.remove("boot_a").unwrap());
             // Adds at the beginning.
             const NEW_PARTITION_0_SIZE: u64 = 1024;
@@ -2121,7 +2128,7 @@ pub(crate) mod test {
     fn test_gpt_builder_non_sorted_add_partition() {
         for (entries_count, data) in get_gpt_test_1_data() {
             let mut disk = data.to_vec();
-            let (mut dev, mut gpt) = test_disk_and_gpt(&disk);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
             let (header, entries) =
                 disk[MBR_SIZE..].split_at_mut(GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE);
             let header = GptHeader::from_bytes_mut(header);
@@ -2130,7 +2137,7 @@ pub(crate) mod test {
             entries.swap(0, 1);
             header.update_entries_crc(entries.as_bytes());
 
-            let (mut builder, _) = GptBuilder::new(&mut dev, &mut gpt).unwrap();
+            let (mut builder, _) = GptBuilder::new(&dev, &mut gpt).unwrap();
             // Adds following boot_b.
             const NEW_PARTITION_SIZE: u64 = 1024;
             builder
@@ -2163,8 +2170,8 @@ pub(crate) mod test {
     #[test]
     fn test_gpt_builder_add_partition_append() {
         for (entries_count, data) in get_gpt_test_1_data() {
-            let (mut dev, mut gpt) = test_disk_and_gpt(data);
-            let (mut builder, _) = GptBuilder::new(&mut dev, &mut gpt).unwrap();
+            let (dev, mut gpt) = test_disk_and_gpt(data);
+            let (mut builder, _) = GptBuilder::new(&dev, &mut gpt).unwrap();
             assert!(builder.remove("boot_b").unwrap());
             // Adds following "boot_a".
             const NEW_PARTITION_SIZE: u64 = 1024;
@@ -2203,8 +2210,8 @@ pub(crate) mod test {
     fn test_gpt_builder_not_enough_resource() {
         // Create a Gpt that can only load 1 entry.
         let mut gpt = new_gpt_n::<1>();
-        let mut dev = test_disk(vec![0u8; 64 * 1024]);
-        let (mut builder, _) = GptBuilder::new(&mut dev, &mut gpt).unwrap();
+        let dev = test_disk(vec![0u8; 64 * 1024]);
+        let (mut builder, _) = GptBuilder::new(&dev, &mut gpt).unwrap();
         builder.add("new_0", [1u8; GPT_GUID_LEN], [1u8; GPT_GUID_LEN], 0, Some(1024)).unwrap();
         assert!(builder.add("new_1", [1u8; GPT_GUID_LEN], [1u8; GPT_GUID_LEN], 0, None).is_err());
     }

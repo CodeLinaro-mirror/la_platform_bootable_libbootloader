@@ -61,7 +61,6 @@ const PARTITION_START: &'static str = "partition-start";
 const BLOCK_DEVICE: &'static str = "block-device";
 const TOTAL_BLOCKS: &'static str = "total-blocks";
 const BLOCK_SIZE: &'static str = "block-size";
-const BLOCK_DEVICE_STATUS: &'static str = "status";
 
 const DEFAULT_BLOCK: &'static str = "gbl-default-block";
 
@@ -497,9 +496,6 @@ where
         Ok(match val_type {
             TOTAL_BLOCKS => snprintf!(out, "{:#x}", info.num_blocks),
             BLOCK_SIZE => snprintf!(out, "{:#x}", info.block_size),
-            BLOCK_DEVICE_STATUS => {
-                snprintf!(out, "{}", blk.status().to_str())
-            }
             _ => return Err("Invalid type".into()),
         })
     }
@@ -526,13 +522,6 @@ where
                     BLOCK_DEVICE,
                     [id, BLOCK_SIZE],
                     snprintf!(val, "{:#x}", info.block_size),
-                )
-                .await?;
-            responder
-                .send_var_info(
-                    BLOCK_DEVICE,
-                    [id, BLOCK_DEVICE_STATUS],
-                    snprintf!(val, "{}", blk.status().to_str()),
                 )
                 .await?;
         }

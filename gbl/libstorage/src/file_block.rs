@@ -17,8 +17,13 @@
 use bytes::buf::UninitSlice;
 use gbl_storage::{BlockInfo, BlockIo};
 use liberror::Error;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::{
+    fs::File,
+    // Unix FS gives us `read_exact_at` and `write_all_at`,
+    // which take immutable receivers and save a mutable file seek.
+    // The alternative would be for `FileBlockIo` to store `file` via a RefCell.
+    os::unix::fs::FileExt,
+};
 
 const BLOCK_SIZE: u64 = 512;
 
@@ -70,32 +75,28 @@ unsafe impl BlockIo for FileBlockIo {
     }
 
     async fn read_blocks<'a>(
-        &mut self,
+        &self,
         blk_offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<(), Error> {
         let out = out.into();
         let offset = blk_offset * BLOCK_SIZE;
-        self.file.seek(SeekFrom::Start(offset)).map_err(|_| Error::Other(None))?;
-
         let mut buf = vec![0u8; out.len()];
-        self.file.read_exact(&mut buf).map_err(|_| Error::Other(None))?;
+        self.file.read_exact_at(&mut buf, offset).map_err(|_| Error::Other(None))?;
         Ok(out.copy_from_slice(&buf))
     }
 
-    async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
+    async fn write_blocks(&self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
         let offset = blk_offset * BLOCK_SIZE;
-        self.file.seek(SeekFrom::Start(offset)).map_err(|_| Error::Other(None))?;
-        self.file.write_all(data).map_err(|_| Error::Other(None))?;
+        self.file.write_all_at(data, offset).map_err(|_| Error::Other(None))?;
         Ok(())
     }
 
-    async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<(), Error> {
+    async fn erase_blocks(&self, blk_offset: u64, num_blks: u64) -> Result<(), Error> {
         let offset = blk_offset * BLOCK_SIZE;
         let size = num_blks * BLOCK_SIZE;
-        self.file.seek(SeekFrom::Start(offset)).map_err(|_| Error::Other(None))?;
         let zeros = vec![0u8; size as usize];
-        self.file.write_all(&zeros).map_err(|_| Error::Other(None))?;
+        self.file.write_all_at(&zeros, offset).map_err(|_| Error::Other(None))?;
         Ok(())
     }
 }

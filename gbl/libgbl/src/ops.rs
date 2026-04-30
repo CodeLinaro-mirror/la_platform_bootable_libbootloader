@@ -1162,7 +1162,13 @@ pub(crate) mod test {
         type Target = [TestGblDisk];
 
         fn deref(&self) -> &Self::Target {
-            &self.0[..]
+            self.0.as_slice()
+        }
+    }
+
+    impl DerefMut for FakeGblOpsStorage {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.0.as_mut_slice()
         }
     }
 

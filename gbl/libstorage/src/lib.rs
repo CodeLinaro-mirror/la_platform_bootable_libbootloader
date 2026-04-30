@@ -22,12 +22,11 @@ extern crate alloc;
 use arrayvec::ArrayVec;
 use bytes::buf::UninitSlice;
 use core::{
-    cell::RefMut,
     cmp::min,
     iter,
-    ops::{Bound, DerefMut, Index, IndexMut, RangeBounds},
+    ops::{Bound, Deref, DerefMut, Index, IndexMut, RangeBounds},
 };
-use gbl_async::block_on;
+use gbl_async::{block_on, yield_now};
 use liberror::{Error, Result};
 use libutils::{
     aligned_subslice,
@@ -140,12 +139,25 @@ impl BlockInfo {
 
 /// `BlockIo` provides interfaces for reading and writing block storage medium.
 ///
-/// SAFETY:
-/// `read_blocks` method must guarantee `out` to be fully initialized on success. Otherwise error
-/// must be returned.
+/// Note for implementors: if an operation is valid,
+/// i.e. the block offset and buffer meet the preconditions of the call,
+/// but the implementation cannot service the request immediately,
+/// the implementation SHOULD return `Err(OutOfResources)`.
 ///
-/// This is necessary because callers are guaranteed that the [UninitSlice] buffer has been fully
-/// initialized on success and can safely be converted to a `&[u8]` and read normally.
+/// This allows callers to reattempt the operation with the expectation that required
+/// resources will eventually become available, e.g. space in a request queue.
+///
+/// It is possible for the same BlockIo to be used concurrently for multiple requests.
+/// It is the responsibility of the implementation to be safe for concurrency.
+/// This is normally easy to achieve due to the borrow checker, but care must be taken
+/// if an implementation crosses an FFI boundary.
+///
+/// SAFETY:
+/// * `read_blocks` method must guarantee `out` to be fully initialized on success.
+///   Otherwise error must be returned.
+///   This is necessary because callers are guaranteed that the [UninitSlice] buffer
+///   has been fully initialized on success and can safely be converted to a `&[u8]`
+///   and read normally.
 pub unsafe trait BlockIo {
     /// Returns the `BlockInfo` for this block device.
     fn info(&self) -> BlockInfo;
@@ -207,7 +219,7 @@ pub unsafe trait BlockIo {
     /// backing buffer for `out` is [MaybeUninit], then it's safe to convert it to a `&[u8]` and
     /// read the now-initialized data.
     async fn read_blocks<'a>(
-        &mut self,
+        &self,
         blk_offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()>;
@@ -224,7 +236,7 @@ pub unsafe trait BlockIo {
     /// # Returns
     ///
     /// Returns Ok(()) if exactly data.len() number of bytes are written. Otherwise errors.
-    async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()>;
+    async fn write_blocks(&self, blk_offset: u64, data: &mut [u8]) -> Result<()>;
 
     /// Erases blocks of data on the device.
     ///
@@ -237,7 +249,7 @@ pub unsafe trait BlockIo {
     /// # Returns
     ///
     /// Returns Ok(()) if erase is successful. Error otherwise.
-    async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<()>;
+    async fn erase_blocks(&self, blk_offset: u64, num_blks: u64) -> Result<()>;
 
     /// Same as `Self::read_blocks()` but IO is blocking.
     ///
@@ -246,7 +258,7 @@ pub unsafe trait BlockIo {
     /// to have separate and optimized implementation for blocking IO use case. This can be provided
     /// by overriding this API.
     fn read_blocks_sync<'a>(
-        &mut self,
+        &self,
         blk_offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
@@ -254,12 +266,12 @@ pub unsafe trait BlockIo {
     }
 
     /// Same as `Self::write_blocks` but IO is blocking
-    fn write_blocks_sync(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
+    fn write_blocks_sync(&self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
         block_on(self.write_blocks(blk_offset, data))
     }
 
     /// Same as `Self::erase_blocks` but IO is blocking
-    fn erase_blocks_sync(&mut self, blk_offset: u64, num_blks: u64) -> Result<()> {
+    fn erase_blocks_sync(&self, blk_offset: u64, num_blks: u64) -> Result<()> {
         block_on(self.erase_blocks(blk_offset, num_blks))
     }
 }
@@ -278,18 +290,18 @@ unsafe impl<T: BlockIo> BlockIo for BlockIoSync<T> {
     }
 
     async fn read_blocks<'a>(
-        &mut self,
+        &self,
         blk_offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
         self.0.read_blocks_sync(blk_offset, out)
     }
 
-    async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
+    async fn write_blocks(&self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
         self.0.write_blocks_sync(blk_offset, data)
     }
 
-    async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<()> {
+    async fn erase_blocks(&self, blk_offset: u64, num_blks: u64) -> Result<()> {
         self.erase_blocks_sync(blk_offset, num_blks)
     }
 }
@@ -297,7 +309,7 @@ unsafe impl<T: BlockIo> BlockIo for BlockIoSync<T> {
 // SAFETY:
 // `read_blocks` method has same guarantees as `BlockIo` implementation of referenced type T.
 // Which guarantees `out` to be fully initialized on success.
-unsafe impl<T: DerefMut> BlockIo for T
+unsafe impl<T: Deref> BlockIo for T
 where
     T::Target: BlockIo,
 {
@@ -306,35 +318,35 @@ where
     }
 
     async fn read_blocks<'a>(
-        &mut self,
+        &self,
         blk_offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
-        self.deref_mut().read_blocks(blk_offset, out).await
+        self.deref().read_blocks(blk_offset, out).await
     }
 
-    async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
-        self.deref_mut().write_blocks(blk_offset, data).await
+    async fn write_blocks(&self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
+        self.deref().write_blocks(blk_offset, data).await
     }
 
-    async fn erase_blocks(&mut self, blk_offset: u64, num_blks: u64) -> Result<()> {
-        self.deref_mut().erase_blocks(blk_offset, num_blks).await
+    async fn erase_blocks(&self, blk_offset: u64, num_blks: u64) -> Result<()> {
+        self.deref().erase_blocks(blk_offset, num_blks).await
     }
 
     fn read_blocks_sync<'a>(
-        &mut self,
+        &self,
         blk_offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<()> {
-        self.deref_mut().read_blocks_sync(blk_offset, out)
+        self.deref().read_blocks_sync(blk_offset, out)
     }
 
-    fn write_blocks_sync(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
-        self.deref_mut().write_blocks_sync(blk_offset, data)
+    fn write_blocks_sync(&self, blk_offset: u64, data: &mut [u8]) -> Result<()> {
+        self.deref().write_blocks_sync(blk_offset, data)
     }
 
-    fn erase_blocks_sync(&mut self, blk_offset: u64, num_blks: u64) -> Result<()> {
-        self.deref_mut().erase_blocks_sync(blk_offset, num_blks)
+    fn erase_blocks_sync(&self, blk_offset: u64, num_blks: u64) -> Result<()> {
+        self.deref().erase_blocks_sync(blk_offset, num_blks)
     }
 }
 
@@ -348,15 +360,15 @@ unsafe impl BlockIo for BlockIoNull {
         unimplemented!();
     }
 
-    async fn read_blocks<'a>(&mut self, _: u64, _: impl Into<&'a mut UninitSlice>) -> Result<()> {
+    async fn read_blocks<'a>(&self, _: u64, _: impl Into<&'a mut UninitSlice>) -> Result<()> {
         unimplemented!();
     }
 
-    async fn write_blocks(&mut self, _: u64, _: &mut [u8]) -> Result<()> {
+    async fn write_blocks(&self, _: u64, _: &mut [u8]) -> Result<()> {
         unimplemented!();
     }
 
-    async fn erase_blocks(&mut self, _: u64, _: u64) -> Result<()> {
+    async fn erase_blocks(&self, _: u64, _: u64) -> Result<()> {
         unimplemented!();
     }
 }
@@ -399,7 +411,7 @@ fn check_range<'a>(
 }
 
 /// Computes the required scratch size for initializing an [AsyncBlockDevice].
-pub fn scratch_size(io: &mut impl BlockIo) -> Result<usize> {
+pub fn scratch_size(io: &impl BlockIo) -> Result<usize> {
     let info = io.info();
     let block_alignment = match info.block_size {
         1 => 0,
@@ -419,13 +431,26 @@ impl<T: BlockIo, const N: usize, B: FromIterator<u8> + DerefMut<Target = [u8]>>
     Disk<T, ArrayVec<Option<B>, N>>
 {
     /// Same as `Self::new()` but allocates the necessary scratch buffers.
-    pub fn new_alloc_scratch(mut io: T) -> Result<Self> {
-        let scratch_size = scratch_size(&mut io)?;
+    pub fn new_alloc_scratch(io: T) -> Result<Self> {
+        let scratch_size = scratch_size(&io)?;
         let pool = ArrayVec::from_iter(
             (0..N).map(|_| Some(B::from_iter(iter::repeat(0).take(scratch_size)))),
         );
         Self::new(io, pool)
     }
+}
+
+macro_rules! try_until_resources_available {
+    ($check:expr) => {
+        loop {
+            let res = $check.await;
+            if res == Err(Error::OutOfResources) {
+                yield_now().await;
+            } else {
+                return res;
+            }
+        }
+    };
 }
 
 impl<T: BlockIo, P: BufferPool> Disk<T, P> {
@@ -438,8 +463,8 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     ///   `BlockInfo::block_size`. It can be computed using the helper API `scratch_size()`. If the
     ///   block device has no alignment requirement, i.e. both alignment and block size are 1, the
     ///   total required scratch size is 0.
-    pub fn new(mut io: T, pool: P) -> Result<Self> {
-        let scratch_size = scratch_size(&mut io)?;
+    pub fn new(io: T, pool: P) -> Result<Self> {
+        let scratch_size = scratch_size(&io)?;
         if !pool.check_buffer_sizes(scratch_size) {
             Err(Error::BufferTooSmall(Some(scratch_size)))
         } else {
@@ -448,12 +473,17 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     }
 
     /// Gets the [BlockInfo]
-    pub fn block_info(&mut self) -> BlockInfo {
+    pub fn block_info(&self) -> BlockInfo {
         self.io.info()
     }
 
     /// Gets the underlying BlockIo implementation.
-    pub fn io(&mut self) -> &mut T {
+    pub fn io(&self) -> &T {
+        &self.io
+    }
+
+    /// Gets the underlying BlockIo implementation mutably.
+    pub fn io_mut(&mut self) -> &mut T {
         &mut self.io
     }
 
@@ -464,13 +494,10 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     /// * `offset`: Offset in number of bytes.
     /// * `out`: Buffer to store the read data.
     /// * Returns success when exactly `out.len()` number of bytes are read.
-    pub async fn read<'a>(
-        &mut self,
-        offset: u64,
-        out: impl Into<&'a mut UninitSlice>,
-    ) -> Result<()> {
+    pub async fn read<'a>(&self, offset: u64, out: impl Into<&'a mut UninitSlice>) -> Result<()> {
         let mut scratch = self.pool.allocate_async().await;
-        read_async(&mut self.io, offset, out, &mut scratch).await
+        let out = out.into();
+        try_until_resources_available!(read_async(&self.io, offset, &mut *out, &mut scratch))
     }
 
     /// Writes data to the device.
@@ -483,9 +510,9 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     /// # Returns
     ///
     /// * Returns success when exactly `data.len()` number of bytes are written.
-    pub async fn write(&mut self, offset: u64, data: &mut [u8]) -> Result<()> {
+    pub async fn write(&self, offset: u64, data: &mut [u8]) -> Result<()> {
         let mut scratch = self.pool.allocate_async().await;
-        write_async(&mut self.io, offset, data, &mut scratch).await
+        try_until_resources_available!(write_async(&self.io, offset, data, &mut scratch))
     }
 
     /// Fills a disk range with the given byte value
@@ -501,7 +528,7 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     ///
     /// * Returns Err(Error::InvalidInput) if size of `scratch` is 0.
     pub async fn fill(
-        &mut self,
+        &self,
         mut offset: u64,
         size: u64,
         val: u8,
@@ -543,9 +570,15 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     ///  # Returns
     ///
     /// * Return Err(Error::BufferTooSmall(_)) if `scratch` is less than block size.
-    pub async fn erase(&mut self, offset: u64, size: u64, erase_scratch: &mut [u8]) -> Result<()> {
+    pub async fn erase(&self, offset: u64, size: u64, erase_scratch: &mut [u8]) -> Result<()> {
         let mut scratch = self.pool.allocate_async().await;
-        erase_async(&mut self.io, offset, size, erase_scratch, &mut scratch).await
+        try_until_resources_available!(erase_async(
+            &self.io,
+            offset,
+            size,
+            erase_scratch,
+            &mut scratch
+        ))
     }
 
     /// Loads and syncs GPT from a block device.
@@ -558,7 +591,7 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     ///   verification and restoration result.
     /// * Returns Err() if disk IO encounters errors.
     pub async fn sync_gpt(
-        &mut self,
+        &self,
         gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
         repair: bool,
     ) -> Result<GptSyncResult> {
@@ -578,7 +611,7 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     ///
     /// * Return `Ok(())` if new GPT is valid and device is updated and synced successfully.
     pub async fn update_gpt(
-        &mut self,
+        &self,
         mbr_primary: &mut [u8],
         resize: bool,
         gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
@@ -593,7 +626,7 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     /// # Args
     ///
     /// * `gpt`: An instance of GPT.
-    pub async fn erase_gpt(&mut self, gpt: &mut Gpt<impl DerefMut<Target = [u8]>>) -> Result<()> {
+    pub async fn erase_gpt(&self, gpt: &mut Gpt<impl DerefMut<Target = [u8]>>) -> Result<()> {
         gpt::erase_gpt(self, gpt).await
     }
 
@@ -610,7 +643,7 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     ///
     /// Returns success when exactly `out.len()` of bytes are read successfully.
     pub async fn read_gpt_partition<'a>(
-        &mut self,
+        &self,
         gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
         part_name: &str,
         offset: u64,
@@ -635,7 +668,7 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     ///
     /// Returns success when exactly `data.len()` of bytes are written successfully.
     pub async fn write_gpt_partition(
-        &mut self,
+        &self,
         gpt: &mut Gpt<impl DerefMut<Target = [u8]>>,
         part_name: &str,
         offset: u64,
@@ -645,18 +678,9 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
         self.write(offset, data).await
     }
 
-    /// Consumes `self` and returns a synchronous-only Disk.
-    pub fn into_sync(self) -> Disk<BlockIoSync<T>, P> {
-        let Self { io, pool } = self;
-        Disk::new(BlockIoSync(io), pool.into_value()).unwrap()
-    }
-}
-
-impl<'a, T: BlockIo, P: BufferPool> Disk<RefMut<'a, T>, PoolRef<'a, P>> {
-    /// Converts a `RefMut<Disk<T, P>>` to `Disk<RefMut<T>, PoolRef<P>>`.
-    pub fn transpose_ref_mut(val: RefMut<'a, Disk<T, P>>) -> Self {
-        let (io, pool) = RefMut::map_split(val, |v| (&mut v.io, &mut v.pool));
-        Disk::new(io, PoolRef::new(RefMut::map(pool, |s| s.get_mut()))).unwrap()
+    /// Creates a view of self as a purely synchronous disk.
+    pub fn as_sync(&self) -> Disk<BlockIoSync<&T>, PoolRef<'_, P>> {
+        Disk::new(BlockIoSync(&self.io), PoolRef::new(self.pool.borrow_mut())).unwrap()
     }
 }
 
@@ -675,8 +699,12 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use gbl_async::block_on;
+    use alloc::boxed::Box;
+    use core::ops::Deref;
+    use gbl_async::{block_on, join, poll};
     use libtestutils::AlignedBuffer;
+    use libutils::constants::KiB;
+
     use std::slice::SliceIndex;
 
     #[derive(Debug)]
@@ -788,7 +816,7 @@ mod test {
 
     fn read_test_helper(case: &TestCase) {
         let data = (0..case.storage_size).map(|v| v as u8).collect::<Vec<_>>();
-        let mut disk = TestDisk::new_ram_alloc(case.block_size, case.alignment, data).unwrap();
+        let disk = TestDisk::new_ram_alloc(case.block_size, case.alignment, data).unwrap();
         // Make an aligned buffer. A misaligned version is created by taking a sub slice that
         // starts at an unaligned offset. Because of this we need to allocate
         // `case.misalignment` more to accommodate it.
@@ -802,7 +830,7 @@ mod test {
         block_on(disk.read(case.rw_offset, &mut *out)).unwrap();
         let rw_off = usize::try_from(case.rw_offset).unwrap();
         assert_eq!(out, &disk.io().storage()[rw_off..][..rw_sz], "Failed. Test case {:?}", case);
-        assert!(disk.io().num_reads <= READ_WRITE_BLOCKS_UPPER_BOUND);
+        assert!(disk.io().num_reads() <= READ_WRITE_BLOCKS_UPPER_BOUND);
     }
 
     fn write_test_helper(
@@ -835,19 +863,21 @@ mod test {
 
     fn erase_test_helper(case: &TestCase) {
         let data = (0..case.storage_size).map(|v| v as u8).collect::<Vec<_>>();
-        let mut disk =
-            TestDisk::new_ram_alloc(case.block_size, case.alignment, data.clone()).unwrap();
+        let disk = TestDisk::new_ram_alloc(case.block_size, case.alignment, data.clone()).unwrap();
         let mut erase_scratch =
             vec![0u8; disk.io().info().erase_block_size().unwrap().try_into().unwrap()];
         let rw_off = usize::try_from(case.rw_offset).unwrap();
         let rw_sz = usize::try_from(case.rw_size).unwrap();
         let orig = disk.io().storage()[rw_off..][..rw_sz].to_vec();
         block_on(disk.erase(case.rw_offset, case.rw_size, &mut erase_scratch[..])).unwrap();
-        let erased = &mut disk.io().storage()[rw_off..][..rw_sz];
-        erased.iter_mut().for_each(|v| *v = !*v);
-        assert_eq!(erased.to_vec(), orig, "Erase test failed. Test case {:?}", case);
+        // New scope to simplify lifetime for dev.io().storage()
+        {
+            let erased = &mut disk.io().storage_mut()[rw_off..][..rw_sz];
+            erased.iter_mut().for_each(|v| *v = !*v);
+            assert_eq!(erased.to_vec(), orig, "Erase test failed. Test case {:?}", case);
+        }
         // The rest of the sotrage should be unchanged.
-        assert_eq!(data, disk.io().storage());
+        assert_eq!(data, disk.io().storage().deref());
     }
 
     macro_rules! read_write_test {
@@ -875,8 +905,8 @@ mod test {
                         &TestCase::new($x0, $x1, $x2, $x3, $x4, $x5),
                         |blk, offset, data| {
                             block_on(blk.write(offset, data)).unwrap();
-                            assert!(blk.io().num_reads <= READ_WRITE_BLOCKS_UPPER_BOUND);
-                            assert!(blk.io().num_writes <= READ_WRITE_BLOCKS_UPPER_BOUND);
+                            assert!(blk.io().num_reads() <= READ_WRITE_BLOCKS_UPPER_BOUND);
+                            assert!(blk.io().num_writes() <= READ_WRITE_BLOCKS_UPPER_BOUND);
                         },
                     );
                 }
@@ -890,8 +920,8 @@ mod test {
                         &TestCase::new(x0, x1, x2, x3, x4, x5),
                         |blk, offset, data| {
                             block_on(blk.write(offset, data)).unwrap();
-                            assert!(blk.io().num_reads <= READ_WRITE_BLOCKS_UPPER_BOUND);
-                            assert!(blk.io().num_writes <= READ_WRITE_BLOCKS_UPPER_BOUND);
+                            assert!(blk.io().num_reads() <= READ_WRITE_BLOCKS_UPPER_BOUND);
+                            assert!(blk.io().num_writes() <= READ_WRITE_BLOCKS_UPPER_BOUND);
                         },
                     );
                 }
@@ -1141,14 +1171,14 @@ mod test {
 
     #[test]
     fn test_no_alignment_require_zero_size_scratch() {
-        let mut io = RamBlockIo::new(1, 1, vec![]);
-        assert_eq!(scratch_size(&mut io).unwrap(), 0);
+        let io = RamBlockIo::new(1, 1, vec![]);
+        assert_eq!(scratch_size(&io).unwrap(), 0);
     }
 
     #[test]
     fn test_scratch_too_small() {
-        let mut io = RamBlockIo::new(512, 512, vec![]);
-        let scratch_size = scratch_size(&mut io).unwrap() - 1;
+        let io = RamBlockIo::new(512, 512, vec![]);
+        let scratch_size = scratch_size(&io).unwrap() - 1;
         let pool = ArrayVec::from_iter(
             (0..2).map(|_| Some(Box::from_iter(iter::repeat(0).take(scratch_size)))),
         );
@@ -1157,27 +1187,118 @@ mod test {
 
     #[test]
     fn test_read_overflow() {
-        let mut disk = TestDisk::new_ram_alloc(512, 512, vec![0u8; 512]).unwrap();
+        let disk = TestDisk::new_ram_alloc(512, 512, vec![0u8; 512]).unwrap();
         assert!(block_on(disk.read(512, &mut vec![0u8; 1][..])).is_err());
         assert!(block_on(disk.read(0, &mut vec![0u8; 513][..])).is_err());
     }
 
     #[test]
     fn test_read_arithmetic_overflow() {
-        let mut disk = TestDisk::new_ram_alloc(512, 512, vec![0u8; 512]).unwrap();
+        let disk = TestDisk::new_ram_alloc(512, 512, vec![0u8; 512]).unwrap();
         assert!(block_on(disk.read(u64::MAX, &mut vec![0u8; 1][..])).is_err());
     }
 
     #[test]
     fn test_write_overflow() {
-        let mut disk = TestDisk::new_ram_alloc(512, 512, vec![0u8; 512]).unwrap();
+        let disk = TestDisk::new_ram_alloc(512, 512, vec![0u8; 512]).unwrap();
         assert!(block_on(disk.write(512, &mut vec![0u8; 1])).is_err());
         assert!(block_on(disk.write(0, &mut vec![0u8; 513])).is_err());
     }
 
     #[test]
     fn test_write_arithmetic_overflow() {
-        let mut disk = TestDisk::new_ram_alloc(512, 512, vec![0u8; 512]).unwrap();
+        let disk = TestDisk::new_ram_alloc(512, 512, vec![0u8; 512]).unwrap();
         assert!(block_on(disk.write(u64::MAX, &mut vec![0u8; 1])).is_err());
+    }
+
+    #[test]
+    fn test_ram_block_io_concurrent_write() {
+        let disk = TestDisk::new_ram_alloc(512, 32, vec![0u8; KiB!(64)]).unwrap();
+        let mut write_1_buf = vec![1u8; KiB!(2)];
+        let mut write_2_buf = vec![2u8; KiB!(2)];
+
+        let mut read_buf = vec![0u8; KiB!(2)];
+
+        // Perfectly aligned writes
+        block_on(async {
+            let write_1_fut = disk.write(0, write_1_buf.as_mut_slice());
+            let write_2_fut = disk.write(KiB!(4), write_2_buf.as_mut_slice());
+            let (res_1, res_2) = join(write_1_fut, write_2_fut).await;
+            assert!(res_1.is_ok());
+            assert!(res_2.is_ok());
+
+            disk.read(0, read_buf.as_mut_slice()).await.unwrap();
+            assert_eq!(read_buf, write_1_buf);
+
+            disk.read(KiB!(4), read_buf.as_mut_slice()).await.unwrap();
+            assert_eq!(read_buf, write_2_buf);
+        });
+
+        // Write is unaligned on blocks
+        block_on(async {
+            let write_1_fut = disk.write(KiB!(6) + 128, write_1_buf.as_mut_slice());
+            let write_2_fut = disk.write(KiB!(8) + 128, write_2_buf.as_mut_slice());
+            let (res_1, res_2) = join(write_1_fut, write_2_fut).await;
+            assert!(res_1.is_ok());
+            assert!(res_2.is_ok());
+
+            disk.read(KiB!(6) + 128, read_buf.as_mut_slice()).await.unwrap();
+            assert_eq!(read_buf, write_1_buf);
+
+            disk.read(KiB!(8) + 128, read_buf.as_mut_slice()).await.unwrap();
+            assert_eq!(read_buf, write_2_buf);
+        });
+    }
+
+    #[test]
+    fn test_ram_block_io_queue_exhaustion() {
+        let disk = TestDisk::new_ram_alloc(512, 32, vec![0u8; KiB!(64)]).unwrap();
+
+        let mut orig = vec![0u8; KiB!(2)];
+        let mut buf = vec![0u8; KiB!(2)];
+        block_on(async {
+            disk.read(0, orig.as_mut_slice()).await.unwrap();
+
+            // Simulate a full queue.
+            *disk.io().error.borrow_mut() = Some(Error::OutOfResources);
+            let mut future = Box::pin(disk.read(0, buf.as_mut_slice()));
+
+            // The first read on the block device should fail with OutOfResources,
+            // but the Disk should hide this as being not ready.
+            assert_eq!(poll(&mut future), None);
+            *disk.io().error.borrow_mut() = None;
+
+            // Now the I/O should complete.
+            assert!(future.await.is_ok());
+            assert_eq!(buf, orig);
+
+            // Same check for write.
+            *disk.io().error.borrow_mut() = Some(Error::OutOfResources);
+
+            buf.iter_mut().for_each(|v| *v = !*v);
+            let orig = buf.clone();
+            let mut future = Box::pin(disk.write(0, buf.as_mut_slice()));
+            assert_eq!(poll(&mut future), None);
+            *disk.io().error.borrow_mut() = None;
+            assert!(future.await.is_ok());
+
+            disk.read(0, buf.as_mut_slice()).await.unwrap();
+            assert_eq!(buf, orig);
+
+            // Same check for erase.
+            *disk.io().error.borrow_mut() = Some(Error::OutOfResources);
+            let mut erase_scratch =
+                vec![0u8; disk.block_info().erase_block_size().unwrap().try_into().unwrap()];
+            let mut future = Box::pin(disk.erase(
+                0,
+                buf.len().try_into().unwrap(),
+                erase_scratch.as_mut_slice(),
+            ));
+            assert_eq!(poll(&mut future), None);
+            *disk.io().error.borrow_mut() = None;
+            assert!(future.await.is_ok());
+            disk.read(0, buf.as_mut_slice()).await.unwrap();
+            assert_eq!(buf, vec![0u8; buf.len()]);
+        });
     }
 }

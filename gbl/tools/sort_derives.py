@@ -48,6 +48,7 @@ EXPECTED_DERIVES: tuple[str, ...] = (
     "IntoBytes",
     "KnownLayout",
     "Unaligned",
+    "Parser",
 )
 
 

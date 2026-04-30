@@ -60,7 +60,7 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
     }
 
     async fn read_blocks<'a>(
-        &mut self,
+        &self,
         blk_offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<(), Error> {
@@ -75,7 +75,7 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
         .or(Err(Error::BlockIoError))
     }
 
-    async fn write_blocks(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
+    async fn write_blocks(&self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
         match &self.block_io2 {
             Some(v) => v.write_blocks_ex(blk_offset, data).await,
             _ => self.block_io.write_blocks(self.media_id, blk_offset, data).map_err(Into::into),
@@ -83,7 +83,7 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
         .or(Err(Error::BlockIoError))
     }
 
-    async fn erase_blocks(&mut self, blk_off: u64, num_blks: u64) -> Result<(), Error> {
+    async fn erase_blocks(&self, blk_off: u64, num_blks: u64) -> Result<(), Error> {
         let protocol = self.erase.as_ref().ok_or(Error::Unsupported)?;
         let block_info = self.info();
         let erase_block_size = block_info.erase_block_size()?;
@@ -93,7 +93,7 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
     }
 
     fn read_blocks_sync<'a>(
-        &mut self,
+        &self,
         blk_offset: u64,
         out: impl Into<&'a mut UninitSlice>,
     ) -> Result<(), Error> {
@@ -102,7 +102,7 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
         self.block_io.read_blocks(self.media_id, blk_offset, out).or(Err(Error::BlockIoError))
     }
 
-    fn write_blocks_sync(&mut self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
+    fn write_blocks_sync(&self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
         self.block_io.write_blocks(self.media_id, blk_offset, data).or(Err(Error::BlockIoError))
     }
 }

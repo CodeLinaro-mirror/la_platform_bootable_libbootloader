@@ -164,11 +164,11 @@ impl BlockStatus {
 pub struct GblDisk<D, G> {
     // Contains a `Disk` for block IO.
     //
-    // `disk` and `partitions` are wrapped in RefCell because they may be shared by multiple async
-    // blocks for operations such as parallel fastboot download/flashing. They are also wrapped
-    // separately in order to make operations on each independent and parallel for use cases such
-    // as getting partition info for `fastboot getvar` when disk IO is busy.
-    disk: RefCell<D>,
+    // `partitions` is wrapped in RefCell because it may be shared by multiple async
+    // blocks, some of which may want to modify the GPT. Tasks that want to modify
+    // the GPT need to wait for `partitions` to be available for mutable borrow.
+    // This causes `partitions` to act as a de facto lock.
+    disk: D,
     partitions: RefCell<PartitionTable<G>>,
     info_cache: BlockInfo,
 }
@@ -185,11 +185,8 @@ where
     /// `BlockIO::write_blocks_sync()' are used.
     pub fn as_sync(
         &self,
-    ) -> Result<
-        GblDisk<Disk<BlockIoSync<RefMut<'_, B>>, PoolRef<'_, P>>, Gpt<RefMut<'_, [u8]>>>,
-        Error,
-    > {
-        let disk = Disk::transpose_ref_mut(self.get_disk()?).into_sync();
+    ) -> Result<GblDisk<Disk<BlockIoSync<&B>, PoolRef<'_, P>>, Gpt<RefMut<'_, [u8]>>>, Error> {
+        let disk = self.disk.as_sync();
         let mut parts = self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?;
         Ok(match parts.deref_mut() {
             PartitionTable::Raw(v, _) => GblDisk::new_raw(disk, v.to_cstr()).unwrap(),
@@ -204,13 +201,13 @@ where
     }
 
     /// Creates a new instance as a GPT device.
-    pub fn new_gpt(mut disk: Disk<B, P>, gpt: Gpt<T>) -> Self {
+    pub fn new_gpt(disk: Disk<B, P>, gpt: Gpt<T>) -> Self {
         let info_cache = disk.io().info();
         Self { disk: disk.into(), info_cache, partitions: PartitionTable::Gpt(gpt).into() }
     }
 
     /// Creates a new instance as a raw storage partition.
-    pub fn new_raw(mut disk: Disk<B, P>, name: &CStr) -> Result<Self, Error> {
+    pub fn new_raw(disk: Disk<B, P>, name: &CStr) -> Result<Self, Error> {
         let info_cache = disk.io().info();
         Ok(Self {
             disk: disk.into(),
@@ -224,22 +221,14 @@ where
         self.info_cache
     }
 
-    /// Gets the block status.
-    pub fn status(&self) -> BlockStatus {
-        match self.disk.try_borrow_mut().ok() {
-            None => BlockStatus::Pending,
-            _ => BlockStatus::Idle,
-        }
-    }
-
-    /// Borrows disk mutably.
-    fn get_disk(&self) -> Result<RefMut<'_, Disk<B, P>>, Error> {
-        self.disk.try_borrow_mut().map_err(|_| Error::NotReady)
+    /// Borrows disk.
+    fn get_disk(&self) -> &Disk<B, P> {
+        &self.disk
     }
 
     /// Gets the block io object `B` from the disk.
-    pub fn get_blk_io(&self) -> Result<RefMut<'_, B>, Error> {
-        Ok(RefMut::map(self.get_disk()?, |v| v.io()))
+    pub fn get_blk_io(&mut self) -> &mut B {
+        self.disk.io_mut()
     }
 
     /// Gets an instance of `PartitionIo` for a partition.
@@ -248,7 +237,7 @@ where
     pub fn partition_io(&self, part: Option<&str>) -> Result<PartitionIo<'_, B, P>, Error> {
         let (part_start, part_end) = self.find_partition(part)?.absolute_range()?;
         Ok(PartitionIo {
-            disks: [Disk::transpose_ref_mut(self.get_disk()?)].into(),
+            disks: [self.get_disk()].into(),
             parts: [(0, part_start, part_end)].into(),
             _mode: PhantomData,
         })
@@ -301,11 +290,10 @@ where
         match self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?.deref_mut() {
             PartitionTable::Raw(_, _) => Ok(None),
             PartitionTable::Gpt(gpt) => {
-                let mut blk = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
                 // Don't repair GPT silently.
                 // TODO(b/441574159): Provides a mechanism for platform to configure whether GPT
                 // should be repaired.
-                Ok(Some(blk.sync_gpt(gpt, false).await?))
+                Ok(Some(self.disk.sync_gpt(gpt, false).await?))
             }
         }
     }
@@ -326,10 +314,7 @@ where
     pub async fn update_gpt(&self, mbr_primary: &mut [u8], resize: bool) -> Result<(), Error> {
         match self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?.deref_mut() {
             PartitionTable::Raw(_, _) => Err(Error::Unsupported),
-            PartitionTable::Gpt(gpt) => {
-                let mut blk = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
-                blk.update_gpt(mbr_primary, resize, gpt).await
-            }
+            PartitionTable::Gpt(gpt) => self.disk.update_gpt(mbr_primary, resize, gpt).await,
         }
     }
 
@@ -342,17 +327,12 @@ where
     pub async fn erase_gpt(&self) -> Result<(), Error> {
         match self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?.deref_mut() {
             PartitionTable::Raw(_, _) => Err(Error::Unsupported),
-            PartitionTable::Gpt(gpt) => {
-                let mut disk = self.disk.try_borrow_mut().map_err(|_| Error::NotReady)?;
-                disk.erase_gpt(gpt).await
-            }
+            PartitionTable::Gpt(gpt) => self.disk.erase_gpt(gpt).await,
         }
     }
 
     /// Creates an instance of GptBuilder.
-    pub fn gpt_builder(
-        &self,
-    ) -> Result<GptBuilder<RefMut<'_, Disk<B, P>>, RefMut<'_, Gpt<T>>>, Error> {
+    pub fn gpt_builder(&self) -> Result<GptBuilder<&Disk<B, P>, RefMut<'_, Gpt<T>>>, Error> {
         let mut parts = self.partitions.try_borrow_mut().map_err(|_| Error::NotReady)?;
         match parts.deref_mut() {
             PartitionTable::Raw(_, _) => Err(Error::Unsupported),
@@ -361,7 +341,7 @@ where
                     PartitionTable::Gpt(v) => v,
                     _ => unreachable!(),
                 });
-                Ok(GptBuilder::new(self.get_disk()?, gpt)?.0)
+                Ok(GptBuilder::new(&self.disk, gpt)?.0)
             }
         }
     }
@@ -396,7 +376,7 @@ pub type PartitionIo<'a, B, P, A = ReadWrite> = MultiPartitionIo<'a, B, P, 1, A>
 
 /// `MultiPartitionIo` provides read/write APIs to one or more partitions.
 pub struct MultiPartitionIo<'a, B: BlockIo, P: BufferPool, const N: usize, A = ReadWrite> {
-    disks: ArrayVec<Disk<RefMut<'a, B>, PoolRef<'a, P>>, N>,
+    disks: ArrayVec<&'a Disk<B, P>, N>,
     // (Index in `disks`, partition start, partition end)
     parts: ArrayVec<(usize, u64, u64), N>,
     _mode: PhantomData<A>,
@@ -514,8 +494,8 @@ impl<'a, B: BlockIo, P: BufferPool, A: AccessMode> MultiPartitionIo<'a, B, P, 1,
 #[cfg(test)]
 impl<'a, B: BlockIo, P: BufferPool> MultiPartitionIo<'a, B, P, 1, ReadWrite> {
     /// Gets the block device.
-    pub fn dev(&mut self) -> &mut Disk<RefMut<'a, B>, PoolRef<'a, P>> {
-        &mut self.disks[0]
+    pub fn dev(&self) -> &Disk<B, P> {
+        &self.disks[0]
     }
 }
 
@@ -565,7 +545,7 @@ pub fn create_multi_partition_io<'a, B: BlockIo, P: BufferPool, const N: usize, 
     }
     for (i, (id, start, end)) in parts_info.iter().enumerate() {
         if i == 0 || parts_info[i - 1].0 != *id {
-            disks.push(Disk::transpose_ref_mut(devs[*id].get_disk()?));
+            disks.push(devs[*id].get_disk());
         }
         parts.push((disks.len().checked_sub(1).unwrap(), *start, *end));
     }

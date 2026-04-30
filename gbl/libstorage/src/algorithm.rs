@@ -21,7 +21,7 @@ use safemath::SafeNum;
 
 /// Reads from a range at block boundary to an aligned buffer.
 async fn read_aligned_all<'a>(
-    io: &mut impl BlockIo,
+    io: &impl BlockIo,
     offset: u64,
     out: impl Into<&'a mut UninitSlice>,
 ) -> Result<()> {
@@ -34,7 +34,7 @@ async fn read_aligned_all<'a>(
 ///   |~~~~~~~~~read~~~~~~~~~|
 ///   |---------|---------|---------|
 async fn read_aligned_offset_and_buffer<'a>(
-    io: &mut impl BlockIo,
+    io: &impl BlockIo,
     offset: u64,
     out: impl Into<&'a mut UninitSlice>,
     scratch: &mut [u8],
@@ -69,7 +69,7 @@ async fn read_aligned_offset_and_buffer<'a>(
 ///          |~~~read~~~|
 ///        |---------------|--------------|
 async fn read_aligned_buffer<'a>(
-    io: &mut impl BlockIo,
+    io: &impl BlockIo,
     offset: u64,
     out: impl Into<&'a mut UninitSlice>,
     scratch: &mut [u8],
@@ -139,7 +139,7 @@ fn split_scratch<'a>(
 
 /// Read with no alignment requirement.
 pub(crate) async fn read_async<'a>(
-    io: &mut impl BlockIo,
+    io: &impl BlockIo,
     offset: u64,
     out: impl Into<&'a mut UninitSlice>,
     scratch: &mut [u8],
@@ -185,7 +185,7 @@ pub(crate) async fn read_async<'a>(
 }
 
 /// Write bytes from aligned buffer to a block boundary range.
-async fn write_aligned_all(io: &mut impl BlockIo, offset: u64, data: &mut [u8]) -> Result<()> {
+async fn write_aligned_all(io: &impl BlockIo, offset: u64, data: &mut [u8]) -> Result<()> {
     let blk_offset = check_range(io.info(), offset, &mut *data)?.try_into()?;
     Ok(io.write_blocks(blk_offset, data).await?)
 }
@@ -194,7 +194,7 @@ async fn write_aligned_all(io: &mut impl BlockIo, offset: u64, data: &mut [u8]) 
 ///   |~~~~~~~~~size~~~~~~~~~|
 ///   |---------|---------|---------|
 async fn write_aligned_offset_and_buffer(
-    io: &mut impl BlockIo,
+    io: &impl BlockIo,
     offset: u64,
     data: &mut [u8],
     scratch: &mut [u8],
@@ -244,7 +244,7 @@ fn rotate_right(slice: &mut [u8], sz: usize, scratch: &mut [u8]) {
 ///          |~~~write~~~|
 ///        |---------------|--------------|
 async fn write_aligned_buffer(
-    io: &mut impl BlockIo,
+    io: &impl BlockIo,
     offset: u64,
     data: &mut [u8],
     scratch: &mut [u8],
@@ -298,7 +298,7 @@ async fn write_aligned_buffer(
 /// It does internal optimization that temporarily modifies `data` layout to minimize number of
 /// calls to `io.read_blocks()`/`io.write_blocks()` (down to O(1)).
 pub(crate) async fn write_async(
-    io: &mut impl BlockIo,
+    io: &impl BlockIo,
     offset: u64,
     data: &mut [u8],
     scratch: &mut [u8],
@@ -344,7 +344,7 @@ pub(crate) async fn write_async(
 
 /// Helper function for performing IO specific erase of arbitrary offset/size.
 pub(crate) async fn erase_async(
-    io: &mut impl BlockIo,
+    io: &impl BlockIo,
     offset: u64,
     size: u64,
     erase_scratch: &mut [u8],

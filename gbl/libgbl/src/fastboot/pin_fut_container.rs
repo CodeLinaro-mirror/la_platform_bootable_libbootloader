@@ -51,17 +51,6 @@ pub(crate) trait PinFutContainerTyped<'a, F: Future + 'a> {
         cb: impl FnMut(&mut Pin<&mut (dyn Future<Output = ()> + 'a)>, &mut FutContext) -> bool,
     );
 
-    /// Returns the number of items
-    #[cfg(test)]
-    fn size(&mut self) -> usize {
-        let mut res = 0;
-        self.for_each_remove_if(|_, _| {
-            res += 1;
-            false
-        });
-        res
-    }
-
     /// Polls all the [Future] once. Returns the number or unfinished ones.
     fn poll_all(&mut self) -> usize {
         let mut res = 0;

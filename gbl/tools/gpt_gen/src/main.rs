@@ -35,7 +35,7 @@ use std::fs::File;
 use std::io::Read;
 
 /// Command line arguments for `gpt_gen`.
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Output file

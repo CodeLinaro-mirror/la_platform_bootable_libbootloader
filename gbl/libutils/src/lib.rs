@@ -26,6 +26,9 @@ pub mod buffer_pool;
 /// Shared object guarded by a RefCell
 pub mod shared;
 
+/// Generic constants and associated helper functions and macros.
+pub mod constants;
+
 /// Returns the largest aligned subslice.
 ///
 /// This function drops as many bytes as needed from the front of the given slice to ensure the

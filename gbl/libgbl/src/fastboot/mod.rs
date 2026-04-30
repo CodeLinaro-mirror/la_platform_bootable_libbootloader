@@ -2087,7 +2087,10 @@ pub(crate) mod test {
     use abr::{
         get_and_clear_one_shot_bootloader, get_boot_slot, mark_slot_unbootable, ABR_DATA_SIZE,
     };
-    use core::pin::{pin, Pin};
+    use core::{
+        ops::Deref,
+        pin::{pin, Pin},
+    };
     use fastboot::{test_utils::TestUploadBuilder, CommandExecType, MAX_RESPONSE_SIZE};
     use gbl_async::{block_on, poll, poll_n_times};
     use gbl_storage::GPT_GUID_LEN;
@@ -2533,22 +2536,16 @@ pub(crate) mod test {
                 "max-fetch-size: 0x7fffffff",
                 "block-device:0:total-blocks: 0x80",
                 "block-device:0:block-size: 0x200",
-                "block-device:0:status: idle",
                 "block-device:1:total-blocks: 0x100",
                 "block-device:1:block-size: 0x200",
-                "block-device:1:status: idle",
                 "block-device:2:total-blocks: 0x100",
                 "block-device:2:block-size: 0x200",
-                "block-device:2:status: idle",
                 "block-device:3:total-blocks: 0x1000",
                 "block-device:3:block-size: 0x1",
-                "block-device:3:status: idle",
                 "block-device:4:total-blocks: 0x2000",
                 "block-device:4:block-size: 0x1",
-                "block-device:4:status: idle",
                 "block-device:5:total-blocks: 0x2000",
                 "block-device:5:block-size: 0x1",
-                "block-device:5:status: idle",
                 "gbl-default-block: None",
                 "partition-start:boot_a: 0x4400",
                 "partition-size:boot_a: 0x2000",
@@ -3202,9 +3199,9 @@ pub(crate) mod test {
         let sparse = include_bytes!("../../testdata/sparse_test.bin");
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
-        storage[0].get_blk_io().unwrap().set_blocking(true);
+        storage[0].get_blk_io().set_blocking(true);
         storage.add_gpt_device(vec![0u8; sparse_raw.len() + 67 * 512]);
-        storage[1].get_blk_io().unwrap().set_blocking(true);
+        storage[1].get_blk_io().set_blocking(true);
         let mut gpt_builder = storage[1].gpt_builder().unwrap();
         gpt_builder.add("sparse", [1u8; GPT_GUID_LEN], [1u8; GPT_GUID_LEN], 0, None).unwrap();
         block_on(gpt_builder.persist()).unwrap();
@@ -3228,12 +3225,10 @@ pub(crate) mod test {
         let expect_boot_a = flipped_bits(include_bytes!("../../../libstorage/test/boot_a.bin"));
         set_download(&mut gbl_fb, expect_boot_a.as_slice());
         block_on(gbl_fb.flash("boot_a", &resp)).unwrap();
-        check_var(&mut gbl_fb, "block-device", "0:status", "IO pending");
 
         // Flashes the "sparse" partition on the different block device.
         set_download(&mut gbl_fb, sparse);
         block_on(gbl_fb.flash("sparse", &resp)).unwrap();
-        check_var(&mut gbl_fb, "block-device", "1:status", "IO pending");
 
         {
             // "oem gbl-sync-tasks" should block.
@@ -3245,72 +3240,12 @@ pub(crate) mod test {
             assert!(poll(oem_sync_blk_fut).unwrap().is_ok());
         }
 
-        // The two blocks should be in the idle state.
-        check_var(&mut gbl_fb, "block-device", "0:status", "idle");
-        check_var(&mut gbl_fb, "block-device", "1:status", "idle");
-
         // Verifies flashed image.
         assert_eq!(
             fetch(&mut gbl_fb, "boot_a".into(), 0, expect_boot_a.len()).unwrap(),
             expect_boot_a
         );
         assert_eq!(fetch(&mut gbl_fb, "sparse".into(), 0, sparse_raw.len()).unwrap(), sparse_raw);
-    }
-
-    #[test]
-    fn test_async_flash_block_on_busy_blk() {
-        let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 2]);
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
-        storage[0].get_blk_io().unwrap().set_blocking(true);
-        storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_2.bin"));
-        storage[1].get_blk_io().unwrap().set_blocking(true);
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        gbl_ops.avb_device_status.is_unlocked = true;
-        let tasks = vec![].into();
-        let parts = gbl_ops.disks();
-        let boot_buffer = Default::default();
-        let mut gbl_fb =
-            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
-        let tasks = gbl_fb.tasks();
-        let resp: TestResponder = Default::default();
-
-        // Enable async IO.
-        assert!(poll(&mut pin!(oem(&mut gbl_fb, "gbl-enable-async-task", &resp))).unwrap().is_ok());
-
-        // Flashes boot_a partition.
-        let expect_boot_a = flipped_bits(include_bytes!("../../../libstorage/test/boot_a.bin"));
-        set_download(&mut gbl_fb, expect_boot_a.as_slice());
-        block_on(gbl_fb.flash("boot_a", &resp)).unwrap();
-
-        // Flashes boot_b partition.
-        let expect_boot_b = flipped_bits(include_bytes!("../../../libstorage/test/boot_b.bin"));
-        set_download(&mut gbl_fb, expect_boot_b.as_slice());
-        {
-            let flash_boot_b_fut = &mut pin!(gbl_fb.flash("boot_b", &resp));
-            // Previous IO has not completed. Block is busy.
-            assert!(poll(flash_boot_b_fut).is_none());
-            // There should only be the previous disk IO task for "boot_a".
-            assert_eq!(tasks.borrow_mut().size(), 1);
-            // Schedule the disk IO task for "flash boot_a" to completion.
-            tasks.borrow_mut().run();
-            // The blocked "flash boot_b" should now be able to finish.
-            assert!(poll(flash_boot_b_fut).is_some());
-            // There should be a disk IO task spawned for "flash boot_b".
-            assert_eq!(tasks.borrow_mut().size(), 1);
-            // Schedule the disk IO tasks for "flash boot_b" to completion.
-            tasks.borrow_mut().run();
-        }
-
-        // Verifies flashed image.
-        assert_eq!(
-            fetch(&mut gbl_fb, "boot_a".into(), 0, expect_boot_a.len()).unwrap(),
-            expect_boot_a
-        );
-        assert_eq!(
-            fetch(&mut gbl_fb, "boot_b".into(), 0, expect_boot_b.len()).unwrap(),
-            expect_boot_b
-        );
     }
 
     #[test]
@@ -3321,12 +3256,12 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
-        storage[0].get_blk_io().unwrap().set_blocking(true);
+        storage[0].get_blk_io().set_blocking(true);
+        *storage[0].partition_io(None).unwrap().dev().io().error.borrow_mut() =
+            Some(liberror::Error::Other(Some("test"))).into();
+
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
-        // Injects an error.
-        storage[0].partition_io(None).unwrap().dev().io().error =
-            liberror::Error::Other(Some("test")).into();
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -3351,9 +3286,9 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         // Add blocking devices so they don't finish in a single poll.
         storage.add_raw_device(c"raw_0", [0xaau8; 4096]);
-        storage[0].get_blk_io().unwrap().set_blocking(true);
+        storage[0].get_blk_io().set_blocking(true);
         storage.add_raw_device(c"raw_1", [0x55u8; 4096]);
-        storage[1].get_blk_io().unwrap().set_blocking(true);
+        storage[1].get_blk_io().set_blocking(true);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
@@ -3369,11 +3304,9 @@ pub(crate) mod test {
 
         // Erases "raw_0".
         block_on(gbl_fb.erase("raw_0", &resp)).unwrap();
-        check_var(&mut gbl_fb, "block-device", "0:status", "IO pending");
 
         // Erases second half of "raw_1"
         block_on(gbl_fb.erase("raw_1//800", &resp)).unwrap();
-        check_var(&mut gbl_fb, "block-device", "1:status", "IO pending");
 
         {
             // "oem gbl-sync-tasks" should block until the I/O tasks complete.
@@ -3392,14 +3325,13 @@ pub(crate) mod test {
             assert!(poll(oem_sync_blk_fut).unwrap().is_ok());
         }
 
-        // The two blocks should be in the idle state.
-        check_var(&mut gbl_fb, "block-device", "0:status", "idle");
-        check_var(&mut gbl_fb, "block-device", "1:status", "idle");
-
         // The mock storage device erases data by flipping bits. Thus 0x55 <--> 0xaa.
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0x55u8; 4096]);
         assert_eq!(
-            storage[1].partition_io(None).unwrap().dev().io().storage,
+            storage[0].partition_io(None).unwrap().dev().io().storage().deref(),
+            [0x55u8; 4096]
+        );
+        assert_eq!(
+            storage[1].partition_io(None).unwrap().dev().io().storage().deref(),
             [[0x55u8; 2048], [0xaau8; 2048]].concat()
         );
     }
@@ -3409,7 +3341,7 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"raw_0", [0xaau8; 4096]);
-        storage[0].get_blk_io().unwrap().error = Some(Error::Unsupported);
+        storage[0].get_blk_io().error = Some(Error::Unsupported).into();
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
@@ -3420,7 +3352,10 @@ pub(crate) mod test {
         let resp: TestResponder = Default::default();
         // Erases "raw_0".
         block_on(gbl_fb.erase("raw_0", &resp)).unwrap();
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0u8; 4096]);
+        assert_eq!(
+            storage[0].partition_io(None).unwrap().dev().io().storage().deref(),
+            [0u8; 4096]
+        );
     }
 
     #[test]
@@ -3431,10 +3366,12 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
+        storage[0].get_blk_io().error = Some(Error::Other(Some("test"))).into();
+
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
+
         // Injects an error.
-        storage[0].get_blk_io().unwrap().error = Some(Error::Other(Some("test")));
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
         let boot_buffer = Default::default();
@@ -3473,23 +3410,32 @@ pub(crate) mod test {
         block_on(gbl_fb.erase("raw_1", &resp)).unwrap();
 
         // The mock storage device erases data by flipping bits. Thus 0x55 <--> 0xaa.
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0x55u8; KiB!(4)]);
-        assert_eq!(storage[1].partition_io(None).unwrap().dev().io().storage, [0x55u8; KiB!(8)]);
-        assert_eq!(storage[2].partition_io(None).unwrap().dev().io().storage, [0xaau8; KiB!(12)]);
+        assert_eq!(
+            storage[0].partition_io(None).unwrap().dev().io().storage().deref(),
+            [0x55u8; KiB!(4)]
+        );
+        assert_eq!(
+            storage[1].partition_io(None).unwrap().dev().io().storage().deref(),
+            [0x55u8; KiB!(8)]
+        );
+        assert_eq!(
+            storage[2].partition_io(None).unwrap().dev().io().storage().deref(),
+            [0xaau8; KiB!(12)]
+        );
 
         // Tests with additional offset/size
         block_on(gbl_fb.erase("raw_0_ab//400/400", &resp)).unwrap();
         block_on(gbl_fb.erase("raw_1//400/400", &resp)).unwrap();
         assert_eq!(
-            storage[0].partition_io(None).unwrap().dev().io().storage,
+            storage[0].partition_io(None).unwrap().dev().io().storage().deref(),
             [vec![0x55u8; KiB!(1)], vec![0xaau8; KiB!(1)], vec![0x55u8; KiB!(2)]].concat()
         );
         assert_eq!(
-            storage[1].partition_io(None).unwrap().dev().io().storage,
+            storage[1].partition_io(None).unwrap().dev().io().storage().deref(),
             [vec![0x55u8; KiB!(1)], vec![0xaau8; KiB!(1)], vec![0x55u8; KiB!(6)]].concat()
         );
         assert_eq!(
-            storage[2].partition_io(None).unwrap().dev().io().storage,
+            storage[2].partition_io(None).unwrap().dev().io().storage().deref(),
             [vec![0xaau8; KiB!(1)], vec![0x55u8; KiB!(1)], vec![0xaau8; KiB!(10)]].concat()
         );
     }
@@ -3577,9 +3523,9 @@ pub(crate) mod test {
         let mut storage = FakeGblOpsStorage::default();
         // Add blocking devices so they don't finish in a single poll.
         storage.add_raw_device(c"userdata", INITIAL_CONTENTS);
-        storage[0].get_blk_io().unwrap().set_blocking(true);
+        storage[0].get_blk_io().set_blocking(true);
         storage.add_raw_device(c"boot", INITIAL_CONTENTS);
-        storage[1].get_blk_io().unwrap().set_blocking(true);
+        storage[1].get_blk_io().set_blocking(true);
         let mut gbl_ops = FakeGblOps::new(&storage);
         let counter = CounterCallback::new();
         let mut fdr_handler = counter.handler();
@@ -3725,7 +3671,7 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
-        storage[0].get_blk_io().unwrap().set_blocking(true);
+        storage[0].get_blk_io().set_blocking(true);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
@@ -3763,7 +3709,7 @@ pub(crate) mod test {
         let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 2]);
         let mut storage = FakeGblOpsStorage::default();
         storage.add_gpt_device(include_bytes!("../../../libstorage/test/gpt_test_1.bin"));
-        storage[0].get_blk_io().unwrap().set_blocking(true);
+        storage[0].get_blk_io().set_blocking(true);
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
         let tasks = vec![].into();
@@ -4034,10 +3980,16 @@ pub(crate) mod test {
         );
 
         // Verifies flashed image on raw_0.
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0x55u8; KiB!(4)]);
+        assert_eq!(
+            storage[0].partition_io(None).unwrap().dev().io().storage().deref(),
+            [0x55u8; KiB!(4)]
+        );
 
         // Verifies flashed image on raw_1.
-        assert_eq!(storage[1].partition_io(None).unwrap().dev().io().storage, [0xaau8; KiB!(8)]);
+        assert_eq!(
+            storage[1].partition_io(None).unwrap().dev().io().storage().deref(),
+            [0xaau8; KiB!(8)]
+        );
     }
 
     #[test]
@@ -4297,10 +4249,8 @@ pub(crate) mod test {
                 b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
-                b"INFOblock-device:0:status: idle",
                 b"INFOblock-device:1:total-blocks: 0x100",
                 b"INFOblock-device:1:block-size: 0x200",
-                b"INFOblock-device:1:status: idle",
                 b"INFOgbl-default-block: None",
                 b"INFOpartition-start:vendor_boot_a: 0x4400",
                 b"INFOpartition-size:vendor_boot_a: 0x1000",
@@ -4346,10 +4296,8 @@ pub(crate) mod test {
                 b"INFOmax-fetch-size: 0x7fffffff",
                 b"INFOblock-device:0:total-blocks: 0x80",
                 b"INFOblock-device:0:block-size: 0x200",
-                b"INFOblock-device:0:status: idle",
                 b"INFOblock-device:1:total-blocks: 0x100",
                 b"INFOblock-device:1:block-size: 0x200",
-                b"INFOblock-device:1:status: idle",
                 b"INFOgbl-default-block: None",
                 b"INFOpartition-start:boot_a: 0x4400",
                 b"INFOpartition-size:boot_a: 0x2000",
@@ -4643,7 +4591,10 @@ pub(crate) mod test {
         );
 
         // Disk contents should be unchanged.
-        assert_eq!(&storage[0].partition_io(None).unwrap().dev().io().storage[..], disk_orig);
+        assert_eq!(
+            &storage[0].partition_io(None).unwrap().dev().io().storage.borrow().as_slice(),
+            disk_orig
+        );
     }
 
     #[test]
@@ -4694,7 +4645,10 @@ pub(crate) mod test {
         );
 
         // Disk contents should have changed.
-        assert_ne!(&storage[0].partition_io(None).unwrap().dev().io().storage[..], disk_orig);
+        assert_ne!(
+            &storage[0].partition_io(None).unwrap().dev().io().storage.borrow().as_slice(),
+            disk_orig
+        );
     }
 
     #[test]
@@ -4735,7 +4689,10 @@ pub(crate) mod test {
         );
 
         // Disk contents should be unchanged.
-        assert_eq!(&storage[0].partition_io(None).unwrap().dev().io().storage[..], disk_orig);
+        assert_eq!(
+            &storage[0].partition_io(None).unwrap().dev().io().storage.borrow().as_slice(),
+            disk_orig
+        );
     }
 
     #[test]
@@ -4775,7 +4732,10 @@ pub(crate) mod test {
         );
 
         // Disk contents should have changed.
-        assert_ne!(&storage[0].partition_io(None).unwrap().dev().io().storage[..], disk_orig);
+        assert_ne!(
+            &storage[0].partition_io(None).unwrap().dev().io().storage.borrow().as_slice(),
+            disk_orig
+        );
     }
 
     #[test]
@@ -4903,7 +4863,7 @@ pub(crate) mod test {
         assert_eq!(get_boot_slot(&mut GblAbrOps(&mut gbl_ops), true), (slot, false));
         // Verifies storage sync
         assert_eq!(
-            storage[0].partition_io(None).unwrap().dev().io().storage[ABR_DATA_SIZE..],
+            storage[0].partition_io(None).unwrap().dev().io().storage().deref()[ABR_DATA_SIZE..],
             data
         );
     }
@@ -5686,9 +5646,18 @@ pub(crate) mod test {
         block_on(gbl_fb.flashing_write_lock_state(LockType::Device, LockState::Unlocked, &resp))
             .unwrap();
         // We should have erased FDR partitions, triggered FDR, and unlocked.
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, ERASED_CONTENTS);
-        assert_eq!(storage[1].partition_io(None).unwrap().dev().io().storage, ERASED_CONTENTS);
-        assert_eq!(storage[2].partition_io(None).unwrap().dev().io().storage, ERASED_CONTENTS);
+        assert_eq!(
+            storage[0].partition_io(None).unwrap().dev().io().storage.borrow().deref(),
+            &ERASED_CONTENTS
+        );
+        assert_eq!(
+            storage[1].partition_io(None).unwrap().dev().io().storage.borrow().deref(),
+            &ERASED_CONTENTS
+        );
+        assert_eq!(
+            storage[2].partition_io(None).unwrap().dev().io().storage.borrow().deref(),
+            &ERASED_CONTENTS
+        );
         assert_eq!(fdr_counter.count(), 1);
         assert_eq!(gbl_fb.gbl_ops.avb_device_status.is_unlocked, true);
 
@@ -5697,9 +5666,18 @@ pub(crate) mod test {
             .unwrap();
         // We should have erased FDR partitions, triggered FDR, and unlocked.
         // Since "erasing" in tests flips the bits, we should be back to the initial contents.
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
-        assert_eq!(storage[1].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
-        assert_eq!(storage[2].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
+        assert_eq!(
+            storage[0].partition_io(None).unwrap().dev().io().storage.borrow().deref(),
+            &INITIAL_CONTENTS
+        );
+        assert_eq!(
+            storage[1].partition_io(None).unwrap().dev().io().storage.borrow().deref(),
+            &INITIAL_CONTENTS
+        );
+        assert_eq!(
+            storage[2].partition_io(None).unwrap().dev().io().storage.borrow().deref(),
+            &INITIAL_CONTENTS
+        );
         assert_eq!(fdr_counter.count(), 2);
         assert_eq!(gbl_fb.gbl_ops.avb_device_status.is_unlocked, false);
     }
@@ -5734,14 +5712,20 @@ pub(crate) mod test {
         block_on(gbl_fb.flashing_write_lock_state(LockType::Critical, LockState::Unlocked, &resp))
             .unwrap();
         // Changing the critical lock state should not modify FDR partitions or trigger FDR.
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
+        assert_eq!(
+            storage[0].partition_io(None).unwrap().dev().io().storage.borrow().deref(),
+            &INITIAL_CONTENTS
+        );
         assert_eq!(fdr_counter.count(), 0);
 
         // Re-lock critical.
         block_on(gbl_fb.flashing_write_lock_state(LockType::Critical, LockState::Locked, &resp))
             .unwrap();
         // Changing the critical lock state should not modify FDR partitions or trigger FDR.
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
+        assert_eq!(
+            storage[0].partition_io(None).unwrap().dev().io().storage.borrow().deref(),
+            &INITIAL_CONTENTS
+        );
         assert_eq!(fdr_counter.count(), 0);
     }
 
@@ -6193,7 +6177,10 @@ pub(crate) mod test {
             listener.dump_transport_out_queue()
         );
         // Verifies flashed image on raw.
-        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, [0x55u8; KiB!(2)]);
+        assert_eq!(
+            storage[0].partition_io(None).unwrap().dev().io().storage().deref(),
+            [0x55u8; KiB!(2)]
+        );
     }
 
     #[test]

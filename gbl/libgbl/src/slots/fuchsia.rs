@@ -613,7 +613,7 @@ mod test {
         const PARTITION: &str = "test_partition";
         const OFFSET: u64 = 2112; // Deliberately wrong to test propagation of parameter.
         let disk = include_bytes!("../../testdata/writeback_test_disk.bin").to_vec();
-        let mut blk = TestDisk::new_ram_alloc(512, 512, disk).unwrap();
+        let blk = TestDisk::new_ram_alloc(512, 512, disk).unwrap();
         let mut gpt = new_gpt_max();
         block_on(blk.sync_gpt(&mut gpt, true)).unwrap();
         let mut sb: SlotBlock<AbrData> = Default::default();
@@ -648,7 +648,7 @@ mod test {
         const PARTITION: &str = "test_partition";
         const OFFSET: u64 = 2112; // Deliberately wrong to test propagation of parameter.
         let disk = include_bytes!("../../testdata/writeback_test_disk.bin").to_vec();
-        let mut blk = TestDisk::new_ram_alloc(512, 512, disk).unwrap();
+        let blk = TestDisk::new_ram_alloc(512, 512, disk).unwrap();
         let mut gpt = new_gpt_max();
         block_on(blk.sync_gpt(&mut gpt, true)).unwrap();
         let mut read_buffer: [u8; size_of::<AbrData>()] = Default::default();

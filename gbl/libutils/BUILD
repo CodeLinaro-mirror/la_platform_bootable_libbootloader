@@ -31,6 +31,7 @@ rust_library(
         "@gbl//libasync",
         "@gbl//liberror",
         "@gbl//libsafemath",
+        "@static_assertions",
     ],
 )
 
