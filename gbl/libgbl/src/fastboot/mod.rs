@@ -331,6 +331,15 @@ pub(crate) struct GblFbData<'a> {
     pub(crate) load_result: Option<Result<LoadedImages<'a>, &'a IntegrationError>>,
 }
 
+/// Enum indicating how to resolve a fastboot partition name.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ResolveMode {
+    /// If an exact match isn't found, try appending the current slot only.
+    CurrentSlot,
+    /// If an exact match isn't found, try appending all slots.
+    AllSlots,
+}
+
 /// `GblFastboot` implements fastboot commands in the GBL context.
 ///
 /// # Lifetimes
@@ -604,8 +613,11 @@ where
         let devs = self.disks;
         // Checks uniqueness of the partition and resolves its block device ID.
         let find = |p: Option<&'s str>| match blk_id {
-            None => Ok::<_, Error>(check_part_unique(devs, p.ok_or("Must provide a partition")?)?),
-            Some(v) => Ok((v, devs[v].find_partition(p)?)),
+            None => Ok::<_, Error>(check_part_unique(devs, p.ok_or(Error::NotUnique)?)?),
+            Some(v) => {
+                let dev = devs.get(v).ok_or(Error::NotFound)?;
+                Ok((v, dev.find_partition(p)?))
+            }
         };
         Ok(match find(part) {
             // Some legacy Fuchsia devices in the field uses name "fuchsia-fvm" for the standard
@@ -621,59 +633,65 @@ where
         })
     }
 
-    /// Resolves partition names with special handling for slotted syntax.
+    /// Resolves partition targets with special handling for slotted syntax.
     ///
     /// The following are checked in order:
     ///
-    ///  1. If there is an exact match of the partition, return the match.
-    ///  2. If partition has format "<base>_ab", checks "<base>_a" and "<base>_b".
-    ///  3. Otherwise checks "<base>_<current slot>".
+    ///  1. If there is an exact match of a partition, return the match
+    ///  2. If target has format `<base>_ab`, override `resolve_mode` to [ResolveMode::AllSlots]
+    ///  3. Depending on [ResolveMode]:
+    ///     * `CurrentSlot`: look for `<base>_<current slot>`
+    ///     * `AllSlots`: look for all `<base>_<slot>` partitions
     ///
     /// # Arguments
     ///
-    /// * `part`: the given partition name, or `None` for raw disk access.
+    /// * `target`: the given target name, or `None` for raw disk access.
     /// * `blk_id`: the block device to locate the partition on, or `None` for any.
+    /// * `resolve_mode`: default name resolution behavior.
     ///
     /// # Returns
     ///
     /// A tuple containing:
     ///
-    /// * The base name of the partition without any slot suffix, or `None` for raw disk.
+    /// * The base name of the resolved partition without any slot suffix, or `None` for raw disk.
     /// * The list of `(block device ID, Partition)` tuples corresponding to this partition.
     fn resolve_slotted_partitions<'s>(
         &mut self,
-        part: Option<&'s str>,
+        target: Option<&'s str>,
         blk_id: Option<usize>,
+        resolve_mode: ResolveMode,
     ) -> Result<(Option<&'s str>, ArrayVec<(usize, Partition), MAX_IO_PARTS>), Error> {
-        match self.find_partition(part, blk_id) {
-            // If there is an exact match, returns as it is.
-            Ok(v) => Ok((
-                part.map(|p| split_partition_suffix(p).map(|(base, _)| base).unwrap_or(p)),
-                (&[v][..]).try_into().unwrap(),
+        match self.find_partition(target, blk_id) {
+            // If there is an exact match, use it.
+            Ok(block_id_and_part) => Ok((
+                target.map(|p| split_partition_suffix(p).map(|(base, _)| base).unwrap_or(p)),
+                [block_id_and_part].into_iter().collect(),
             )),
-            // Checks slotted extension. Currently only support A/B two-slot scheme.
-            Err(Error::NotFound) => match part {
-                // If the partition doesn't exist but ends with "_ab", expands to "_a" and "_b"
-                // respectively.
-                Some(p) if p.ends_with("_ab") => {
-                    let mut res = ArrayVec::new();
-                    let base = p.strip_suffix("_ab").unwrap();
-                    for suffix in ["a", "b"] {
-                        let part = RawName::new_formatted(format_args!("{base}_{suffix}"))?;
-                        res.push(self.find_partition(Some(part.to_str()), blk_id)?);
+            // If we didn't match but have a target name, check for slot suffixes.
+            Err(Error::NotFound) if target.is_some() => {
+                let target = target.unwrap();
+
+                // `_ab` suffix is a way for users to force all-slots mode.
+                let (base, resolve_mode) = match target.strip_suffix("_ab") {
+                    Some(base) => (base, ResolveMode::AllSlots),
+                    None => (target, resolve_mode),
+                };
+
+                let slots: ArrayVec<char, MAX_IO_PARTS> = match resolve_mode {
+                    ResolveMode::AllSlots => ['a', 'b'].into(),
+                    ResolveMode::CurrentSlot => {
+                        [self.gbl_ops.get_current_slot()?.suffix.as_char()].into_iter().collect()
                     }
-                    Ok((Some(base), res))
+                };
+
+                let mut res = ArrayVec::new();
+                for slot in slots {
+                    let full = RawName::new_formatted(format_args!("{base}_{slot}"))?;
+                    res.push(self.find_partition(Some(full.to_str()), blk_id)?);
                 }
-                // Otherwise appends with current slot and checks again.
-                Some(p) => {
-                    let mut res = ArrayVec::new();
-                    let slot = self.gbl_ops.get_current_slot()?.suffix.as_char();
-                    let part = RawName::new_formatted(format_args!("{p}_{slot}"))?;
-                    res.push(self.find_partition(Some(part.to_str()), blk_id)?);
-                    Ok((Some(p), res))
-                }
-                _ => Err(Error::NotFound),
-            },
+                Ok((Some(base), res))
+            }
+            // Failed to find the partition.
             Err(e) => return Err(e),
         }
     }
@@ -716,7 +734,8 @@ where
             return Err("partition name is required".into());
         }
 
-        let (basename, block_ids_and_parts) = self.resolve_slotted_partitions(part, blk_id)?;
+        let (basename, block_ids_and_parts) =
+            self.resolve_slotted_partitions(part, blk_id, ResolveMode::CurrentSlot)?;
 
         let (fdr, critical) = if A::IS_READ_ONLY {
             // Read-only access never requires FDR or critical lock.
@@ -767,6 +786,31 @@ where
             return Err("partition is critical-locked".into());
         }
 
+        // We've checked locking and FDR requirements, we can grab the I/O now.
+        let part_io = self.get_partition_io_unchecked::<A>(block_ids_and_parts, off, sz).await?;
+        Ok((part_io, fdr))
+    }
+
+    /// Creates a [MultiPartitionIo] from resolved partitions.
+    ///
+    /// Note: the caller MUST ensure that partition attributes are respected, this function does
+    /// not apply any lock or FDR checks.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_ids_and_parts`: a list of resolved block IDs and partition locations
+    /// * `off`: the offset within the partition
+    /// * `sz`: the size within the partition
+    ///
+    /// # Returns
+    ///
+    /// The [MultiPartitionIo] for disk access.
+    async fn get_partition_io_unchecked<A: AccessMode>(
+        &mut self,
+        block_ids_and_parts: ArrayVec<(usize, Partition), MAX_IO_PARTS>,
+        off: Option<u64>,
+        sz: Option<u64>,
+    ) -> CommandResult<MultiPartitionIo<'a, B, P2, MAX_IO_PARTS, A>> {
         let _guard = TraceGuard::new(false);
         loop {
             // Determine the exact byte range on each disk we're going to use.
@@ -784,7 +828,7 @@ where
             match crate::partition::create_multi_partition_io::<_, _, _, A>(self.disks, parts_info)
             {
                 Err(Error::NotReady) => yield_now().await,
-                v => return Ok((v?, fdr)),
+                v => return Ok(v?),
             }
         }
     }
@@ -1190,6 +1234,90 @@ where
             _ => Err("Unknown data type".into()),
         }
     }
+
+    /// Erases all FDR-linked partitions.
+    ///
+    /// This is non-security-critical so is best-effort; any errors will be logged but not
+    /// propagated up to the caller because we want to ensure that locking and unlocking a
+    /// device is still possible, otherwise errors in this step could brick a device by
+    /// preventing unlock and therefore preventing re-flashing.
+    ///
+    /// Callers are expected to always FDR following this.
+    async fn wipe_fdr_partitions(&mut self, responder: &mut impl InfoSender) {
+        let attributes = match self.gbl_ops.avb_read_partition_attributes() {
+            Ok(attributes) => attributes,
+            Err(e) => {
+                gbl_println!(
+                    self.gbl_ops,
+                    "Failed to determine FDR partitions, skipping pre-FDR wipe ({:?})",
+                    e
+                );
+                return;
+            }
+        };
+
+        // Wait for any async disk I/O to complete.
+        self.sync_tasks(responder, "Userdata wipe").await;
+
+        for attribute in attributes.filter(|p| p.fdr == Fdr::Yes) {
+            let basename = attribute.name_cstr().to_str().unwrap();
+            let block_ids_and_parts = match self.resolve_slotted_partitions(
+                Some(basename),
+                None,
+                ResolveMode::AllSlots,
+            ) {
+                // Missing partition may be pretty standard since we inject some defaults,
+                // just no-op this case.
+                Err(Error::NotFound) => continue,
+                Err(e) => {
+                    gbl_println!(
+                        self.gbl_ops,
+                        "Failed to resolve partition '{}', skipping pre-FDR wipe ({:?})",
+                        basename,
+                        e
+                    );
+                    continue;
+                }
+                Ok((_, parts)) => parts,
+            };
+
+            // We are adhering to partition attributes because:
+            //
+            // * The caller will FDR immediately after we return
+            // * If for some reason a partition is critical but is also marked for FDR, FDR
+            //   takes priority so we don't need to check lock state. The critical lock is
+            //   just to guard direct user modification
+            let part_io = match self
+                .get_partition_io_unchecked::<ReadWrite>(block_ids_and_parts, Some(0), None)
+                .await
+            {
+                Ok(part_io) => part_io,
+                Err(e) => {
+                    gbl_println!(
+                        self.gbl_ops,
+                        "Failed to locate partition '{}', skipping pre-FDR wipe ({:?})",
+                        basename,
+                        e
+                    );
+                    continue;
+                }
+            };
+            let mut task = Task::new(TaskWorkload::Erase(
+                part_io,
+                self.take_or_allocate_download_buffer().await,
+            ));
+            task.set_context(|f| write!(f, "erase:{basename}"));
+
+            if let Err(e) = self.schedule_task(&mut task, responder).await {
+                gbl_println!(
+                    self.gbl_ops,
+                    "Failed to erase partition '{}', skipping pre-FDR wipe ({:?})",
+                    basename,
+                    e
+                );
+            }
+        }
+    }
 }
 
 // See definition of [GblFastboot] for docs on lifetimes and generics parameters.
@@ -1570,6 +1698,7 @@ where
         &mut self,
         lock_type: LockType,
         lock_state: LockState,
+        mut responder: impl InfoSender,
     ) -> CommandResult<()> {
         // NOTE: This creates a usability edge case: if a user has unlocked both DEVICE and
         // CRITICAL locks, and then locks DEVICE first, they will be unable to lock CRITICAL
@@ -1577,6 +1706,27 @@ where
         if lock_type == LockType::Critical {
             self.check_unlocked()?;
         }
+
+        if lock_type == LockType::Device {
+            // 1. Wipe all FDR-linked partitions
+            //
+            // This puts the device in a consistent state ready for re-initialization. It's not
+            // security-critical - the upcoming FDR itself will securely shred all this data when it
+            // rotates keys - but this provides some extra level of assurance that no data will
+            // inadvertently leak across lock states.
+            //
+            // For dev boards that do not yet implement key rotation, this is necessary to wipe
+            // user data and essentially performs a non-secure FDR.
+            self.wipe_fdr_partitions(&mut responder).await;
+
+            // 2. Perform FDR
+            //
+            // This is security-critical - we must not allow any user data to leak across lock
+            // states in either direction. FDR rotates encryption keys to irreversably shred any
+            // user data.
+            self.sync_tasks_and_fdr(&mut responder).await?;
+        }
+
         Ok(self.gbl_ops.avb_write_lock_state(lock_type, lock_state)?)
     }
 
@@ -2004,12 +2154,30 @@ pub(crate) mod test {
         }
     }
 
-    #[test]
-    fn test_resolve_slotted_partitions_exact_match() {
+    /// Test helper to set up a `GblFastboot` and call `resolve_slotted_partitions()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `parts`: partition names to install as raw storage devices
+    /// * `target`: passed to `resolve_slotted_partitions()`
+    /// * `block_id`: passed to `resolve_slotted_partitions()`
+    /// * `mode`: passed to `resolve_slotted_partitions()`
+    ///
+    /// # Returns
+    ///
+    /// The result of `resolve_slotted_partitions()`, except the resolved `ArrayVec` of
+    /// `(block_id, Partition)` is converted to a `Vec` of `(block_id, name)` for easier test use.
+    fn resolve_slotted_partition<'a>(
+        parts: &[&CStr],
+        target: Option<&'a str>,
+        block_id: Option<usize>,
+        mode: ResolveMode,
+    ) -> Result<(Option<&'a str>, Vec<(u32, String)>), Error> {
         let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 1]);
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", vec![0u8; KiB!(4)]);
-
+        for part in parts {
+            storage.add_raw_device(part, vec![0u8; KiB!(4)]);
+        }
         let mut gbl_ops = FakeGblOps::new(&storage);
         let tasks = vec![].into();
         let parts = gbl_ops.disks();
@@ -2017,64 +2185,115 @@ pub(crate) mod test {
         let mut gbl_fb =
             GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
 
-        let (base, res) = gbl_fb.resolve_slotted_partitions(Some("boot_a"), None).unwrap();
-        assert_eq!(base, Some("boot"));
-        assert_eq!(res.len(), 1);
+        let (basename, block_ids_and_parts) =
+            gbl_fb.resolve_slotted_partitions(target, block_id, mode)?;
+
+        // Convert the result into a format that's easier for tests to validate.
+        let mut result = Vec::new();
+        for (block_id, part) in block_ids_and_parts {
+            // We unconditionally use `add_raw_device()` above with 4KiB size.
+            let Partition::Raw(raw_name, size) = part else {
+                panic!("Unexpected partition {:?}", part);
+            };
+            assert_eq!(size, KiB!(4));
+
+            // Convert `block_id` to `u32` so comparisons don't have to explicitly say `0usize`.
+            // Convert `raw_name` to `String` so it outlives this function.
+            result.push((block_id.try_into().unwrap(), raw_name.to_str().to_string()));
+        }
+
+        Ok((basename, result))
+    }
+
+    #[test]
+    fn test_resolve_slotted_partitions_exact_match() {
+        let (basename, parts) =
+            resolve_slotted_partition(&[c"boot_a"], Some("boot_a"), None, ResolveMode::CurrentSlot)
+                .unwrap();
+        assert_eq!(basename, Some("boot"));
+        assert_eq!(parts, vec![(0, "boot_a".to_string())]);
     }
 
     #[test]
     fn test_resolve_slotted_partitions_ab_expansion() {
-        let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 1]);
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"vendor_a", vec![0u8; KiB!(4)]);
-        storage.add_raw_device(c"vendor_b", vec![0u8; KiB!(4)]);
-
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        let tasks = vec![].into();
-        let parts = gbl_ops.disks();
-        let boot_buffer = Default::default();
-        let mut gbl_fb =
-            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
-
-        let (base, res) = gbl_fb.resolve_slotted_partitions(Some("vendor_ab"), None).unwrap();
-        assert_eq!(base, Some("vendor"));
-        assert_eq!(res.len(), 2);
+        let (basename, parts) = resolve_slotted_partition(
+            &[c"vendor_a", c"vendor_b"],
+            // `_ab` suffix should resolve to both partitions.
+            Some("vendor_ab"),
+            None,
+            ResolveMode::CurrentSlot,
+        )
+        .unwrap();
+        assert_eq!(basename, Some("vendor"));
+        assert_eq!(parts, vec![(0, "vendor_a".to_string()), (1, "vendor_b".to_string())]);
     }
 
     #[test]
-    fn test_resolve_slotted_partitions_fallback() {
-        let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 1]);
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"system_a", vec![0u8; KiB!(4)]);
+    fn test_resolve_slotted_partitions_current_slot() {
+        let (basename, parts) = resolve_slotted_partition(
+            &[c"system_a", c"system_b"],
+            Some("system"),
+            None,
+            // `CurrentSlot` mode should only resolve to the A partition.
+            ResolveMode::CurrentSlot,
+        )
+        .unwrap();
+        assert_eq!(basename, Some("system"));
+        assert_eq!(parts, vec![(0, "system_a".to_string())]);
+    }
 
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        let tasks = vec![].into();
-        let parts = gbl_ops.disks();
-        let boot_buffer = Default::default();
-        let mut gbl_fb =
-            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
-
-        let (base, res) = gbl_fb.resolve_slotted_partitions(Some("system"), None).unwrap();
-        assert_eq!(base, Some("system"));
-        assert_eq!(res.len(), 1);
+    #[test]
+    fn test_resolve_slotted_partitions_all_slots() {
+        let (basename, parts) = resolve_slotted_partition(
+            &[c"system_a", c"system_b"],
+            Some("system"),
+            None,
+            // `AllSlots` mode should resolve to both partitions.
+            ResolveMode::AllSlots,
+        )
+        .unwrap();
+        assert_eq!(basename, Some("system"));
+        assert_eq!(parts, vec![(0, "system_a".to_string()), (1, "system_b".to_string())]);
     }
 
     #[test]
     fn test_resolve_slotted_partitions_none() {
-        let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 1]);
-        let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"raw_0", vec![0u8; KiB!(4)]);
+        let (basename, parts) =
+            resolve_slotted_partition(&[c"raw_0"], None, Some(0), ResolveMode::CurrentSlot)
+                .unwrap();
+        assert_eq!(basename, None);
+        // Finding raw partitions by disk ID just returns the empty string, the name is not needed.
+        assert_eq!(parts, vec![(0, "".to_string())]);
+    }
 
-        let mut gbl_ops = FakeGblOps::new(&storage);
-        let tasks = vec![].into();
-        let parts = gbl_ops.disks();
-        let boot_buffer = Default::default();
-        let mut gbl_fb =
-            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+    #[test]
+    fn test_resolve_slotted_partitions_partition_not_found() {
+        assert_eq!(
+            resolve_slotted_partition(
+                &[c"boot_a"],
+                Some("vendor_a"),
+                None,
+                ResolveMode::CurrentSlot
+            ),
+            Err(Error::NotFound)
+        );
+    }
 
-        let (base, res) = gbl_fb.resolve_slotted_partitions(None, Some(0)).unwrap();
-        assert_eq!(base, None);
-        assert_eq!(res.len(), 1);
+    #[test]
+    fn test_resolve_slotted_partitions_disk_not_found() {
+        assert_eq!(
+            resolve_slotted_partition(&[c"raw_0"], None, Some(1), ResolveMode::CurrentSlot),
+            Err(Error::NotFound)
+        );
+    }
+
+    #[test]
+    fn test_resolve_slotted_partitions_ambiguous_disk() {
+        assert_eq!(
+            // 2 disks, but we don't specify a particular disk ID.
+            resolve_slotted_partition(&[c"raw_0", c"raw_1"], None, None, ResolveMode::CurrentSlot),
+            Err(Error::NotUnique)
+        );
     }
 
     #[test]
@@ -3452,13 +3671,7 @@ pub(crate) mod test {
         // Fetching non-unique partitions should now fail.
         check_upload(&mut gbl_fb, "raw/", off, size, Err("NotUnique".into()));
         check_upload(&mut gbl_fb, "vendor_boot_a/", off, size, Err("NotUnique".into()));
-        check_upload(
-            &mut gbl_fb,
-            "/",
-            off,
-            size,
-            Err(Error::Other(Some("Must provide a partition")).into()),
-        );
+        check_upload(&mut gbl_fb, "/", off, size, Err(Error::NotUnique.into()));
     }
 
     #[test]
@@ -5183,6 +5396,9 @@ pub(crate) mod test {
         let buffers = vec![Some(vec![0u8; KiB!(1)]); 1];
         let mut gbl_ops = FakeGblOps::new(&storage);
         gbl_ops.avb_device_status.is_unlocked = true;
+        let fdr_counter = CounterCallback::new();
+        let mut fdr_handler = fdr_counter.handler();
+        gbl_ops.factory_data_reset_handler = Some(&mut fdr_handler);
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
         listener.add_transport_input(b"flashing lock");
@@ -5213,7 +5429,111 @@ pub(crate) mod test {
                 (LockType::Critical, LockState::Locked),
                 (LockType::Critical, LockState::Unlocked),
             ]
-        )
+        );
+
+        // We should have FDR'd twice, on device lock/unlock. See below for a more targeted
+        // test of FDR behavior, but this is useful as an end-to-end check with the full command
+        // processing loop.
+        assert_eq!(fdr_counter.count(), 2);
+    }
+
+    #[test]
+    fn test_fastboot_flashing_lock_unlock_fdr() {
+        const INITIAL_CONTENTS: [u8; KiB!(4)] = [0x11u8; KiB!(4)];
+        // `RamBlockIo` simulates erase by flipping all bits, !0x11 (initial) = 0xEE.
+        const ERASED_CONTENTS: [u8; KiB!(4)] = [0xEEu8; KiB!(4)];
+        let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 2]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"userdata", INITIAL_CONTENTS);
+        // It's not common for FDR partitions to be slotted, but if a device ever does want this
+        // we should handle it properly and wipe both.
+        storage.add_raw_device(c"metadata_a", INITIAL_CONTENTS);
+        storage.add_raw_device(c"metadata_b", INITIAL_CONTENTS);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let fdr_counter = CounterCallback::new();
+        let mut fdr_handler = fdr_counter.handler();
+        gbl_ops.factory_data_reset_handler = Some(&mut fdr_handler);
+        // Mark "userdata" and "metadata" as FDR-linked.
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![
+            SpecializedPartition {
+                name_buffer: cstr_buffer("userdata"),
+                fdr: Fdr::Yes,
+                ..Default::default()
+            },
+            SpecializedPartition {
+                name_buffer: cstr_buffer("metadata"),
+                fdr: Fdr::Yes,
+                ..Default::default()
+            },
+        ]));
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let resp: TestResponder = Default::default();
+
+        // Unlock the device.
+        block_on(gbl_fb.flashing_write_lock_state(LockType::Device, LockState::Unlocked, &resp))
+            .unwrap();
+        // We should have erased FDR partitions, triggered FDR, and unlocked.
+        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, ERASED_CONTENTS);
+        assert_eq!(storage[1].partition_io(None).unwrap().dev().io().storage, ERASED_CONTENTS);
+        assert_eq!(storage[2].partition_io(None).unwrap().dev().io().storage, ERASED_CONTENTS);
+        assert_eq!(fdr_counter.count(), 1);
+        assert_eq!(gbl_fb.gbl_ops.avb_device_status.is_unlocked, true);
+
+        // Re-lock the device.
+        block_on(gbl_fb.flashing_write_lock_state(LockType::Device, LockState::Locked, &resp))
+            .unwrap();
+        // We should have erased FDR partitions, triggered FDR, and unlocked.
+        // Since "erasing" in tests flips the bits, we should be back to the initial contents.
+        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
+        assert_eq!(storage[1].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
+        assert_eq!(storage[2].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
+        assert_eq!(fdr_counter.count(), 2);
+        assert_eq!(gbl_fb.gbl_ops.avb_device_status.is_unlocked, false);
+    }
+
+    #[test]
+    fn test_fastboot_flashing_lock_unlock_critical_no_fdr() {
+        const INITIAL_CONTENTS: [u8; KiB!(4)] = [0x11u8; KiB!(4)];
+        let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 2]);
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"userdata", INITIAL_CONTENTS);
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let fdr_counter = CounterCallback::new();
+        let mut fdr_handler = fdr_counter.handler();
+        gbl_ops.factory_data_reset_handler = Some(&mut fdr_handler);
+        // Mark "userdata" as FDR-linked.
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("userdata"),
+            fdr: Fdr::Yes,
+            ..Default::default()
+        }]));
+        // Device must be unlocked to change critical lock state.
+        gbl_ops.avb_device_status.is_unlocked = true;
+
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+        let resp: TestResponder = Default::default();
+
+        // Unlock critical.
+        block_on(gbl_fb.flashing_write_lock_state(LockType::Critical, LockState::Unlocked, &resp))
+            .unwrap();
+        // Changing the critical lock state should not modify FDR partitions or trigger FDR.
+        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
+        assert_eq!(fdr_counter.count(), 0);
+
+        // Re-lock critical.
+        block_on(gbl_fb.flashing_write_lock_state(LockType::Critical, LockState::Locked, &resp))
+            .unwrap();
+        // Changing the critical lock state should not modify FDR partitions or trigger FDR.
+        assert_eq!(storage[0].partition_io(None).unwrap().dev().io().storage, INITIAL_CONTENTS);
+        assert_eq!(fdr_counter.count(), 0);
     }
 
     #[test]
