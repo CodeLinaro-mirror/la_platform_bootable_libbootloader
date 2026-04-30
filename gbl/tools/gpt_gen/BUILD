@@ -23,5 +23,12 @@ rust_binary(
     name = "gpt_gen",
     srcs = ["src/main.rs"],
     edition = "2021",
-    deps = ["@clap"],
+    deps = [
+        "@arrayvec",
+        "@bytes",
+        "@clap",
+        "@gbl//libasync",
+        "@gbl//libstorage",
+        "@gbl//libstorage:file_block_io",
+    ],
 )

@@ -38,6 +38,9 @@ def parse_args() -> argparse.Namespace:
       "--timeout", type=int, help="timeout in seconds", default=10
   )
   parser.add_argument("--log_output", help="Output path for serial log")
+  parser.add_argument(
+      "--disk", action="append", help="Path to a disk image to attach as virtio-blk"
+  )
 
   return parser.parse_args()
 
@@ -68,6 +71,16 @@ def launch_qemu(args):
       cmd_args += ["-bios", bios]
       # ESP partition
       cmd_args += ["-drive", "format=raw,file=fat:rw:esp"]
+      # Add extra disks
+      disks = args.disk or []
+      for i, disk in enumerate(disks):
+        disk_path = os.path.abspath(disk)
+        drive_id = f"hd{i}"
+        cmd_args += [
+            "-drive",
+            f"file={disk_path},format=raw,if=none,id={drive_id},readonly=on",
+        ]
+        cmd_args += ["-device", f"virtio-blk-device,drive={drive_id}"]
       # Re-direct all sources of serial log to a log file
       cmd_args += ["-serial", "chardev:console"]
       cmd_args += ["-monitor", "chardev:console"]
