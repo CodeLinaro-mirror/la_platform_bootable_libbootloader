@@ -138,9 +138,10 @@ mod test {
         constants::ZIRCON_KERNEL_ALIGNMENT,
         fuchsia_boot::test::{
             append_cmd_line, corrupt_data, create_gbl_ops, create_storage, normalize_zbi,
-            read_test_data, TEST_ROLLBACK_INDEX_LOCATION, ZIRCON_A_ZBI_FILE,
+            TEST_ROLLBACK_INDEX_LOCATION, ZIRCON_A_ZBI_FILE,
         },
         ops::test::FakeGblOps,
+        tests::read_test_data,
     };
     use avb::{IoError, CERT_PIK_VERSION_LOCATION, CERT_PSK_VERSION_LOCATION};
     use libtestutils::AlignedBuffer;

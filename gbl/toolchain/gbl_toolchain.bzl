@@ -290,6 +290,7 @@ def _dev_test_impl(ctx):
     return DefaultInfo(
         files = depset(ctx.files.target),
         executable = _create_symlink_wrapper(ctx, file),
+        runfiles = ctx.attr.target[DefaultInfo].default_runfiles,
     )
 
 dev_test = rule(

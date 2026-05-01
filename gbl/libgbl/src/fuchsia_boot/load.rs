@@ -185,11 +185,12 @@ mod test {
         fastboot::test::{make_expected_transport_out, SharedTestListener},
         fuchsia_boot::test::{
             append_cmd_line, append_zbi_file, create_gbl_ops, create_storage,
-            create_storage_legacy_names, normalize_zbi, read_test_data, TEST_CERT_PIK_VERSION,
+            create_storage_legacy_names, normalize_zbi, TEST_CERT_PIK_VERSION,
             TEST_CERT_PSK_VERSION, TEST_KERNEL_RESERVED_MEMORY_SIZE, TEST_ROLLBACK_INDEX_LOCATION,
             TEST_ROLLBACK_INDEX_VALUE, ZIRCON_A_ZBI_FILE, ZIRCON_SLOTLESS_ZBI_FILE,
         },
         ops::test::FakeGblOps,
+        tests::read_test_data,
     };
     use abr::{
         mark_slot_active, mark_slot_successful, mark_slot_unbootable, set_one_shot_bootloader,

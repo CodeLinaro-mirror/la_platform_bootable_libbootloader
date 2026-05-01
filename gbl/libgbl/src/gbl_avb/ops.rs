@@ -691,7 +691,9 @@ mod test {
     use super::*;
     use crate::{
         ops::test::{FakeGblOps, FakeGblOpsStorage},
-        tests::{testdata, TEST_PERMANENT_ATTRIBUTES_HASH_PATH, TEST_PERMANENT_ATTRIBUTES_PATH},
+        tests::{
+            read_test_data, TEST_PERMANENT_ATTRIBUTES_HASH_PATH, TEST_PERMANENT_ATTRIBUTES_PATH,
+        },
     };
     use avb::{CERT_PIK_VERSION_LOCATION, CERT_PSK_VERSION_LOCATION};
     use zerocopy::FromBytes;
@@ -1019,14 +1021,19 @@ mod test {
         // Cert verification requires both permanent attribute ops plus reading
         // rollback indices for the signing keys.
         gbl_ops.avb_ops.cert_permanent_attributes = Some(
-            CertPermanentAttributes::read_from(&testdata(TEST_PERMANENT_ATTRIBUTES_PATH)).unwrap(),
+            CertPermanentAttributes::read_from(&read_test_data(TEST_PERMANENT_ATTRIBUTES_PATH))
+                .unwrap(),
         );
         gbl_ops.avb_ops.cert_permanent_attributes_hash =
-            Some(testdata(TEST_PERMANENT_ATTRIBUTES_HASH_PATH).try_into().unwrap());
+            Some(read_test_data(TEST_PERMANENT_ATTRIBUTES_HASH_PATH).try_into().unwrap());
         gbl_ops.avb_ops.rollbacks.insert(CERT_PIK_VERSION_LOCATION, Ok(0));
         gbl_ops.avb_ops.rollbacks.insert(CERT_PSK_VERSION_LOCATION, Ok(0));
 
-        (gbl_ops, testdata(TEST_CERT_PUBLIC_KEY_PATH), testdata(TEST_CERT_METADATA_PATH))
+        (
+            gbl_ops,
+            read_test_data(TEST_CERT_PUBLIC_KEY_PATH),
+            read_test_data(TEST_CERT_METADATA_PATH),
+        )
     }
 
     #[test]

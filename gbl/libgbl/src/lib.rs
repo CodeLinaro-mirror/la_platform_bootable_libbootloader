@@ -54,25 +54,62 @@ pub use error::{IntegrationError, Result};
 pub use ops::{GblOps, Os};
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     extern crate avb_sysdeps;
     extern crate avb_test;
     extern crate boringssl_sysdeps;
     extern crate libc_deps_posix;
 
-    use std::{fs, path::Path};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     pub(crate) const TEST_PERMANENT_ATTRIBUTES_PATH: &str = "cert_permanent_attributes.bin";
     pub(crate) const TEST_PERMANENT_ATTRIBUTES_HASH_PATH: &str = "cert_permanent_attributes.hash";
+
+    /// Returns the path to the given test file, or `None` if it can't be found.
+    ///
+    /// This handles the different directory structures between `bazel test` and our
+    /// `build_and_run_tests` wrapper.
+    fn test_data_path(path: &str) -> Option<PathBuf> {
+        let paths = [
+            // Directory for `build_and_run_tests` workflow (runs in execution root)
+            Path::new("external/gbl+/libgbl/testdata").join(path),
+            // Directory for `bazel test` workflow (runs in runfiles directory)
+            Path::new("../gbl+/libgbl/testdata").join(path),
+        ];
+        for p in paths {
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        None
+    }
 
     /// Returns the contents of a test data file.
     ///
     /// Panics if the requested file cannot be read.
     ///
     /// # Arguments
-    /// * `path`: file path relative to libgbl's `testdata/` directory.
-    pub(crate) fn testdata(path: &str) -> Vec<u8> {
-        let full_path = Path::new("external/gbl+/libgbl/testdata").join(path);
-        fs::read(full_path).unwrap()
+    /// * `path`: file path relative to the test data directory.
+    pub(crate) fn read_test_data(path: impl AsRef<str>) -> Vec<u8> {
+        let path = path.as_ref();
+        match test_data_path(path) {
+            Some(p) => fs::read(p).unwrap(),
+            None => panic!("Could not find testdata {}", path),
+        }
+    }
+
+    /// Returns the contents of a test data file as a string.
+    ///
+    /// Panics if the requested file cannot be read or is not valid UTF-8.
+    pub(crate) fn read_test_data_as_str(path: impl AsRef<str>) -> String {
+        String::from_utf8(read_test_data(path)).unwrap()
+    }
+
+    /// Returns true if `path` exists relative to the test data directory.
+    pub(crate) fn test_data_exists(path: impl AsRef<str>) -> bool {
+        test_data_path(path.as_ref()).is_some()
     }
 }
