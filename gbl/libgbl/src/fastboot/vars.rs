@@ -14,7 +14,7 @@
 
 use crate::{
     android_boot::hasher::{Hasher, Sha256},
-    fastboot::{BufferPool, GblFastboot, PinFutContainerTyped},
+    fastboot::{BufferPool, GblFastboot, PinFutContainerTyped, ResolveMode},
     gbl_println,
     partition::{check_part_unique, split_partition_suffix, Partition, RawName},
     slots::{Bootability, Slot},
@@ -352,7 +352,8 @@ where
     /// Parses and finds the size of the given partition.
     pub(crate) fn partition_size<'s>(&mut self, part: &'s str) -> CommandResult<u64> {
         let (part, blk_id, off, sz) = self.parse_partition_arg(part)?;
-        let (_, parts) = self.resolve_slotted_partitions(part, blk_id)?;
+        // If the user just gives the partition base name, resolve to the current slot.
+        let (_, parts) = self.resolve_slotted_partitions(part, blk_id, ResolveMode::CurrentSlot)?;
         // Slotted partition-size only make sense if they are all the same. Because it may be used
         // to copy AVB footer.
         for (_, p) in &parts[1..] {

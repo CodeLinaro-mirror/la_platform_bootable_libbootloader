@@ -573,6 +573,7 @@ pub trait FastbootImplementation {
         &mut self,
         lock_type: LockType,
         lock_state: LockState,
+        responder: impl InfoSender,
     ) -> CommandResult<()>;
 
     /// Handler for `fastboot flashing get_unlock_ability`.
@@ -1352,12 +1353,13 @@ async fn command_exec(
     }
 }
 
-async fn lock_helper(
+async fn lock_helper<T: Transport>(
     fb_impl: &mut impl FastbootImplementation,
     lock_type: LockType,
     lock_state: LockState,
+    resp: &mut Responder<'_, T>,
 ) -> CommandResult<&'static str> {
-    fb_impl.flashing_write_lock_state(lock_type, lock_state).await.map(|_| "")
+    fb_impl.flashing_write_lock_state(lock_type, lock_state, &mut *resp).await.map(|_| "")
 }
 
 /// Handler for "fastboot flashing ..."
@@ -1368,10 +1370,14 @@ async fn flashing(
 ) -> Result<()> {
     let mut resp = Responder::new(transport);
     let res = match cmd {
-        "lock" => lock_helper(fb_impl, LockType::Device, LockState::Locked).await,
-        "lock_critical" => lock_helper(fb_impl, LockType::Critical, LockState::Locked).await,
-        "unlock" => lock_helper(fb_impl, LockType::Device, LockState::Unlocked).await,
-        "unlock_critical" => lock_helper(fb_impl, LockType::Critical, LockState::Unlocked).await,
+        "lock" => lock_helper(fb_impl, LockType::Device, LockState::Locked, &mut resp).await,
+        "unlock" => lock_helper(fb_impl, LockType::Device, LockState::Unlocked, &mut resp).await,
+        "lock_critical" => {
+            lock_helper(fb_impl, LockType::Critical, LockState::Locked, &mut resp).await
+        }
+        "unlock_critical" => {
+            lock_helper(fb_impl, LockType::Critical, LockState::Unlocked, &mut resp).await
+        }
         "get_unlock_ability" => fb_impl.flashing_get_unlock_ability().await.map(|u| match u {
             Unlockability::Allowed => "1",
             Unlockability::Prohibited => "0",
@@ -1766,6 +1772,7 @@ mod test {
             &mut self,
             lock_type: LockType,
             lock_state: LockState,
+            _responder: impl InfoSender,
         ) -> CommandResult<()> {
             self.last_write_lock_state_call = Some((lock_type, lock_state));
             Ok(())
