@@ -165,5 +165,6 @@ typedef struct {
 // This is part of enum from Table 9. Relocation types.
 // But only 1 value is need
 #define R_RISCV_RELATIVE 3
+#define R_AARCH64_RELATIVE 1027
 
 #endif  // __ELF_H__

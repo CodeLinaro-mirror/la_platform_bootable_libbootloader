@@ -161,6 +161,17 @@ config_setting(
     constraint_values = elf_riscv64_constraint_values,
 )
 
+elf_aarch64_constraint_values = [
+    ":elf",
+    "@platforms//os:none",
+    "@platforms//cpu:aarch64",
+]
+
+config_setting(
+    name = "gbl_rust_elf_aarch64",
+    constraint_values = elf_aarch64_constraint_values,
+)
+
 platform(
     name = "host_x86_64_dev",
     constraint_values = host_x86_64_constraint_values + [":dev"],
@@ -219,6 +230,16 @@ platform(
 platform(
     name = "gbl_elf_riscv64_prod",
     constraint_values = elf_riscv64_constraint_values + [":prod"],
+)
+
+platform(
+    name = "gbl_elf_aarch64_dev",
+    constraint_values = elf_aarch64_constraint_values + [":dev"],
+)
+
+platform(
+    name = "gbl_elf_aarch64_prod",
+    constraint_values = elf_aarch64_constraint_values + [":prod"],
 )
 
 bool_setting(
@@ -486,6 +507,25 @@ toolchain(
     exec_compatible_with = ["@platforms//os:linux"],
     target_compatible_with = elf_riscv64_constraint_values,
     toolchain = ":riscv64_elf_clang_cc_toolchain",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+)
+
+gbl_clang_cc_toolchain(
+    name = "aarch64_elf_clang_cc_toolchain",
+    builtin_includes = builtin_includes_uefi_common,
+    cc_flags = cc_flags_uefi_common + [
+        "-fpie",
+        "-march=armv8-a",
+    ],
+    target_cpu = "aarch64",
+    target_system_triple = "aarch64-unknown-linux",
+)
+
+toolchain(
+    name = "aarch64_elf_clang",
+    exec_compatible_with = ["@platforms//os:linux"],
+    target_compatible_with = elf_aarch64_constraint_values,
+    toolchain = ":aarch64_elf_clang_cc_toolchain",
     toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
 )
 
@@ -985,6 +1025,34 @@ toolchain(
     exec_compatible_with = ["@platforms//os:linux"],
     target_settings = ["@gbl//toolchain:gbl_rust_elf_riscv64"],
     toolchain = ":riscv64gc-unknown-none-pie_elf",
+    toolchain_type = "@rules_rust//rust:toolchain",
+)
+
+rust_toolchain(
+    name = "aarch64-unknown-linux-gnu",
+    allocator_library = None,
+    binary_ext = "",
+    default_edition = "2021",
+    dylib_ext = ".so",
+    exec_triple = "x86_64-unknown-linux-gnu",
+    extra_rustc_flags = rustc_common_flags + rustc_opt_flags,
+    global_allocator_library = None,
+    rust_doc = "@rust_prebuilts//:bin/rustdoc",
+    rust_std = select({
+        ":rust_no_sysroot_true": ":rust_stdlib_empty",
+        "//conditions:default": ":rust_std_source_build",
+    }),
+    rustc = "@rust_prebuilts//:bin/rustc",
+    staticlib_ext = ".a",
+    stdlib_linkflags = [],
+    target_triple = "aarch64-unknown-linux-gnu",
+)
+
+toolchain(
+    name = "aarch64-unknown-linux-gnu_toolchain",
+    exec_compatible_with = ["@platforms//os:linux"],
+    target_settings = ["@gbl//toolchain:gbl_rust_elf_aarch64"],
+    toolchain = ":aarch64-unknown-linux-gnu",
     toolchain_type = "@rules_rust//rust:toolchain",
 )
 
