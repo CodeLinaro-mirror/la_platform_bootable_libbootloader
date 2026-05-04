@@ -1,6 +1,6 @@
 # Generic Bootloader (GBL)
 
-GBL is a UEFI application encapsulating the Android and Fuchsia boot process,
+GBL is a UEFI application encapsulating the Android and Fuchsia boot processes,
 providing a standardized, platform-agnostic bootloader core.
 
 ## Architecture & Design
@@ -51,6 +51,12 @@ providing a standardized, platform-agnostic bootloader core.
 - **Fatal Errors:** Use the `report_error_and_reset` pattern and ensure a
   GBL-specific error tag is provided.
 
+### 4. Coding Conventions
+
+- **Imports:** ALWAYS use import at the module top level. Use local imports or
+  fully qualified names ONLY if a name is used only once or when a top-level
+  import might be ambiguous.
+
 ## Building and Testing
 
 The GBL build script is at `bootable/libbootloader/gbl/bazel.sh` relative to the
@@ -89,8 +95,10 @@ contributions.
 
 ### 2. Commit Messages
 
-All commit messages must strictly adhere to the Android convention. A `Bug:` tag
-is **mandatory**.
+All commit messages must strictly adhere to the Android convention.
+
+- A `Bug:` or `Fix:` tag is **mandatory**.
+- A `Test:` tag describing how the change was verified is recommended.
 
 **Format Example:**
 
@@ -100,5 +108,6 @@ gbl: Resolve boot failure on device XYZ
 This change addresses a null pointer dereference in the EFI
 protocol handling, which caused a boot hang.
 
-Bug: 123456789
+Bug: <bug-number>
+Test: ./bazel.sh test @gbl//tests
 ```
