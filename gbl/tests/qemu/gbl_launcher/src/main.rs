@@ -24,6 +24,8 @@ use efi_types::{EfiHandle, EfiSystemTable};
 #[global_allocator]
 static mut EFI_GLOBAL_ALLOCATOR: EfiAllocator = EfiAllocator::new();
 
+extern crate alloc;
+
 /// Pull in the sysdeps required by libavb so the linker can find them.
 extern crate avb_sysdeps;
 /// Pull in the sysdeps required by boringssl so the linker can find them.
@@ -43,6 +45,12 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
         return;
     };
     efi_println!(entry, "Launcher started");
+    semihosting::println!("Semihosting enabled.");
+
+    let mut file = semihosting::File::open(c"fdt.dtb", semihosting::OpenMode::ReadBinary).unwrap();
+    let mut fdt_buffer = alloc::vec![0u8; file.len().unwrap()];
+    let read_size = file.read(&mut fdt_buffer).unwrap();
+    semihosting::println!("Loaded FDT with {} bytes", read_size);
     // TODO(b/499359597): Mock EFI protocols and launch GBL.
     entry.system_table().runtime_services().shutdown().unwrap();
 }

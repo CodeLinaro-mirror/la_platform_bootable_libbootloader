@@ -42,9 +42,6 @@ use libgbl::android_boot::BootBuffer;
 
 type Result<T> = core::result::Result<T, Error>;
 
-pub(crate) const EFI_DTB_TABLE_GUID: EfiGuid =
-    EfiGuid::new(0xb1b621d5, 0xf19c, 0x41a5, [0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0]);
-
 /// Helper function to get the `DevicePathText` from a `DeviceHandle`.
 pub fn get_device_path<'a>(
     entry: &'a EfiEntry,
@@ -78,6 +75,9 @@ pub fn image_base(entry: &EfiEntry) -> Result<usize> {
         .inspect_err(|e| efi_println!(entry, "Failed to open LoadedImageProtocol: {e}"))?
         .image_base())
 }
+
+pub(crate) const EFI_DTB_TABLE_GUID: EfiGuid =
+    EfiGuid::new(0xb1b621d5, 0xf19c, 0x41a5, [0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0]);
 
 /// Find FDT from EFI configuration table.
 pub fn get_efi_fdt(entry: &EfiEntry) -> Option<(&FdtHeader, &[u8])> {

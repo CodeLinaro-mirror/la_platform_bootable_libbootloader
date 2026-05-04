@@ -35,6 +35,7 @@ rust_binary(
         "@gbl//libboringssl:sysdeps",
         "@gbl//libefi",
         "@gbl//libefi_types",
+        "@gbl//libsemihosting",
         "@gbl//libstack",
     ],
 )
