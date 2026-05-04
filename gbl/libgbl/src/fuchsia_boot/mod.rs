@@ -184,17 +184,16 @@ pub fn zircon_check_enter_fastboot<'a>(ops: &mut impl GblOps<'a>) -> bool {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use crate::ops::{
-        test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
-        CertPermanentAttributes,
+    use crate::{
+        ops::{
+            test::{FakeGblOps, FakeGblOpsStorage, TestGblDisk},
+            CertPermanentAttributes,
+        },
+        tests::read_test_data,
     };
     use abr::set_one_shot_bootloader;
     use avb_bindgen::{AVB_CERT_PIK_VERSION_LOCATION, AVB_CERT_PSK_VERSION_LOCATION};
-    use std::{
-        collections::{BTreeSet, HashMap},
-        fs,
-        path::Path,
-    };
+    use std::collections::{BTreeSet, HashMap};
     use zerocopy::FromBytes;
 
     // The cert test keys were both generated with rollback version 42.
@@ -218,11 +217,6 @@ pub(crate) mod test {
     // The `reserve_memory_size` value in the test ZBI kernel.
     // See `gen_zircon_test_images()` in libgbl/testdata/gen_test_data.py.
     pub(crate) const TEST_KERNEL_RESERVED_MEMORY_SIZE: usize = 1024;
-
-    /// Reads a data file under libgbl/testdata/
-    pub(crate) fn read_test_data(file: &str) -> Vec<u8> {
-        fs::read(Path::new(format!("external/gbl+/libgbl/testdata/{}", file).as_str())).unwrap()
-    }
 
     /// Returns a default [FakeGblOpsStorage] with valid test images.
     ///

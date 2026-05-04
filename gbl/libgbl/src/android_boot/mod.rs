@@ -716,6 +716,7 @@ pub(crate) mod tests {
             test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage},
             PartitionBuffer,
         },
+        tests::{read_test_data, read_test_data_as_str, test_data_exists},
     };
     use avf::{
         test::{dummy_pvmfw_partition, DUMMY_VENDOR_HANDOVER},
@@ -732,7 +733,6 @@ pub(crate) mod tests {
         cell::RefCell,
         collections::{BTreeMap, HashMap},
         ffi::CString,
-        fs,
         path::Path,
         str::from_utf8,
         string::String,
@@ -758,9 +758,6 @@ pub(crate) mod tests {
         ("com.android.build.system.security_patch", "1"),
     ];
 
-    // Test data path
-    const TEST_DATA_PATH: &str = "external/gbl+/libgbl/testdata/android";
-
     // Expected FDT properties provided by `dtb_a`.
     const EXPECTED_DTB_PROPS_A: &[(&str, &CStr, Option<&[u8]>)] =
         &[("/chosen", c"dtb_slot", Some(b"a\0"))];
@@ -784,18 +781,6 @@ pub(crate) mod tests {
     // Expected FDT properties provided by `boot` or `vendor_boot`.
     const EXPECTED_FDT_PROPS: &[(&str, &CStr, Option<&[u8]>)] =
         &[("/chosen", c"builtin", Some(&[1]))];
-
-    /// Reads a data file under libgbl/testdata/
-    pub(crate) fn read_test_data(file: impl AsRef<str>) -> Vec<u8> {
-        println!("reading file: {}", file.as_ref());
-        fs::read(Path::new(format!("{TEST_DATA_PATH}/{}", file.as_ref()).as_str())).unwrap()
-    }
-
-    /// Reads a data file as string under libgbl/testdata/
-    pub(crate) fn read_test_data_as_str(file: impl AsRef<str>) -> String {
-        fs::read_to_string(Path::new(format!("{TEST_DATA_PATH}/{}", file.as_ref()).as_str()))
-            .unwrap()
-    }
 
     /// Generates a readable string for a bootconfig bytes.
     pub(crate) fn dump_bootconfig(data: &[u8]) -> String {
@@ -1078,7 +1063,7 @@ pub(crate) mod tests {
                         part.strip_suffix(&format!("_{slot}")).unwrap_or(part).to_string();
                     let digest = vbmeta_file.with_extension(format!("{slotless}.digest.txt"));
                     let digest = digest.to_str().unwrap();
-                    if Path::new(format!("{TEST_DATA_PATH}/{}", digest).as_str()).exists() {
+                    if test_data_exists(digest) {
                         builder.partition_digests.insert(slotless, read_test_data_as_str(digest));
                     }
                 }
@@ -1291,7 +1276,7 @@ pub(crate) mod tests {
             if let Some(vbmeta) = vbmeta {
                 partitions.push((format!("vbmeta_{slot_name}"), vbmeta.into()));
             }
-            partitions.push((format!("fw_{slot_name}"), format!("fw_{slot_name}.img")));
+            partitions.push((format!("fw_{slot_name}"), format!("android/fw_{slot_name}.img")));
 
             let expected_bootconfig = make_expected_bootconfig(
                 &partitions,
@@ -1386,8 +1371,8 @@ pub(crate) mod tests {
         additional_parts: &[(&str, &str)],
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
     ) {
-        let vbmeta_file = format!("vbmeta_v{ver}_{slot}.img");
-        let mut parts = vec![(format!("boot_{slot}"), format!("boot_v{ver}_{slot}.img"))];
+        let vbmeta_file = format!("android/vbmeta_v{ver}_{slot}.img");
+        let mut parts = vec![(format!("boot_{slot}"), format!("android/boot_v{ver}_{slot}.img"))];
         for (part, file) in additional_parts.iter().cloned() {
             parts.push((part.into(), file.into()));
         }
@@ -1395,8 +1380,8 @@ pub(crate) mod tests {
             slot,
             &parts,
             &vbmeta_file,
-            &read_test_data(format!("kernel_{slot}.img")),
-            &read_test_data(format!("generic_ramdisk_{slot}.img")),
+            &read_test_data(format!("android/kernel_{slot}.img")),
+            &read_test_data(format!("android/generic_ramdisk_{slot}.img")),
             "",
             EXPECTED_V2_CMDLINE,
             additional_expected_fdt_properties,
@@ -1407,26 +1392,26 @@ pub(crate) mod tests {
     #[test]
     fn test_android_load_verify_fixup_v0_slot_a() {
         // V0 image doesn't have built-in dtb. We need to provide from dtb partition.
-        let parts = &[("dtb_a", "dtb_a.img")];
+        let parts = &[("dtb_a", "android/dtb_a.img")];
         test_android_load_verify_fixup_v2_or_lower(0, 'a', parts, EXPECTED_DTB_PROPS_A);
     }
 
     #[test]
     fn test_android_load_verify_fixup_v0_dtbo_slot_a() {
-        let parts = &[("dtbo_a", "dtbo_a.img"), ("dtb_a", "dtb_a.img")];
+        let parts = &[("dtbo_a", "android/dtbo_a.img"), ("dtb_a", "android/dtb_a.img")];
         let fdt_prop = Vec::from([EXPECTED_DTB_PROPS_A, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v2_or_lower(0, 'a', parts, &fdt_prop);
     }
 
     #[test]
     fn test_android_load_verify_fixup_v0_slot_b() {
-        let parts = &[("dtb_b", "dtb_b.img")];
+        let parts = &[("dtb_b", "android/dtb_b.img")];
         test_android_load_verify_fixup_v2_or_lower(0, 'b', parts, EXPECTED_DTB_PROPS_B);
     }
 
     #[test]
     fn test_android_load_verify_fixup_v0_dtbo_slot_b() {
-        let parts = &[("dtbo_b", "dtbo_b.img"), ("dtb_b", "dtb_b.img")];
+        let parts = &[("dtbo_b", "android/dtbo_b.img"), ("dtb_b", "android/dtb_b.img")];
         let fdt_prop = Vec::from([EXPECTED_DTB_PROPS_B, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v2_or_lower(0, 'b', parts, &fdt_prop);
     }
@@ -1434,26 +1419,26 @@ pub(crate) mod tests {
     #[test]
     fn test_android_load_verify_fixup_v1_slot_a() {
         // V1 image doesn't have built-in dtb. We need to provide from dtb partition.
-        let parts = &[("dtb_a", "dtb_a.img")];
+        let parts = &[("dtb_a", "android/dtb_a.img")];
         test_android_load_verify_fixup_v2_or_lower(1, 'a', parts, EXPECTED_DTB_PROPS_A);
     }
 
     #[test]
     fn test_android_load_verify_fixup_v1_dtbo_slot_a() {
-        let parts = &[("dtbo_a", "dtbo_a.img"), ("dtb_a", "dtb_a.img")];
+        let parts = &[("dtbo_a", "android/dtbo_a.img"), ("dtb_a", "android/dtb_a.img")];
         let fdt_prop = Vec::from([EXPECTED_DTB_PROPS_A, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v2_or_lower(1, 'a', parts, &fdt_prop);
     }
 
     #[test]
     fn test_android_load_verify_fixup_v1_slot_b() {
-        let parts = &[("dtb_b", "dtb_b.img")];
+        let parts = &[("dtb_b", "android/dtb_b.img")];
         test_android_load_verify_fixup_v2_or_lower(1, 'b', parts, EXPECTED_DTB_PROPS_B);
     }
 
     #[test]
     fn test_android_load_verify_fixup_v1_dtbo_slot_b() {
-        let parts = &[("dtbo_b", "dtbo_b.img"), ("dtb_b", "dtb_b.img")];
+        let parts = &[("dtbo_b", "android/dtbo_b.img"), ("dtb_b", "android/dtb_b.img")];
         let fdt_prop = Vec::from([EXPECTED_DTB_PROPS_B, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v2_or_lower(1, 'b', parts, &fdt_prop);
     }
@@ -1466,7 +1451,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v2_dtbo_slot_a() {
-        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "android/dtbo_a.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v2_or_lower(2, 'a', parts, &fdt_prop);
     }
@@ -1478,7 +1463,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v2_dtbo_slot_b() {
-        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "android/dtbo_b.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v2_or_lower(2, 'b', parts, &fdt_prop);
     }
@@ -1486,8 +1471,8 @@ pub(crate) mod tests {
     /// Returns the expected ramdisk for a slotted v3/v4 image in this test module.
     fn expected_v3_v4_ramdisk(slot: char) -> Vec<u8> {
         [
-            read_test_data(format!("vendor_ramdisk_{slot}.img")),
-            read_test_data(format!("generic_ramdisk_{slot}.img")),
+            read_test_data(format!("android/vendor_ramdisk_{slot}.img")),
+            read_test_data(format!("android/generic_ramdisk_{slot}.img")),
         ]
         .concat()
     }
@@ -1507,7 +1492,7 @@ pub(crate) mod tests {
             slot,
             partitions,
             vbmeta_file,
-            &read_test_data(format!("kernel_{slot}.img")),
+            &read_test_data(format!("android/kernel_{slot}.img")),
             &expected_v3_v4_ramdisk(slot),
             expected_vendor_bootconfig,
             EXPECTED_V3_V4_CMDLINE,
@@ -1525,10 +1510,13 @@ pub(crate) mod tests {
         additional_parts: &[(String, String)],
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
     ) {
-        let vbmeta = format!("vbmeta_v{boot_ver}_v{vendor_ver}_{slot}.img");
+        let vbmeta = format!("android/vbmeta_v{boot_ver}_v{vendor_ver}_{slot}.img");
         let mut parts = vec![
-            (format!("boot_{slot}"), format!("boot_v{boot_ver}_{slot}.img")),
-            (format!("vendor_boot_{slot}"), format!("vendor_boot_v{vendor_ver}_{slot}.img")),
+            (format!("boot_{slot}"), format!("android/boot_v{boot_ver}_{slot}.img")),
+            (
+                format!("vendor_boot_{slot}"),
+                format!("android/vendor_boot_v{vendor_ver}_{slot}.img"),
+            ),
         ];
         parts.extend_from_slice(additional_parts);
         test_android_load_verify_fixup_v3_or_v4(
@@ -1555,7 +1543,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v3_v3_no_init_boot_dtbo_slot_a() {
-        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "android/dtbo_a.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(3, 3, 'a', "", parts, &fdt_prop);
     }
@@ -1574,7 +1562,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v3_v3_no_init_boot_dtbo_slot_b() {
-        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "android/dtbo_b.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(3, 3, 'b', "", parts, &fdt_prop);
     }
@@ -1593,7 +1581,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v4_v3_no_init_boot_dtbo_slot_a() {
-        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "android/dtbo_a.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(4, 3, 'a', "", parts, &fdt_prop);
     }
@@ -1612,7 +1600,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v4_v3_no_init_boot_dtbo_slot_b() {
-        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "android/dtbo_b.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(4, 3, 'b', "", parts, &fdt_prop);
     }
@@ -1632,7 +1620,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v3_v4_no_init_boot_dtbo_slot_a() {
-        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "android/dtbo_a.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(3, 4, 'a', config, parts, &fdt_prop);
@@ -1653,7 +1641,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v3_v4_no_init_boot_dtbo_slot_b() {
-        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "android/dtbo_b.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(3, 4, 'b', config, parts, &fdt_prop);
@@ -1674,7 +1662,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v4_v4_no_init_boot_dtbo_slot_a() {
-        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "android/dtbo_a.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(4, 4, 'a', config, parts, &fdt_prop);
@@ -1695,7 +1683,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v4_v4_no_init_boot_dtbo_slot_b() {
-        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "android/dtbo_b.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(4, 4, 'b', config, parts, &fdt_prop);
@@ -1708,10 +1696,10 @@ pub(crate) mod tests {
         additional_parts: &[(String, String)],
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
     ) {
-        let vbmeta = format!("vbmeta_v4_dttable_{slot}.img");
+        let vbmeta = format!("android/vbmeta_v4_dttable_{slot}.img");
         let mut parts = vec![
-            (format!("boot_{slot}"), format!("boot_v4_{slot}.img")),
-            (format!("vendor_boot_{slot}"), format!("vendor_boot_v4_dttable_{slot}.img")),
+            (format!("boot_{slot}"), format!("android/boot_v4_{slot}.img")),
+            (format!("vendor_boot_{slot}"), format!("android/vendor_boot_v4_dttable_{slot}.img")),
         ];
         parts.extend_from_slice(additional_parts);
         test_android_load_verify_fixup_v3_or_v4(
@@ -1745,11 +1733,14 @@ pub(crate) mod tests {
         additional_parts: &[(String, String)],
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
     ) {
-        let vbmeta = format!("vbmeta_v{boot_ver}_v{vendor_ver}_init_boot_{slot}.img");
+        let vbmeta = format!("android/vbmeta_v{boot_ver}_v{vendor_ver}_init_boot_{slot}.img");
         let mut parts = vec![
-            (format!("boot_{slot}"), format!("boot_no_ramdisk_v{boot_ver}_{slot}.img")),
-            (format!("vendor_boot_{slot}"), format!("vendor_boot_v{vendor_ver}_{slot}.img")),
-            (format!("init_boot_{slot}"), format!("init_boot_{slot}.img")),
+            (format!("boot_{slot}"), format!("android/boot_no_ramdisk_v{boot_ver}_{slot}.img")),
+            (
+                format!("vendor_boot_{slot}"),
+                format!("android/vendor_boot_v{vendor_ver}_{slot}.img"),
+            ),
+            (format!("init_boot_{slot}"), format!("android/init_boot_{slot}.img")),
         ];
         parts.extend_from_slice(additional_parts);
         test_android_load_verify_fixup_v3_or_v4(
@@ -1769,7 +1760,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v3_v3_init_boot_dtbo_slot_a() {
-        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "android/dtbo_a.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v3_or_v4_init_boot(3, 3, 'a', "", parts, &fdt_prop);
     }
@@ -1781,7 +1772,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v3_v3_init_boot_dtbo_slot_b() {
-        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "android/dtbo_b.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v3_or_v4_init_boot(3, 3, 'b', "", parts, &fdt_prop);
     }
@@ -1793,7 +1784,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v4_v3_init_boot_dtbo_slot_a() {
-        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "android/dtbo_a.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v3_or_v4_init_boot(4, 3, 'a', "", parts, &fdt_prop);
     }
@@ -1805,7 +1796,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v4_v3_init_boot_dtbo_slot_b() {
-        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "android/dtbo_b.img".into())];
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v3_or_v4_init_boot(4, 3, 'b', "", parts, &fdt_prop);
     }
@@ -1825,7 +1816,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v3_v4_init_boot_dtbo_slot_a() {
-        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "android/dtbo_a.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v3_or_v4_init_boot(3, 4, 'a', config, parts, &fdt_prop);
@@ -1846,7 +1837,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v3_v4_init_boot_dtbo_slot_b() {
-        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "android/dtbo_b.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v3_or_v4_init_boot(3, 4, 'b', config, parts, &fdt_prop);
@@ -1867,7 +1858,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v4_v4_init_boot_dtbo_slot_a() {
-        let parts = &[("dtbo_a".into(), "dtbo_a.img".into())];
+        let parts = &[("dtbo_a".into(), "android/dtbo_a.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_A].concat());
         test_android_load_verify_fixup_v3_or_v4_init_boot(4, 4, 'a', config, parts, &fdt_prop);
@@ -1888,7 +1879,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_android_load_verify_fixup_v4_v4_init_boot_dtbo_slot_b() {
-        let parts = &[("dtbo_b".into(), "dtbo_b.img".into())];
+        let parts = &[("dtbo_b".into(), "android/dtbo_b.img".into())];
         let config = TEST_VENDOR_BOOTCONFIG;
         let fdt_prop = Vec::from([EXPECTED_FDT_PROPS, EXPECTED_DTBO_PROPS_B].concat());
         test_android_load_verify_fixup_v3_or_v4_init_boot(4, 4, 'b', config, parts, &fdt_prop);
@@ -1896,10 +1887,10 @@ pub(crate) mod tests {
 
     /// Helper for testing v4 boot image with different kernel compression.
     fn test_android_load_verify_boot_v4_compression_slot(compression: &str) {
-        let vbmeta = format!("vbmeta_v4_{compression}_a.img");
+        let vbmeta = format!("android/vbmeta_v4_{compression}_a.img");
         let parts = vec![
-            (format!("boot_a"), format!("boot_v4_{compression}_a.img")),
-            (format!("vendor_boot_a"), format!("vendor_boot_v4_a.img")),
+            (format!("boot_a"), format!("android/boot_v4_{compression}_a.img")),
+            (format!("vendor_boot_a"), format!("android/vendor_boot_v4_a.img")),
             (format!("vbmeta_a"), vbmeta.clone()),
         ];
         test_android_load_verify_fixup(
@@ -1908,7 +1899,7 @@ pub(crate) mod tests {
             &[],
             false,
             0,
-            &read_test_data(format!("gki_boot_{compression}_kernel_uncompressed")),
+            &read_test_data(format!("android/gki_boot_{compression}_kernel_uncompressed")),
             &expected_v3_v4_ramdisk('a'),
             &make_expected_bootconfig(
                 &parts,
@@ -1936,11 +1927,11 @@ pub(crate) mod tests {
 
     fn test_android_load_verify_fixup_fails_if_vbmeta_missing_partitions(unlocked: bool) {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_no_ramdisk_v4_a.img"));
-        storage.add_raw_device(c"vendor_boot_a", read_test_data("vendor_boot_v4_a.img"));
-        storage.add_raw_device(c"init_boot_a", read_test_data("init_boot_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_no_ramdisk_v4_a.img"));
+        storage.add_raw_device(c"vendor_boot_a", read_test_data("android/vendor_boot_v4_a.img"));
+        storage.add_raw_device(c"init_boot_a", read_test_data("android/init_boot_a.img"));
         // vbmeta_noop.img has no partition descriptors. Thus nothing should be loaded by avb.
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_noop.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_noop.img"));
         let mut ops = FakeGblOps::new(&storage);
         ops.avb_device_status.is_unlocked = unlocked;
         ops.avb_ops.rollbacks = HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(0))]);
@@ -1973,20 +1964,20 @@ pub(crate) mod tests {
     #[test]
     fn test_android_load_verify_fixup_with_vendor_kernel_boot() {
         let parts = vec![
-            ("boot_a".into(), "boot_no_ramdisk_v4_a.img".into()),
-            ("vendor_kernel_boot_a".into(), "vendor_kernel_boot_a.img".into()),
-            ("vendor_boot_a".into(), "vendor_boot_v4_a.img".into()),
-            ("init_boot_a".into(), "init_boot_a.img".into()),
+            ("boot_a".into(), "android/boot_no_ramdisk_v4_a.img".into()),
+            ("vendor_kernel_boot_a".into(), "android/vendor_kernel_boot_a.img".into()),
+            ("vendor_boot_a".into(), "android/vendor_boot_v4_a.img".into()),
+            ("init_boot_a".into(), "android/init_boot_a.img".into()),
         ];
         test_android_load_verify_fixup_success(
             'a',
             &parts,
-            "vbmeta_v4_v4_init_boot_a.img",
-            &read_test_data("kernel_a.img"),
+            "android/vbmeta_v4_v4_init_boot_a.img",
+            &read_test_data("android/kernel_a.img"),
             &[
-                read_test_data("vendor_ramdisk_a.img"),
-                read_test_data("vendor_kernel_a.img"),
-                read_test_data("generic_ramdisk_a.img"),
+                read_test_data("android/vendor_ramdisk_a.img"),
+                read_test_data("android/vendor_kernel_a.img"),
+                read_test_data("android/generic_ramdisk_a.img"),
             ]
             .concat(),
             TEST_VENDOR_BOOTCONFIG,
@@ -2003,27 +1994,27 @@ pub(crate) mod tests {
         storage.add_raw_device(c"boot_a", vec![0; 1024]);
         // Zeroes only. Will be provided via preloaded buffer.
         storage.add_raw_device(c"vendor_kernel_boot_a", vec![0; 1024]);
-        storage.add_raw_device(c"vendor_boot_a", read_test_data("vendor_boot_v4_a.img"));
-        storage.add_raw_device(c"init_boot_a", read_test_data("init_boot_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v4_v4_init_boot_a.img"));
+        storage.add_raw_device(c"vendor_boot_a", read_test_data("android/vendor_boot_v4_a.img"));
+        storage.add_raw_device(c"init_boot_a", read_test_data("android/init_boot_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v4_v4_init_boot_a.img"));
 
         let image_buffers: Vec<(LoadPartition, RefCell<Vec<u8>>, bool)> = vec![
             // Preloaded.
-            (LoadPartition::Boot, read_test_data("boot_no_ramdisk_v4_a.img").into(), true),
+            (LoadPartition::Boot, read_test_data("android/boot_no_ramdisk_v4_a.img").into(), true),
             (
                 LoadPartition::VendorKernelBoot,
-                read_test_data("vendor_kernel_boot_a.img").into(),
+                read_test_data("android/vendor_kernel_boot_a.img").into(),
                 true,
             ),
             // Designated load
             (
                 LoadPartition::VendorBoot,
-                vec![0u8; read_test_data("vendor_boot_v4_a.img").len()].into(),
+                vec![0u8; read_test_data("android/vendor_boot_v4_a.img").len()].into(),
                 false,
             ),
             (
                 LoadPartition::InitBoot,
-                vec![0u8; read_test_data("init_boot_a.img").len()].into(),
+                vec![0u8; read_test_data("android/init_boot_a.img").len()].into(),
                 false,
             ),
         ];
@@ -2045,9 +2036,12 @@ pub(crate) mod tests {
             assert!(!sync_preloaded);
             // Checks that this is called after images are loaded.
             // Designated buffers are loaded with the correct image.
-            assert_eq!(*image_buffers[2].1.borrow_mut(), read_test_data("vendor_boot_v4_a.img"));
+            assert_eq!(
+                *image_buffers[2].1.borrow_mut(),
+                read_test_data("android/vendor_boot_v4_a.img")
+            );
             assert_eq!(vendor_boot_addr, image_buffers[2].1.borrow_mut().as_ptr_range());
-            assert_eq!(*image_buffers[3].1.borrow_mut(), read_test_data("init_boot_a.img"));
+            assert_eq!(*image_buffers[3].1.borrow_mut(), read_test_data("android/init_boot_a.img"));
             assert_eq!(init_boot_addr, image_buffers[3].1.borrow_mut().as_ptr_range());
 
             // Override test custom FDT/bootconifg fixup. Checks that this is called before final
@@ -2069,12 +2063,12 @@ pub(crate) mod tests {
 
         let expected_bootconfig = make_expected_bootconfig(
             &vec![
-                ("boot_a".into(), "boot_no_ramdisk_v4_a.img".into()),
-                ("vendor_kernel_boot_a".into(), "vendor_kernel_boot_a.img".into()),
-                ("vendor_boot_a".into(), "vendor_boot_v4_a.img".into()),
-                ("init_boot_a".into(), "init_boot_a.img".into()),
+                ("boot_a".into(), "android/boot_no_ramdisk_v4_a.img".into()),
+                ("vendor_kernel_boot_a".into(), "android/vendor_kernel_boot_a.img".into()),
+                ("vendor_boot_a".into(), "android/vendor_boot_v4_a.img".into()),
+                ("init_boot_a".into(), "android/init_boot_a.img".into()),
             ],
-            Some("vbmeta_v4_v4_init_boot_a.img"),
+            Some("android/vbmeta_v4_v4_init_boot_a.img"),
             false,
             BootStateColor::Green,
             'a',
@@ -2082,13 +2076,13 @@ pub(crate) mod tests {
             TEST_BOOTCONFIG_FIXUP,
         );
         let expected_ramdisk = &[
-            read_test_data("vendor_ramdisk_a.img"),
-            read_test_data("vendor_kernel_a.img"),
-            read_test_data("generic_ramdisk_a.img"),
+            read_test_data("android/vendor_ramdisk_a.img"),
+            read_test_data("android/vendor_kernel_a.img"),
+            read_test_data("android/generic_ramdisk_a.img"),
         ]
         .concat();
         check_ramdisk(ramdisk, expected_ramdisk, &expected_bootconfig);
-        assert_eq!(kernel, read_test_data("kernel_a.img"));
+        assert_eq!(kernel, read_test_data("android/kernel_a.img"));
 
         // sync_partition_buffer is called and can affect fixup.
         assert_eq!(
@@ -2101,25 +2095,29 @@ pub(crate) mod tests {
     /// Helper for checking V2 image loaded from slot A and in normal mode.
     pub(crate) fn checks_loaded_v2_slot_a_normal_mode(ramdisk: &[u8], kernel: &[u8]) {
         let expected_bootconfig = ExpectedBootconfigBuilder::new()
-            .vbmeta_size(read_test_data("vbmeta_v2_a.img").len())
-            .digest(read_test_data_as_str("vbmeta_v2_a.digest.txt"))
-            .partition_digest("boot", read_test_data_as_str("vbmeta_v2_a.boot.digest.txt"))
+            .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
+            .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .slot('a')
             .dtb_idx(0)
             .dtb_source("boot")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
-        check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
-        assert_eq!(kernel, read_test_data("kernel_a.img"));
+        check_ramdisk(
+            ramdisk,
+            &read_test_data("android/generic_ramdisk_a.img"),
+            &expected_bootconfig,
+        );
+        assert_eq!(kernel, read_test_data("android/kernel_a.img"));
     }
 
     /// Helper for checking V2 image loaded from slot A and in unlocked mode.
     pub(crate) fn checks_loaded_v2_slot_a_unlocked_mode(ramdisk: &[u8], kernel: &[u8]) {
         let expected_bootconfig = ExpectedBootconfigBuilder::new()
-            .vbmeta_size(read_test_data("vbmeta_v2_a.img").len())
-            .digest(read_test_data_as_str("vbmeta_v2_a.digest.txt"))
-            .partition_digest("boot", read_test_data_as_str("vbmeta_v2_a.boot.digest.txt"))
+            .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
+            .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .slot('a')
             .dtb_idx(0)
@@ -2128,16 +2126,20 @@ pub(crate) mod tests {
             .color(BootStateColor::Orange)
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
-        check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
-        assert_eq!(kernel, read_test_data("kernel_a.img"));
+        check_ramdisk(
+            ramdisk,
+            &read_test_data("android/generic_ramdisk_a.img"),
+            &expected_bootconfig,
+        );
+        assert_eq!(kernel, read_test_data("android/kernel_a.img"));
     }
 
     /// Helper for checking V2 image loaded from slot A and in recovery mode.
     fn checks_loaded_v2_slot_a_recovery_mode(ramdisk: &[u8], kernel: &[u8]) {
         let expected_bootconfig = ExpectedBootconfigBuilder::new()
-            .vbmeta_size(read_test_data("vbmeta_v2_a.img").len())
-            .digest(read_test_data_as_str("vbmeta_v2_a.digest.txt"))
-            .partition_digest("boot", read_test_data_as_str("vbmeta_v2_a.boot.digest.txt"))
+            .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
+            .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .force_normal_boot(false)
             .slot('a')
@@ -2145,8 +2147,12 @@ pub(crate) mod tests {
             .dtb_source("boot")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
-        check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
-        assert_eq!(kernel, read_test_data("kernel_a.img"));
+        check_ramdisk(
+            ramdisk,
+            &read_test_data("android/generic_ramdisk_a.img"),
+            &expected_bootconfig,
+        );
+        assert_eq!(kernel, read_test_data("android/kernel_a.img"));
     }
 
     /// Helper for getting default FakeGblOps for tests.
@@ -2163,8 +2169,8 @@ pub(crate) mod tests {
         // "androidboot.force_normal_boot=1\n" and therefore independent of image versions. We can
         // pick any image version for test. Use v2 for simplicity.
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
 
         let mut ops = default_test_gbl_ops(&storage);
         let mut load = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
@@ -2179,9 +2185,9 @@ pub(crate) mod tests {
     /// Helper for testing pvmfw load.
     fn test_android_load_verify_fixup_pvmfw_load(boot_buffer: BootBuffer, expected_addr: usize) {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
         // We are just interested in pvmfw load behavior. Don't care about avb verification.
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_disabled.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_disabled.img"));
         let (pvmfw_part, min_exp_size) =
             dummy_pvmfw_partition(TEST_PVMFW_FILL_VALUE, TEST_PVMFW_FILL_COUNT);
         storage.add_raw_device(c"pvmfw_a", pvmfw_part);
@@ -2244,8 +2250,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_bcb_normal_mode() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -2258,8 +2264,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_bcb_recovery_mode() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -2276,25 +2282,29 @@ pub(crate) mod tests {
     /// Helper for checking V2 image loaded from slot B and in normal mode.
     pub(crate) fn checks_loaded_v2_slot_b_normal_mode(ramdisk: &[u8], kernel: &[u8]) {
         let expected_bootconfig = ExpectedBootconfigBuilder::new()
-            .vbmeta_size(read_test_data("vbmeta_v2_b.img").len())
-            .digest(read_test_data_as_str("vbmeta_v2_b.digest.txt"))
-            .partition_digest("boot", read_test_data_as_str("vbmeta_v2_b.boot.digest.txt"))
+            .vbmeta_size(read_test_data("android/vbmeta_v2_b.img").len())
+            .digest(read_test_data_as_str("android/vbmeta_v2_b.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_b.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .slot('b')
             .dtb_idx(0)
             .dtb_source("boot")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
-        check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_b.img"), &expected_bootconfig);
-        assert_eq!(kernel, read_test_data("kernel_b.img"));
+        check_ramdisk(
+            ramdisk,
+            &read_test_data("android/generic_ramdisk_b.img"),
+            &expected_bootconfig,
+        );
+        assert_eq!(kernel, read_test_data("android/kernel_b.img"));
     }
 
     /// Helper for checking V2 image loaded from slot B and in unlocked mode.
     pub(crate) fn checks_loaded_v2_slot_b_unlocked_mode(ramdisk: &[u8], kernel: &[u8]) {
         let expected_bootconfig = ExpectedBootconfigBuilder::new()
-            .vbmeta_size(read_test_data("vbmeta_v2_b.img").len())
-            .digest(read_test_data_as_str("vbmeta_v2_b.digest.txt"))
-            .partition_digest("boot", read_test_data_as_str("vbmeta_v2_b.boot.digest.txt"))
+            .vbmeta_size(read_test_data("android/vbmeta_v2_b.img").len())
+            .digest(read_test_data_as_str("android/vbmeta_v2_b.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_b.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .slot('b')
             .dtb_idx(0)
@@ -2303,15 +2313,19 @@ pub(crate) mod tests {
             .color(BootStateColor::Orange)
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
-        check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_b.img"), &expected_bootconfig);
-        assert_eq!(kernel, read_test_data("kernel_b.img"));
+        check_ramdisk(
+            ramdisk,
+            &read_test_data("android/generic_ramdisk_b.img"),
+            &expected_bootconfig,
+        );
+        assert_eq!(kernel, read_test_data("android/kernel_b.img"));
     }
 
     #[test]
     fn test_android_main_slotted_gbl_slot_a() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -2324,8 +2338,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_slotted_gbl_slot_b() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_b", read_test_data("boot_v2_b.img"));
-        storage.add_raw_device(c"vbmeta_b", read_test_data("vbmeta_v2_b.img"));
+        storage.add_raw_device(c"boot_b", read_test_data("android/boot_v2_b.img"));
+        storage.add_raw_device(c"vbmeta_b", read_test_data("android/vbmeta_v2_b.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -2341,8 +2355,8 @@ pub(crate) mod tests {
     #[cfg(feature = "gbl_dev")]
     fn test_android_main_unsupported_slot_default_to_a() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -2378,8 +2392,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_bootonce_bootloader_bcb_command_is_cleared() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.write_to_partition_sync("misc", 0, &mut b"bootonce-bootloader".to_vec()).unwrap();
@@ -2396,8 +2410,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_enter_fastboot_via_bcb() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.write_to_partition_sync("misc", 0, &mut b"bootonce-bootloader".to_vec()).unwrap();
@@ -2407,8 +2421,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_enter_fastboot_via_get_one_shot_boot_mode() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
@@ -2419,8 +2433,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_enter_fastboot_via_get_one_shot_boot_mode_recovery_via_bcb() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.write_to_partition_sync("misc", 0, &mut b"boot-recovery".to_vec()).unwrap();
@@ -2449,8 +2463,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_enter_recovery_mode_via_get_one_shot_boot_mode() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.write_to_partition_sync("misc", 0, &mut b"bootonce-bootloader".to_vec()).unwrap();
@@ -2468,7 +2482,7 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_fastboot_boot() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.avb_device_status.is_unlocked = true;
@@ -2478,7 +2492,7 @@ pub(crate) mod tests {
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
-            let data = read_test_data(format!("boot_v2_a.img"));
+            let data = read_test_data(format!("android/boot_v2_a.img"));
             listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
             listener.add_transport_input(&data);
             listener.add_transport_input(b"boot");
@@ -2505,7 +2519,7 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_fastboot_boot_designated_buffers() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
         let mut ops = default_test_gbl_ops(&storage);
         ops.avb_device_status.is_unlocked = true;
@@ -2522,7 +2536,7 @@ pub(crate) mod tests {
             BootBuffer::new(general, Some(&mut kernel), Some(&mut ramdisk), Some(&mut fdt), None);
         let listener: SharedTestListener = Default::default();
         let (ramdisk, fdt, kernel, _) = android_main(&mut ops, buffers, |fb| {
-            let data = read_test_data(format!("boot_v2_a.img"));
+            let data = read_test_data(format!("android/boot_v2_a.img"));
             listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
             listener.add_transport_input(&data);
             listener.add_transport_input(b"boot");
@@ -2580,12 +2594,12 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_enter_fastboot_trigger_sync_preloaded_partition() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         // Set up designated load buffer for boot_a image
-        let img_len = read_test_data("boot_v2_a.img").len();
+        let img_len = read_test_data("android/boot_v2_a.img").len();
         let buf = RefCell::new(vec![0u8; img_len]);
         let get_partition_buffer_handler = |img: LoadPartition| match img {
             LoadPartition::Boot => {
@@ -2630,7 +2644,7 @@ pub(crate) mod tests {
                 // Called with `sync_preloaded=true` due to fastboot, image not loaded yet.
                 (true, vec![0u8; img_len]),
                 // sync_preloaded = false, image loaded.
-                (false, read_test_data("boot_v2_a.img")),
+                (false, read_test_data("android/boot_v2_a.img")),
             ]
         );
     }
@@ -2638,11 +2652,11 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_fastboot_boot_always_sync_preloaded_partition() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         // Set up designated load buffer for boot_a image
-        let img_len = read_test_data("boot_v2_a.img").len();
+        let img_len = read_test_data("android/boot_v2_a.img").len();
         let buf = RefCell::new(vec![0u8; img_len]);
         let get_partition_buffer_handler = |img: LoadPartition| match img {
             LoadPartition::Boot => {
@@ -2668,7 +2682,7 @@ pub(crate) mod tests {
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
         let (ramdisk, _, kernel, _) = android_main(&mut ops, load_buffer, |fb| {
-            let data = read_test_data(format!("boot_v2_a.img"));
+            let data = read_test_data(format!("android/boot_v2_a.img"));
             listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
             listener.add_transport_input(&data);
             listener.add_transport_input(b"boot");
@@ -2697,7 +2711,7 @@ pub(crate) mod tests {
                 // Called with `sync_preloaded=true` due to fastboot, images not loaded yet.
                 (true, vec![0u8; img_len]),
                 // Called with `sync_preloaded=false`, after images are loaded.
-                (false, read_test_data("boot_v2_a.img")),
+                (false, read_test_data("android/boot_v2_a.img")),
             ]
         );
     }
@@ -2705,8 +2719,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_fastboot_boot_items() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -2730,9 +2744,9 @@ pub(crate) mod tests {
         .unwrap();
 
         let expected_bootconfig = ExpectedBootconfigBuilder::new()
-            .vbmeta_size(read_test_data("vbmeta_v2_a.img").len())
-            .digest(read_test_data_as_str("vbmeta_v2_a.digest.txt"))
-            .partition_digest("boot", read_test_data_as_str("vbmeta_v2_a.boot.digest.txt"))
+            .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
+            .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .unlocked(true)
             .color(BootStateColor::Orange)
@@ -2744,8 +2758,12 @@ pub(crate) mod tests {
             .extra("gbl.blob.test=c29tZSB0ZXN0IGRhdGE=\n")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
             .build();
-        check_ramdisk(ramdisk, &read_test_data("generic_ramdisk_a.img"), &expected_bootconfig);
-        assert_eq!(kernel, read_test_data("kernel_a.img"));
+        check_ramdisk(
+            ramdisk,
+            &read_test_data("android/generic_ramdisk_a.img"),
+            &expected_bootconfig,
+        );
+        assert_eq!(kernel, read_test_data("android/kernel_a.img"));
 
         let fdt = Fdt::new(fdt).unwrap();
         from_utf8(fdt.get_property("/chosen", c"bootargs").unwrap())
@@ -2757,8 +2775,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_fastboot_boot_items_ignored_when_locked() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -2794,8 +2812,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_with_no_rng() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -2816,8 +2834,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_post_load_fastboot() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v2_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v2_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
@@ -2883,8 +2901,8 @@ pub(crate) mod tests {
     #[test]
     fn test_android_main_post_load_fastboot_load_failed() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("boot_v2_a.img"));
-        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_v1_a.img"));
+        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v1_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);

@@ -331,7 +331,7 @@ mod test {
     use super::*;
     use crate::{
         android_boot::tests::{
-            read_test_data, EXPECTED_AVB_PROPS, TEST_ROLLBACK_INDEX, TEST_ROLLBACK_INDEX_LOCATION,
+            EXPECTED_AVB_PROPS, TEST_ROLLBACK_INDEX, TEST_ROLLBACK_INDEX_LOCATION,
         },
         gbl_avb::{
             AvbDeviceStatus, AvbPartition, AvbProperty, Critical, Fdr, SpecializedPartition,
@@ -340,6 +340,7 @@ mod test {
             test::{slot, slot_successful, FakeGblOps, FakeGblOpsStorage},
             Slot,
         },
+        tests::read_test_data,
         IntegrationError::AvbIoError,
     };
     use avb::{IoError, SlotVerifyError};
@@ -442,11 +443,11 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&fw)).unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"fw_a", "fw_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"fw_a", "android/fw_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
 
         assert_eq!(
@@ -487,10 +488,10 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&not_presented)).unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
         assert_eq!(
             test_avb_verify_slot(
@@ -530,10 +531,10 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&not_presented)).unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
         assert_eq!(
             test_avb_verify_slot(
@@ -566,10 +567,10 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
 
         assert_eq!(
@@ -598,9 +599,9 @@ mod test {
 
     #[test]
     fn test_avb_verify_slot_from_preloaded_success() {
-        let mut boot = read_test_data("boot_no_ramdisk_v4_a.img");
-        let mut init_boot = read_test_data("init_boot_a.img");
-        let mut vendor_boot = read_test_data("vendor_boot_v4_a.img");
+        let mut boot = read_test_data("android/boot_no_ramdisk_v4_a.img");
+        let mut init_boot = read_test_data("android/init_boot_a.img");
+        let mut vendor_boot = read_test_data("android/vendor_boot_v4_a.img");
 
         let mut preloaded = [
             (LoadPartition::Boot, PartitionBuffer::Preloaded(&mut boot[..])),
@@ -613,7 +614,7 @@ mod test {
         }
         let partitions_data = [
             // Required images aren't presented. Have to rely on preloaded.
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
         assert_eq!(
             test_avb_verify_slot(
@@ -652,11 +653,11 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&fw)).unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"fw_a", "fw_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"fw_a", "android/fw_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
         assert_eq!(
             test_avb_verify_slot(
@@ -702,11 +703,11 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&fw)).unwrap();
         partitions_to_verify.try_push(LoadPartition::PlatformSpecific(&not_presented)).unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"fw_a", "fw_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"fw_a", "android/fw_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
         assert_eq!(
             test_avb_verify_slot(
@@ -739,10 +740,10 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
             // Wrong boot image, expect verification to fail.
-            (c"boot_a", "boot_v0_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_v0_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
         assert_eq!(
             test_avb_verify_slot(
@@ -775,10 +776,10 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
         assert_eq!(
             test_avb_verify_slot(
@@ -811,10 +812,10 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
             // Wrong boot image, expect verification to fail.
-            (c"boot_a", "boot_v0_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_v0_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
 
         assert_eq!(
@@ -848,10 +849,10 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
 
         assert_eq!(
@@ -911,10 +912,10 @@ mod test {
         partitions_to_verify.try_push(LoadPartition::InitBoot).unwrap();
         partitions_to_verify.try_push(LoadPartition::VendorBoot).unwrap();
         let partitions_data = [
-            (c"boot_a", "boot_no_ramdisk_v4_a.img"),
-            (c"init_boot_a", "init_boot_a.img"),
-            (c"vendor_boot_a", "vendor_boot_v4_a.img"),
-            (c"vbmeta_a", "vbmeta_v4_v4_init_boot_a.img"),
+            (c"boot_a", "android/boot_no_ramdisk_v4_a.img"),
+            (c"init_boot_a", "android/init_boot_a.img"),
+            (c"vendor_boot_a", "android/vendor_boot_v4_a.img"),
+            (c"vbmeta_a", "android/vbmeta_v4_v4_init_boot_a.img"),
         ];
         assert_eq!(
             test_avb_verify_slot(

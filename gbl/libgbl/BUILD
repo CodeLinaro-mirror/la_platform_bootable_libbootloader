@@ -105,7 +105,7 @@ rust_test(
     ],
     crate = ":libgbl",
     crate_features = ["uuid"],
-    data = ["@gbl//libgbl/testdata"],
+    data = ["//libgbl/testdata"],
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
         "@avb//:avb_crypto_ops_for_test",

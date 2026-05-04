@@ -2042,7 +2042,7 @@ pub(crate) mod test {
     use crate::{
         android_boot::tests::{
             checks_loaded_v2_slot_a_unlocked_mode, checks_loaded_v2_slot_b_unlocked_mode,
-            default_test_gbl_ops, read_test_data,
+            default_test_gbl_ops,
         },
         constants::{KiB, MiB, KERNEL_ALIGNMENT},
         gbl_avb::{AvbDeviceStatus, LoadPartition, SpecializedPartition},
@@ -2054,6 +2054,7 @@ pub(crate) mod test {
             },
             FastbootPartitionType, PartitionBuffer,
         },
+        tests::read_test_data,
         Os,
     };
     #[cfg(feature = "fuchsia")]
@@ -5026,7 +5027,7 @@ pub(crate) mod test {
     ) -> (&[u8], &[u8], &[u8], &mut [u8]) {
         let mut storage = FakeGblOpsStorage::default();
         let vbmeta = CString::new(format!("vbmeta_{suffix}")).unwrap();
-        let vbmeta_img = read_test_data(format!("vbmeta_v2_{suffix}.img"));
+        let vbmeta_img = read_test_data(format!("android/vbmeta_v2_{suffix}.img"));
         storage.add_raw_device(&vbmeta, vbmeta_img);
         let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
         let mut gbl_ops = default_test_gbl_ops(&storage);
@@ -5035,7 +5036,7 @@ pub(crate) mod test {
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
-        let data = read_test_data(format!("boot_v2_{suffix}.img"));
+        let data = read_test_data(format!("android/boot_v2_{suffix}.img"));
         listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
         listener.add_transport_input(&data);
         listener.add_transport_input(b"boot");
@@ -5083,15 +5084,15 @@ pub(crate) mod test {
         // Tests that "fastboot boot" is reentrant valid.
         let mut storage = FakeGblOpsStorage::default();
         let vbmeta = CString::new(format!("vbmeta_a")).unwrap();
-        let vbmeta_img = read_test_data(format!("vbmeta_v4_v4_init_boot_a.img"));
+        let vbmeta_img = read_test_data("android/vbmeta_v4_v4_init_boot_a.img");
         storage.add_raw_device(&vbmeta, vbmeta_img);
 
         // Use preloaded buffers so that we can test that `GblOps::get_partition_buffer()` allows
         // backend to handle buffer acquire and release.
         let preloaded = vec![
-            (LoadPartition::VendorKernelBoot, "vendor_kernel_boot_a.img"),
-            (LoadPartition::VendorBoot, "vendor_boot_v4_a.img"),
-            (LoadPartition::InitBoot, "init_boot_a.img"),
+            (LoadPartition::VendorKernelBoot, "android/vendor_kernel_boot_a.img"),
+            (LoadPartition::VendorBoot, "android/vendor_boot_v4_a.img"),
+            (LoadPartition::InitBoot, "android/init_boot_a.img"),
         ];
         let buffers = HashMap::<String, RefCell<Vec<u8>>>::from_iter(
             preloaded.iter().map(|(p, f)| (p.name().to_owned(), read_test_data(f).into())),
@@ -5116,7 +5117,7 @@ pub(crate) mod test {
         listener.add_transport_input(b"boot");
 
         // "fastboot boot boot_no_ramdisk_v4_a.img", from the same state, should succeed.
-        let data = read_test_data("boot_no_ramdisk_v4_a.img");
+        let data = read_test_data("android/boot_no_ramdisk_v4_a.img");
         listener.add_transport_input(format!("download:{:#x}", data.len()).as_bytes());
         listener.add_transport_input(&data);
         listener.add_transport_input(b"boot");
@@ -5148,12 +5149,12 @@ pub(crate) mod test {
 
         let (ramdisk, _, kernel, _) =
             res.split_loaded_android((&mut load_buffer[..]).into()).unwrap();
-        assert_eq!(kernel, read_test_data("kernel_a.img"));
+        assert_eq!(kernel, read_test_data("android/kernel_a.img"));
         assert!(ramdisk.starts_with(
             &[
-                read_test_data("vendor_ramdisk_a.img"),
-                read_test_data("vendor_kernel_a.img"),
-                read_test_data("generic_ramdisk_a.img"),
+                read_test_data("android/vendor_ramdisk_a.img"),
+                read_test_data("android/vendor_kernel_a.img"),
+                read_test_data("android/generic_ramdisk_a.img"),
             ]
             .concat()
         ));
