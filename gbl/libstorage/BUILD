@@ -57,3 +57,17 @@ rust_doc_test(
     name = "libstorage_doc_test",
     crate = ":libstorage",
 )
+
+rust_library(
+    name = "file_block_io",
+    srcs = ["src/file_block.rs"],
+    crate_name = "file_block_io",
+    edition = "2021",
+    rustc_flags = ANDROID_RUST_LINTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libstorage",
+        "@bytes",
+        "@gbl//liberror",
+    ],
+)
