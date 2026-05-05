@@ -60,6 +60,7 @@ use fastboot::{
 };
 
 const ERR_DEVICE_LOCKED: &str = "Device is locked";
+const ERR_CRITICAL_LOCKED: &str = "Device is critical-locked";
 use gbl_async::{join, join_mut, yield_now};
 use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
@@ -560,12 +561,17 @@ where
 
     /// Parses and checks the argument for "fastboot flash gpt/<blk_idx>/"resize".
     ///
+    /// Also verifies that the device is critically-unlocked if necessary.
+    ///
     /// # Returns
     ///
     /// * Returns `Ok(Some((blk_idx, resize)))` if command is a GPT flashing command.
     /// * Returns `Ok(None)` if command is not a GPT flashing command.
     /// * Returns `Err()` otherwise.
-    pub(crate) fn parse_flash_gpt_args(&self, part: &str) -> CommandResult<Option<(usize, bool)>> {
+    pub(crate) fn parse_flash_gpt_args(
+        &mut self,
+        part: &str,
+    ) -> CommandResult<Option<(usize, bool)>> {
         // Syntax: flash gpt/<blk_idx>/"resize"
         let mut args = part.split('/');
         if next_arg(&mut args).filter(|v| *v == FLASH_GPT_PART).is_none() {
@@ -581,6 +587,9 @@ where
             Some(_) => return Err("Unknown argument".into()),
             _ => false,
         };
+        // Check the critical lock - GPT modification gives the ability to modify any other
+        // partition, so we check for full-disk access.
+        self.check_full_disk_critical_unlocked()?;
         Ok(Some((blk_id, resize)))
     }
 
@@ -737,54 +746,44 @@ where
         let (basename, block_ids_and_parts) =
             self.resolve_slotted_partitions(part, blk_id, ResolveMode::CurrentSlot)?;
 
-        let (fdr, critical) = if A::IS_READ_ONLY {
+        // Determine if we need to FDR and check critical lock protection.
+        let fdr = if A::IS_READ_ONLY {
             // Read-only access never requires FDR or critical lock.
-            (Fdr::No, Critical::No)
+            Fdr::No
         } else {
-            // Write access may require FDR or critical lock, check partition attributes.
             match basename {
-                Some(basename) => self
-                    .gbl_ops
-                    .avb_read_partition_attributes()?
-                    .find(|p| p.name_cstr().to_bytes() == basename.as_bytes())
-                    .map(|p| (p.fdr, p.critical))
-                    .unwrap_or((Fdr::No, Critical::No)),
+                // Named partition access.
+                Some(basename) => {
+                    // Check partition attributes for FDR or critical.
+                    let (fdr, critical) = self
+                        .gbl_ops
+                        .avb_read_partition_attributes()?
+                        .find(|p| p.name_cstr().to_bytes() == basename.as_bytes())
+                        .map(|p| (p.fdr, p.critical))
+                        .unwrap_or((Fdr::No, Critical::No));
+                    if critical == Critical::Yes {
+                        self.check_critical_unlocked()?
+                    }
+                    fdr
+                }
                 // Raw disk access.
-                None => (
-                    // No FDR.
-                    // Raw disk access is advanced usage, it's up the caller to know if they're
-                    // messing with userdata or not, and auto-triggering FDR on non-secure disk
-                    // modification is a developer convenience, not security load-bearing.
-                    Fdr::No,
+                None => {
                     // Critical only if the device has defined any critical partitions.
                     // If we have critically-protected partitions, we must also critically-protect
                     // raw disk access or else it defeats the purpose since raw disk writes could
                     // get around the critical lock. We could try to lookup which partition(s) this
                     // raw access hits and be more precise with the lock, but we should wait until
                     // we have a use case before adding that complexity.
-                    if self
-                        .gbl_ops
-                        .avb_read_partition_attributes()?
-                        .any(|p| p.critical == Critical::Yes)
-                    {
-                        Critical::Yes
-                    } else {
-                        Critical::No
-                    },
-                ),
+                    self.check_full_disk_critical_unlocked()?;
+
+                    // No FDR.
+                    // Raw disk access is advanced usage, it's up the caller to know if they're
+                    // messing with userdata or not, and auto-triggering FDR on non-secure disk
+                    // modification is a developer convenience, not security load-bearing.
+                    Fdr::No
+                }
             }
         };
-
-        // Enforce the critical lock.
-        if critical == Critical::Yes
-            && !self
-                .gbl_ops
-                .avb_read_device_status()
-                .map_err(|_| "failed to read lock state")?
-                .is_unlocked_critical
-        {
-            return Err("partition is critical-locked".into());
-        }
 
         // We've checked locking and FDR requirements, we can grab the I/O now.
         let part_io = self.get_partition_io_unchecked::<A>(block_ids_and_parts, off, sz).await?;
@@ -1136,12 +1135,36 @@ where
         Ok(v)
     }
 
-    /// Helper for checking whether device is unlocked.
+    /// Returns `Ok` if the device lock is unlocked.
     fn check_unlocked(&mut self) -> CommandResult<()> {
         match self.gbl_ops.avb_read_device_status() {
-            Err(e) => Err(format_args!("Failed to get unlock status {e}").into()),
+            Err(e) => Err(format_args!("Failed to read lock state: {e}").into()),
             Ok(status) if status.is_unlocked => Ok(()),
             _ => Err(ERR_DEVICE_LOCKED.into()),
+        }
+    }
+
+    /// Returns `Ok` if the critical lock is unlocked.
+    fn check_critical_unlocked(&mut self) -> CommandResult<()> {
+        match self.gbl_ops.avb_read_device_status() {
+            Err(e) => Err(format_args!("Failed to read lock state: {e}").into()),
+            Ok(status) if status.is_unlocked_critical => Ok(()),
+            _ => Err(ERR_CRITICAL_LOCKED.into()),
+        }
+    }
+
+    /// Returns `Ok` if the critical lock is unlocked or never required.
+    ///
+    /// This is useful for checking full-disk access e.g. GPT or raw disk. In this case, write
+    /// access also provides the ability to modify any other partition on disk, so we require the
+    /// critical lock if any partitions require it.
+    fn check_full_disk_critical_unlocked(&mut self) -> CommandResult<()> {
+        // Check partition attributes first, it's probably cheaper. Even though it may involve
+        // copying some partition name buffers around and looping on them, it will likely be done
+        // entirely in UEFI whereas checking lock state requires a secure-world context switch.
+        match self.gbl_ops.avb_read_partition_attributes()?.any(|p| p.critical == Critical::Yes) {
+            true => self.check_critical_unlocked(),
+            false => Ok(()),
         }
     }
 
@@ -2992,7 +3015,7 @@ pub(crate) mod test {
         assert_eq!(out[0], b"FAILpartition name is required");
     }
 
-    const FAIL_MESSAGE_CRITICAL_LOCK: &[u8] = b"FAILpartition is critical-locked";
+    const FAIL_MESSAGE_CRITICAL_LOCK: &[u8] = b"FAILDevice is critical-locked";
     const FAIL_MESSAGE_NOT_FOUND: &[u8] = b"FAILNotFound";
 
     /// Attempts to flash 4KiB of 0xAA to `part` and returns the response.
@@ -4568,6 +4591,188 @@ pub(crate) mod test {
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
+    }
+    #[test]
+    fn test_update_gpt_critical_locked() {
+        let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
+        let gpt_new = include_bytes!("../../../libstorage/test/gpt_test_2.bin");
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(disk_orig);
+        let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
+        gbl_ops.avb_device_status.is_unlocked_critical = false;
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("critical"),
+            critical: Critical::Yes,
+            ..Default::default()
+        }]));
+
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+
+        let gpt_to_flash = &gpt_new[..34 * 512];
+
+        listener.add_transport_input(format!("download:{:#x}", gpt_to_flash.len()).as_bytes());
+        listener.add_transport_input(gpt_to_flash);
+        listener.add_transport_input(b"flash:gpt/0");
+        listener.add_transport_input(b"continue");
+
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            // Critical lock should have prevented GPT modification.
+            make_expected_transport_out(&[
+                b"DATA00004400",
+                b"OKAY",
+                b"FAILDevice is critical-locked",
+                b"OKAY",
+            ]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+
+        // Disk contents should be unchanged.
+        assert_eq!(&storage[0].partition_io(None).unwrap().dev().io().storage[..], disk_orig);
+    }
+
+    #[test]
+    fn test_update_gpt_critical_unlocked() {
+        let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(disk_orig);
+        let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
+        gbl_ops.avb_device_status.is_unlocked_critical = true;
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("critical"),
+            critical: Critical::Yes,
+            ..Default::default()
+        }]));
+
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+
+        let gpt_new = include_bytes!("../../../libstorage/test/gpt_test_2.bin");
+        let gpt_to_flash = &gpt_new[..34 * 512];
+
+        listener.add_transport_input(format!("download:{:#x}", gpt_to_flash.len()).as_bytes());
+        listener.add_transport_input(gpt_to_flash);
+        listener.add_transport_input(b"flash:gpt/0");
+        listener.add_transport_input(b"continue");
+
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
+                b"DATA00004400",
+                b"OKAY",
+                b"INFOUpdating GPT...",
+                b"OKAY",
+                b"OKAY",
+            ]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+
+        // Disk contents should have changed.
+        assert_ne!(&storage[0].partition_io(None).unwrap().dev().io().storage[..], disk_orig);
+    }
+
+    #[test]
+    fn test_erase_gpt_critical_locked() {
+        let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(disk_orig);
+        let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
+        gbl_ops.avb_device_status.is_unlocked_critical = false;
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("critical"),
+            critical: Critical::Yes,
+            ..Default::default()
+        }]));
+
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+
+        listener.add_transport_input(b"erase:gpt/0");
+        listener.add_transport_input(b"continue");
+
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            // Critical lock should have prevented GPT modification.
+            make_expected_transport_out(&[b"FAILDevice is critical-locked", b"OKAY",]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+
+        // Disk contents should be unchanged.
+        assert_eq!(&storage[0].partition_io(None).unwrap().dev().io().storage[..], disk_orig);
+    }
+
+    #[test]
+    fn test_erase_gpt_critical_unlocked() {
+        let disk_orig = include_bytes!("../../../libstorage/test/gpt_test_1.bin");
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_gpt_device(disk_orig);
+        let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
+        gbl_ops.avb_device_status.is_unlocked_critical = true;
+        gbl_ops.avb_partition_attributes = Some(Ok(vec![SpecializedPartition {
+            name_buffer: cstr_buffer("critical"),
+            critical: Critical::Yes,
+            ..Default::default()
+        }]));
+
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+
+        listener.add_transport_input(b"erase:gpt/0");
+        listener.add_transport_input(b"continue");
+
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[b"OKAY", b"OKAY",]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+
+        // Disk contents should have changed.
+        assert_ne!(&storage[0].partition_io(None).unwrap().dev().io().storage[..], disk_orig);
     }
 
     #[test]
