@@ -13,6 +13,8 @@
 # limitations under the License.
 
 load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform")
+load("@gbl_llvm_prebuilts//:info.bzl", "gbl_llvm_tool_path")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_binary")
 
 package(
@@ -20,43 +22,36 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-# TODO(b/509953349): Remove this once kernel is assembled into boot image.
-# Copy test kernel to the launcher directory, so that include_bytes! can find it. Otherwise the
-# compiled data could be in an arbitrary sandbox location.
-genrule(
-    name = "copy_test_kernel",
-    srcs = ["@gbl//tests/qemu/test_kernel:test_kernel_aarch64"],
-    outs = ["test_kernel.bin"],
-    cmd = "cp $< $@",
+cc_library(
+    name = "kernel_start",
+    srcs = ["start.S"],
+    deps = ["@gbl//libelf:relocation"],
 )
 
 rust_binary(
-    name = "gbl_launcher_bin",
-    srcs = ["src/main.rs"],
-    compile_data = [
-        # TODO(b/509953349): Remove this once kernel is assembled into boot image.
-        ":copy_test_kernel",
-    ],
-    edition = "2024",
+    name = "test_kernel_elf",
+    srcs = ["main.rs"],
+    linker_script = ":kernel.ld",
     rustc_flags = [
         "-C",
         "panic=abort",
     ],
     deps = [
-        "@avb//:libavb_c_sha_staticlib",
-        "@boringssl//:libcrypto_c_baremetal_static",
-        "@gbl//libavb:sysdeps",
-        "@gbl//libboot",
-        "@gbl//libboringssl:sysdeps",
-        "@gbl//libefi",
-        "@gbl//libefi_types",
+        ":kernel_start",
         "@gbl//libsemihosting",
-        "@gbl//libstack",
     ],
 )
 
+# Strip ELF header.
+genrule(
+    name = "test_kernel_gen",
+    srcs = [":test_kernel_elf"],
+    outs = ["test_kernel.bin"],
+    cmd = "{} -O binary $< $@".format(gbl_llvm_tool_path("llvm-objcopy")),
+)
+
 build_with_platform(
-    name = "gbl_launcher_aarch64",
-    platform = "@gbl//toolchain:gbl_uefi_aarch64_dev",
-    deps = [":gbl_launcher_bin"],
+    name = "test_kernel_aarch64",
+    platform = "@gbl//toolchain:gbl_elf_aarch64_dev",
+    deps = [":test_kernel_gen"],
 )

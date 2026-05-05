@@ -28,10 +28,14 @@ cc_library(
     ],
     copts = select({
         "@gbl//toolchain:gbl_rust_elf_riscv64": [],
+        "@gbl//toolchain:gbl_rust_elf_aarch64": [],
         # For the `elf_static_relocation_checker` host tool, enable
         # print and panics as exit().
         "//conditions:default": ["-DHOST_TOOLING"],
-    }),
+    }) + [
+        # Before relocation is complete, it may not be possible to access stack canary.
+        "-fno-stack-protector",
+    ],
     includes = [
         "include",
         "public",

@@ -17,6 +17,8 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 use efi::{efi_println, initialize, EfiAllocator};
 use efi_types::{EfiHandle, EfiSystemTable};
 
@@ -24,12 +26,15 @@ use efi_types::{EfiHandle, EfiSystemTable};
 #[global_allocator]
 static mut EFI_GLOBAL_ALLOCATOR: EfiAllocator = EfiAllocator::new();
 
-extern crate alloc;
-
 /// Pull in the sysdeps required by libavb so the linker can find them.
 extern crate avb_sysdeps;
 /// Pull in the sysdeps required by boringssl so the linker can find them.
 extern crate boringssl_sysdeps;
+
+// Embed the test kernel binary at compile-time using include_bytes!
+// Path is relative to this main.rs file path:
+// TODO(b/509953349): Remove this once kernel is assembled into boot image.
+static KERNEL_BYTES: &[u8] = include_bytes!("../test_kernel.bin");
 
 /// EFI application main entry.
 ///
@@ -52,7 +57,13 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
     let read_size = file.read(&mut fdt_buffer).unwrap();
     semihosting::println!("Loaded FDT with {} bytes", read_size);
     // TODO(b/499359597): Mock EFI protocols and launch GBL.
-    entry.system_table().runtime_services().shutdown().unwrap();
+
+    // TODO(b/509953349): Remove this once kernel is assembled into boot image.
+    let mut mmap_buf = alloc::vec![0u8; 65536];
+    let _ = efi::exit_boot_services(entry, &mut mmap_buf).unwrap();
+    // SAFETY:
+    // * `KERNEL_BYTES` is a custom test kernel blob.
+    unsafe { boot::aarch64::jump_linux_el2_or_lower(KERNEL_BYTES, &[], &[]) };
 }
 
 #[panic_handler]
