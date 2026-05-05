@@ -31,7 +31,8 @@ def parse_args() -> argparse.Namespace:
       formatter_class=argparse.RawDescriptionHelpFormatter,
   )
 
-  parser.add_argument("efi", help="Path to the EFI application")
+  parser.add_argument("efi", help="Path to the GBL launcher EFI application")
+  parser.add_argument("gbl", help="Path to the GBL binary")
   parser.add_argument("--bios", help="Path to the BIOS (UEFI firmware)")
   parser.add_argument("--qemu", help="Path to the QEMU binary")
   parser.add_argument(
@@ -61,6 +62,9 @@ def launch_qemu(args):
     shutil.copyfile(args.efi, esp_part_dir / "bootaa64.efi")
     # Make sure a log file always eixsts
     (test_dir / "console.log").write_text("")
+
+    gbl_path = os.path.abspath(args.gbl)
+    os.symlink(gbl_path, test_dir / "gbl.bin")
 
     try:
       cmd_args = [qemu, "-nographic", "-cpu", "max"]

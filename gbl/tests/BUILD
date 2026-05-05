@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@gbl//toolchain:build_and_run_tests.bzl", "build_and_run_tests")
 
 test_suite(
     name = "tests",
     tests = [
         ":build_and_run_tests",
+        ":build_and_run_qemu_tests",
         # Doc tests does not work for `build_and_run_tests` because it accesses
         # `../rules_rust/util/process_wrapper` and its path can't be correctly provided as test
         # data.
@@ -32,18 +34,7 @@ test_suite(
 build_and_run_tests(
     name = "build_and_run_tests",
     # We need to re-specify the runtime data needed by tests.
-    data = [
-        "@gbl//libgbl/testdata",
-    ] + select(
-        {
-            # The vmm repo may not be added in all branches. Only enable the test when
-            # it exists.
-            # Put as data dependency so that this becomes a build-time test. The output produced
-            # is the log file.
-            "@vmm//repo_exists:exists": ["@gbl//tests/qemu:qemu_test"],
-            "//conditions:default": [],
-        },
-    ),
+    data = ["@gbl//libgbl/testdata"],
     tests = [
         "@gbl//:readme_test",
         "@gbl//efi:test",
@@ -78,4 +69,28 @@ build_and_run_tests(
         "@gbl//libutils:test",
         "@gbl//libutils:testutils_test",
     ],
+)
+
+selects.config_setting_group(
+    name = "qemu_test_dependencies_exist",
+    match_all = [
+        "@vmm//repo_exists:exists",
+        "@mkbootimg//repo_exists:exists",
+    ],
+)
+
+build_and_run_tests(
+    name = "build_and_run_qemu_tests",
+    # The vmm repo may not be added in all branches. Only enable the test when
+    # it exists.
+    # Put as data dependency so that this becomes a build-time test. The output produced
+    # is the log file.
+    # Put as a different test target so that it can be parallelized with other tests.
+    data = select(
+        {
+            ":qemu_test_dependencies_exist": ["@gbl//tests/qemu:qemu_test"],
+            "//conditions:default": [],
+        },
+    ),
+    tests = [],
 )

@@ -801,7 +801,7 @@ impl<'a> BootServices<'a> {
     {
         let mut null: EfiHandle = null_mut();
         let handle = handle.unwrap_or(&mut null);
-        let provider = Box::new(Box::pin(Provider::<T::InterfaceType, R>::new(rust_impl)));
+        let provider = Box::pin(Provider::<T::InterfaceType, R>::new(rust_impl));
         // SAFETY:
         // * `handle` is an optional output parameter. It is either NULL or points to a valid
         //   handle. It is not retained and outlives the call.
@@ -812,11 +812,46 @@ impl<'a> BootServices<'a> {
                 handle as *mut _,
                 &T::GUID,
                 EFI_INTERFACE_TYPE_EFI_NATIVE_INTERFACE,
-                provider.as_ref().as_ref().to_ptr() as *mut _ as _
+                provider.as_ref().to_ptr() as *mut _ as _
             )?;
         }
-        Box::leak(provider);
+        core::mem::forget(provider);
         Ok(())
+    }
+
+    /// Loads and starts an EFI application.
+    ///
+    /// # Safety
+    ///
+    /// Caller must guarantee that `src` is a valid EFI application
+    pub unsafe fn load_and_start_image(&self, src: &mut [u8]) -> Result<()> {
+        let mut image_handle: EfiHandle = null_mut();
+
+        // SAFETY:
+        // * `image_handle` is an output parameter. It is not retained and outlives the call.
+        // * `src` is a valid slice and outlives the call.
+        // * `parent_image_handle` is a valid handle for output and outlives the call.
+        unsafe {
+            efi_call!(
+                self.boot_services.load_image,
+                true, // Ignored since we use source buffer.
+                self.efi_entry.image_handle().0,
+                null_mut(),
+                src.as_ptr() as _,
+                src.len(),
+                &mut image_handle
+            )?;
+        }
+
+        let mut exit_data_size: usize = 0;
+
+        // SAFETY:
+        // * `exit_data` is an optional output parameter and set to NULL.
+        // * `exit_data_size` is an output parameter. It is not retained and outlives the call.
+        //   The value is set to 0 to indicate exit_data is not used.
+        unsafe {
+            efi_call!(self.boot_services.start_image, image_handle, &mut exit_data_size, null_mut())
+        }
     }
 }
 

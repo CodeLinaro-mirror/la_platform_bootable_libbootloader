@@ -20,23 +20,9 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-# TODO(b/509953349): Remove this once kernel is assembled into boot image.
-# Copy test kernel to the launcher directory, so that include_bytes! can find it. Otherwise the
-# compiled data could be in an arbitrary sandbox location.
-genrule(
-    name = "copy_test_kernel",
-    srcs = ["@gbl//tests/qemu/test_kernel:test_kernel_aarch64"],
-    outs = ["test_kernel.bin"],
-    cmd = "cp $< $@",
-)
-
 rust_binary(
     name = "gbl_launcher_bin",
     srcs = ["src/main.rs"],
-    compile_data = [
-        # TODO(b/509953349): Remove this once kernel is assembled into boot image.
-        ":copy_test_kernel",
-    ],
     edition = "2024",
     rustc_flags = [
         "-C",

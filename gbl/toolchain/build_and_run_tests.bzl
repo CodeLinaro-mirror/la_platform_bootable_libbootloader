@@ -92,5 +92,5 @@ def build_and_run_tests(name, tests, data, envs = {}):
     sh_test(
         name = name,
         srcs = ["@gbl//tests:noop.sh"],
-        data = all_tests,
+        data = data + all_tests,
     )
