@@ -102,16 +102,14 @@ pub(crate) fn into_verify_data<'a>(
 /// * Returns an error if verification process failed and boot cannot continue.
 pub fn avb_verify_slot<'a, 'b: 'c, 'c>(
     ops: &mut impl GblOps<'a>,
-    slot: Slot,
+    slot: Option<Slot>,
     partitions: &'c mut PartitionsToVerify<'b>,
 ) -> Result<(SlotVerifyData<'c>, VerificationStatus, bool)> {
-    let slot_index = SlotIndex::try_from(slot.suffix.as_char())
-        .inspect_err(|_| gbl_println!(ops, "AVB: Invalid slot: {}", slot.suffix.as_char()))
-        .map_err(|_| Error::InvalidInput)?;
+    let slot_index = slot.map(|s| slot_to_index(ops, s)).transpose()?;
 
     let PartitionsToVerify { partitions, preloaded } = partitions;
 
-    let mut avb_ops = GblAvbOps::new(ops, Some(slot_index), preloaded, false);
+    let mut avb_ops = GblAvbOps::new(ops, slot_index, preloaded, false);
     let status = avb_ops.avb_read_device_status()?;
 
     let mut flags = SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_NONE;
@@ -126,7 +124,7 @@ pub fn avb_verify_slot<'a, 'b: 'c, 'c>(
     let verify_result = slot_verify(
         &mut avb_ops,
         &names,
-        Some(slot_index.into()),
+        slot_index.map(|s| s.into()),
         flags,
         HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_MANAGED_RESTART_AND_EIO,
     );
@@ -233,7 +231,7 @@ pub fn avb_verify_slot<'a, 'b: 'c, 'c>(
     // Allowes FW to handle verification result.
     avb_ops.handle_verification_result(verify_data, verification_status, digest)?;
 
-    if let Some(ref verify_data) = verify_data {
+    if let (Some(verify_data), Some(slot)) = (verify_data, slot) {
         // Update rollback indices if the slot has successfully booted following:
         // https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes
         if !status.is_unlocked && slot.bootability == Bootability::Successful {
@@ -260,15 +258,13 @@ pub fn avb_verify_slot<'a, 'b: 'c, 'c>(
 #[cfg(feature = "gbl_dev")]
 pub fn avb_fake_verify_slot<'a, 'b: 'c, 'c>(
     ops: &mut impl GblOps<'a>,
-    slot: Slot,
+    slot: Option<Slot>,
     partitions: &'c mut PartitionsToVerify<'b>,
 ) -> Result<(SlotVerifyData<'c>, VerificationStatus, bool)> {
-    use crate::android_boot::slotted_part;
     use crate::gbl_avb::ops::custom_vbmeta::CustomVbmetaAvbOps;
+    use crate::slots::slotted_part;
 
-    let slot_index = SlotIndex::try_from(slot.suffix.as_char())
-        .inspect_err(|_| gbl_println!(ops, "AVB: Invalid slot: {}", slot.suffix.as_char()))
-        .map_err(|_| Error::InvalidInput)?;
+    let slot_index = slot.map(|s| slot_to_index(ops, s)).transpose()?;
 
     let PartitionsToVerify { partitions, preloaded } = partitions;
 
@@ -276,12 +272,12 @@ pub fn avb_fake_verify_slot<'a, 'b: 'c, 'c>(
     for partition in partitions.iter() {
         // `libavb` fails with IO if any partition is missed when verification is disabled,
         // so filter out missed partitions.
-        if ops.partition_size(&slotted_part(partition.name(), slot))?.is_some() {
+        if ops.partition_size(&slotted_part(partition.name(), slot.map(|s| s.suffix)))?.is_some() {
             names.push(partition.name_cstr());
         }
     }
 
-    let mut avb_ops = GblAvbOps::new(ops, Some(slot_index), preloaded, false);
+    let mut avb_ops = GblAvbOps::new(ops, slot_index, preloaded, false);
     let status = avb_ops.avb_read_device_status()?;
 
     // Uses pre-compiled fake vbmeta image with disabled verification, so rely on libavb to
@@ -297,7 +293,7 @@ pub fn avb_fake_verify_slot<'a, 'b: 'c, 'c>(
     match slot_verify(
         &mut custom_avb_ops,
         &names,
-        Some(slot_index.into()),
+        slot_index.map(|s| s.into()),
         SlotVerifyFlags::AVB_SLOT_VERIFY_FLAGS_ALLOW_VERIFICATION_ERROR,
         HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_RESTART,
     ) {
@@ -324,6 +320,16 @@ pub fn avb_fake_verify_slot<'a, 'b: 'c, 'c>(
             ))
         }
     }
+}
+
+/// Helper to convert a `Slot` to a `SlotIndex`, logging and mapping errors.
+fn slot_to_index<'a>(
+    ops: &mut impl GblOps<'a>,
+    slot: Slot,
+) -> core::result::Result<SlotIndex, Error> {
+    SlotIndex::try_from(slot.suffix.as_char())
+        .inspect_err(|_| gbl_println!(ops, "AVB: Invalid slot: {}", slot.suffix.as_char()))
+        .map_err(|_| Error::InvalidInput)
 }
 
 #[cfg(test)]
@@ -404,7 +410,7 @@ mod test {
         };
         ops.avb_handle_verification_result = Some(&mut handler);
         ops.avb_key_validation_status = Some(Ok(key_validation_status));
-        let res = avb_verify_slot(&mut ops, slot, partitions_to_verify);
+        let res = avb_verify_slot(&mut ops, Some(slot), partitions_to_verify);
         if let Some(expected_updated_fw_rollback) = expected_updated_fw_rollback {
             let updated_rollback_index =
                 ops.avb_ops.rollbacks.get(&TEST_ROLLBACK_INDEX_LOCATION).unwrap();

@@ -26,7 +26,7 @@ use crate::{
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message},
     ops::{OneShotBootMode, PartitionBuffer},
-    slots::Slot,
+    slots::{slotted_part, Slot},
     GblOps, IntegrationError, Result,
 };
 use arrayvec::ArrayVec;
@@ -58,7 +58,7 @@ pub use vboot::{avb_verify_slot, PartitionsToVerify};
 pub(crate) mod load;
 #[cfg(feature = "fuchsia")]
 pub(crate) use load::get_kernel;
-use load::{android_load_verified, slotted_part, BootBufferLoader};
+use load::{android_load_verified, BootBufferLoader};
 
 /// A helper to convert a bytes slice containing a null-terminated string to `str`
 fn cstr_bytes_to_str(data: &[u8]) -> core::result::Result<&str, Error> {
@@ -83,7 +83,7 @@ pub const STANDARD_PARTITIONS: &[LoadPartition] = &[
 /// On success, returns a tuple of (ramdisk, fdt, kernel, unused buffer).
 pub fn android_load_verify_fixup<'a, 'b>(
     ops: &mut impl GblOps<'b>,
-    slot: Slot,
+    slot: Option<Slot>,
     is_recovery: bool,
     boot_buffer: BootBuffer<'a>,
 ) -> Result<(&'a [u8], &'a [u8], &'a [u8], &'a mut [u8])> {
@@ -137,7 +137,9 @@ pub fn android_load_verify_fixup<'a, 'b>(
                 // fails, so this size check should be removed. For now, it's kept to allow reusing
                 // the same vbmeta in unit tests without providing all partitions.
                 if partition.verification() == Verification::Required
-                    || ops.partition_size(&slotted_part(partition.name(), slot))?.is_some()
+                    || ops
+                        .partition_size(&slotted_part(partition.name(), slot.map(|s| s.suffix)))?
+                        .is_some()
                 {
                     partitions_to_verify.try_push(*partition)?
                 }
@@ -202,8 +204,10 @@ pub fn android_load_verify_fixup<'a, 'b>(
     if !is_recovery {
         bootconfig_builder.add_item("androidboot.force_normal_boot", 1)?;
     }
-    bootconfig_builder
-        .add_item("androidboot.slot_suffix", format_args!("_{}", slot.suffix.as_char()))?;
+    if let Some(s) = slot {
+        bootconfig_builder
+            .add_item("androidboot.slot_suffix", format_args!("_{}", s.suffix.as_char()))?;
+    }
     // Placeholder value for now. Userspace can use this value to tell if device is booted with GBL.
     // TODO(yochiang): Generate useful value like version, build_incremental in the bootconfig.
     bootconfig_builder.add_item("androidboot.gbl.version", 0)?;
@@ -389,17 +393,32 @@ fn finalize_bootconfig<'a, 'b, 'c>(
 }
 
 /// Gets the target slot to boot.
-pub(crate) fn get_boot_slot<'a>(ops: &mut impl GblOps<'a>) -> Result<Slot> {
+pub(crate) fn get_boot_slot<'a>(ops: &mut impl GblOps<'a>) -> Result<Option<Slot>> {
     match ops.get_current_slot() {
-        Ok(slot) => Ok(slot),
+        Ok(slot) => Ok(Some(slot)),
         #[cfg(feature = "gbl_dev")]
-        Err(Error::Unsupported | Error::NotFound) => {
-            gbl_println!(
-                ops,
-                "Slotting is not supported. Defaulting to 'a' slot. \
-                This is only supported on dev GBL"
-            );
-            Ok(Slot { suffix: 'a'.try_into().unwrap(), ..Default::default() })
+        Err(e @ (Error::Unsupported | Error::NotFound)) => {
+            if ops.partition_size("boot_a")?.is_some() {
+                gbl_println!(
+                    ops,
+                    "Slotting is not supported but boot_a exists. Defaulting to 'a' slot. \
+                    This is only supported on dev GBL"
+                );
+                Ok(Some(Slot { suffix: 'a'.try_into().unwrap(), ..Default::default() }))
+            } else if ops.partition_size("boot")?.is_some() {
+                gbl_println!(
+                    ops,
+                    "Slotting is not supported and boot_a not found, but boot exists. Defaulting to slotless. \
+                    This is only supported on dev GBL"
+                );
+                Ok(None)
+            } else {
+                gbl_println!(
+                    ops,
+                    "Slotting is not supported and neither boot_a nor boot found. Failing."
+                );
+                Err(e.into())
+            }
         }
         Err(e) => {
             gbl_println!(ops, "Failed to get boot slot: {e}");
@@ -645,7 +664,10 @@ pub fn android_main<'a, 'b, G: GblOps<'a>>(
         ops.sync_partition_buffer(true)?;
 
         // Checks whether fastboot has set a different active slot. Reboot if it does.
-        if matches!(result.last_set_active_slot, Some(s) if s != slot.suffix.as_char()) {
+        if slot.map_or(
+            false,
+            |s| matches!(result.last_set_active_slot, Some(x) if x != s.suffix.as_char()),
+        ) {
             gbl_println!(ops, "Active slot changed by \"fastboot set_active\". Reset..");
             ops.reboot()?;
         }
@@ -1149,7 +1171,7 @@ pub(crate) mod tests {
         let designated_fdt = boot_buffer.fdt.as_ref().map(|v| v.as_ptr());
         let designated_kernel = boot_buffer.kernel.as_ref().map(|v| v.as_ptr());
         let (ramdisk, fdt, kernel, _) =
-            android_load_verify_fixup(&mut ops, slot, false, boot_buffer).unwrap();
+            android_load_verify_fixup(&mut ops, Some(slot), false, boot_buffer).unwrap();
         assert_eq!(kernel, expected_kernel);
         check_ramdisk(ramdisk, expected_ramdisk, expected_bootconfig);
         assert_eq!(ramdisk.as_ptr() as usize % PAGE_SIZE, 0);
@@ -1946,9 +1968,13 @@ pub(crate) mod tests {
         ops.avb_handle_verification_result = Some(&mut handler);
         ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
         let mut load = AlignedBuffer::new(64 * 1024 * 1024, KERNEL_ALIGNMENT);
-        assert!(
-            android_load_verify_fixup(&mut ops, slot('a'), false, (&mut load[..]).into()).is_err()
-        );
+        assert!(android_load_verify_fixup(
+            &mut ops,
+            Some(slot('a')),
+            false,
+            (&mut load[..]).into()
+        )
+        .is_err());
     }
 
     #[test]
@@ -2059,7 +2085,8 @@ pub(crate) mod tests {
 
         let mut load = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let (ramdisk, fdt, kernel, _) =
-            android_load_verify_fixup(&mut ops, slot('a'), false, (&mut load[..]).into()).unwrap();
+            android_load_verify_fixup(&mut ops, Some(slot('a')), false, (&mut load[..]).into())
+                .unwrap();
 
         let expected_bootconfig = make_expected_bootconfig(
             &vec![
@@ -2100,6 +2127,25 @@ pub(crate) mod tests {
             .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
             .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .slot('a')
+            .dtb_idx(0)
+            .dtb_source("boot")
+            .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
+            .build();
+        check_ramdisk(
+            ramdisk,
+            &read_test_data("android/generic_ramdisk_a.img"),
+            &expected_bootconfig,
+        );
+        assert_eq!(kernel, read_test_data("android/kernel_a.img"));
+    }
+
+    /// Helper for checking V2 image loaded in slotless and normal mode.
+    pub(crate) fn checks_loaded_v2_slotless_normal_mode(ramdisk: &[u8], kernel: &[u8]) {
+        let expected_bootconfig = ExpectedBootconfigBuilder::new()
+            .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
+            .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
+            .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
+            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
             .dtb_idx(0)
             .dtb_source("boot")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
@@ -2175,7 +2221,8 @@ pub(crate) mod tests {
         let mut ops = default_test_gbl_ops(&storage);
         let mut load = AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let (ramdisk, _, kernel, _) =
-            android_load_verify_fixup(&mut ops, slot('a'), true, (&mut load[..]).into()).unwrap();
+            android_load_verify_fixup(&mut ops, Some(slot('a')), true, (&mut load[..]).into())
+                .unwrap();
         checks_loaded_v2_slot_a_recovery_mode(ramdisk, kernel)
     }
 
@@ -2199,7 +2246,7 @@ pub(crate) mod tests {
         ops.avb_device_status.is_unlocked = true;
         ops.avf_vendor_dice_handover = Some(&DUMMY_VENDOR_HANDOVER[..]);
         let (ramdisk, fdt, _, _) =
-            android_load_verify_fixup(&mut ops, slot('a'), false, boot_buffer).unwrap();
+            android_load_verify_fixup(&mut ops, Some(slot('a')), false, boot_buffer).unwrap();
 
         let bootconfig = extract_bootconfig(ramdisk).unwrap();
         bootconfig.find(&format!("{PROTECTED_PROP}=true")).unwrap();
@@ -2937,5 +2984,27 @@ pub(crate) mod tests {
             "\nActual USB output:\n{}",
             listener.dump_transport_out_queue()
         );
+    }
+
+    #[test]
+    fn test_get_boot_slot_slotless() {
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot", read_test_data("android/boot_v2_a.img"));
+        storage.add_raw_device(c"vbmeta", read_test_data("android/vbmeta_v2_a.img"));
+        storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
+
+        let mut ops = default_test_gbl_ops(&storage);
+        ops.current_slot = Some(Err(liberror::Error::Unsupported));
+        ops.slot_count = Some(Err(liberror::Error::Unsupported));
+        let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
+        let load_buffer = (&mut load_buffer[..]).into();
+
+        let r = android_main(&mut ops, load_buffer, |_| {});
+        if cfg!(feature = "gbl_dev") {
+            let (ramdisk, _, kernel, _) = r.unwrap();
+            checks_loaded_v2_slotless_normal_mode(ramdisk, kernel);
+        } else {
+            assert_eq!(r.unwrap_err(), liberror::Error::Unsupported.into());
+        }
     }
 }

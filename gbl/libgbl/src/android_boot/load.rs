@@ -22,24 +22,15 @@ use crate::{
     gbl_avb::{state::BootStateColor, LoadPartition},
     gbl_println,
     ops::GblOps,
-    partition::RAW_PARTITION_NAME_LEN,
-    slots::Slot,
+    slots::{slotted_part, Slot},
 };
-use arrayvec::ArrayString;
 use avb::SlotVerifyData;
 use bootimg::{defs::*, BootImage, VendorImageHeader};
-use core::{fmt::Write, mem::take, ops::Range};
+use core::{mem::take, ops::Range};
 use liberror::Error;
 use libutils::{aligned_offset, aligned_subslice};
 use safemath::SafeNum;
 use zerocopy::{IntoBytes, Ref};
-
-/// Returns a slotted partition name.
-pub(crate) fn slotted_part(part: &str, slot: Slot) -> ArrayString<RAW_PARTITION_NAME_LEN> {
-    let mut res = ArrayString::new_const();
-    write!(res, "{part}_{}", slot.suffix.as_char()).unwrap();
-    res
-}
 
 // Helper for constructing a range that ends at a page aligned boundary. Specifically, it returns
 // `start..round_up(start + sz, page_size)`
@@ -291,12 +282,12 @@ impl LoadedImages<'_> {
 fn get_verified_partition<'a, 'b>(
     ops: &mut impl GblOps<'a>,
     part: LoadPartition,
-    slot: Slot,
+    slot: Option<Slot>,
     unlocked: bool,
     optional: bool,
     verify_data: &'b SlotVerifyData,
 ) -> Result<&'b [u8], Error> {
-    let slotted = slotted_part(part.name(), slot);
+    let slotted = slotted_part(part.name(), slot.map(|s| s.suffix));
     let part_res =
         verify_data.partition_data().iter().find(|v| v.partition_name() == part.name_cstr());
     match part_res {
@@ -355,7 +346,7 @@ fn log_and_parse_bootimg<'a, 'b>(
 /// * `load`: The destination image assembly load buffer.
 pub(super) fn android_load_verified<'a, 'b>(
     ops: &mut impl GblOps<'a>,
-    slot: Slot,
+    slot: Option<Slot>,
     unlocked: bool,
     is_recovery: bool,
     verify_data: &'b SlotVerifyData,
@@ -485,7 +476,7 @@ fn parse_vendor_ramdisks<'a, const CAP: usize>(
 fn load_v3_and_v4_verified<'a, 'b>(
     ops: &mut impl GblOps<'a>,
     boot: &'b [u8],
-    slot: Slot,
+    slot: Option<Slot>,
     unlocked: bool,
     is_recovery: bool,
     verify_data: &'b SlotVerifyData,
@@ -867,16 +858,4 @@ fn move_left(
     buffer.get(..sub.len()).ok_or(Error::BufferTooSmall(Some(sub.len())))?;
     buffer.copy_within(buffer.len() - sub.len().., 0);
     Ok(sub_slice_range(&range, &buffer[..sub.len()].as_ptr_range()).unwrap())
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::ops::test::slot;
-
-    #[test]
-    fn test_slotted_part() {
-        assert_eq!(slotted_part("boot", slot('a')).as_ref(), "boot_a");
-        assert_eq!(slotted_part("boot", slot('b')).as_ref(), "boot_b");
-    }
 }
