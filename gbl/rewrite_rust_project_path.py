@@ -64,10 +64,15 @@ def _parse_args() -> argparse.Namespace:
       help="Target architecture",
   )
 
+  parser.add_argument(
+      "--exclude-tests",
+      action="store_true",
+  )
+
   return parser.parse_args()
 
 
-def traverse(obj: dict, arch: str):
+def traverse(obj: dict, arch: str, exclude_tests: bool):
   if isinstance(obj, dict):
     for key, val in obj.items():
       if key == "root_module" or key == "CARGO_MANIFEST_DIR":
@@ -77,7 +82,7 @@ def traverse(obj: dict, arch: str):
         obj[key] = [os.path.realpath(d) for d in val]
         continue
       elif key == "cfg" and isinstance(val, list):
-        obj[key] = [o for o in val if o != "test"]
+        obj[key] = [o for o in val if o != "test"] if exclude_tests else val
         continue
       elif key == "CARGO_CFG_TARGET_OS":
         obj[key] = "uefi"
@@ -85,10 +90,10 @@ def traverse(obj: dict, arch: str):
         obj[key] = arch
       elif key == "target":
         obj[key] = ARCH_TARGET[arch]
-      traverse(val, arch)
+      traverse(val, arch, exclude_tests)
   elif isinstance(obj, list):
     for item in obj:
-      traverse(item, arch)
+      traverse(item, arch, exclude_tests)
 
 
 def main():
@@ -99,7 +104,7 @@ def main():
   logging.info("Starting updating %s", rust_project_json_path)
   with open(rust_project_json_path, "r") as fp:
     data = json.load(fp)
-    traverse(data, args.arch)
+    traverse(data, args.arch, args.exclude_tests)
 
   with tempfile.NamedTemporaryFile("w+", delete=False) as fp:
     json.dump(data, fp.file, indent=True)
