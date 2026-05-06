@@ -53,9 +53,15 @@ providing a standardized, platform-agnostic bootloader core.
 
 ### 4. Coding Conventions
 
-- **Imports:** ALWAYS use import at the module top level. Use local imports or
-  fully qualified names ONLY if a name is used only once or when a top-level
-  import might be ambiguous.
+- **Imports:** ALWAYS use imports at the module top level unless a name is used
+  only once or is ambiguous. When adding new imports, merge and group them with
+  existing ones sharing a common prefix (e.g., `use crate::ops::{A, B, C};`)
+  instead of adding standalone lines, to preserve file style.
+- **Contextual Awareness:** ALWAYS prioritize understanding and matching the
+  local context of the file and component you are working on. This applies to
+  coding style (like import grouping), architectural patterns, error handling,
+  and dependency usage. Read surrounding code and existing implementations to
+  understand established patterns before introducing new code or structures.
 
 ## Building and Testing
 
