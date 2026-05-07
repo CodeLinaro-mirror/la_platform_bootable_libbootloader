@@ -815,7 +815,12 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
         let primary_entries = primary_entries.as_bytes_mut();
         let secondary_entries = secondary_entries.as_bytes_mut();
         let sync_res = match (primary_res, secondary_res) {
-            (Err(primary), Err(secondary)) => GptSyncResult::NoValidGpt { primary, secondary },
+            (Err(primary), Err(secondary)) => {
+                // No valid GPT, wipe the underlying bytes to avoid exposing garbage via accessors.
+                primary_header.as_bytes_mut().fill(0);
+                primary_entries.fill(0);
+                GptSyncResult::NoValidGpt { primary, secondary }
+            }
             (Ok(()), Ok(())) if is_consistent(&primary_header, &secondary_header) => {
                 GptSyncResult::BothValid
             }
@@ -877,7 +882,9 @@ impl<B: DerefMut<Target = [u8]>> Gpt<B> {
             }
         };
 
-        block_size.0 = Some(nonzero_blk_sz);
+        if !matches!(sync_res, GptSyncResult::NoValidGpt { .. }) {
+            block_size.0 = Some(nonzero_blk_sz);
+        }
         Ok(sync_res)
     }
 
@@ -1383,6 +1390,15 @@ pub(crate) mod test {
                 })
             }
         );
+    }
+
+    #[test]
+    fn test_gpt_invalid_returns_errors() {
+        let (mut dev, mut gpt) = test_disk_and_gpt(include_bytes!("../test/gpt_too_big.bin"));
+        let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
+        assert!(matches!(sync_res, GptSyncResult::NoValidGpt { .. }));
+        assert!(gpt.check_valid().is_err());
+        assert!(gpt.entries().is_err());
     }
 
     /// A helper for testing restoration of invalid primary/secondary header modified by caller.
