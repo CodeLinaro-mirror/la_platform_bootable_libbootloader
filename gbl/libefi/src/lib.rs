@@ -52,9 +52,13 @@
 #![feature(never_type)]
 
 extern crate alloc;
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use arrayvec::ArrayVec;
 use core::ptr::NonNull;
+use efi_types::{
+    protocol::{BridgeToRust, Provider},
+    Identified,
+};
 
 #[cfg(not(test))]
 mod allocation;
@@ -120,9 +124,9 @@ use efi_types::{
         EfiRuntimeService, EfiStatus, EfiSystemTable, EfiTimerDelay, EfiTpl, GblEfiDebugErrorTag,
         EFI_EVENT_TYPE_NOTIFY_SIGNAL, EFI_EVENT_TYPE_NOTIFY_WAIT, EFI_EVENT_TYPE_RUNTIME,
         EFI_EVENT_TYPE_SIGNAL_EXIT_BOOT_SERVICES, EFI_EVENT_TYPE_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
-        EFI_EVENT_TYPE_TIMER, EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL,
-        EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL, EFI_RESET_TYPE_COLD,
-        EFI_RESET_TYPE_SHUTDOWN, EFI_STATUS_DEVICE_ERROR, EFI_STATUS_SUCCESS,
+        EFI_EVENT_TYPE_TIMER, EFI_INTERFACE_TYPE_EFI_NATIVE_INTERFACE,
+        EFI_LOCATE_HANDLE_SEARCH_TYPE_BY_PROTOCOL, EFI_OPEN_PROTOCOL_ATTRIBUTE_BY_HANDLE_PROTOCOL,
+        EFI_RESET_TYPE_COLD, EFI_RESET_TYPE_SHUTDOWN, EFI_STATUS_DEVICE_ERROR, EFI_STATUS_SUCCESS,
         GBL_EFI_DEBUG_ERROR_TAG_BOOT_ERROR,
     },
     tpl::TplControl,
@@ -779,6 +783,40 @@ impl<'a> BootServices<'a> {
                 self.efi_entry,
             )
         })
+    }
+
+    /// Installs a protocol interface from a Rust implementation.
+    ///
+    /// This is a convenience function that creates a [Provider] from a Rust implementation
+    /// and installs it as a protocol interface.
+    ///
+    /// The method allocates and leaks a [Provider] for each protocol installed.
+    pub fn install_protocol_from_rust<T: ProtocolInfo, R>(
+        &self,
+        handle: Option<&mut EfiHandle>,
+        rust_impl: &'static R,
+    ) -> Result<()>
+    where
+        T::InterfaceType: Identified + BridgeToRust<R>,
+    {
+        let mut null: EfiHandle = null_mut();
+        let handle = handle.unwrap_or(&mut null);
+        let provider = Box::new(Box::pin(Provider::<T::InterfaceType, R>::new(rust_impl)));
+        // SAFETY:
+        // * `handle` is an optional output parameter. It is either NULL or points to a valid
+        //   handle. It is not retained and outlives the call.
+        // * `provider` is immediately leaked and ownership is fully given to the UEFI firmware.
+        unsafe {
+            efi_call!(
+                self.boot_services.install_protocol_interface,
+                handle as *mut _,
+                &T::GUID,
+                EFI_INTERFACE_TYPE_EFI_NATIVE_INTERFACE,
+                provider.as_ref().as_ref().to_ptr() as *mut _ as _
+            )?;
+        }
+        Box::leak(provider);
+        Ok(())
     }
 }
 

@@ -53,6 +53,7 @@ rust_binary(
         "@gbl//libefi_types",
         "@gbl//libsemihosting",
         "@gbl//libstack",
+        "@gbl//tests/qemu/gbl_efi_boot_memory",
     ],
 )
 
