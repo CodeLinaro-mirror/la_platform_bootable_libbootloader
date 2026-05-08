@@ -16,7 +16,7 @@
 
 use crate::{
     constants::FDT_ALIGNMENT,
-    device_tree::SelectedDtComponentsMetadata,
+    device_tree::{DtSourceLocation, SelectedDtComponentsMetadata},
     fastboot::{
         boot_items::{BootItem, BootItemContainer},
         run_gbl_fastboot, run_gbl_fastboot_stack, split_loaded_android, GblFastbootResult,
@@ -487,18 +487,36 @@ fn finalize_bootconfig<'a, 'b, 'c>(
     boot_items: Option<BootItemContainer<'c>>,
 ) -> Result<usize> {
     let mut builder = BootConfigBuilder::from_prefix_unchecked(buf, curr_bootconfig_sz)?;
+
     if avf_enabled {
         avf_update_bootconfig(ops, &mut builder, selected_dt_metadata.vmdtbo.as_ref())?;
     }
-    builder.add_item("androidboot.dtb_idx", selected_dt_metadata.base_dt.source_index)?;
-    builder.add_item("androidboot.dtb_source", selected_dt_metadata.base_dt.source)?;
+
+    match &selected_dt_metadata.base_dt.location {
+        DtSourceLocation::DtIndex(source_index) => {
+            builder.add_item("androidboot.dtb_idx", source_index)?;
+            builder.add_item("androidboot.dtb_source", selected_dt_metadata.base_dt.source)?;
+        }
+        DtSourceLocation::FitConfigOffset(config_offset) => {
+            builder.add_item("androidboot.fit_source", selected_dt_metadata.base_dt.source)?;
+            builder.add_item("androidboot.fit_configuration_offset", config_offset)?;
+        }
+    }
+
     builder.add_array(
         "androidboot.dtbo_idx",
-        selected_dt_metadata.overlays.iter().map(|m| m.source_index),
+        selected_dt_metadata.overlays.iter().filter_map(|m| match m.location {
+            DtSourceLocation::DtIndex(source_index) => Some(source_index),
+            DtSourceLocation::FitConfigOffset(_) => None,
+        }),
     )?;
+
     builder.add_array(
         "androidboot.dtbo_source",
-        selected_dt_metadata.overlays.iter().map(|m| m.source),
+        selected_dt_metadata.overlays.iter().filter_map(|m| match m.location {
+            DtSourceLocation::DtIndex(_source_index) => Some(m.source),
+            DtSourceLocation::FitConfigOffset(_) => None,
+        }),
     )?;
 
     if let Some(ref v) = boot_items {

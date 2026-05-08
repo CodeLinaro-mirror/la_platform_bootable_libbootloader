@@ -32,6 +32,7 @@ mkimage -f ${SCRIPT_DIR}/fitimage_with_default_option.its ${DATA_DIR}/fit_with_d
 mkimage -f ${SCRIPT_DIR}/fitimage_with_no_metadata.its ${DATA_DIR}/fit_with_no_metadata.img -E -B 8
 mkimage -f ${SCRIPT_DIR}/fitimage_with_invalid_metadata_type.its ${DATA_DIR}/fit_with_invalid_metadata_type.img -E -B 8
 mkimage -f ${SCRIPT_DIR}/fitimage_with_invalid_metadata_position.its ${DATA_DIR}/fit_with_invalid_metadata_position.img -E -B 8
+mkimage -f ${SCRIPT_DIR}/fitimage_with_invalid_configurations.its ${DATA_DIR}/fitimage_with_invalid_configurations.img -E -B 8
 
 #Creation of zeros.img
 dd if=/dev/zero of=${DATA_DIR}/zeros.img count=10 bs=1M

@@ -1112,7 +1112,9 @@ mod test {
     use ::efi::protocol::Revision;
     use efi_mocks::{protocol::gbl_efi_avb::GblAvbProtocol, MockEfi};
     use libgbl::{
-        device_tree::{DtComponentSourceMetadata, SelectedDtComponent, SelectedDtComponents},
+        device_tree::{
+            DtComponentSourceMetadata, DtSourceLocation, SelectedDtComponent, SelectedDtComponents,
+        },
         gbl_avb::{Critical, Fdr, Verification},
     };
     use libutils::cstr_buffer;
@@ -2280,21 +2282,21 @@ mod test {
                 base_dt: SelectedDtComponent {
                     source_metadata: DtComponentSourceMetadata {
                         source: DtComponentSource::VendorBoot,
-                        source_index: 0,
+                        location: DtSourceLocation::DtIndex(0),
                     },
                     dt: &base[..]
                 },
                 vmdtbo: Some(SelectedDtComponent {
                     source_metadata: DtComponentSourceMetadata {
                         source: DtComponentSource::Dtbo,
-                        source_index: 0,
+                        location: DtSourceLocation::DtIndex(0),
                     },
                     dt: &vmdtbo2[..]
                 }),
                 overlays: [SelectedDtComponent {
                     source_metadata: DtComponentSourceMetadata {
                         source: DtComponentSource::Dtbo,
-                        source_index: 0,
+                        location: DtSourceLocation::DtIndex(0),
                     },
                     dt: &overlay2[..]
                 }]

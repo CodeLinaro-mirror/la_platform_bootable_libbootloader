@@ -76,13 +76,21 @@ impl core::fmt::Display for DtComponentType {
     }
 }
 
-/// Metadata for device tree component source information.
+/// Metadata for device tree source information.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DtSourceLocation {
+    /// Index of the component within DtTable or the appended DTB(O) list
+    DtIndex(usize),
+    /// Selected FIT configuration node offset in the FIT FDT.
+    FitConfigOffset(usize),
+}
+/// Metadata for device tree source information.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DtComponentSourceMetadata {
     /// Source the component is loaded from.
     pub source: DtComponentSource,
     /// Index of the component within its source.
-    pub source_index: usize,
+    pub location: DtSourceLocation,
 }
 
 /// Device tree component (base device tree or overlay) to build the final one.
@@ -151,7 +159,7 @@ pub fn entry_is_vmdtbo(selection_metadata: &DtTableMetadata) -> bool {
 }
 
 fn valid_vmdtbo(component: &DtComponent) -> bool {
-    component.source_metadata.source == DtComponentSource::Dtbo
+    matches!(component.source_metadata.location, DtSourceLocation::DtIndex(_))
         && component.component_type == DtComponentType::PvmDeviceAssignmentOverlay
 }
 
@@ -228,7 +236,7 @@ impl<'a> DtComponentsRegistry<'a> {
             self.components.push(DtComponent {
                 source_metadata: DtComponentSourceMetadata {
                     source: component_source,
-                    source_index: idx,
+                    location: DtSourceLocation::DtIndex(idx),
                 },
                 component_type: Self::component_type(component_source, &entry),
                 selection_metadata: Some(entry.metadata),
@@ -295,7 +303,7 @@ impl<'a> DtComponentsRegistry<'a> {
             self.components.push(DtComponent {
                 source_metadata: DtComponentSourceMetadata {
                     source: component_source,
-                    source_index: start_index + components_added,
+                    location: DtSourceLocation::DtIndex(start_index + components_added),
                 },
                 component_type: component_type,
                 selection_metadata: None,
@@ -345,7 +353,7 @@ impl<'a> DtComponentsRegistry<'a> {
         self.components.push(DtComponent {
             source_metadata: DtComponentSourceMetadata {
                 source: component_source,
-                source_index: 0,
+                location: DtSourceLocation::DtIndex(0),
             },
             component_type: component_type,
             selection_metadata: None,
@@ -490,7 +498,7 @@ pub(crate) mod test {
             &DtComponent {
                 source_metadata: DtComponentSourceMetadata {
                     source: DtComponentSource::Boot,
-                    source_index: 0,
+                    location: DtSourceLocation::DtIndex(0),
                 },
                 component_type: DtComponentType::BaseDt,
                 selection_metadata: None,
@@ -528,7 +536,7 @@ pub(crate) mod test {
             &DtComponent {
                 source_metadata: DtComponentSourceMetadata {
                     source: DtComponentSource::Boot,
-                    source_index: 0,
+                    location: DtSourceLocation::DtIndex(0),
                 },
                 component_type: DtComponentType::BaseDt,
                 selection_metadata: None,
@@ -589,7 +597,7 @@ pub(crate) mod test {
             .map(|(i, e)| DtComponent {
                 source_metadata: DtComponentSourceMetadata {
                     source: DtComponentSource::Dtbo,
-                    source_index: i,
+                    location: DtSourceLocation::DtIndex(i),
                 },
                 component_type: DtComponentType::Overlay,
                 selection_metadata: Some(e.metadata),
