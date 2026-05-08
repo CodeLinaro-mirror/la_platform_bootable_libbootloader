@@ -197,6 +197,7 @@ mod test {
         ABR_MAX_TRIES_REMAINING,
     };
     use avb_bindgen::{AVB_CERT_PIK_VERSION_LOCATION, AVB_CERT_PSK_VERSION_LOCATION};
+    use fastboot::LockState;
     use libtestutils::AlignedBuffer;
     use std::string::String;
     use zbi::{ZbiItem, ZBI_ALIGNMENT_USIZE};
@@ -231,8 +232,16 @@ mod test {
             &mut expected_zbi_items,
             format!("zvb.current_slot={}", char::from(slot)).as_bytes(),
         );
-        append_zbi_file(&mut expected_zbi_items, FakeGblOps::TEST_BOOTLOADER_FILE_1);
-        append_zbi_file(&mut expected_zbi_items, FakeGblOps::TEST_BOOTLOADER_FILE_2);
+        expected_zbi_items
+    }
+
+    pub(crate) fn make_expected_zbi_items_with_bootloader_files(
+        slot: SlotIndex,
+        expected_kernel: &[u8],
+    ) -> AlignedBuffer {
+        let mut expected_zbi_items = make_expected_zbi_items(slot, expected_kernel);
+        append_zbi_file(&mut expected_zbi_items[..], FakeGblOps::TEST_BOOTLOADER_FILE_1);
+        append_zbi_file(&mut expected_zbi_items[..], FakeGblOps::TEST_BOOTLOADER_FILE_2);
         expected_zbi_items
     }
 
@@ -250,9 +259,19 @@ mod test {
     }
 
     // Checks that the given zbi_items and kernel are correctly fixed up against test images.
-    pub(crate) fn check_fixedup(slot: SlotIndex, zbi_items: &[u8], kernel: &[u8]) {
+    pub(crate) fn check_fixedup(
+        slot: SlotIndex,
+        zbi_items: &[u8],
+        kernel: &[u8],
+        lock_state: LockState,
+    ) {
         let expected_kernel = read_test_data(&format!("zircon_{}.zbi", char::from(slot)));
-        let expected_zbi_items = make_expected_zbi_items(slot, &expected_kernel);
+        let expected_zbi_items = match lock_state {
+            fastboot::LockState::Locked => make_expected_zbi_items(slot, &expected_kernel),
+            fastboot::LockState::Unlocked => {
+                make_expected_zbi_items_with_bootloader_files(slot, &expected_kernel)
+            }
+        };
         assert_zbi_eq!(zbi_items, &expected_zbi_items);
         assert_zbi_eq!(kernel, &expected_kernel);
         assert_eq!(zbi_items.as_ptr() as usize % PAGE_SIZE, 0);
@@ -291,7 +310,7 @@ mod test {
         let LoadedVerifiedZircon { zbi_items, kernel, slot: booted_slot } =
             zircon_main(&mut ops, &mut load_buffer[..], |_| {}).unwrap();
         assert_eq!(booted_slot, slot);
-        check_fixedup(slot, zbi_items, kernel);
+        check_fixedup(slot, zbi_items, kernel, LockState::Locked);
         // Rollback indices are not updated because slots are not successful.
         check_rollback_not_updated(&mut ops);
     }
@@ -341,7 +360,8 @@ mod test {
         let LoadedVerifiedZircon { zbi_items, kernel, slot: booted_slot } =
             zircon_main(&mut ops, &mut load_buffer[..], |_| {}).unwrap();
         assert_eq!(booted_slot, slot);
-        check_fixedup(slot, zbi_items, kernel);
+
+        check_fixedup(slot, zbi_items, kernel, LockState::Locked);
         // Rollback indices are updated because slots are successful.
         check_rollback_updated(&mut ops);
     }
@@ -434,7 +454,7 @@ mod test {
         let LoadedVerifiedZircon { zbi_items, kernel, slot: booted_slot } =
             zircon_main(&mut ops, &mut load_buffer[..], |_| {}).unwrap();
         assert_eq!(booted_slot, slot);
-        check_fixedup(slot, zbi_items, kernel);
+        check_fixedup(slot, zbi_items, kernel, LockState::Unlocked);
     }
 
     #[test]
@@ -535,7 +555,8 @@ mod test {
             zircon_main_fastboot_boot(&mut ops, &mut load_buffer[..], &bootimg, &listener).unwrap();
         assert_eq!(slot, booted_slot);
         let expected_kernel = read_test_data("zircon_slotless.zbi");
-        let expected_zbi_items = make_expected_zbi_items(slot, &expected_kernel);
+        let expected_zbi_items =
+            make_expected_zbi_items_with_bootloader_files(slot, &expected_kernel);
         assert_zbi_eq!(zbi_items, &expected_zbi_items);
         assert_zbi_eq!(kernel, &expected_kernel);
         check_rollback_not_updated(&mut ops);
@@ -591,7 +612,7 @@ mod test {
         let LoadedVerifiedZircon { zbi_items, kernel, .. } =
             zircon_main_fastboot_boot(&mut ops, &mut load_buffer[..], &bootimg, &listener).unwrap();
         // fastboot boot fails. Device should boot normally.
-        check_fixedup(SlotIndex::A, zbi_items, kernel);
+        check_fixedup(SlotIndex::A, zbi_items, kernel, LockState::Locked);
 
         assert_eq!(
             listener.transport_out_queue(),
@@ -658,7 +679,8 @@ mod test {
         let LoadedVerifiedZircon { zbi_items, kernel, .. } =
             zircon_main_fastboot_boot(&mut ops, &mut load_buffer[..], &bootimg, &listener).unwrap();
         let expected_kernel = read_test_data("zircon_slotless.zbi");
-        let expected_zbi_items = make_expected_zbi_items(SlotIndex::A, &expected_kernel);
+        let expected_zbi_items =
+            make_expected_zbi_items_with_bootloader_files(SlotIndex::A, &expected_kernel);
         assert_zbi_eq!(zbi_items, &expected_zbi_items);
         assert_zbi_eq!(kernel, &expected_kernel);
 
@@ -722,8 +744,6 @@ mod test {
         let mut expected_zbi_items = AlignedBuffer::new(256 * 1024, ZBI_ALIGNMENT_USIZE);
         let mut items = ZbiContainer::new(&mut expected_zbi_items[..]).unwrap();
         items.extend(&ZbiContainer::parse(&expected_kernel[..]).unwrap()).unwrap();
-        append_zbi_file(&mut expected_zbi_items, FakeGblOps::TEST_BOOTLOADER_FILE_1);
-        append_zbi_file(&mut expected_zbi_items, FakeGblOps::TEST_BOOTLOADER_FILE_2);
         append_cmd_line(&mut expected_zbi_items, FakeGblOps::ADDED_ZBI_COMMANDLINE_CONTENTS);
         append_cmd_line(&mut expected_zbi_items, b"vb_prop_0=val\0");
         append_cmd_line(&mut expected_zbi_items, b"vb_prop_1=val\0");

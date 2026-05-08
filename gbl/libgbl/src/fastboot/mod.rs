@@ -1620,6 +1620,7 @@ where
             }
             #[cfg(feature = "fuchsia")]
             "add-staged-bootloader-file" => {
+                self.check_unlocked()?;
                 let file_name = next_arg(&mut args).ok_or("Missing file name")?;
                 self.add_staged_bootloader_file(file_name).await?;
                 Ok(())
@@ -4024,6 +4025,7 @@ pub(crate) mod test {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         gbl_ops.get_zbi_bootloader_files_buffer().unwrap().fill(0);
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
@@ -4059,6 +4061,7 @@ pub(crate) mod test {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4094,6 +4097,7 @@ pub(crate) mod test {
         let storage = FakeGblOpsStorage::default();
         let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
         let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let (transports, tcp) = (&mut [&listener], &listener);
 
@@ -4111,6 +4115,42 @@ pub(crate) mod test {
         assert_eq!(
             listener.transport_out_queue(),
             make_expected_transport_out(&[b"FAILNo file staged", b"OKAY",]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "fuchsia")]
+    fn test_oem_add_staged_bootloader_file_fail_when_locked() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        // Device is locked by default in FakeGblOps.
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+
+        listener.add_transport_input(format!("download:{:#x}", 3).as_bytes());
+        listener.add_transport_input(b"foo");
+        listener.add_transport_input(b"oem add-staged-bootloader-file file1");
+        listener.add_transport_input(b"continue");
+
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[
+                b"DATA00000003",
+                b"OKAY",
+                b"FAILDevice is locked",
+                b"OKAY",
+            ]),
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
