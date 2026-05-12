@@ -107,12 +107,20 @@ pub enum GptError {
         /// Next partition in overlap. (partition index, first, last)
         next: (usize, u64, u64),
     },
-    /// Unexpected GPT header size.
+    /// Unexpected GPT entry size.
     UnexpectedEntrySize {
         /// The actual entry size in the GPT header.
         actual: u32,
         /// The expected size.
         expect: usize,
+    },
+    /// Unexpected GPT header current LBA.
+    /// The current LBA must be 1 for the primary GPT, and the last block for the secondary.
+    UnexpectedHeaderLba {
+        /// The actual current LBA in the GPT header.
+        actual: u64,
+        /// The expected LBA.
+        expect: u64,
     },
     /// Unexpected GPT header size.
     UnexpectedHeaderSize {

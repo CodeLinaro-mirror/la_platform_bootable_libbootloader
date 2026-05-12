@@ -229,6 +229,17 @@ fn check_header(io: &impl BlockIo, header: &GptHeader, is_primary: bool) -> Resu
 
     check_header_fields(header)?;
 
+    let expected_current: u64 = match is_primary {
+        true => 1,
+        false => (num_blks - 1).try_into()?,
+    };
+    if header.current != expected_current {
+        return Err(Error::GptError(GptError::UnexpectedHeaderLba {
+            actual: header.current,
+            expect: expected_current,
+        }));
+    }
+
     // Checks first/last usable block.
     //
     // Assuming maximum range where partition entries are adjacent to GPT headers.
@@ -1330,6 +1341,50 @@ pub(crate) mod test {
             assert!(gpt.partition_iter().is_err());
             assert!(gpt.find_partition("boot_a").is_err());
             assert!(gpt.find_partition("boot_b").is_err());
+        }
+    }
+
+    #[test]
+    fn test_check_header_invalid_current() {
+        let data = get_gpt_test_1_data()[0].1;
+        let mut data = data.to_vec();
+        let header = GptHeader::from_bytes_mut(&mut data[512..]);
+        header.current = 2; // Invalid, should be 1
+        header.update_crc();
+
+        let dev = test_disk(data);
+        let mut gpt = new_gpt_max();
+        let sync_res = block_on(dev.sync_gpt(&mut gpt, true)).unwrap();
+        match sync_res {
+            GptSyncResult::PrimaryRestored(Error::GptError(GptError::UnexpectedHeaderLba {
+                actual,
+                expect,
+            })) => {
+                assert_eq!(actual, 2);
+                assert_eq!(expect, 1);
+            }
+            _ => panic!("Expected PrimaryRestored with UnexpectedHeaderLba, got {:?}", sync_res),
+        }
+    }
+
+    #[test]
+    fn test_update_gpt_rejects_invalid_current() {
+        let data = get_gpt_test_1_data()[0].1;
+        let dev = test_disk(data);
+        let mut gpt = new_gpt_max();
+
+        let mut download = get_gpt_test_1_data()[0].1.to_vec();
+        let header = GptHeader::from_bytes_mut(&mut download[512..]);
+        header.current = 2; // Invalid, should be 1
+        header.update_crc();
+
+        let res = block_on(update_gpt(&dev, &mut download, false, &mut gpt));
+        match res {
+            Err(Error::GptError(GptError::UnexpectedHeaderLba { actual, expect })) => {
+                assert_eq!(actual, 2);
+                assert_eq!(expect, 1);
+            }
+            _ => panic!("Expected UnexpectedHeaderLba, got {:?}", res),
         }
     }
 
