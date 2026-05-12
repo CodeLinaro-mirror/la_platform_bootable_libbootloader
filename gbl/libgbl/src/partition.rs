@@ -454,10 +454,14 @@ impl<'a, B: BlockIo, P: BufferPool, const N: usize> MultiPartitionIo<'a, B, P, N
     }
 
     /// Writes sparse image to the partition.
-    pub async fn write_sparse(&self, off: u64, img: &mut [u8]) -> Result<(), Error> {
+    pub async fn write_sparse(&self, img: &mut [u8]) -> Result<(), Error> {
         let sz = is_sparse_image(img).map_err(|_| Error::InvalidInput)?.data_size();
-        let abs_offs = self.check_rw_range(off, sz)?;
-        write_sparse_image(img, &mut (&abs_offs, self)).await?;
+        // Initial size check against the declared data size from the header for fail-fast in the
+        // common case to avoid partial writes. Each chunk I/O also checks its boundaries in case
+        // the declared header size doesn't agree with the chunk information.
+        let _ = self.check_rw_range(0, sz)?;
+        let mut writer = self;
+        write_sparse_image(img, &mut writer).await?;
         Ok(())
     }
 
@@ -502,17 +506,12 @@ impl<'a, B: BlockIo, P: BufferPool> MultiPartitionIo<'a, B, P, 1, ReadWrite> {
     }
 }
 
-// Implements `SparseRawWriter` for tuple (array of flash offsets, MultiPartitionIo)
+// Implements `SparseRawWriter` over the bounds-checked partition writer.
 impl<'a, B: BlockIo, P: BufferPool, const N: usize> SparseRawWriter
-    for (&ArrayVec<u64, N>, &MultiPartitionIo<'a, B, P, N, ReadWrite>)
+    for &MultiPartitionIo<'a, B, P, N, ReadWrite>
 {
     async fn write(&mut self, off: u64, data: &mut [u8]) -> Result<(), Error> {
-        for ((disk_idx, _, _), abs_off) in self.1.parts.iter().zip(self.0.iter()) {
-            self.1.disks[*disk_idx]
-                .write((SafeNum::from(off) + *abs_off).try_into()?, data)
-                .await?;
-        }
-        Ok(())
+        (*self).write(off, data).await
     }
 }
 
@@ -896,11 +895,11 @@ pub(crate) mod test {
                 .unwrap()
                 .sub(1, u64::try_from(raw.len() - 1).unwrap())
                 .unwrap()
-                .write_sparse(1, &mut sparse),
+                .write_sparse(&mut sparse),
         )
         .unwrap();
         let mut expected = vec![0u8; raw.len()];
-        expected[1 + 1..][..sparse_raw.len()].clone_from_slice(sparse_raw);
+        expected[1..][..sparse_raw.len()].clone_from_slice(sparse_raw);
         test_part_read(&blk, Some("raw"), &expected, 1, sparse_raw.len().try_into().unwrap());
     }
 
@@ -914,11 +913,11 @@ pub(crate) mod test {
         {
             let mut io =
                 find_multi_partition_io::<_, _, _, ReadWrite>(&devs, &["raw_0", "raw_1"]).unwrap();
-            io = io.sub(1, u64::try_from(sparse_raw.len()).unwrap() + 1).unwrap();
-            block_on(io.write_sparse(1, &mut sparse)).unwrap();
+            io = io.sub(1, u64::try_from(sparse_raw.len()).unwrap()).unwrap();
+            block_on(io.write_sparse(&mut sparse)).unwrap();
         }
-        let mut expected = vec![0u8; sparse_raw.len() + 2];
-        expected[1 + 1..][..sparse_raw.len()].clone_from_slice(sparse_raw);
+        let mut expected = vec![0u8; sparse_raw.len() + 1];
+        expected[1..][..sparse_raw.len()].clone_from_slice(sparse_raw);
         test_part_read(&devs[0], Some("raw_0"), &expected, 1, sparse_raw.len().try_into().unwrap());
         test_part_read(&devs[1], Some("raw_1"), &expected, 1, sparse_raw.len().try_into().unwrap());
     }
@@ -929,19 +928,15 @@ pub(crate) mod test {
         let mut sparse = include_bytes!("../testdata/sparse_test.bin").to_vec();
         sparse[0] = !sparse[0]; // Corrupt image.
         let raw = raw_disk(c"raw", vec![0u8; sparse_raw.len() + 512]);
-        assert!(
-            block_on(raw.partition_io(Some("raw")).unwrap().write_sparse(1, &mut sparse)).is_err()
-        );
+        assert!(block_on(raw.partition_io(Some("raw")).unwrap().write_sparse(&mut sparse)).is_err());
     }
 
     #[test]
     fn test_write_sparse_overflow_size() {
         let sparse_raw = include_bytes!("../testdata/sparse_test_raw.bin");
         let mut sparse = include_bytes!("../testdata/sparse_test.bin").to_vec();
-        let raw = raw_disk(c"raw", vec![0u8; sparse_raw.len()]);
-        assert!(
-            block_on(raw.partition_io(Some("raw")).unwrap().write_sparse(1, &mut sparse)).is_err()
-        );
+        let raw = raw_disk(c"raw", vec![0u8; sparse_raw.len() - 1]);
+        assert!(block_on(raw.partition_io(Some("raw")).unwrap().write_sparse(&mut sparse)).is_err());
     }
 
     #[test]

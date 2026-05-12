@@ -115,7 +115,7 @@ impl<'a, 'b, B: BlockIo, P2: BufferPool, P: BufferPool> TaskWorkload<'a, 'b, B, 
     async fn run(&mut self) -> Result<(), Error> {
         let res = match self {
             Self::Flash(io, data, size) => io.write(0, &mut data[..*size]).await,
-            Self::FlashSparse(io, data) => io.write_sparse(0, data).await,
+            Self::FlashSparse(io, data) => io.write_sparse(data).await,
             Self::Fill(io, buffer, payload) => {
                 let io_size = io.size_bytes();
 
