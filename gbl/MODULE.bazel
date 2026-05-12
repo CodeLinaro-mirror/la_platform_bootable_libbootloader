@@ -271,11 +271,10 @@ gbl_rust_crate_repository(
     path = "external/rust/android-crates-io/crates/termtree",
 )
 
-# TODO(b/383783832): migrate to android-crates-io
 gbl_rust_crate_repository(
     name = "zune_inflate",
     features = ["gzip"],
-    path = "external/rust/crates/zune-inflate",
+    path = "external/rust/android-crates-io/crates/zune-inflate",
 )
 
 gbl_rust_crate_repository(
