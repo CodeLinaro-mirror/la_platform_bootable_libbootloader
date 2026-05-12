@@ -59,3 +59,9 @@ pub extern "C" fn kernel_main() -> ! {
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     semihosting::shutdown(1);
 }
+
+// ELF requires the following symbol.
+#[no_mangle]
+pub extern "C" fn _Unwind_Resume(_: *mut core::ffi::c_void) {
+    panic!();
+}
