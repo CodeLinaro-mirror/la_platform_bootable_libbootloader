@@ -311,6 +311,8 @@ cc_flags_common = [
     "-fno-exceptions",
     "-fno-rtti",
     "-femit-dwarf-unwind=always",
+    "-ffunction-sections",
+    "-fdata-sections",
     # Enable optimization otherwise software AVB hash will be too slow.
     "-O3",
     # The llvm version we use errors out for every goto statement that bypasses variable
