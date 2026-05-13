@@ -302,7 +302,7 @@ fn check_entries(header: &GptHeader, entries: &[u8]) -> Result<()> {
         .ok_or(Error::GptError(GptError::EntriesTruncated))?
         .into_slice();
     let entries = &entries[..header.entries_count.try_into().unwrap()];
-    for (idx, ele) in entries.iter().take_while(|v| !v.is_null()).enumerate() {
+    for (idx, ele) in entries.iter().enumerate().filter(|(_, v)| !v.is_null()) {
         // Error information uses 1-base partition index.
         let idx = idx.checked_add(1).unwrap();
         let (first, last) = (ele.first, ele.last);
@@ -327,7 +327,7 @@ fn check_entries(header: &GptHeader, entries: &[u8]) -> Result<()> {
         _ => u64::MAX,
     });
 
-    let actual = entries.iter().position(|v| v.is_null()).unwrap_or(entries.len());
+    let actual = entries.iter().filter(|v| !v.is_null()).count();
     if actual > 1 {
         for i in 0..actual - 1 {
             let prev: usize = sorted_indices[i].try_into().unwrap();
@@ -1756,6 +1756,46 @@ pub(crate) mod test {
                 256 => Error::GptError(GptError::PartitionRangeOverlap {
                     prev: (2, 66, 82),
                     next: (1, 82, 105),
+                }),
+                _ => unimplemented!(),
+            };
+            test_gpt_sync_restore(modify, modify, err, err, entries_count, data);
+        }
+    }
+
+    #[test]
+    fn test_sync_gpt_post_null_invalid_entry() {
+        fn modify(hdr: &mut GptHeader, mut entries: Ref<&mut [u8], [GptEntry]>) {
+            let entry_size = size_of::<GptEntry>();
+            entries.as_bytes_mut()[entry_size..2 * entry_size].fill(0);
+            entries[2] = entries[0];
+            entries[2].part_type = GptGuid([0u8; GPT_GUID_LEN]);
+            hdr.update_entries_crc(entries.as_bytes());
+        }
+        let err = Error::GptError(GptError::ZeroPartitionTypeGUID { idx: 3 });
+        for (entries_count, data) in get_gpt_test_1_data() {
+            test_gpt_sync_restore(modify, modify, err, err, entries_count, data);
+        }
+    }
+
+    #[test]
+    fn test_sync_gpt_post_null_overlap() {
+        fn modify(hdr: &mut GptHeader, mut entries: Ref<&mut [u8], [GptEntry]>) {
+            let entry_size = size_of::<GptEntry>();
+            entries.as_bytes_mut()[entry_size..2 * entry_size].fill(0);
+            entries[2] = entries[0];
+            entries[2].first = entries[0].first + 1;
+            hdr.update_entries_crc(entries.as_bytes());
+        }
+        for (entries_count, data) in get_gpt_test_1_data() {
+            let err = match entries_count {
+                128 => Error::GptError(GptError::PartitionRangeOverlap {
+                    prev: (1, 34, 49),
+                    next: (3, 35, 49),
+                }),
+                256 => Error::GptError(GptError::PartitionRangeOverlap {
+                    prev: (1, 66, 81),
+                    next: (3, 67, 81),
                 }),
                 _ => unimplemented!(),
             };
