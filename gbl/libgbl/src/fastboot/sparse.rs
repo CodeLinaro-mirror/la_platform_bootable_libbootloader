@@ -176,6 +176,9 @@ pub async fn write_sparse_image(
             _ => return Err("Invalid Chunk Type".into()),
         };
         write_offset = u64_add(write_offset, payload_sz)?;
+        if write_offset > sparse_header.data_size() {
+            return Err("Sparse chunks exceed declared total_blks".into());
+        }
         sparse_img[fill_off..][..size_of::<FillInfo>()].clone_from_slice(fill.as_bytes());
         fill_off = usize_add(fill_off, size_of::<FillInfo>())?;
         curr = usize_add(curr, header.total_sz)?;
@@ -362,6 +365,16 @@ mod test {
         sparse_header.minor_version = SPARSE_HEADER_MINOR_VER + 1;
         copy_to(&sparse_header, &mut sparse[..]);
         let mut out = vec![];
+        assert!(block_on(write_sparse_image(&mut sparse[..], &mut out)).is_err());
+    }
+
+    #[test]
+    fn test_sparse_chunks_exceed_total_blks() {
+        let mut sparse = include_bytes!("../../testdata/sparse_test.bin").to_vec();
+        let mut sparse_header: SparseHeader = copy_from(&sparse[..]).unwrap();
+        sparse_header.total_blks = 1;
+        copy_to(&sparse_header, &mut sparse[..]);
+        let mut out = vec![0u8; 100 * 1024];
         assert!(block_on(write_sparse_image(&mut sparse[..], &mut out)).is_err());
     }
 }
