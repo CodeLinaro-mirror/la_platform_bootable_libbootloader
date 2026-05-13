@@ -215,6 +215,13 @@ impl<'a> DtComponentsRegistry<'a> {
                 )))?;
             aligned_buffer.copy_from_slice(entry.dtb);
 
+            // Make sure the FDT reported size is valid (fits in the dttable entry size).
+            let fdt_header = FdtHeader::from_bytes_ref(aligned_buffer)?;
+            let fdt_totalsize = fdt_header.totalsize();
+            if fdt_totalsize > aligned_buffer.len() {
+                return Err(Error::Other(Some("DTBO overlay totalsize exceeds entry size")));
+            }
+
             self.components.push(DtComponent {
                 source_metadata: DtComponentSourceMetadata {
                     source: component_source,
@@ -222,7 +229,8 @@ impl<'a> DtComponentsRegistry<'a> {
                 },
                 component_type: Self::component_type(component_source, &entry),
                 selection_metadata: Some(entry.metadata),
-                dt: aligned_buffer,
+                // Trim off any unused trailing bytes e.g. due to dttable padding.
+                dt: &aligned_buffer[..fdt_totalsize],
                 selected: false,
             });
 
@@ -328,7 +336,9 @@ impl<'a> DtComponentsRegistry<'a> {
         }
 
         let header = FdtHeader::from_bytes_ref(fdt)?;
-        let (fdt_buffer, fdt_remains) = fdt.split_at(header.totalsize());
+        let (fdt_buffer, fdt_remains) = fdt
+            .split_at_checked(header.totalsize())
+            .ok_or(Error::Other(Some("FDT totalsize exceeds buffer length")))?;
         self.components.push(DtComponent {
             source_metadata: DtComponentSourceMetadata {
                 source: component_source,
@@ -588,6 +598,30 @@ pub(crate) mod test {
 
         // Check data is aligned
         registry.components().for_each(|c| assert!(c.dt.as_ptr().align_offset(FDT_ALIGNMENT) == 0));
+    }
+
+    #[test]
+    fn test_components_append_from_dttable_invalid_totalsize() {
+        let mut dttable = include_bytes!("../../libdttable/test/data/dttable.img").to_vec();
+        let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
+        let mut registry = DtComponentsRegistry::new();
+
+        let table = DtTableImage::from_bytes(&dttable[..]).unwrap();
+        let entry = table.nth_entry(0).unwrap();
+        let entry_len = entry.dtb.len();
+        let dtb_offset = entry.dtb.as_ptr() as usize - dttable.as_ptr() as usize;
+
+        // Modify totalsize to be larger than entry length
+        let invalid_size = (entry_len + 1) as u32;
+        dttable[dtb_offset + 4..dtb_offset + 8].copy_from_slice(&invalid_size.to_be_bytes());
+
+        // Re-parse the table image with modified buffer
+        let table = DtTableImage::from_bytes(&dttable[..]).unwrap();
+
+        // It should fail because totalsize > entry length
+        assert!(registry
+            .append_from_dttable(DtComponentSource::Dtbo, &table, &mut buffer[..])
+            .is_err());
     }
 
     #[test]
