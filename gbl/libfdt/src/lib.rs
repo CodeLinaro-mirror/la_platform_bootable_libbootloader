@@ -523,8 +523,12 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
         // Iterate through the overlays and extract their pointers.
         let mut pointers: ArrayVec<*const u8, MAXIMUM_OVERLAYS_TO_APPLY> = ArrayVec::new();
         for overlay in overlays {
+            // Check each overlay size to prevent buffer overflows in the C FFI calls.
+            let overlay_bytes = overlay.as_ref();
+            fdt_check_buffer(overlay_bytes)?;
+
             pointers
-                .try_push(overlay.as_ref().as_ptr())
+                .try_push(overlay_bytes.as_ptr())
                 .map_err(|_| Error::Other(Some(MAXIMUM_OVERLAYS_ERROR_MSG)))?;
         }
 
@@ -1004,7 +1008,8 @@ mod test {
     #[test]
     fn test_fdt_multioverlay_apply_maximum_amount_of_overlays_handled() {
         let init = include_bytes!("../test/data/base.dtb").to_vec();
-        let too_many_overlays = &[&[] as &[u8]; MAXIMUM_OVERLAYS_TO_APPLY + 1];
+        let overlay = include_bytes!("../test/data/overlay_by_path.dtbo").to_vec();
+        let too_many_overlays = &[&overlay[..]; MAXIMUM_OVERLAYS_TO_APPLY + 1];
 
         let mut fdt_buf = vec![0u8; init.len()];
         let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &init[..]).unwrap();
@@ -1014,6 +1019,22 @@ mod test {
             Err(Error::Other(Some(MAXIMUM_OVERLAYS_ERROR_MSG))),
             "too many overlays isn't handled"
         );
+    }
+
+    #[test]
+    fn test_fdt_multioverlay_apply_invalid_totalsize() {
+        let base = include_bytes!("../test/data/base.dtb").to_vec();
+        let mut overlay = include_bytes!("../test/data/overlay_by_path.dtbo").to_vec();
+
+        let mut fdt_buf = vec![0u8; base.len() + overlay.len()];
+        let mut fdt = Fdt::new_from_init(&mut fdt_buf[..], &base[..]).unwrap();
+
+        // Modify the overlay reported size to be larger than the buffer.
+        let original_size = overlay.len();
+        let invalid_size = (original_size + 1) as u32;
+        overlay[4..8].copy_from_slice(&invalid_size.to_be_bytes());
+
+        assert!(fdt.multioverlay_apply([&overlay[..]]).is_err());
     }
 
     #[test]
