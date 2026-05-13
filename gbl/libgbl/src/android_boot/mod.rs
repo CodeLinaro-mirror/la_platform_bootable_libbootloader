@@ -2887,6 +2887,7 @@ pub(crate) mod tests {
 
         let mut ops = default_test_gbl_ops(&storage);
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
+        ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
@@ -2905,9 +2906,11 @@ pub(crate) mod tests {
             listener.add_transport_input(b"continue");
             fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         });
-        match paused_fastboot_continue_should_reboot() {
-            true => assert_eq!(res.unwrap_err(), Error::Aborted.into()),
-            _ => res.map(|_| ()).unwrap(),
+
+        // Only dev builds can continue after stopping post-load, prod builds must reboot.
+        match cfg!(feature = "gbl_dev") {
+            true => assert!(res.is_ok()),
+            false => assert_eq!(res.unwrap_err(), Error::Aborted.into()),
         }
 
         assert_eq!(
@@ -2942,18 +2945,21 @@ pub(crate) mod tests {
         fdt.get_property("/chosen", c"linux,initrd-start").unwrap();
         let kernel = listener.transport_out_queue()[7].to_vec();
         let ramdisk = listener.transport_out_queue()[11].to_vec();
-        checks_loaded_v2_slot_a_normal_mode(&ramdisk, &kernel);
+        checks_loaded_v2_slot_a_unlocked_mode(&ramdisk, &kernel);
     }
 
     #[test]
     fn test_android_main_post_load_fastboot_load_failed() {
         let mut storage = FakeGblOpsStorage::default();
-        storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
+        let mut boot_img = read_test_data("android/boot_v2_a.img");
+        boot_img[0] = !boot_img[0]; // Corrupt kernel magic bits to trigger boot failure.
+        storage.add_raw_device(c"boot_a", boot_img);
         storage.add_raw_device(c"vbmeta_a", read_test_data("android/vbmeta_v1_a.img"));
         storage.add_raw_device(c"misc", vec![0u8; 4 * 1024 * 1024]);
 
         let mut ops = default_test_gbl_ops(&storage);
         ops.one_shot_boot_mode = Some(OneShotBootMode::Bootloader);
+        ops.avb_device_status.is_unlocked = true;
         let listener: SharedTestListener = Default::default();
         let mut load_buffer = vec![0u8; 8 * 1024 * 1024];
         let load_buffer = (&mut load_buffer[..]).into();
@@ -2966,9 +2972,12 @@ pub(crate) mod tests {
             listener.add_transport_input(b"continue");
             fb.run_n::<2>(&mut vec![0u8; 256 * 1024], &mut [&listener], Some(&listener));
         });
-        match paused_fastboot_continue_should_reboot() {
-            true => assert_eq!(res.unwrap_err(), Error::Aborted.into()),
-            _ => assert!(res.is_err()),
+
+        match cfg!(feature = "gbl_dev") {
+            // Dev build should attempt to continue and hit the bad magic error.
+            true => assert_eq!(res.unwrap_err(), Error::BadMagic.into()),
+            // Prod build should never attempt to continue at all.
+            false => assert_eq!(res.unwrap_err(), Error::Aborted.into()),
         }
 
         assert_eq!(
@@ -2976,9 +2985,9 @@ pub(crate) mod tests {
             make_expected_transport_out(&[
                 b"OKAY",
                 b"OKAY",
-                b"FAILLoad didn't succeed: AvbSlotVerifyError(Verification(None))",
-                b"FAILLoad didn't succeed: AvbSlotVerifyError(Verification(None))",
-                b"FAILLoad didn't succeed: AvbSlotVerifyError(Verification(None))",
+                b"FAILLoad didn't succeed: UnificationError(BadMagic)",
+                b"FAILLoad didn't succeed: UnificationError(BadMagic)",
+                b"FAILLoad didn't succeed: UnificationError(BadMagic)",
                 b"OKAY",
             ]),
             "\nActual USB output:\n{}",

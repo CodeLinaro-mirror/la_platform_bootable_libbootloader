@@ -1497,8 +1497,13 @@ where
 
     async fn upload(&mut self, responder: impl UploadBuilder + InfoSender) -> CommandResult<()> {
         let Some(data_type) = self.stage_data_type.take() else {
+            // If the device has provided some custom OEM command with upload data, allow it
+            // regardless of lock state. This can be necessary e.g. for authenticated unlock.
             return self.upload_oem_data(responder).await;
         };
+
+        // Our debug commands should always be gated behind device unlock.
+        self.check_unlocked()?;
 
         let data = match data_type {
             StageDataType::LoadedRamdisk => self.get_load_result()?.ramdisk,
@@ -1642,8 +1647,12 @@ where
                 let (data, sz) = self.take_download().ok_or("No download")?;
                 Ok(self.boot_item_container()?.append_blob(arg, &data[..sz])?)
             }
-            "gbl-stage" => Ok(self.stage_data_type = Some(self.gbl_stage(args)?)),
+            "gbl-stage" => {
+                self.check_unlocked()?;
+                Ok(self.stage_data_type = Some(self.gbl_stage(args)?))
+            }
             "gbl-pause-fastboot-after-load" => {
+                self.check_unlocked()?;
                 let v: u64 = FromHexStr::try_from_hex_str(next_arg(&mut args).unwrap_or("1"))?;
                 self.result.pause_in_fastboot = v != 0;
                 Ok(())
@@ -4154,6 +4163,81 @@ pub(crate) mod test {
             "\nActual Transport output:\n{}",
             listener.dump_transport_out_queue()
         );
+    }
+
+    #[test]
+    fn test_oem_gbl_stage_fail_when_locked() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+
+        listener.add_transport_input(b"oem gbl-stage trace");
+        listener.add_transport_input(b"continue");
+
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[b"FAILDevice is locked", b"OKAY",]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_oem_gbl_pause_fastboot_after_load_fail_when_locked() {
+        let storage = FakeGblOpsStorage::default();
+        let buffers = vec![Some(vec![0u8; KiB!(128)]); 2];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+
+        listener.add_transport_input(b"oem gbl-pause-fastboot-after-load");
+        listener.add_transport_input(b"continue");
+
+        block_on(run_gbl_fastboot_stack::<3>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            Default::default(),
+        ));
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            make_expected_transport_out(&[b"FAILDevice is locked", b"OKAY",]),
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
+        );
+    }
+
+    #[test]
+    fn test_upload_staged_data_fail_when_locked() {
+        let dl_buffers = Shared::from(vec![Some(vec![0u8; KiB!(128)]); 1]);
+        let storage = FakeGblOpsStorage::default();
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        let tasks = vec![].into();
+        let parts = gbl_ops.disks();
+        let boot_buffer = Default::default();
+        let mut gbl_fb =
+            GblFastboot::new(&mut gbl_ops, parts, Task::run, &tasks, &dl_buffers, boot_buffer);
+
+        gbl_fb.stage_data_type = Some(StageDataType::Trace);
+
+        let mut upload_out = vec![0u8; 100];
+        let test_uploader = TestUploadBuilder(&mut upload_out[..]);
+
+        let res = block_on(gbl_fb.upload(test_uploader));
+        assert!(res.is_err());
+        assert!(format!("{:?}", res).contains("Device is locked"));
     }
 
     #[test]
