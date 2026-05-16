@@ -52,7 +52,7 @@ cc_library(
         "include/dice/config/boringssl_ed25519",
     ],
     deps = [
-        "@boringssl//:libcrypto_c_baremetal",
+        "@boringssl//:crypto_baremetal",
         "@gbl//libc:headers",
     ],
 )
@@ -79,7 +79,7 @@ cc_library(
     includes = ["include"],
     deps = [
         ":libopen_dice_cbor_baremetal_ed25519",
-        "@boringssl//:libcrypto_c_baremetal",
+        "@boringssl//:crypto_baremetal",
         "@gbl//libc:headers",
     ],
 )

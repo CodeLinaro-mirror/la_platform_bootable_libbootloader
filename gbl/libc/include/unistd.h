@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The Android Open Source Project
+ * Copyright (C) 2026 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,31 +15,16 @@
  *
  */
 
-#ifndef __STDLIB_INTTYPES_H__
-#define __STDLIB_INTTYPES_H__
+#ifndef __UNISTD_H__
+#define __UNISTD_H__
 
-#ifdef __UINT32_FMTx__
-#define PRIx32 __UINT32_FMTx__
-#else
-#define PRIx32 "x"
-#endif
+#include <gbl/defs.h>
+#include <stddef.h>
 
-#ifdef __UINT32_FMTX__
-#define PRIX32 __UINT32_FMTX__
-#else
-#define PRIX32 "X"
-#endif
+__BEGIN_DECLS
 
-#ifdef __UINT64_FMTu__
-#define PRIu64 __UINT64_FMTu__
-#else
-#define PRIu64 "llu"
-#endif
+int getentropy(void* buffer, size_t length);
 
-#ifdef __UINT64_FMTx__
-#define PRIx64 __UINT64_FMTx__
-#else
-#define PRIx64 "llx"
-#endif
+__END_DECLS
 
-#endif  // __STDLIB_INTTYPES_H__
+#endif  // __UNISTD_H__

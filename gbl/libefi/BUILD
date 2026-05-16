@@ -28,7 +28,10 @@ package(
 
 rust_library(
     name = "libefi",
-    srcs = glob(["src/**/*.rs"]),
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/efi_rng_c.rs"],
+    ),
     crate_name = "efi",
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
@@ -48,6 +51,18 @@ rust_library(
         "@gbl//libutils",
         "@spin",
         "@zerocopy",
+    ],
+)
+
+rust_library(
+    name = "libefi_rng",
+    srcs = ["src/efi_rng_c.rs"],
+    crate_name = "efi_rng",
+    rustc_flags = ANDROID_RUST_LINTS,
+    deps = [
+        ":libefi",
+        "@gbl//libefi_types",
+        "@gbl//liberror",
     ],
 )
 
@@ -93,7 +108,7 @@ cc_test(
         "@avb//:avb_crypto_ops",
         "@avb//:headers",
         "@avb//:libavb_c",
-        "@boringssl//:libcrypto_c_baremetal",
+        "@boringssl//:crypto_baremetal",
         "@gbl//libavb:sysdeps",
         "@gbl//libboringssl:sysdeps",
         "@gbl//libc:libc_deps_posix",

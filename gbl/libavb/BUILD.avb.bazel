@@ -117,7 +117,7 @@ cc_library(
     defines = ["AVB_COMPILATION"],
     deps = [
         ":headers",
-        "@boringssl//:libcrypto_c_baremetal",
+        "@boringssl//:crypto_baremetal",
         "@gbl//libefi:efi_sha_header",
     ],
 )
@@ -136,7 +136,7 @@ cc_library(
     ],
     deps = [
         ":headers",
-        "@boringssl//:libcrypto_c_baremetal",
+        "@boringssl//:crypto_baremetal",
     ],
 )
 
@@ -163,7 +163,7 @@ cc_library(
         "libavb/boringssl/",
     ],
     deps = [
-        "@boringssl//:libcrypto_c_baremetal",
+        "@boringssl//:crypto_baremetal",
         "@gbl//libavb:avb_crypto_ops_impl",
         "@gbl//libc:headers",
     ],

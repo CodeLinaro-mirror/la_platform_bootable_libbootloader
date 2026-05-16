@@ -30,13 +30,17 @@ rust_library(
     deps = [
         ":libc_c_staticlib",
         "@gbl//libsafemath",
-    ],
+    ] + select({
+        "@platforms//os:linux": [":libc_deps_posix"],
+        "//conditions:default": [],
+    }),
 )
 
 rust_test(
     name = "libc_test",
     crate = ":libc",
     rustc_flags = ANDROID_RUST_LINTS,
+    deps = [":libc_deps_posix"],
 )
 
 rust_library(
@@ -51,18 +55,25 @@ cc_library(
     hdrs = [
         "include/assert.h",
         "include/bits/types/mbstate_t.h",
+        "include/ctype.h",
         "include/debug.h",
+        "include/errno.h",
+        "include/fcntl.h",
         "include/features.h",
         "include/gbl/defs.h",
         "include/gbl/print.h",
         "include/intrin.h",
         "include/inttypes.h",
+        "include/io.h",
         "include/limits.h",
+        "include/locale.h",
+        "include/nl_types.h",
         "include/stdio.h",
         "include/stdlib.h",
         "include/string.h",
         "include/sys/types.h",
         "include/time.h",
+        "include/unistd.h",
     ],
     includes = ["include"],
 )
@@ -70,8 +81,14 @@ cc_library(
 cc_library(
     name = "libc_c",
     srcs = [
+        "src/ctype.c",
         "src/format.c",
+        "src/stdlib.c",
     ],
+    copts = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["-D__GBL_LIBC_STUBS__"],
+    }),
     deps = [
         ":headers",
     ],

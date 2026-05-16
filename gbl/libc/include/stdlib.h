@@ -22,6 +22,8 @@
 
 __BEGIN_DECLS
 
+#define MB_CUR_MAX 1
+
 // Following are definitions referenced by floating point APIs in clang C++
 // headers.
 //
@@ -39,6 +41,18 @@ typedef struct {
 
 ldiv_t ldiv(long numer, long denom);
 lldiv_t lldiv(long long numer, long long denom);
+
+void* bsearch(const void* key, const void* base, size_t nmemb, size_t size,
+              int (*compar)(const void*, const void*));
+
+void qsort(void *base, size_t nmemb, size_t size,
+           int (*compar)(const void *, const void *));
+
+void* malloc(size_t size);
+void* realloc(void* ptr, size_t size);
+void free(void* ptr);
+unsigned long int strtoul(const char* s, char** endptr, int base);
+char* getenv(const char* name);
 
 __attribute__((noreturn)) void abort();
 

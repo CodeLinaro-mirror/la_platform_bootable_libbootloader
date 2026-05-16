@@ -30,6 +30,8 @@ static mut EFI_GLOBAL_ALLOCATOR: EfiAllocator = EfiAllocator::new();
 extern crate avb_sysdeps;
 /// Pull in the sysdeps required by boringssl so the linker can find them.
 extern crate boringssl_sysdeps;
+/// Pull in the getentropy implementation.
+extern crate efi_rng;
 
 // Embed the test kernel binary at compile-time using include_bytes!
 // Path is relative to this main.rs file path:

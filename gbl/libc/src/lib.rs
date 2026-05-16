@@ -19,6 +19,9 @@
 
 extern crate alloc;
 
+#[cfg(target_os = "linux")]
+extern crate libc_deps_posix;
+
 use alloc::alloc::{alloc, dealloc};
 use core::{
     alloc::Layout,
@@ -30,6 +33,8 @@ use safemath::SafeNum;
 
 pub use strcmp::{strcmp, strncmp};
 
+/// Binary search implementation.
+pub mod bsearch;
 pub mod print;
 pub mod strchr;
 pub mod strcmp;
@@ -59,6 +64,64 @@ extern "Rust" {
     fn gbl_print(d: &dyn core::fmt::Display);
 }
 
+/// Helper data structure to hold data that is stored before `ptr`. This data is used by
+/// allocator/deallocator.
+///
+/// It is mainly used to have types and offsets in one place, and not duplicated as part of
+/// alloc/dealloc implementation.
+#[derive(Debug, Default)]
+struct PrefixData {
+    pub size: usize,
+    pub offset: usize,
+}
+
+impl PrefixData {
+    /// Determine prefix size necessary to store data required for [gbl_free]: size, offset
+    pub fn required_size(&self) -> usize {
+        size_of_val(&self.size) + size_of_val(&self.offset)
+    }
+
+    /// Reads prefix data based on ptr
+    /// # SAFETY:
+    /// * `ptr` must be allocated by `gbl_malloc` and has enough padding before `ptr` to hold
+    /// prefix data. Which consists of offset and size values.
+    pub unsafe fn from_ptr(ptr: *mut u8) -> PrefixData {
+        let mut prefix = PrefixData::default();
+
+        // Read size used in allocation from prefix data.
+        prefix.offset = usize::from_ne_bytes(
+            // SAFETY:
+            // Function requires `ptr` to be allocated by `gbl_malloc` and has enough padding
+            // before `ptr` to hold prefix data.
+            unsafe {
+                core::slice::from_raw_parts(
+                    ptr.sub(size_of_val(&prefix.offset)),
+                    size_of_val(&prefix.offset),
+                )
+            }
+            .try_into()
+            .unwrap(),
+        );
+
+        // Read offset for unaligned pointer from prefix data.
+        prefix.size = usize::from_ne_bytes(
+            // SAFETY:
+            // Function requires `ptr` to be allocated by `gbl_malloc` and has enough padding
+            // before `ptr` to hold prefix data.
+            unsafe {
+                core::slice::from_raw_parts(
+                    ptr.sub(size_of_val(&prefix.offset) + size_of_val(&prefix.size)),
+                    size_of_val(&prefix.size),
+                )
+            }
+            .try_into()
+            .unwrap(),
+        );
+
+        prefix
+    }
+}
+
 /// Extended version of void *malloc(size_t size) with ptr alignment configuration support.
 /// Libraries may have a different alignment requirements.
 ///
@@ -69,34 +132,30 @@ extern "Rust" {
 #[no_mangle]
 pub unsafe extern "C" fn gbl_malloc(request_size: usize, alignment: usize) -> *mut c_void {
     (|| {
-        // Prefix data:
-        let mut size = 0usize;
-        let mut offset = 0usize;
-
-        // Determine prefix size necessary to store data required for [gbl_free]: size, offset
-        let prefix_size: usize = size_of_val(&size) + size_of_val(&offset);
+        let mut prefix = PrefixData::default();
 
         // Determine padding necessary to guarantee alignment. Padding includes prefix data.
-        let pad: usize = (SafeNum::from(alignment) + prefix_size).try_into().ok()?;
+        let pad: usize = (SafeNum::from(alignment) + prefix.required_size()).try_into().ok()?;
 
         // Actual size to allocate. It includes padding to guarantee alignment.
-        size = (SafeNum::from(request_size) + pad).try_into().ok()?;
+        prefix.size = (SafeNum::from(request_size) + pad).try_into().ok()?;
 
         // SAFETY:
         // *  On success, `alloc` guarantees to allocate enough memory.
         let ptr = unsafe {
             // Due to manual aligning, there is no need for specific layout alignment.
-            NonNull::new(alloc(Layout::from_size_align(size, 1).ok()?))?.as_ptr()
+            NonNull::new(alloc(Layout::from_size_align(prefix.size, 1).ok()?))?.as_ptr()
         };
 
         // Calculate the aligned address to return the caller.
-        let ret_address = (SafeNum::from(ptr as usize) + prefix_size).round_up(alignment);
+        let ret_address =
+            (SafeNum::from(ptr as usize) + prefix.required_size()).round_up(alignment);
 
         // Calculate the offsets from the allocation start.
         let ret_offset = ret_address - (ptr as usize);
-        let align_offset: usize = (ret_offset - size_of_val(&size)).try_into().ok()?;
-        let size_offset: usize = (align_offset - size_of_val(&offset)).try_into().ok()?;
-        offset = usize::try_from(ret_offset).ok()?;
+        let offset_offset: usize = (ret_offset - size_of_val(&prefix.size)).try_into().ok()?;
+        let size_offset: usize = (offset_offset - size_of_val(&prefix.offset)).try_into().ok()?;
+        prefix.offset = usize::try_from(ret_offset).ok()?;
 
         // SAFETY:
         // 'ptr' is guarantied to be valid:
@@ -108,12 +167,12 @@ pub unsafe extern "C" fn gbl_malloc(request_size: usize, alignment: usize) -> *m
         // takes into account padding and prefix.
         unsafe {
             // Write metadata and return the caller's pointer.
-            core::slice::from_raw_parts_mut(ptr.add(size_offset), size_of_val(&size))
-                .copy_from_slice(&size.to_ne_bytes());
-            core::slice::from_raw_parts_mut(ptr.add(align_offset), size_of_val(&offset))
-                .copy_from_slice(&offset.to_ne_bytes());
+            core::slice::from_raw_parts_mut(ptr.add(size_offset), size_of_val(&prefix.size))
+                .copy_from_slice(&prefix.size.to_ne_bytes());
+            core::slice::from_raw_parts_mut(ptr.add(offset_offset), size_of_val(&prefix.offset))
+                .copy_from_slice(&prefix.offset.to_ne_bytes());
 
-            Some(ptr.add(offset))
+            Some(ptr.add(prefix.offset))
         }
     })()
     .unwrap_or(null_mut()) as _
@@ -133,35 +192,8 @@ pub unsafe extern "C" fn gbl_free(ptr: *mut c_void, alignment: usize) {
         return;
     }
     let mut ptr = ptr as *mut u8;
-
-    let mut offset = 0usize;
-    let mut size = 0usize;
-
-    // Calculate offsets for size of align data
-    let align_offset: usize = size_of_val(&size);
-    let size_offset: usize = align_offset + size_of_val(&size);
-
-    // Read size used in allocation from prefix data.
-    offset = usize::from_ne_bytes(
-        // SAFETY:
-        // * `ptr` is allocated by `gbl_malloc` and has enough padding before `ptr` to hold
-        // prefix data. Which consists of align and size values.
-        // * Alignment is 1 for &[u8]
-        unsafe { core::slice::from_raw_parts(ptr.sub(align_offset), size_of_val(&offset)) }
-            .try_into()
-            .unwrap(),
-    );
-
-    // Read offset for unaligned pointer from prefix data.
-    size = usize::from_ne_bytes(
-        // SAFETY:
-        // * `ptr` is allocated by `gbl_malloc` and has enough padding before `ptr` to hold
-        // prefix data. Which consists of align and size values.
-        // * Alignment is 1 for &[u8]
-        unsafe { core::slice::from_raw_parts(ptr.sub(size_offset), size_of_val(&size)) }
-            .try_into()
-            .unwrap(),
-    );
+    // SAFETY: gbl_free() safety requirement guarantees ptr is from gbl_malloc()
+    let prefix = unsafe { PrefixData::from_ptr(ptr) };
 
     // SAFETY:
     // * `ptr` is allocated by `gbl_malloc` and has enough padding before `ptr` to hold
@@ -169,11 +201,65 @@ pub unsafe extern "C" fn gbl_free(ptr: *mut c_void, alignment: usize) {
     // `alloc`, and must be passed to `dealloc`
     unsafe {
         // Calculate unaligned pointer returned by [alloc], which must be used in [dealloc]
-        ptr = ptr.sub(offset);
+        ptr = ptr.sub(prefix.offset);
 
         // Call to global allocator.
-        dealloc(ptr, Layout::from_size_align(size, alignment).unwrap());
+        dealloc(ptr, Layout::from_size_align(prefix.size, alignment).unwrap());
     };
+}
+
+/// Extended version of void *realloc(void *ptr, size_t size) with alignment support.
+///
+/// This implementation allocates a new block, copies the data, and frees the old block.
+/// This avoids complex re-alignment logic that would be needed if the underlying allocator moved
+/// the block.
+///
+/// In case new_size <= size and alignment is the same nothing is done. And function returns same
+/// pointer.
+///
+/// # Safety
+///
+/// * `ptr` must be a pointer allocated by `gbl_malloc` or null.
+/// * `gbl_realloc` must be called with the same `alignment` as the corresponding `gbl_malloc` call.
+#[no_mangle]
+pub unsafe extern "C" fn gbl_realloc(
+    ptr: *mut c_void,
+    new_size: usize,
+    alignment: usize,
+) -> *mut c_void {
+    if ptr.is_null() {
+        return unsafe { gbl_malloc(new_size, alignment) };
+    }
+    if new_size == 0 {
+        // SAFETY:
+        // * `ptr` is a pointer allocated by `gbl_malloc` and is not null.
+        unsafe { gbl_free(ptr, alignment) };
+        return null_mut();
+    }
+
+    // SAFETY: `gbl_realloc()` require ptr to be from `gbl_malloc()` and there is null check above
+    let prefix = unsafe { PrefixData::from_ptr(ptr as *mut u8) };
+    let old_usable = prefix.size - prefix.offset;
+
+    // Don't need to reallocate if new size is <= old_size and alignment matches
+    if new_size <= old_usable && ptr.align_offset(alignment) == 0 {
+        return ptr;
+    }
+
+    // SAFETY: checking for null return value
+    let new_ptr = unsafe { gbl_malloc(new_size, alignment) };
+    if new_ptr.is_null() {
+        return null_mut();
+    }
+
+    let copy_size = core::cmp::min(new_size, old_usable);
+
+    // SAFETY: `ptr` and `new_ptr` are valid for `copy_size` bytes, and non-overlapping.
+    unsafe { core::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, copy_size) };
+
+    // SAFETY: `ptr` is pointer allocated by gbl_malloc as per function safety.
+    unsafe { gbl_free(ptr, alignment) };
+    new_ptr
 }
 
 /// void *memchr(const void *ptr, int ch, size_t count);
@@ -216,4 +302,133 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, maxlen: usize) -> usize {
 #[no_mangle]
 pub extern "C" fn abort() -> ! {
     panic!("aborted by 3d party code")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gbl_realloc_malloc() {
+        // SAFETY: passing null is allowed. And should just allocate.
+        let ptr = unsafe { gbl_realloc(core::ptr::null_mut(), 100, 8) };
+        assert!(!ptr.is_null());
+        // SAFETY: ptr is returned by `gbl_realloc()` (and internally `gbl_malloc`)
+        unsafe { gbl_free(ptr, 8) };
+    }
+
+    #[test]
+    fn test_gbl_realloc_free() {
+        // SAFETY: checking returned value is not null before using.
+        let ptr = unsafe { gbl_malloc(100, 8) };
+        assert!(!ptr.is_null());
+        // SAFETY: ptr is valid pointer not null after check.
+        let new_ptr = unsafe { gbl_realloc(ptr, 0, 8) };
+        assert!(new_ptr.is_null());
+        // Note: Original `ptr` is freed by `gbl_realloc`, so we do not free it again.
+    }
+
+    #[test]
+    fn test_gbl_realloc_grow() {
+        // SAFETY: checking returned value is not null before using.
+        let ptr = unsafe { gbl_malloc(10, 8) };
+        assert!(!ptr.is_null());
+        // Fill with sequential data
+        for i in 0..10 {
+            // SAFETY: `ptr` is valid [u8; 10] pointer. And index i < 10;
+            unsafe { *(ptr as *mut u8).add(i) = i as u8 };
+        }
+
+        // Grow to 100 bytes
+        // SAFETY: checking returned value is not null before using.
+        // `ptr` is not null ptr returned by gbl_malloc.
+        let new_ptr = unsafe { gbl_realloc(ptr, 100, 8) };
+        assert!(!new_ptr.is_null());
+
+        // Verify old data is preserved
+        for i in 0..10 {
+            // SAFETY: `ptr` is valid [u8; 10] pointer. And index i < 10;
+            assert_eq!(unsafe { *(new_ptr as *const u8).add(i) }, i as u8);
+        }
+
+        // SAFETY: new_ptr is returned by `gbl_realloc()` (and internally `gbl_malloc`)
+        unsafe { gbl_free(new_ptr, 8) };
+    }
+
+    #[test]
+    fn test_gbl_realloc_shrink() {
+        // SAFETY: checking returned value is not null before using.
+        let ptr = unsafe { gbl_malloc(100, 8) };
+        assert!(!ptr.is_null());
+        // Fill with sequential data
+        for i in 0..100 {
+            // SAFETY: `ptr` is valid [u8; 100] pointer. And index i < 100;
+            unsafe { *(ptr as *mut u8).add(i) = i as u8 };
+        }
+
+        // Shrink to 10 bytes
+        // SAFETY: ptr is valid pointer from `gbl_malloc`. Result is checked for null.
+        let new_ptr = unsafe { gbl_realloc(ptr, 10, 8) };
+        assert!(!new_ptr.is_null());
+
+        // Verify old data is preserved up to the new size
+        for i in 0..10 {
+            // SAFETY: `ptr` is valid [u8; 10] pointer. And index i < 10;
+            assert_eq!(unsafe { *(new_ptr as *const u8).add(i) }, i as u8);
+        }
+
+        // SAFETY: ptr is returned by `gbl_realloc()` (and internally `gbl_malloc`)
+        unsafe { gbl_free(new_ptr, 8) };
+    }
+
+    fn test_gbl_realloc_same_ptr_helper(
+        old_size: usize,
+        old_align: usize,
+        new_size: usize,
+        new_align: usize,
+    ) {
+        // SAFETY: checking returned value is not null before using.
+        let ptr = unsafe { gbl_malloc(old_size, old_align) };
+        assert!(!ptr.is_null());
+        // Fill with sequential data
+        for i in 0..old_size {
+            // SAFETY: `ptr` is valid [u8; old_size] pointer. And index i < old_size;
+            unsafe { *(ptr as *mut u8).add(i) = i as u8 };
+        }
+
+        // Realloc to now_size bytes
+        // SAFETY: ptr is valid pointer from `gbl_malloc`. Result is checked for null.
+        let new_ptr = unsafe { gbl_realloc(ptr, new_size, new_align) };
+        assert!(!new_ptr.is_null());
+        assert_eq!(new_ptr, ptr);
+
+        // Verify old data is preserved
+        for i in 0..new_size {
+            // SAFETY: `ptr` is valid [u8; new_size] pointer. And index i < new_size;
+            assert_eq!(unsafe { *(new_ptr as *const u8).add(i) }, i as u8);
+        }
+
+        // SAFETY: ptr is returned by `gbl_realloc()` (and internally `gbl_malloc`)
+        unsafe { gbl_free(new_ptr, new_align) };
+    }
+
+    #[test]
+    fn test_gbl_realloc_same_size_same_align() {
+        test_gbl_realloc_same_ptr_helper(50, 16, 50, 16);
+    }
+
+    #[test]
+    fn test_gbl_realloc_smaller_size_same_align() {
+        test_gbl_realloc_same_ptr_helper(50, 16, 25, 16);
+    }
+
+    #[test]
+    fn test_gbl_realloc_same_size_smaller_align() {
+        test_gbl_realloc_same_ptr_helper(50, 16, 50, 8);
+    }
+
+    #[test]
+    fn test_gbl_realloc_smaller_size_smaller_align() {
+        test_gbl_realloc_same_ptr_helper(50, 16, 25, 8);
+    }
 }

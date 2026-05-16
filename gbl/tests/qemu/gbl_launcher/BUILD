@@ -44,11 +44,12 @@ rust_binary(
     ],
     deps = [
         "@avb//:libavb_c_sha_staticlib",
-        "@boringssl//:libcrypto_c_baremetal_static",
         "@gbl//libavb:sysdeps",
         "@gbl//libboot",
+        "@gbl//libboringssl:libcrypto_c_baremetal_static",
         "@gbl//libboringssl:sysdeps",
         "@gbl//libefi",
+        "@gbl//libefi:libefi_rng",
         "@gbl//libefi_types",
         "@gbl//libsemihosting",
         "@gbl//libstack",
