@@ -51,6 +51,7 @@ build_and_run_tests(
         "@gbl//libabr:libabr_test",
         "@gbl//libasync:cyclic_executor_test",
         "@gbl//libasync:libasync_test",
+        "@gbl//libboot:libboot_test",
         "@gbl//libbootimg:libbootimg_test",
         "@gbl//libbootparams:test",
         "@gbl//libc:libc_c_test",
