@@ -623,6 +623,10 @@ uefi_rustc_flags = [
     # infinite recursion.
     "-Z",
     "stack-protector=all",
+    # `rustc` requires `-Zunstable-options` to use custom target specifications
+    # since Rust 1.95.0 (https://github.com/rust-lang/rust/pull/151534).
+    "-Z",
+    "unstable-options",
     # Always stores frame pointers.
     "-C",
     "force-frame-pointers=yes",
