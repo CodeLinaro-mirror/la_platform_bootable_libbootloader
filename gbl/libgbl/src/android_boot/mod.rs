@@ -55,6 +55,7 @@ use device_tree::{
 pub mod vboot;
 pub use vboot::{avb_verify_slot, PartitionsToVerify};
 
+pub(crate) mod kernel;
 pub(crate) mod load;
 #[cfg(feature = "fuchsia")]
 pub(crate) use load::get_kernel;
@@ -175,6 +176,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
 
     let images = android_load_verified(ops, slot, unlocked, is_recovery, &verify_data)?;
 
+    loader.kernel_load(ops, images.kernel)?;
     let mut pvmfw = match images.pvmfw.is_empty() {
         true => None,
         _ => Some(loader.pvmfw_load(
@@ -188,7 +190,6 @@ pub fn android_load_verify_fixup<'a, 'b>(
         )?),
     };
     loader.ramdisk_load(&images.ramdisks[..])?;
-    loader.kernel_load(ops, images.kernel)?;
 
     let kernel_len = loader.kernel_sz;
     let ramdisk_len = loader.ramdisk_sz;
@@ -305,7 +306,6 @@ pub fn android_load_verify_fixup<'a, 'b>(
     let fdt_sz = finalize_dt(ops, fdt, &ramdisk[..ramdisk_len], !bootconfig_supported)?;
     let fdt_range = fdt[..fdt_sz].as_ptr_range();
     loader.set_fdt_range(fdt_range);
-    loader.move_kernel_left();
     let [ramdisk, fdt, kernel, unused] = loader.into_splits();
 
     Ok((&ramdisk[..ramdisk_len], &fdt[..fdt_sz], &kernel[..kernel_len], unused))
@@ -2230,7 +2230,7 @@ pub(crate) mod tests {
     const TEST_PVMFW_FILL_COUNT: usize = 0xC00;
 
     /// Helper for testing pvmfw load.
-    fn test_android_load_verify_fixup_pvmfw_load(boot_buffer: BootBuffer, expected_addr: usize) {
+    fn test_android_load_verify_fixup_pvmfw_load(boot_buffer: BootBuffer) -> usize {
         let mut storage = FakeGblOpsStorage::default();
         storage.add_raw_device(c"boot_a", read_test_data("android/boot_v2_a.img"));
         // We are just interested in pvmfw load behavior. Don't care about avb verification.
@@ -2264,34 +2264,44 @@ pub(crate) mod tests {
         );
         let reg_prop =
             fdt.get_property("/reserved-memory/pkvm_guest_firmware", std_props::REG).unwrap();
-        assert_eq!(&reg_prop[..8], expected_addr.to_be_bytes());
+        let pvmfw_addr = usize::from_be_bytes(reg_prop[..8].try_into().unwrap());
+        assert_eq!(pvmfw_addr % PVMFW_DATA_ALIGNMENT, 0);
+
         let mut length_bytes = reg_prop[8..].to_vec();
         // The length field is sometimes less than 8 bytes. Converts to little endian and resizes
         // to 8 bytes.
         length_bytes.reverse();
         length_bytes.resize(8, 0);
         assert!(usize::from_le_bytes(length_bytes.try_into().unwrap()) >= min_exp_size);
+
+        pvmfw_addr
     }
 
     #[test]
     fn test_android_load_verify_fixup_pvmfw_load_designated() {
         let general = &mut AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
         let pvmfw_data = &mut AlignedBuffer::new(32 * 1024, PVMFW_DATA_ALIGNMENT);
-        let expected_addr = pvmfw_data.as_ptr() as usize;
         let boot_buffer = BootBuffer::new(general, None, None, None, Some(pvmfw_data));
-        test_android_load_verify_fixup_pvmfw_load(boot_buffer, expected_addr);
-        assert!(&pvmfw_data[..0xc00].iter().all(|&b| b == TEST_PVMFW_FILL_VALUE));
+        let pvmfw_addr = test_android_load_verify_fixup_pvmfw_load(boot_buffer);
+
+        let expected_addr = pvmfw_data.as_ptr() as usize;
+        assert_eq!(pvmfw_addr, expected_addr);
+        assert!(&pvmfw_data[..TEST_PVMFW_FILL_COUNT].iter().all(|&b| b == TEST_PVMFW_FILL_VALUE));
     }
 
     #[test]
     fn test_android_load_verify_fixup_pvmfw_load_general() {
-        let general = &mut AlignedBuffer::new(8 * 1024 * 1024, PVMFW_DATA_ALIGNMENT);
-        // Starts with unaligned address. pvmfw should be loaded at offset 1.
-        let general = &mut general[PVMFW_DATA_ALIGNMENT - 1..];
-        let expected_addr = general[1..].as_ptr() as usize;
+        let general = &mut AlignedBuffer::new(8 * 1024 * 1024, KERNEL_ALIGNMENT);
+        let general_start = general.as_ptr() as usize;
+        let general_end = general_start + general.len();
         let boot_buffer = BootBuffer::new(&mut general[..], None, None, None, None);
-        test_android_load_verify_fixup_pvmfw_load(boot_buffer, expected_addr);
-        assert!(&general[1..][..0xc00].iter().all(|&b| b == TEST_PVMFW_FILL_VALUE));
+        let pvmfw_addr = test_android_load_verify_fixup_pvmfw_load(boot_buffer);
+
+        assert!(pvmfw_addr >= general_start && pvmfw_addr < general_end);
+        let off = pvmfw_addr - general_start;
+        assert!(general[off..][..TEST_PVMFW_FILL_COUNT]
+            .iter()
+            .all(|&b| b == TEST_PVMFW_FILL_VALUE));
     }
 
     #[test]

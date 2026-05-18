@@ -253,17 +253,18 @@ pub fn split_loaded_android<'a>(
     // Computes the size of each image component.
     let [ramdisk_sz, fdt_sz, kernel_sz] = [&ramdisk, &fdt, &kernel].map(|v| ptr_range_len(v));
 
-    // Partitions the general load buffer.
+    // Partitions the general load buffer. Physical order: kernel, (pvmfw,) ramdisk, fdt, unused.
     let general_buf = boot_buffer.take_boot_items().split_unused();
     let general = &general_buf.as_ptr_range();
-    let ramdisk = sub_slice_range(general, ramdisk).unwrap_or(0..0);
+    let kernel = sub_slice_range(general, kernel).unwrap_or(0..0);
+    let ramdisk = sub_slice_range(general, ramdisk).unwrap_or(kernel.end..kernel.end);
     let fdt = sub_slice_range(general, fdt).unwrap_or(ramdisk.end..ramdisk.end);
-    let kernel = sub_slice_range(general, kernel).unwrap_or(fdt.end..fdt.end);
-    assert!(fdt.start >= ramdisk.end && kernel.start >= fdt.end);
-    let (rem, unused) = general_buf.split_at_mut(kernel.end);
-    let (rem, general_kernel) = rem.split_at_mut(kernel.start);
+    assert!(ramdisk.start >= kernel.end && fdt.start >= ramdisk.end);
+    let (rem, unused) = general_buf.split_at_mut(fdt.end);
     let (rem, general_fdt) = rem.split_at_mut(fdt.start);
-    let (_, general_ramdisk) = rem.split_at_mut(ramdisk.start);
+    let (rem, general_ramdisk) = rem.split_at_mut(ramdisk.start);
+    let (_, rem) = rem.split_at_mut(kernel.start);
+    let (general_kernel, _) = rem.split_at_mut(kernel.end - kernel.start);
 
     // Chooses between designated or partitioned general buffer.
     let ramdisk = &mut boot_buffer.ramdisk.unwrap_or(general_ramdisk)[..ramdisk_sz];
