@@ -14,7 +14,7 @@
 
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 
 package(
@@ -79,6 +79,7 @@ rust_library(
     deps = [
         "@gbl//liberror",
         "@gbl//libsafemath",
+        "@static_assertions",
         "@zerocopy",
     ] + select({
         "@gbl//toolchain:gbl_rust_uefi_aarch64": [
@@ -95,4 +96,14 @@ rust_library(
         "@gbl//toolchain:prod": [],
         "@gbl//toolchain:dev": ["@zbi"],
     }),
+)
+
+rust_test(
+    name = "libboot_test",
+    compile_data = [
+        "@gbl//libboot/test/data:all",
+    ],
+    crate = ":libboot",
+    rustc_flags = ANDROID_RUST_LINTS,
+    visibility = ["//visibility:public"],
 )

@@ -62,6 +62,7 @@ rust_library(
         "@base64",
         "@bitflags",
         "@bytes",
+        "@cfg_if",
         "@crc32fast",
         "@gbl//libabr",
         "@gbl//libasync",
