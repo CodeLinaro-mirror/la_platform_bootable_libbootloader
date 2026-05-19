@@ -503,6 +503,20 @@ gbl_rust_crate_repository(
     deps = ["@clap_builder"],
 )
 
+gbl_rust_crate_repository(
+    name = "hash32",
+    path = "external/rust/android-crates-io/crates/hash32",
+    deps = ["@byteorder"],
+)
+
+gbl_rust_crate_repository(
+    name = "heapless",
+    path = "external/rust/android-crates-io/crates/heapless",
+    deps = [
+        "@hash32",
+    ],
+)
+
 # Set up a repo to export LLVM tool/library/header/sysroot paths
 gbl_llvm_prebuilts = use_repo_rule("@gbl//toolchain:gbl_workspace_util.bzl", "gbl_llvm_prebuilts")
 
