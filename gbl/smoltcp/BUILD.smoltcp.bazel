@@ -51,23 +51,6 @@ EOT
     """,
 )
 
-# `smoltcp` depends on crate `heapless`, which is still in the process of being imported to Android
-# (or possibly abandoned http://ag/22200123). For now we use a custom implementation of the APIs as
-# a workaround.
-genrule(
-    name = "heapless_src",
-    srcs = ["@gbl//smoltcp:heapless.rs"],
-    outs = ["src/heapless.rs"],
-    cmd = "cp $(SRCS) $(OUTS)",
-)
-
-rust_library(
-    name = "heapless",
-    srcs = ["src/heapless.rs"],
-    crate_root = "src/heapless.rs",
-    edition = "2021",
-)
-
 # Add fixup.rs to build and use our own crate root that imports it.
 genrule(
     name = "smoltcp_fixup",
@@ -110,7 +93,6 @@ rust_library(
     crate_root = "src/crate_root.rs",
     data = [
         ":gen_config",
-        ":heapless_src",
         ":smoltcp_fixup",
     ],
     edition = "2021",
@@ -133,10 +115,10 @@ rust_library(
     # it for dev boards.
     target_compatible_with = ["@gbl//toolchain:dev"],
     deps = [
-        ":heapless",
         "@bitflags",
         "@byteorder",
         "@cfg_if",
+        "@heapless",
         "@managed",
     ],
 )
