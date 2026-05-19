@@ -178,7 +178,7 @@ gbl_rust_crate_repository(
 gbl_new_local_repository(
     name = "smoltcp",
     build_file = "@gbl//smoltcp:BUILD.smoltcp.bazel",
-    path = "external/rust/crates/smoltcp",
+    path = "external/rust/android-crates-io/crates/smoltcp",
 )
 
 gbl_rust_crate_repository(

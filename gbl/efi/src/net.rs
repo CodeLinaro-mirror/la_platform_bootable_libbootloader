@@ -194,7 +194,7 @@ pub struct RxToken<'a>(&'a mut [u8]);
 impl phy::RxToken for RxToken<'_> {
     fn consume<R, F>(self, f: F) -> R
     where
-        F: FnOnce(&mut [u8]) -> R,
+        F: FnOnce(&[u8]) -> R,
     {
         f(self.0)
     }
@@ -327,10 +327,7 @@ fn ll_mac_ip6_addr_from_efi_mac(mac: EfiMacAddress) -> (EthernetAddress, IpAddre
     ip6_bytes[14] = ll_mac_bytes[4];
     ip6_bytes[15] = ll_mac_bytes[5];
 
-    (
-        EthernetAddress::from_bytes(ll_mac_bytes),
-        IpAddress::Ipv6(Ipv6Address::from_bytes(&ip6_bytes[..])),
-    )
+    (EthernetAddress::from_bytes(ll_mac_bytes), IpAddress::Ipv6(Ipv6Address::from(ip6_bytes)))
 }
 
 /// `EfiTcpSocket` groups together necessary components for performing TCP.
@@ -481,11 +478,10 @@ impl<'a, 'b> EfiTcpSocket<'a, 'b> {
     /// Broadcasts Fuchsia Fastboot MDNS service once.
     pub fn broadcast_fuchsia_fastboot_mdns(&mut self) {
         const MDNS_PORT: u16 = 5353;
-        const IP6_BROADCAST_ADDR: &[u8] =
-            &[0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFB];
-        let ip6_broadcast = Ipv6Address::from_bytes(&IP6_BROADCAST_ADDR[..]);
-        let meta =
-            UdpMetadata { endpoint: (ip6_broadcast, MDNS_PORT).into(), meta: Default::default() };
+        const IP6_BROADCAST_ADDR: [u8; 16] =
+            [0xFF, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFB];
+        let ip6_broadcast = Ipv6Address::from(IP6_BROADCAST_ADDR);
+        let meta = UdpMetadata::from((ip6_broadcast, MDNS_PORT));
         let handle = self.socket_set.iter().nth(1).unwrap().0;
         let socket = self.socket_set.get_mut::<UdpSocket>(handle);
         if !socket.is_open() {
@@ -605,6 +601,9 @@ impl<'a, 'b, 'c> EfiGblNetworkInternal<'a, 'b, 'c> {
         // We can also consider getting this from vendor configuration.
         let (ll_mac, ll_ip6_addr) =
             ll_mac_ip6_addr_from_efi_mac(self.efi_net_dev.protocol.mode()?.current_address);
+        let IpAddress::Ipv6(ll_ip6_addr_v6) = ll_ip6_addr else {
+            unreachable!();
+        };
         // Configures smoltcp network interface.
         let mut interface = Interface::new(
             Config::new(ll_mac.into()),
@@ -620,7 +619,7 @@ impl<'a, 'b, 'c> EfiGblNetworkInternal<'a, 'b, 'c> {
             eth_mac[0], eth_mac[1], eth_mac[2], eth_mac[3], eth_mac[4], eth_mac[5]
         );
         let fuchsia_fastboot_mdns_packet =
-            fuchsia_fastboot_mdns_packet(fuchsia_node_name.as_str(), ll_ip6_addr.as_bytes())?
+            fuchsia_fastboot_mdns_packet(fuchsia_node_name.as_str(), &ll_ip6_addr_v6.octets())?
                 .into();
 
         // Creates sockets.
