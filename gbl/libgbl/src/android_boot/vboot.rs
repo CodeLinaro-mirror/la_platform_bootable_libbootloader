@@ -221,10 +221,15 @@ pub fn avb_verify_slot<'a, 'b: 'c, 'c>(
         is_eio = verify_data.resolved_hashtree_error_mode()
             == HashtreeErrorMode::AVB_HASHTREE_ERROR_MODE_EIO;
 
+        // Take the last AVB digest on the commandline, which will be the one calculated by libavb.
+        // There should only be one, but it's not guaranteed, e.g. if a chained vbmeta signing key
+        // is compromised, an attacker could create a vbmeta which injects a fake digest as a
+        // commandline property descriptor. libavb puts all descriptors first in the commandline
+        // then appends its own calculated values last, so always use the last one.
         digest = CommandlineParser::new(verify_data.cmdline().to_str().unwrap())
-            .find_map(|v| v.ok().filter(|v| v.key == AVB_DIGEST_KEY))
-            .map(|v| v.value)
-            .flatten()
+            .filter_map(|v| v.ok().filter(|v| v.key == AVB_DIGEST_KEY))
+            .last()
+            .and_then(|v| v.value)
     }
 
     let verification_status = VerificationStatus { color, is_eio };
@@ -346,7 +351,7 @@ mod test {
             test::{slot, slot_successful, FakeGblOps, FakeGblOpsStorage},
             Slot,
         },
-        tests::read_test_data,
+        tests::{read_test_data, read_test_data_as_str},
         IntegrationError::AvbIoError,
     };
     use avb::{IoError, SlotVerifyError};
@@ -940,5 +945,57 @@ mod test {
             ),
             Ok(()),
         );
+    }
+
+    /// This test uses a "malicious" vbmeta which tries to inject a fake vbmeta digest to the
+    /// commandline, and ensures that we ignore it and use the real digest.
+    #[test]
+    fn test_avb_verify_slot_success_spoof_digest() {
+        let mut partitions_to_verify = PartitionsToVerify::default();
+        let partitions_data = [(c"vbmeta_a", "android/vbmeta_spoof_a.img")];
+        let real_vbmeta_digest = read_test_data_as_str("android/vbmeta_spoof_a.digest.txt");
+
+        let mut storage = FakeGblOpsStorage::default();
+        for (part, file) in &partitions_data {
+            storage.add_raw_device(part, read_test_data(file));
+        }
+        let mut ops = FakeGblOps::new(&storage);
+        ops.avb_ops.rollbacks =
+            HashMap::from([(TEST_ROLLBACK_INDEX_LOCATION, Ok(TEST_ROLLBACK_INDEX_BEFORE_VERIFY))]);
+
+        // Set up a `handle_verification_result()` handler to save the state for analysis.
+        let mut out_status = None;
+        let mut out_digest = None;
+        let mut handler = |status,
+                           digest: Option<&CStr>,
+                           _: Option<Vec<AvbProperty<'_>>>,
+                           _: Option<Vec<AvbPartition<'_>>>| {
+            out_status = Some(status);
+            out_digest = digest.map(|d| d.to_str().unwrap().to_owned());
+            Ok(())
+        };
+        ops.avb_handle_verification_result = Some(&mut handler);
+        ops.avb_key_validation_status = Some(Ok(KeyValidationStatus::Valid));
+
+        let res = avb_verify_slot(&mut ops, Some(slot_successful('a')), &mut partitions_to_verify);
+        assert!(res.is_ok());
+
+        assert_eq!(
+            out_status,
+            Some(VerificationStatus { color: BootStateColor::Green, is_eio: false })
+        );
+
+        // Verify that both digests are present in the command line, the spoofed one we injected
+        // from vbmeta and the real one calculated by libavb.
+        //
+        // It's possible in the future we might want to change behavior e.g. to error out if we
+        // detect duplicate vbmeta digests in the commandline, but for now we allow it.
+        let (verify_data, _, _) = res.unwrap();
+        let cmdline = verify_data.cmdline().to_str().unwrap();
+        assert!(cmdline.contains("androidboot.vbmeta.digest=spoofed_digest"));
+        assert!(cmdline.contains(&format!("androidboot.vbmeta.digest={}", real_vbmeta_digest)));
+
+        // The digest passed to `handle_verification_result()` should be the real one.
+        assert_eq!(out_digest, Some(real_vbmeta_digest.to_owned()));
     }
 }
