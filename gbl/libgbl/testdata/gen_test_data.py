@@ -271,7 +271,9 @@ def gen_android_test_dtb():
 
 
 # Generate vbmeta data for a set of images.
-def gen_android_test_vbmeta(partition_file_pairs, out_vbmeta):
+def gen_android_test_vbmeta(
+    partition_file_pairs, out_vbmeta, kernel_cmdline=None
+):
   with tempfile.TemporaryDirectory() as temp_dir:
     desc_args = []
     temp_dir = pathlib.Path(temp_dir)
@@ -298,26 +300,30 @@ def gen_android_test_vbmeta(partition_file_pairs, out_vbmeta):
           check=True,
       )
 
+    cmd = [
+        AVB_TOOL,
+        "make_vbmeta_image",
+        "--output",
+        out_vbmeta,
+        "--key",
+        PSK,
+        "--algorithm",
+        "SHA512_RSA4096",
+        "--rollback_index",
+        f"{TEST_ROLLBACK_INDEX}",
+        "--rollback_index_location",
+        f"{TEST_ROLLBACK_INDEX_LOCATION}",
+        "--prop",
+        "com.android.build.system.os_version:1",
+        "--prop",
+        "com.android.build.system.security_patch:1",
+    ]
+    if kernel_cmdline:
+      cmd += ["--kernel_cmdline", kernel_cmdline]
+    cmd += desc_args
+
     subprocess.run(
-        [
-            AVB_TOOL,
-            "make_vbmeta_image",
-            "--output",
-            out_vbmeta,
-            "--key",
-            PSK,
-            "--algorithm",
-            "SHA512_RSA4096",
-            "--rollback_index",
-            f"{TEST_ROLLBACK_INDEX}",
-            "--rollback_index_location",
-            f"{TEST_ROLLBACK_INDEX_LOCATION}",
-            "--prop",
-            "com.android.build.system.os_version:1",
-            "--prop",
-            "com.android.build.system.security_patch:1",
-        ]
-        + desc_args,
+        cmd,
         stderr=subprocess.STDOUT,
         check=True,
     )
@@ -638,14 +644,22 @@ androidboot.config_2=val_2
 
   # Generates a vbmeta image that doesn't verify any partition and will just
   # trivially succeed.
-  gen_android_test_vbmeta([], out_dir / f"vbmeta_noop.img")
+  gen_android_test_vbmeta([], out_dir / "vbmeta_noop.img")
+
   # Generates a vbmeta image that disables verification.
   # (`AVB_VBMETA_IMAGE_FLAGS_VERIFICATION_DISABLED` is set).
   #
   # Note: Generated `vbmeta_disabled.img` is also used for fake vbmeta boot flow
   # on dev GBL. Revisit `avb_fake_verify_slot` in ligbl/src/android_boot/vboot.rs
   # for more details.
-  gen_disabled_vbmeta(out_dir / f"vbmeta_disabled.img")
+  gen_disabled_vbmeta(out_dir / "vbmeta_disabled.img")
+
+  # Generates a vbmeta image with spoofed digest.
+  gen_android_test_vbmeta(
+      [],
+      out_dir / "vbmeta_spoof_a.img",
+      kernel_cmdline="androidboot.vbmeta.digest=spoofed_digest",
+  )
 
 
 def gen_zircon_test_images(zbi_tool):
