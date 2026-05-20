@@ -16,11 +16,7 @@
 
 // TODO(b/380392958) Cleanup other used of the constants. Move them here as well.
 
-use arrayvec::ArrayString;
-use core::fmt::{Debug, Display, Formatter};
 use static_assertions::const_assert_eq;
-#[cfg(feature = "fuchsia")]
-use zbi::ZBI_ALIGNMENT_USIZE;
 
 /// Macro for defining Kibibyte-sized constants
 #[macro_export]
@@ -67,69 +63,6 @@ pub const PAGE_SIZE: usize = KiB!(4);
 /// Pvmfw image alignment requirement.
 pub const PVMFW_DATA_ALIGNMENT: usize = PAGE_SIZE;
 
-// Type alias for raw partition image name.
-type PartitionImageName = ArrayString<IMAGE_NAME_MAX_LEN>;
-
 /// This should be more than enough (Linux kernel MODULE_NAME_LEN is also 56).
 /// Keep in sync with the constant defined in gbl_efi_fastboot_protocol.h
 pub const FASTBOOT_PARTITION_TYPE_LEN: usize = 56;
-
-/// Image names list.
-/// Used for identifying what buffer size/alignment is necessary.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum ImageType {
-    /// ZBI for Zircon kernel
-    #[cfg(feature = "fuchsia")]
-    ZbiZircon,
-    /// ZBI items
-    #[cfg(feature = "fuchsia")]
-    ZbiItems,
-    /// Boot
-    Boot,
-    /// FDT
-    Fdt,
-    /// Ramdisk
-    Ramdisk,
-    /// pVM firmware data
-    PvmfwData,
-    /// Raw partition
-    Partition(PartitionImageName),
-}
-
-impl ImageType {
-    /// Get alignment required for the [ImageType]
-    pub fn alignment(&self) -> usize {
-        match self {
-            #[cfg(feature = "fuchsia")]
-            Self::ZbiZircon => ZIRCON_KERNEL_ALIGNMENT,
-            #[cfg(feature = "fuchsia")]
-            Self::ZbiItems => ZBI_ALIGNMENT_USIZE,
-            Self::Boot => KERNEL_ALIGNMENT,
-            Self::Fdt => FDT_ALIGNMENT,
-            Self::Ramdisk => PAGE_SIZE,
-            Self::PvmfwData => PVMFW_DATA_ALIGNMENT,
-            Self::Partition(_) => PAGE_SIZE,
-        }
-    }
-
-    /// Get image name for the [ImageType]
-    pub fn name(&self) -> &str {
-        match self {
-            #[cfg(feature = "fuchsia")]
-            ImageType::ZbiZircon => "zbi_zircon",
-            #[cfg(feature = "fuchsia")]
-            ImageType::ZbiItems => "zbi_items",
-            ImageType::Boot => "boot",
-            ImageType::Fdt => "fdt",
-            ImageType::Ramdisk => "ramdisk",
-            ImageType::PvmfwData => "pvmfw_data",
-            Self::Partition(name) => &name,
-        }
-    }
-}
-
-impl Display for ImageType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.name())
-    }
-}
