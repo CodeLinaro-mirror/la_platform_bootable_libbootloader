@@ -28,7 +28,7 @@ pub(crate) struct KernelAttributes {
     /// Memory footprint of the kernel region.
     pub(crate) reserved_size: usize,
     /// Alignment page size.
-    pub(crate) _page_size: usize,
+    pub(crate) page_size: usize,
 }
 
 /// Parses the kernel image header for the current target architecture.
@@ -41,7 +41,7 @@ pub(crate) fn parse_kernel_attributes(kernel: &[u8]) -> Result<KernelAttributes,
             Ok(KernelAttributes {
                 // Account for potential appended payloads so kernel size exceeds header image_size.
                 reserved_size: kernel.len().max(image_size),
-                _page_size: page_size,
+                page_size: page_size,
             })
         } else if #[cfg(target_arch = "riscv64")] {
             let h = boot::parse_riscv64(kernel)?;
@@ -49,13 +49,13 @@ pub(crate) fn parse_kernel_attributes(kernel: &[u8]) -> Result<KernelAttributes,
             Ok(KernelAttributes {
                 // Account for potential appended payloads so kernel size exceeds header image_size.
                 reserved_size: kernel.len().max(image_size),
-                _page_size: crate::constants::PAGE_SIZE,
+                page_size: crate::constants::PAGE_SIZE,
             })
         } else {
             let _ = kernel;
             Ok(KernelAttributes {
                 reserved_size: kernel.len(),
-                _page_size: crate::constants::PAGE_SIZE,
+                page_size: crate::constants::PAGE_SIZE,
             })
         }
     }

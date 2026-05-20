@@ -14,8 +14,11 @@
 
 use super::{cstr_bytes_to_str, BootBuffer};
 use crate::{
-    android_boot::{avf::BootInfo, build_pvmfw_data_region, kernel::parse_kernel_attributes},
-    constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
+    android_boot::{
+        avf::{build_pvmfw_data_region, BootInfo},
+        kernel::{parse_kernel_attributes, KernelAttributes},
+    },
+    constants::{FDT_ALIGNMENT, KERNEL_ALIGNMENT, PAGE_SIZE},
     decompress::decompress_kernel,
     device_tree::DtComponentSource,
     fastboot::boot_items::BootItemContainer,
@@ -617,6 +620,7 @@ impl<'a> BootBufferLoader<'a> {
         &mut self,
         ops: &mut impl GblOps<'b>,
         img: &[u8],
+        kernel_attrs: &KernelAttributes,
         verify_data: &SlotVerifyData,
         unlocked: bool,
         is_recovery: bool,
@@ -629,21 +633,24 @@ impl<'a> BootBufferLoader<'a> {
         let pvmfw_bin_len = pvmfw_bin.len();
         let boot_info = BootInfo::new(unlocked, is_recovery, color, verify_data);
         Ok(match self.bufs.pvmfw_data.as_mut() {
-            Some(v) => build_pvmfw_data_region(ops, v, pvmfw_bin, &boot_info, dtbo_part)
-                .map(|sz| (&mut take(v)[..sz], pvmfw_bin_len))?,
+            Some(v) => {
+                build_pvmfw_data_region(ops, v, pvmfw_bin, kernel_attrs, &boot_info, dtbo_part)
+                    .map(|sz| (&mut take(v)[..sz], pvmfw_bin_len))?
+            }
             _ => {
                 // Kernel must already be loaded, nothing else should be.
                 assert_ne!(self.kernel_sz, 0);
                 assert_eq!(self.ramdisk_sz, 0);
                 assert_eq!(self.bootconfig_sz, 0);
                 assert_eq!(self.general_fdt, 0..0);
-                // TODO(b/513613018): Hook into kernel header attributes to identify expected
-                // PVMFW alignment.
-                let off = aligned_offset(&self.general, PVMFW_DATA_ALIGNMENT)?;
+                // Use the kernel's page size so the hypervisor's identity mapping covers the
+                // pvmfw region exactly.
+                let off = aligned_offset(&self.general, kernel_attrs.page_size)?;
                 let sz = build_pvmfw_data_region(
                     ops,
                     &mut self.general[off..],
                     pvmfw_bin,
+                    kernel_attrs,
                     &boot_info,
                     dtbo_part,
                 )?;
@@ -659,8 +666,8 @@ impl<'a> BootBufferLoader<'a> {
         &mut self,
         ops: &mut impl GblOps<'b>,
         kernel: &[u8],
-    ) -> Result<(), Error> {
-        self.kernel_sz = match self.bufs.kernel.as_mut() {
+    ) -> Result<KernelAttributes, Error> {
+        let attrs = match self.bufs.kernel.as_mut() {
             // Designated buffer, decompresses directly into it.
             Some(v) => {
                 let sz = decompress_kernel(ops, kernel, v)?;
@@ -668,7 +675,7 @@ impl<'a> BootBufferLoader<'a> {
                 if attrs.reserved_size > v.len() {
                     return Err(Error::BufferTooSmall(Some(attrs.reserved_size)));
                 }
-                attrs.reserved_size
+                attrs
             }
             // Use general buffer. Decompresses at the head and carves the kernel out of
             // `self.general` so subsequent loads see only the remaining space.
@@ -688,10 +695,11 @@ impl<'a> BootBufferLoader<'a> {
                     take(&mut self.general)[off..].split_at_mut(attrs.reserved_size);
                 self.general = general;
                 self.general_kernel = Some(kernel);
-                attrs.reserved_size
+                attrs
             }
         };
-        Ok(())
+        self.kernel_sz = attrs.reserved_size;
+        Ok(attrs)
     }
 
     /// Loads ramdisks to the buffer.

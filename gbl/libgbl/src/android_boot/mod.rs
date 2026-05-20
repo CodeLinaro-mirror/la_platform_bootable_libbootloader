@@ -43,7 +43,7 @@ use libutils::{aligned_subslice, buffer_pool::BufferPool, shared::Shared};
 use misc::AndroidBootMode;
 
 mod avf;
-use avf::{avf_fixup_host_dt, avf_update_bootconfig, build_pvmfw_data_region, inject_vmdtbo};
+use avf::{avf_fixup_host_dt, avf_update_bootconfig, inject_vmdtbo};
 
 pub(crate) mod hasher;
 
@@ -176,12 +176,13 @@ pub fn android_load_verify_fixup<'a, 'b>(
 
     let images = android_load_verified(ops, slot, unlocked, is_recovery, &verify_data)?;
 
-    loader.kernel_load(ops, images.kernel)?;
+    let kernel_attrs = loader.kernel_load(ops, images.kernel)?;
     let mut pvmfw = match images.pvmfw.is_empty() {
         true => None,
         _ => Some(loader.pvmfw_load(
             ops,
             images.pvmfw,
+            &kernel_attrs,
             &verify_data,
             unlocked,
             is_recovery,
@@ -256,7 +257,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
 
     if let Some((reg, bin_sz)) = pvmfw.as_mut() {
         let total_size = match selected.vmdtbo {
-            Some(vmdtbo) => inject_vmdtbo(reg, *bin_sz, vmdtbo.dt)?,
+            Some(vmdtbo) => inject_vmdtbo(reg, *bin_sz, &kernel_attrs, vmdtbo.dt)?,
             None => reg.len(),
         };
         avf_fixup_host_dt(ops, &mut fdt, &reg[..total_size], *bin_sz, &verify_data)?;
