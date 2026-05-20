@@ -37,6 +37,7 @@ genrule(
     pub const IFACE_MAX_SIXLOWPAN_ADDRESS_CONTEXT_COUNT: usize = 4;
     pub const IFACE_NEIGHBOR_CACHE_COUNT: usize = 16;
     pub const IFACE_MAX_ROUTE_COUNT: usize = 2;
+    pub const IFACE_MAX_PREFIX_COUNT: usize = 1;
     pub const FRAGMENTATION_BUFFER_SIZE: usize = 1500;
     pub const ASSEMBLER_MAX_SEGMENT_COUNT: usize = 4;
     pub const REASSEMBLY_BUFFER_SIZE: usize = 1500;
@@ -51,34 +52,12 @@ EOT
     """,
 )
 
-# Add fixup.rs to build and use our own crate root that imports it.
-genrule(
-    name = "smoltcp_fixup",
-    srcs = [
-        "@gbl//smoltcp:fixup.rs",
-        "src/lib.rs",
-    ],
-    outs = [
-        "src/fixup.rs",
-        "src/crate_root.rs",
-    ],
-    cmd = """
-        IFS=" " read -a srcs <<< "$(SRCS)" && \
-        IFS=" " read -a outs <<< "$(OUTS)" && \
-        for index in $${!srcs[@]}; do cp $${srcs[$$index]} $${outs[$$index]}; done && \
-        echo "mod fixup;" >> $${outs[1]}
-""",
-)
-
 rust_library(
     name = "smoltcp",
     srcs = glob(
         ["**/*.rs"],
-        exclude = ["src/lib.rs"],
     ) + [
         "src/config.rs",
-        "src/crate_root.rs",
-        "src/fixup.rs",
     ],
     applicable_licenses = [":license"],
     crate_features = [
@@ -90,12 +69,11 @@ rust_library(
         "socket-icmp",
         "socket-udp",
     ],
-    crate_root = "src/crate_root.rs",
+    crate_root = "src/lib.rs",
     data = [
         ":gen_config",
-        ":smoltcp_fixup",
     ],
-    edition = "2021",
+    edition = "2024",
     rustc_env = {
         "OUT_DIR": ".",
     },
@@ -109,7 +87,7 @@ rust_library(
         "-A",
         "unused_variables",
         "-A",
-        "mismatched_lifetime_syntaxes",
+        "unused_mut",
     ],
     # TCP in the bootloader can be a significant attack vector, only allow
     # it for dev boards.
