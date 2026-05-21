@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "bool_setting", "int_flag")
+load("@gbl_config//:variables.bzl", "ENABLE_CROSS_LANG_LTO")
 load(
     "@gbl_llvm_prebuilts//:info.bzl",
     "GBL_CPP_CONFIG_INC",
@@ -352,6 +353,10 @@ toolchain(
 # The following defines LLVM C++ toolchains for UEFI/ELF targets. They are mostly used for the
 # final step of linking Rust executables, but may also be used for compiling mixed C/C++ code.
 
+uefi_c_lto_flags = [
+    "-flto=thin",
+] if ENABLE_CROSS_LANG_LTO else []
+
 cc_flags_uefi_common = cc_flags_common + [
     "-D_LIBCPP_HAS_NO_THREADS",
     "-D_LIBCPP_HAS_NO_WIDE_CHARACTERS",
@@ -364,7 +369,7 @@ cc_flags_uefi_common = cc_flags_common + [
     "-fno-omit-frame-pointer",
     # Supports unwind table. (On arm, this makes sure x29 is stored on stack first).
     "-funwind-tables",
-]
+] + uefi_c_lto_flags
 
 uefi_ld_flags_common = [
     "-z,noexecstack",
@@ -626,7 +631,11 @@ uefi_rustc_flags = [
     "force-unwind-tables=yes",
     # Generate debug information. For MSVC targets, this only affects the size of the PDB file.
     "-g",
-]
+] + ([
+    # Enable linker-plugin LTO for cross-language inlining
+    "-C",
+    "linker-plugin-lto",
+] if ENABLE_CROSS_LANG_LTO else [])
 
 config_setting(
     name = "compilation_mode_dbg",

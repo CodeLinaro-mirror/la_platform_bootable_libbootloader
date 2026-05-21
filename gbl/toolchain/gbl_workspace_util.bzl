@@ -151,10 +151,40 @@ def _gbl_config_impl(repo_ctx):
     if not build_number:
         build_number = "eng.{}".format(repo_ctx.getenv("USER"))
 
+    # Query rustc LLVM version
+    rust_llvm_ver = ""
+    rustc_path = repo_ctx.path(Label("@rust_prebuilts//:bin/rustc"))
+    rustc_res = repo_ctx.execute([rustc_path, "--version", "--verbose"])
+    if rustc_res.return_code == 0:
+        for line in rustc_res.stdout.split("\n"):
+            if line.startswith("LLVM version:"):
+                rust_llvm_ver = line.split(":")[1].strip()
+
+    # Query clang LLVM version
+    clang_llvm_ver = ""
+    clang_path = repo_ctx.path(Label("@llvm_linux_x86_64_prebuilts//:bin/clang"))
+    clang_res = repo_ctx.execute([clang_path, "--version"])
+    if clang_res.return_code == 0:
+        parts = clang_res.stdout.split("clang version ")
+        if len(parts) > 1:
+            clang_llvm_ver = parts[1].split(" ")[0].strip()
+
+    enable_cross_lang_lto = False
+    if rust_llvm_ver and clang_llvm_ver:
+        # Match major version (e.g. "22" from "22.0.1")
+        rust_major = rust_llvm_ver.split(".")[0]
+        clang_major = clang_llvm_ver.split(".")[0]
+        enable_cross_lang_lto = (rust_major == clang_major)
+
+    if not enable_cross_lang_lto:
+        # buildifier: disable=print
+        print("\n[GBL Toolchain WARNING]: LLVM version mismatch! Rustc ({}) vs Clang ({}). Cross-language ThinLTO FFI inlining is DEACTIVATED!\n".format(rust_llvm_ver, clang_llvm_ver))
+
     # Create a file to export environment variables.
     variables_content = """
 BUILD_NUMBER = "{}"
-""".format(build_number)
+ENABLE_CROSS_LANG_LTO = {}
+""".format(build_number, enable_cross_lang_lto)
 
     repo_ctx.file("variables.bzl", variables_content)
     repo_ctx.file("BUILD", "")
