@@ -312,8 +312,6 @@ fn check_entries(header: &GptHeader, entries: &[u8]) -> Result<()> {
                 part_range: (first, last),
                 usable_range: (header.first, header.last),
             }));
-        } else if ele.part_type.0 == [0u8; GPT_GUID_LEN] {
-            return Err(Error::GptError(GptError::ZeroPartitionTypeGUID { idx }));
         } else if ele.guid.0 == [0u8; GPT_GUID_LEN] {
             return Err(Error::GptError(GptError::ZeroPartitionUniqueGUID { idx }));
         }
@@ -372,8 +370,10 @@ impl GptEntry {
 
     /// Return whether this is a `NULL` entry. The first null entry marks the end of the partition
     /// entries.
+    ///
+    /// Per UEFI spec, a Partition Type GUID of zero marks the entry as unused.
     fn is_null(&self) -> bool {
-        self.first == 0 && self.last == 0
+        self.part_type.0 == [0u8; GPT_GUID_LEN] || (self.first == 0 && self.last == 0)
     }
 
     /// Decode the partition name into a string. A length N utf16 string can be at most 2N utf8
@@ -1763,8 +1763,26 @@ pub(crate) mod test {
         }
     }
 
+    fn apply_to_primary_and_secondary(
+        disk: &mut [u8],
+        modify: impl Fn(&mut GptHeader, Ref<&mut [u8], [GptEntry]>) + Copy,
+    ) {
+        let (hdr, entries) =
+            (&mut disk[MBR_SIZE..]).split_at_mut(GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE);
+        let mut hdr = GptHeader::from_bytes_mut(hdr);
+        let n = usize::try_from(gpt_entries_size(hdr.entries_count)).unwrap();
+        modify(&mut hdr, Ref::<_, [GptEntry]>::new_slice(&mut entries[..n]).unwrap());
+
+        let (entries, hdr) = (&mut disk[MBR_SIZE..])
+            .split_last_chunk_mut::<GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE>()
+            .unwrap();
+        let mut hdr = GptHeader::from_bytes_mut(&mut hdr[..]);
+        let (_, entries) = entries.split_at_mut_checked(entries.len() - n).unwrap();
+        modify(&mut hdr, Ref::<_, [GptEntry]>::new_slice(entries).unwrap());
+    }
+
     #[test]
-    fn test_sync_gpt_post_null_invalid_entry() {
+    fn test_sync_gpt_post_null_zero_type_entry_is_unused() {
         fn modify(hdr: &mut GptHeader, mut entries: Ref<&mut [u8], [GptEntry]>) {
             let entry_size = size_of::<GptEntry>();
             entries.as_bytes_mut()[entry_size..2 * entry_size].fill(0);
@@ -1772,9 +1790,13 @@ pub(crate) mod test {
             entries[2].part_type = GptGuid([0u8; GPT_GUID_LEN]);
             hdr.update_entries_crc(entries.as_bytes());
         }
-        let err = Error::GptError(GptError::ZeroPartitionTypeGUID { idx: 3 });
-        for (entries_count, data) in get_gpt_test_1_data() {
-            test_gpt_sync_restore(modify, modify, err, err, entries_count, data);
+        for (_, data) in get_gpt_test_1_data() {
+            let mut disk = data.to_vec();
+            apply_to_primary_and_secondary(&mut disk, modify);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
+            assert!(block_on(dev.sync_gpt(&mut gpt, false)).is_ok());
+            let entries = gpt.entries().unwrap();
+            assert_eq!(entries.len(), 1);
         }
     }
 
@@ -1804,14 +1826,18 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn test_sync_gpt_zero_partition_type_guid() {
+    fn test_sync_gpt_zero_partition_type_guid_is_unused() {
         fn modify(hdr: &mut GptHeader, mut entries: Ref<&mut [u8], [GptEntry]>) {
             entries[1].part_type = GptGuid([0u8; GPT_GUID_LEN]);
             hdr.update_entries_crc(entries.as_bytes());
         }
-        let err = Error::GptError(GptError::ZeroPartitionTypeGUID { idx: 2 });
-        for (entries_count, data) in get_gpt_test_1_data() {
-            test_gpt_sync_restore(modify, modify, err, err, entries_count, data);
+        for (_, data) in get_gpt_test_1_data() {
+            let mut disk = data.to_vec();
+            apply_to_primary_and_secondary(&mut disk, modify);
+            let (dev, mut gpt) = test_disk_and_gpt(&disk);
+            assert!(block_on(dev.sync_gpt(&mut gpt, false)).is_ok());
+            let entries = gpt.entries().unwrap();
+            assert_eq!(entries.len(), 1);
         }
     }
 
