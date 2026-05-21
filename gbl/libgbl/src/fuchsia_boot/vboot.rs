@@ -106,20 +106,22 @@ fn zircon_verify_kernel_internal<'a, 'b, B: SplitByteSliceMut + PartialEq>(
         }
     };
 
+    let top_level_vbmeta = verify_data.vbmeta_data().first().unwrap();
     assert!(
-        verify_data.vbmeta_data().first().unwrap().partition_name() == c"vbmeta",
+        top_level_vbmeta.partition_name() == c"vbmeta",
         "GBL requires the vbmeta partition as the top-level verification structure. Please \
         contact the GBL team if you encounter this error."
     );
 
-    // Collects ZBI items from vbmetadata and appends to the `zbi_items`.
-    for vbmeta_data in verify_data.vbmeta_data() {
-        for prop in vbmeta_data.descriptors()?.iter().filter_map(|d| match d {
-            Descriptor::Property(p) if p.key.starts_with("zbi") => Some(p),
-            _ => None,
-        }) {
-            zbi_items.extend_unaligned(prop.value_with_nul.split_last().unwrap().1)?;
-        }
+    // Collects ZBI items from top-level vbmetadata and appends to the `zbi_items`.
+    //
+    // Do not allow ZBIs from chained vbmeta blobs as this could allow privilege escalation
+    // from chained authorities that were never intended to be able to control the ZBI.
+    for prop in top_level_vbmeta.descriptors()?.iter().filter_map(|d| match d {
+        Descriptor::Property(p) if p.key.starts_with("zbi") => Some(p),
+        _ => None,
+    }) {
+        zbi_items.extend_unaligned(prop.value_with_nul.split_last().unwrap().1)?;
     }
 
     // Update rollback indices if the slot has successfully booted following:
@@ -140,7 +142,7 @@ mod test {
             append_cmd_line, corrupt_data, create_gbl_ops, create_storage, normalize_zbi,
             TEST_ROLLBACK_INDEX_LOCATION, ZIRCON_A_ZBI_FILE,
         },
-        ops::test::FakeGblOps,
+        ops::test::{FakeGblOps, FakeGblOpsStorage},
         tests::read_test_data,
     };
     use avb::{IoError, CERT_PIK_VERSION_LOCATION, CERT_PSK_VERSION_LOCATION};
@@ -486,5 +488,38 @@ mod test {
         ops.avb_ops.rollbacks.insert(CERT_PSK_VERSION_LOCATION, Err(IoError::NotImplemented));
 
         assert!(test_verify_zircon(&mut ops, true, KernelState::Valid).is_err());
+    }
+
+    #[test]
+    fn verify_ignores_zbi_props_from_chained_vbmeta() {
+        let zbi = read_test_data(ZIRCON_A_ZBI_FILE);
+
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"vbmeta_a", read_test_data("vbmeta_top.bin"));
+        storage.add_raw_device(c"chained_part_a", read_test_data("vbmeta_chained.bin"));
+        storage.add_raw_device(c"zircon_a", &zbi);
+
+        let mut ops = create_gbl_ops(&storage);
+        ops.avb_ops.rollbacks.insert(2, Ok(0));
+
+        let mut load_buffer = AlignedBuffer::new(zbi.len(), ZIRCON_KERNEL_ALIGNMENT);
+        load_buffer[..zbi.len()].clone_from_slice(&zbi);
+
+        let mut zbi_items_buffer = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
+        let mut zbi_items = ZbiContainer::new(&mut zbi_items_buffer[..]).unwrap();
+
+        let (kernel, _) = zbi_split_unused_buffer_mut(&mut load_buffer[..]).unwrap();
+
+        zircon_verify_kernel_internal(&mut ops, Some(SlotIndex::A), false, kernel, &mut zbi_items)
+            .unwrap();
+
+        let normalized = normalize_zbi(&zbi_items_buffer);
+
+        let mut expected_zbi = AlignedBuffer::new(1024, ZBI_ALIGNMENT_USIZE);
+        ZbiContainer::new(&mut expected_zbi[..]).unwrap();
+        append_cmd_line(&mut expected_zbi, b"vb_prop_top=val\0");
+        // Chained vbmeta tries to add `vb_prop_chained=val` which should not exist here.
+
+        assert_eq!(normalized, normalize_zbi(&expected_zbi));
     }
 }
