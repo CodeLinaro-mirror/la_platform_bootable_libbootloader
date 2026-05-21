@@ -763,6 +763,117 @@ def gen_zircon_test_images(zbi_tool):
           + vbmeta_prop_args
       )
 
+  # Generate chained vbmeta test data
+  with tempfile.TemporaryDirectory() as temp_dir:
+    temp_dir = pathlib.Path(temp_dir)
+
+    # Generate a ZBI payload for the chained vbmeta
+    chained_payload = temp_dir / "chained_payload.bin"
+    subprocess.run(
+        [
+            zbi_tool,
+            "--output",
+            chained_payload,
+            "--type=CMDLINE",
+            "--entry=vb_prop_chained=val",
+        ],
+        check=True,
+    )
+
+    # Generate the chained vbmeta image
+    chained_vbmeta_img = SCRIPT_DIR / "vbmeta_chained.bin"
+    subprocess.run(
+        [
+            AVB_TOOL,
+            "make_vbmeta_image",
+            "--output",
+            chained_vbmeta_img,
+            "--key",
+            PSK,
+            "--algorithm",
+            "SHA512_RSA4096",
+            "--prop_from_file",
+            f"zbi_vb_prop_chained:{chained_payload}",
+        ],
+        check=True,
+    )
+
+    # Extract the public key of the chained vbmeta
+    chained_pub_key = temp_dir / "chained_pub_key.bin"
+    subprocess.run(
+        [
+            AVB_TOOL,
+            "extract_public_key",
+            "--key",
+            PSK,
+            "--output",
+            chained_pub_key,
+        ],
+        check=True,
+    )
+
+    # Generate a hash descriptor for zircon (reusing zircon_a.zbi)
+    zbi_desc = temp_dir / "zircon.vbmeta_desc"
+    subprocess.run(
+        [
+            AVB_TOOL,
+            "add_hash_footer",
+            "--image",
+            SCRIPT_DIR / "zircon_a.zbi",
+            "--partition_name",
+            "zircon",
+            "--do_not_append_vbmeta_image",
+            "--output_vbmeta_image",
+            zbi_desc,
+            "--salt",
+            "1000",
+            "--partition_size",
+            "209715200",
+        ],
+        check=True,
+    )
+
+    # Generate the top-level vbmeta and chain it to the second one
+    top_vbmeta_img = SCRIPT_DIR / "vbmeta_top.bin"
+
+    top_payload = temp_dir / "top_payload.bin"
+    subprocess.run(
+        [
+            zbi_tool,
+            "--output",
+            top_payload,
+            "--type=CMDLINE",
+            "--entry=vb_prop_top=val",
+        ],
+        check=True,
+    )
+
+    subprocess.run(
+        [
+            AVB_TOOL,
+            "make_vbmeta_image",
+            "--output",
+            top_vbmeta_img,
+            "--key",
+            PSK,
+            "--algorithm",
+            "SHA512_RSA4096",
+            "--public_key_metadata",
+            ATX_METADATA,
+            "--include_descriptors_from_image",
+            zbi_desc,
+            "--prop_from_file",
+            f"zbi_vb_prop_top:{top_payload}",
+            "--chain_partition",
+            f"chained_part:2:{chained_pub_key}",
+            "--rollback_index",
+            f"{TEST_ROLLBACK_INDEX}",
+            "--rollback_index_location",
+            f"{TEST_ROLLBACK_INDEX_LOCATION}",
+        ],
+        check=True,
+    )
+
 
 def gen_fuchsia_fastboot_boot_image():
   with tempfile.TemporaryDirectory() as temp_dir:
