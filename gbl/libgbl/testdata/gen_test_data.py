@@ -711,6 +711,8 @@ def gen_zircon_test_images(zbi_tool):
               vbmeta_desc,
               "--partition_size",
               "209715200",
+              "--salt",
+              "1000",
           ]
       )
       # Generates two cmdline ZBI items to add as property descriptors to
