@@ -30,6 +30,8 @@ pub extern "C" fn avb_abort() -> ! {
 }
 
 #[no_mangle]
+#[inline(always)]
+#[allow(unused_attributes)]
 pub extern "C" fn avb_malloc_(size: usize) -> *mut c_void {
     // SAFETY: libavb calls are compatible with libc counterparts, alignment the same as
     // avb_free
@@ -37,6 +39,8 @@ pub extern "C" fn avb_malloc_(size: usize) -> *mut c_void {
 }
 
 #[no_mangle]
+#[inline(always)]
+#[allow(unused_attributes)]
 pub extern "C" fn avb_free(ptr: *mut c_void) {
     // SAFETY: libavb calls are compatible with libc counterparts, alignment the same as
     // avb_malloc_
@@ -59,6 +63,8 @@ pub extern "C" fn avb_div_by_10(dividend: *mut u64) -> u32 {
 }
 
 #[no_mangle]
+#[inline(always)]
+#[allow(unused_attributes)]
 pub extern "C" fn avb_memcpy(dest: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     // SAFETY: libavb calls are compatible with libc counterparts
     unsafe { memcpy(dest, src, n) }
