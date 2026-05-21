@@ -28,6 +28,7 @@ def _build_and_run_impl(ctx):
     ctx.actions.run_shell(
         inputs = [executable] + ctx.files.data,
         outputs = [logfile],
+        env = ctx.attr.env,
         progress_message = "Running test %s" % executable.short_path,
         command = """\
         BIN="%s" && \
@@ -56,18 +57,23 @@ build_and_run = rule(
             allow_files = True,
             allow_empty = True,
         ),
+        "env": attr.string_dict(
+            allow_empty = True,
+            default = {},
+        ),
     },
 )
 
 # TODO(b/382503065): This is a temporary workaround due to presubmit infra not blocking on test
 # failures and only on build failures. Removed once the issue is solved.
-def build_and_run_tests(name, tests, data):
+def build_and_run_tests(name, tests, data, envs = {}):
     """Create an `sh_test` target that run a set of unittests during build time.
 
     Args:
         name (String): name of the rust_library target.
         tests (List of strings): List of test target.
         data (List of strings): Runtime data needed by the tests.
+        envs (Dict of string to dict): Environment variables for each test.
     """
 
     all_tests = []
@@ -78,6 +84,7 @@ def build_and_run_tests(name, tests, data):
             testonly = True,
             executable = test,
             data = data,
+            env = envs.get(test, {}),
         )
 
         all_tests.append(":{}".format(subtest_name))
