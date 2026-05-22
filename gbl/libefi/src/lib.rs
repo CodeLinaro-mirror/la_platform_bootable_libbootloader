@@ -53,6 +53,7 @@
 
 extern crate alloc;
 use alloc::vec::Vec;
+use arrayvec::ArrayVec;
 use core::ptr::NonNull;
 
 #[cfg(not(test))]
@@ -129,10 +130,49 @@ use efi_types::{
 use liberror::{Error, Result};
 use libutils::{aligned_subslice, base_type_name};
 use protocol::{
-    simple_text_output::SimpleTextOutputProtocol,
-    {Protocol, ProtocolImpl, ProtocolInfo},
+    simple_text_output::SimpleTextOutputProtocol, Protocol, ProtocolImpl, ProtocolInfo, Revision,
 };
 use zerocopy::{FromBytes, Ref};
+
+/// Container for EFI metrics.
+pub struct EfiMetrics {
+    /// List of opened protocols.
+    pub opened_protocols: ArrayVec<(&'static str, Revision), 32>,
+}
+
+impl EfiMetrics {
+    /// Records an opened protocol version.
+    fn record_protocol(&mut self, tag: &'static str, rev: Revision) {
+        if !self.opened_protocols.iter().any(|(t, _)| *t == tag) {
+            let _ = self.opened_protocols.try_push((tag, rev));
+        }
+    }
+}
+
+#[cfg(not(test))]
+static EFI_METRICS: spin::Mutex<EfiMetrics> =
+    spin::Mutex::new(EfiMetrics { opened_protocols: ArrayVec::new_const() });
+
+#[cfg(test)]
+thread_local! {
+    static EFI_METRICS: core::cell::RefCell<EfiMetrics> = core::cell::RefCell::new(EfiMetrics { opened_protocols: ArrayVec::new_const() });
+}
+
+/// Records an opened protocol version.
+pub(crate) fn record_protocol(tag: &'static str, rev: Revision) {
+    #[cfg(not(test))]
+    EFI_METRICS.lock().record_protocol(tag, rev);
+    #[cfg(test)]
+    EFI_METRICS.with_borrow_mut(|m| m.record_protocol(tag, rev));
+}
+
+/// Returns the list of opened protocols.
+pub fn opened_protocols() -> ArrayVec<(&'static str, Revision), 32> {
+    #[cfg(not(test))]
+    return EFI_METRICS.lock().opened_protocols.clone();
+    #[cfg(test)]
+    return EFI_METRICS.with_borrow(|m| m.opened_protocols.clone());
+}
 
 /// `EfiEntry` stores the EFI system table pointer and image handle passed from the entry point.
 /// It's the root data structure that derives all other wrapper APIs and structures.

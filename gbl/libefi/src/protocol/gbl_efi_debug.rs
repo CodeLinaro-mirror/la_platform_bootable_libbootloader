@@ -35,6 +35,8 @@ impl ProtocolInfo for GblDebugProtocol {
         EfiGuid::new(0x98ca3da1, 0xc1ac, 0x4402, [0x9c, 0x16, 0x75, 0x58, 0xd3, 0xed, 0x57, 0x05]);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
+
+    const METRICS_TAG: Option<&'static str> = Some("gbl_debug");
 }
 
 impl<'a> Protocol<'a, GblDebugProtocol> {

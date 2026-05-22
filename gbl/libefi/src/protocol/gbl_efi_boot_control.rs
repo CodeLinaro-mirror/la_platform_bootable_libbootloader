@@ -42,6 +42,8 @@ impl ProtocolInfo for GblBootControlProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0xd382db1b, 0x9ac2, 0x11f0, [0x84, 0xc7, 0x04, 0x7b, 0xcb, 0xa9, 0x60, 0x19]);
+
+    const METRICS_TAG: Option<&'static str> = Some("gbl_boot_control");
 }
 
 fn from_efi_unbootable_reason(reason: GblEfiUnbootableReason) -> UnbootableReason {

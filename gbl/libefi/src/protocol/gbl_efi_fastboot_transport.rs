@@ -39,6 +39,8 @@ impl ProtocolInfo for GblFastbootTransportProtocol {
         EfiGuid::new(0xedade92c, 0x5c48, 0x440d, [0x84, 0x9c, 0xe2, 0xa0, 0xc7, 0xe5, 0x51, 0x43]);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
+
+    const METRICS_TAG: Option<&'static str> = Some("gbl_fastboot_transport");
 }
 
 /// Wrapper for GblEfiFastbootRxMode
