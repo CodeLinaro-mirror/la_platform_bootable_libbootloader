@@ -44,7 +44,7 @@ impl From<OpCode> for usize {
         match op_code {
             OpCode::Open => 0x1,
             OpCode::Close => 0x2,
-            OpCode::WriteC => 0x4,
+            OpCode::WriteC => 0x3,
             OpCode::Write => 0x5,
             OpCode::Read => 0x6,
             OpCode::FLen => 0x0C,
@@ -63,40 +63,54 @@ enum ExitReason {
 
 /// Semihosting call for aarch64
 #[cfg(target_arch = "aarch64")]
-fn semihosting_call(op_code: OpCode, param: usize) -> Option<usize> {
+fn semihosting_call(op_code: OpCode, param: usize) -> Result<usize, Error> {
     let mut ret = usize::from(op_code);
     // SAFETY: Semihosting API call. The operation does not modify program state.
     unsafe {
         core::arch::asm!(
+            "dsb sy",
             "hlt 0xF000",
             inout("x0") ret,
             in("x1") param,
             clobber_abi("C"),
         );
     };
-    Some(ret)
+    Ok(ret)
 }
 
 #[cfg(target_arch = "riscv64")]
-fn semihosting_call(_: OpCode, _: usize) -> Option<usize> {
+fn semihosting_call(_: OpCode, _: usize) -> Result<usize, Error> {
     unimplemented!()
 }
 
 #[cfg(target_arch = "x86_64")]
-fn semihosting_call(_: OpCode, _: usize) -> Option<usize> {
+fn semihosting_call(_: OpCode, _: usize) -> Result<usize, Error> {
     // X86 has no such concept
-    None
+    Err(Error::Unsupported)
+}
+
+fn semihosting_call_with_args<const N: usize>(
+    op_code: OpCode,
+    args: [usize; N],
+) -> Result<usize, Error> {
+    let mut volatile_args = [0usize; N];
+    for i in 0..N {
+        // We need to make sure the arguments are written to memory and not optimized away.
+        // SAFETY: `volatile_args[i]` is a valid pointer to a local variable.
+        unsafe { core::ptr::write_volatile(&mut volatile_args[i], args[i]) };
+    }
+    semihosting_call(op_code, volatile_args.as_ptr() as _)
 }
 
 /// Run command on the host
 pub fn system(cmd: &CStr) -> usize {
-    let args = [cmd.as_ptr() as usize, cmd.count_bytes()];
-    semihosting_call(OpCode::System, args.as_ptr() as usize).unwrap_or(usize::MAX)
+    semihosting_call_with_args(OpCode::System, [cmd.as_ptr() as usize, cmd.count_bytes()])
+        .unwrap_or(usize::MAX)
 }
 
 /// Writes a character to the semihosting console.
 pub fn writec(val: u8) {
-    semihosting_call(OpCode::WriteC, &val as *const u8 as usize);
+    let _ = semihosting_call_with_args(OpCode::WriteC, [val.into()]);
 }
 
 /// Semihosting console based on writec
@@ -133,10 +147,8 @@ macro_rules! println {
 
 /// Exits system.
 pub fn shutdown(exit_code: usize) -> ! {
-    let _ = semihosting_call(
-        OpCode::ExitExtended,
-        [ExitReason::ApplicationExit as usize, exit_code].as_ptr() as _,
-    );
+    let args = [ExitReason::ApplicationExit as usize, exit_code];
+    let _ = semihosting_call_with_args(OpCode::ExitExtended, args);
     loop {}
 }
 
@@ -172,8 +184,10 @@ pub enum OpenMode {
 
 /// Opens a file
 pub fn fopen(path: &CStr, mode: OpenMode) -> Result<NonZeroUsize, Error> {
-    let args: [usize; _] = [path.as_ptr() as _, mode as _, path.count_bytes()];
-    match semihosting_call(OpCode::Open, args.as_ptr() as _).ok_or(Error::Unsupported)? {
+    match semihosting_call_with_args(
+        OpCode::Open,
+        [path.as_ptr() as _, mode as _, path.count_bytes()],
+    )? {
         usize::MAX => Err(Error::Other(Some("fopen failed"))),
         v => NonZeroUsize::new(v).ok_or(Error::Other(Some("got zero handle"))),
     }
@@ -181,8 +195,7 @@ pub fn fopen(path: &CStr, mode: OpenMode) -> Result<NonZeroUsize, Error> {
 
 /// Closes a file
 pub fn fclose(handle: NonZeroUsize) -> Result<(), Error> {
-    let args: [usize; _] = [handle.get()];
-    match semihosting_call(OpCode::Close, args.as_ptr() as _).ok_or(Error::Unsupported)? {
+    match semihosting_call_with_args(OpCode::Close, [handle.get()])? {
         0 => Ok(()),
         _ => Err(Error::Other(Some("fclose() failed"))),
     }
@@ -190,8 +203,10 @@ pub fn fclose(handle: NonZeroUsize) -> Result<(), Error> {
 
 /// Reads data from a file
 pub fn fread(handle: NonZeroUsize, out: &mut [u8]) -> Result<usize, Error> {
-    let args: [usize; _] = [handle.get(), out.as_mut_ptr() as _, out.len()];
-    match semihosting_call(OpCode::Read, args.as_ptr() as _).ok_or(Error::Unsupported)? {
+    match semihosting_call_with_args(
+        OpCode::Read,
+        [handle.get(), out.as_mut_ptr() as _, out.len()],
+    )? {
         0 => Ok(out.len()),
         v if v >= out.len() => Err(Error::Other(Some("fread() failed"))),
         v => Ok(v),
@@ -200,8 +215,8 @@ pub fn fread(handle: NonZeroUsize, out: &mut [u8]) -> Result<usize, Error> {
 
 /// Writes data to a file
 pub fn fwrite(handle: NonZeroUsize, data: &[u8]) -> Result<(), Error> {
-    let args: [usize; _] = [handle.get(), data.as_ptr() as _, data.len()];
-    match semihosting_call(OpCode::Write, args.as_ptr() as _).ok_or(Error::Unsupported)? {
+    match semihosting_call_with_args(OpCode::Write, [handle.get(), data.as_ptr() as _, data.len()])?
+    {
         0 => Ok(()),
         _ => Err(Error::Other(Some("fwrite() failed"))),
     }
@@ -209,8 +224,7 @@ pub fn fwrite(handle: NonZeroUsize, data: &[u8]) -> Result<(), Error> {
 
 /// Queries file length
 pub fn flen(handle: NonZeroUsize) -> Result<usize, Error> {
-    let args: [usize; _] = [handle.get()];
-    match semihosting_call(OpCode::FLen, args.as_ptr() as _).ok_or(Error::Unsupported)? {
+    match semihosting_call_with_args(OpCode::FLen, [handle.get()])? {
         usize::MAX => Err(Error::Other(Some("flen() failed"))),
         v => Ok(v),
     }
