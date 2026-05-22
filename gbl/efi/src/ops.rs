@@ -180,30 +180,77 @@ impl<'a, 'b> Ops<'a, 'b> {
         Fdt::new(fdt_bytes).ok()
     }
 
-    /// Helper for opening GblBootControlProtocol protocol.
-    fn open_boot_control_protocol(&mut self) -> Result<Protocol<'a, GblBootControlProtocol>> {
-        match self
+    /// Refuses to use a GBL protocol whose firmware-reported revision is below 1.0.
+    ///
+    /// Every GBL custom protocol has been release with major revision 1. A lower revision
+    /// means the firmware ships a pre-released, potentially ABI-incompatible version.
+    fn check_gbl_protocol_revision<T: Versioned>(&self, protocol: &T) -> Result<()> {
+        let actual = protocol.revision();
+        if actual.major < 1 {
+            efi_println!(
+                self.efi_entry,
+                "GBL protocol {} revision {} is below 1.0; refusing to use",
+                core::any::type_name::<T>(),
+                actual
+            );
+            return Err(Error::UnsupportedVersion);
+        }
+        Ok(())
+    }
+
+    /// Helper for opening GblAvbProtocol.
+    fn open_avb_protocol(&self) -> Result<Protocol<'a, GblAvbProtocol>> {
+        let protocol = self
             .efi_entry
             .system_table()
             .boot_services()
-            .find_first_and_open::<GblBootControlProtocol>()
-        {
-            Ok(protocol)
-                if protocol.revision() >= Protocol::<'_, GblBootControlProtocol>::REVISION =>
-            {
-                Ok(protocol)
-            }
-            Ok(protocol) => {
-                efi_println!(
-                    self.efi_entry,
-                    "GblBootControlProtocol version is too low, expected: {} actual: {}",
-                    Protocol::<'_, GblBootControlProtocol>::REVISION,
-                    protocol.revision()
-                );
-                Err(Error::UnsupportedVersion)
-            }
-            Err(e) => Err(e),
-        }
+            .find_first_and_open::<GblAvbProtocol>()?;
+        self.check_gbl_protocol_revision(&protocol)?;
+        Ok(protocol)
+    }
+
+    /// Helper for opening GblAvfProtocol.
+    fn open_avf_protocol(&self) -> Result<Protocol<'a, GblAvfProtocol>> {
+        let protocol = self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblAvfProtocol>()?;
+        self.check_gbl_protocol_revision(&protocol)?;
+        Ok(protocol)
+    }
+
+    /// Helper for opening GblBootControlProtocol.
+    fn open_boot_control_protocol(&self) -> Result<Protocol<'a, GblBootControlProtocol>> {
+        let protocol = self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblBootControlProtocol>()?;
+        self.check_gbl_protocol_revision(&protocol)?;
+        Ok(protocol)
+    }
+
+    /// Helper for opening GblFastbootProtocol.
+    fn open_fastboot_protocol(&self) -> Result<Protocol<'a, GblFastbootProtocol>> {
+        let protocol = self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblFastbootProtocol>()?;
+        self.check_gbl_protocol_revision(&protocol)?;
+        Ok(protocol)
+    }
+
+    /// Helper for opening GblOsConfigurationProtocol.
+    fn open_os_configuration_protocol(&self) -> Result<Protocol<'a, GblOsConfigurationProtocol>> {
+        let protocol = self
+            .efi_entry
+            .system_table()
+            .boot_services()
+            .find_first_and_open::<GblOsConfigurationProtocol>()?;
+        self.check_gbl_protocol_revision(&protocol)?;
+        Ok(protocol)
     }
 
     /// Run protocol integration required tests.
@@ -279,6 +326,36 @@ impl<'a, 'b> Ops<'a, 'b> {
             Ok(CommandExecType::DefaultImpl)
         }
     }
+
+    /// Helper to run GblFastbootProtocol.command_exec.
+    fn handle_command_exec_via_protocol<'arg, Sender: InfoSender + OkaySender + FailSender>(
+        &self,
+        args: impl Iterator<Item = &'arg CStr> + Clone,
+        download: &mut [u8],
+        download_used: usize,
+        sender: &mut Option<Sender>,
+    ) -> Result<CommandExecType> {
+        match self.open_fastboot_protocol() {
+            Ok(v) => {
+                match v.command_exec(args, download, download_used, |msg_type, msg| {
+                    command_exec_message_sender(msg_type, msg, sender)
+                }) {
+                    Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED) => {
+                        Ok(CommandExecType::Prohibited)
+                    }
+                    Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL)
+                    | Err(Error::NotFound) => Ok(CommandExecType::DefaultImpl),
+                    Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL) => {
+                        Ok(CommandExecType::CustomImpl)
+                    }
+                    Ok(_) => Err(Error::InvalidState),
+                    Err(e) => Err(e),
+                }
+            }
+            Err(Error::NotFound) => Ok(Default::default()),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 impl Write for Ops<'_, '_> {
@@ -305,37 +382,6 @@ fn command_exec_message_sender(
             block_on(sender.take().ok_or(Error::ProtocolError)?.send_fail(msg))
         }
         _ => Err(Error::InvalidInput),
-    }
-}
-
-/// Helper function to run GblFastbootProtocol.command_exec
-fn handle_command_exec_via_protocol<'arg, Sender: InfoSender + OkaySender + FailSender>(
-    entry: &EfiEntry,
-    args: impl Iterator<Item = &'arg CStr> + Clone,
-    download: &mut [u8],
-    download_used: usize,
-    sender: &mut Option<Sender>,
-) -> Result<CommandExecType> {
-    match entry.system_table().boot_services().find_first_and_open::<GblFastbootProtocol>() {
-        Ok(v) => {
-            match v.command_exec(args, download, download_used, |msg_type, msg| {
-                command_exec_message_sender(msg_type, msg, sender)
-            }) {
-                Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_PROHIBITED) => {
-                    Ok(CommandExecType::Prohibited)
-                }
-                Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL) | Err(Error::NotFound) => {
-                    Ok(CommandExecType::DefaultImpl)
-                }
-                Ok(GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_CUSTOM_IMPL) => {
-                    Ok(CommandExecType::CustomImpl)
-                }
-                Ok(_) => Err(Error::InvalidState),
-                Err(e) => Err(e),
-            }
-        }
-        Err(Error::NotFound) => Ok(Default::default()),
-        Err(e) => Err(e),
     }
 }
 
@@ -414,8 +460,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     fn avb_read_partition_attributes_raw(
         &mut self,
     ) -> AvbIoResult<ArrayMaxSpecializedParts<SpecializedPartition>> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => protocol.read_partition_attributes().map_err(efi_error_to_avb_error),
 
             Err(_) => Err(AvbIoError::NotImplemented),
@@ -423,8 +468,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     }
 
     fn avb_read_device_status(&mut self) -> AvbIoResult<AvbDeviceStatus> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => protocol
                 .read_device_status()
                 .map(efi_to_gbl_avb_device_status)
@@ -434,8 +478,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     }
 
     fn avb_read_rollback_index(&mut self, rollback_index_location: usize) -> AvbIoResult<u64> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => protocol
                 .read_rollback_index(rollback_index_location)
                 .map_err(efi_error_to_avb_error),
@@ -448,8 +491,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         rollback_index_location: usize,
         index: u64,
     ) -> AvbIoResult<()> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => protocol
                 .write_rollback_index(rollback_index_location, index)
                 .map_err(efi_error_to_avb_error),
@@ -458,8 +500,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     }
 
     fn avb_read_persistent_value(&mut self, name: &CStr, value: &mut [u8]) -> AvbIoResult<usize> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => {
                 protocol.read_persistent_value(name, value).map_err(efi_error_to_avb_error)
             }
@@ -468,8 +509,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     }
 
     fn avb_write_persistent_value(&mut self, name: &CStr, value: &[u8]) -> AvbIoResult<()> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => {
                 protocol.write_persistent_value(name, Some(value)).map_err(efi_error_to_avb_error)
             }
@@ -478,8 +518,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     }
 
     fn avb_erase_persistent_value(&mut self, name: &CStr) -> AvbIoResult<()> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => {
                 protocol.write_persistent_value(name, None).map_err(efi_error_to_avb_error)
             }
@@ -492,8 +531,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         public_key: &[u8],
         public_key_metadata: Option<&[u8]>,
     ) -> AvbIoResult<KeyValidationStatus> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => protocol
                 .validate_vbmeta_public_key(public_key, public_key_metadata)
                 .map(to_avb_validation_status_or_panic)
@@ -555,8 +593,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         static AVB_PROPERTIES_STORAGE: Mutex<AvbPropertiesStorage> =
             Mutex::new(AvbPropertiesStorage(ArrayVec::new_const()));
 
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => {
                 #[cfg(not(test))]
                 let mut avb_properties_efi = AVB_PROPERTIES_STORAGE.try_lock().unwrap();
@@ -608,16 +645,14 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     }
 
     fn factory_data_reset(&mut self) -> Result<()> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvbProtocol>()
-        {
+        match self.open_avb_protocol() {
             Ok(protocol) => protocol.factory_data_reset(),
             Err(e) => Err(e),
         }
     }
 
     fn avf_is_supported(&mut self) -> Result<bool> {
-        match self.efi_entry.system_table().boot_services().find_first_and_open::<GblAvfProtocol>()
-        {
+        match self.open_avf_protocol() {
             Ok(_) => Ok(true),
             // Protocol is optional.
             Err(Error::NotFound | Error::Unsupported) => Ok(false),
@@ -626,12 +661,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     }
 
     fn avf_read_vendor_dice_handover<'c>(&mut self, buffer: &'c mut [u8]) -> Result<&'c [u8]> {
-        let handover_size = self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblAvfProtocol>()?
-            .read_vendor_dice_handover(buffer)?;
+        let handover_size = self.open_avf_protocol()?.read_vendor_dice_handover(buffer)?;
 
         Ok(&buffer[..handover_size])
     }
@@ -640,13 +670,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         &mut self,
         buffer: &'c mut [u8],
     ) -> Result<Option<&'c [u8]>> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblAvfProtocol>()?
-            .read_secretkeeper_public_key(buffer)
-        {
+        match self.open_avf_protocol()?.read_secretkeeper_public_key(buffer) {
             Ok(public_key_size) => Ok(Some(&buffer[..public_key_size])),
             // Secret Keeper public key may not be provided for VMs booted with the legacy
             // `VmSecrets::V1` scheme. This shouldn't be supported on modern devices, so
@@ -686,12 +710,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         bootconfig: &[u8],
         fixup_buffer: &'c mut [u8],
     ) -> Result<Option<&'c [u8]>> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblOsConfigurationProtocol>()
-        {
+        match self.open_os_configuration_protocol() {
             Ok(protocol) => match protocol.fixup_bootconfig(bootconfig, fixup_buffer) {
                 Ok(fixup_size) => Ok(Some(&fixup_buffer[..fixup_size])),
                 Err(Error::Unsupported) => Ok(None),
@@ -706,19 +725,8 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     fn fixup_device_tree(&mut self, device_tree: &mut [u8]) -> Result<()> {
         match self.efi_entry.system_table().boot_services().find_first_and_open::<DtFixupProtocol>()
         {
-            Ok(protocol) if protocol.revision() >= Protocol::<'_, DtFixupProtocol>::REVISION => {
-                protocol.fixup(device_tree)
-            }
+            Ok(protocol) => protocol.fixup(device_tree),
             // Protocol is optional.
-            Ok(protocol) => {
-                efi_println!(
-                    self.efi_entry,
-                    "DtFixupProtocol exists but version is too low for GBL to use ({} < {})",
-                    protocol.revision(),
-                    Protocol::<'_, DtFixupProtocol>::REVISION
-                );
-                Ok(())
-            }
             Err(Error::NotFound) => Ok(()),
             Err(e) => Err(e),
         }
@@ -728,12 +736,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         &mut self,
         components_registry: &mut DtComponentsRegistry,
     ) -> Result<()> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblOsConfigurationProtocol>()
-        {
+        match self.open_os_configuration_protocol() {
             Ok(protocol) => {
                 // Protocol detected, convert to UEFI types.
                 let mut uefi_components: ArrayVec<_, MAXIMUM_DT_COMPONENTS> = components_registry
@@ -775,12 +778,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         fit: &[u8],
         metadata: Option<&[u8]>,
     ) -> Result<Option<usize>> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblOsConfigurationProtocol>()
-        {
+        match self.open_os_configuration_protocol() {
             Ok(protocol) => {
                 let metadata_slice = metadata.unwrap_or(&[]);
                 match protocol.select_fit_configuration(fit, metadata_slice) {
@@ -801,23 +799,14 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         args: impl Iterator<Item = &'arg CStr> + Clone,
         out: &mut [u8],
     ) -> Result<usize> {
-        self.efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()?
-            .get_var(name, args, out)
+        self.open_fastboot_protocol()?.get_var(name, args, out)
     }
 
     fn fastboot_visit_all_variables(
         &mut self,
         mut cb: impl FnMut(&mut Self, &[&CStr], &CStr),
     ) -> Result<()> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()
-        {
+        match self.open_fastboot_protocol() {
             Ok(v) => v.get_var_all(|args, val| cb(self, args, val)),
             Err(Error::NotFound) => Ok(()),
             Err(e) => Err(e),
@@ -834,11 +823,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
             LockState::Unlocked => efi_types::GBL_EFI_AVB_LOCK_STATE_UNLOCKED,
         };
 
-        self.efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblAvbProtocol>()?
-            .write_lock_state(lock_type, lock_state)
+        self.open_avb_protocol()?.write_lock_state(lock_type, lock_state)
     }
 
     fn fastboot_get_unlock_ability(&mut self) -> Result<Unlockability> {
@@ -850,12 +835,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     }
 
     fn fastboot_get_staged(&mut self, out: &mut [u8]) -> Result<(usize, usize)> {
-        match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()
-        {
+        match self.open_fastboot_protocol() {
             Ok(v) => v.get_staged(out),
             Err(Error::NotFound) => Ok((0, 0)),
             Err(e) => Err(e),
@@ -865,10 +845,7 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
     fn fastboot_get_partition_type(&mut self, part: &str) -> Result<FastbootPartitionType> {
         let mut part_type = [0u8; _];
         match self
-            .efi_entry
-            .system_table()
-            .boot_services()
-            .find_first_and_open::<GblFastbootProtocol>()
+            .open_fastboot_protocol()
             .and_then(|p| p.get_partition_type(RawName::try_from(part)?.to_cstr(), &mut part_type))
         {
             Ok(part_type_len) => Ok((part_type_len, part_type).into()),
@@ -893,13 +870,8 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
         sender: Sender,
     ) -> Result<CommandExecType> {
         let sender = &mut Some(sender);
-        let mut res = handle_command_exec_via_protocol(
-            self.efi_entry,
-            args.clone(),
-            download,
-            download_used,
-            sender,
-        );
+        let mut res =
+            self.handle_command_exec_via_protocol(args.clone(), download, download_used, sender);
 
         if matches!(res, Ok(CommandExecType::DefaultImpl) | Err(Error::NotFound))
             && let Some(sender) = sender.take()
@@ -1139,15 +1111,116 @@ fn avb_error_to_efi_error(error: AvbIoError) -> Error {
 #[cfg(test)]
 mod test {
     use super::*;
+    use ::efi::protocol::Revision;
     use efi_mocks::{protocol::gbl_efi_avb::GblAvbProtocol, MockEfi};
-    use efi_types::defs::EFI_DT_FIXUP_PROTOCOL_REVISION;
     use libgbl::{
         device_tree::{DtComponentSourceMetadata, SelectedDtComponent, SelectedDtComponents},
         gbl_avb::{Critical, Fdr, Verification},
     };
     use libutils::cstr_buffer;
     use mockall::predicate::eq;
-    use std::{cell::RefCell, rc::Rc, slice};
+    use std::slice;
+
+    /// Builds a `MockEfi` whose `find_first_and_open::<P>()` returns a default mock with
+    /// `Versioned::revision` overridden to `revision`. The con_out passthrough lets the
+    /// rejection path's `efi_println!` succeed without an explicit `write_str` expectation.
+    fn mock_efi_with_revision<P: 'static + efi_mocks::protocol::WithRevision>(
+        revision: Revision,
+    ) -> MockEfi {
+        let mut mock_efi = MockEfi::new();
+        mock_efi.con_out.expect_write_str().returning(|_| Ok(()));
+        mock_efi
+            .boot_services
+            .expect_find_first_and_open::<P>()
+            .return_once(move || Ok(P::with_revision(revision)));
+        mock_efi
+    }
+
+    #[test]
+    fn open_avb_protocol_rejects_pre_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblAvbProtocol>(Revision { major: 0, minor: 256 }).install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.open_avb_protocol().err(), Some(Error::UnsupportedVersion));
+    }
+
+    #[test]
+    fn open_avb_protocol_accepts_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblAvbProtocol>(Revision { major: 1, minor: 0 }).install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert!(ops.open_avb_protocol().is_ok());
+    }
+
+    #[test]
+    fn open_avf_protocol_rejects_pre_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblAvfProtocol>(Revision { major: 0, minor: 256 }).install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.open_avf_protocol().err(), Some(Error::UnsupportedVersion));
+    }
+
+    #[test]
+    fn open_avf_protocol_accepts_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblAvfProtocol>(Revision { major: 1, minor: 0 }).install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert!(ops.open_avf_protocol().is_ok());
+    }
+
+    #[test]
+    fn open_boot_control_protocol_rejects_pre_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblBootControlProtocol>(Revision { major: 0, minor: 256 })
+                .install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.open_boot_control_protocol().err(), Some(Error::UnsupportedVersion));
+    }
+
+    #[test]
+    fn open_boot_control_protocol_accepts_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblBootControlProtocol>(Revision { major: 1, minor: 0 })
+                .install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert!(ops.open_boot_control_protocol().is_ok());
+    }
+
+    #[test]
+    fn open_fastboot_protocol_rejects_pre_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblFastbootProtocol>(Revision { major: 0, minor: 256 })
+                .install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.open_fastboot_protocol().err(), Some(Error::UnsupportedVersion));
+    }
+
+    #[test]
+    fn open_fastboot_protocol_accepts_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblFastbootProtocol>(Revision { major: 1, minor: 0 })
+                .install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert!(ops.open_fastboot_protocol().is_ok());
+    }
+
+    #[test]
+    fn open_os_configuration_protocol_rejects_pre_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblOsConfigurationProtocol>(Revision { major: 0, minor: 256 })
+                .install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert_eq!(ops.open_os_configuration_protocol().err(), Some(Error::UnsupportedVersion));
+    }
+
+    #[test]
+    fn open_os_configuration_protocol_accepts_1_0() {
+        let installed =
+            mock_efi_with_revision::<GblOsConfigurationProtocol>(Revision { major: 1, minor: 0 })
+                .install();
+        let ops = Ops::new(installed.entry(), &[], None, 0);
+        assert!(ops.open_os_configuration_protocol().is_ok());
+    }
 
     /// Represents possible outcomes for protocol method call.
     #[derive(Copy, Clone)]
@@ -2292,15 +2365,8 @@ mod test {
         base: &mut [u8],
         base_after_fixup: &'static [u8],
         protocol_lookup_error: Option<Error>,
-        protocol_revision_invalid: bool,
         protocol_result: Result<()>,
     ) -> Result<()> {
-        let (protocol_revision, expected_conout) = if protocol_revision_invalid {
-            (0, "DtFixupProtocol exists but version is too low for GBL to use (0.0 < 1.0)\r\n")
-        } else {
-            (EFI_DT_FIXUP_PROTOCOL_REVISION, "")
-        };
-
         let mut mock_efi = MockEfi::new();
         mock_efi.boot_services.expect_find_first_and_open::<DtFixupProtocol>().return_once(
             move || {
@@ -2309,7 +2375,6 @@ mod test {
                 }
 
                 let mut dt_fixup = DtFixupProtocol::default();
-                dt_fixup.expect_revision().return_const(protocol_revision);
                 dt_fixup.expect_fixup().return_once(move |buffer| {
                     buffer.copy_from_slice(base_after_fixup);
                     protocol_result
@@ -2319,24 +2384,11 @@ mod test {
             },
         );
 
-        // This is a bit tricky, we want to check we're logging the right
-        // messages to conout, but depending on formatting it might be broken
-        // up into multiple calls to `write_str()`. So here we create a shared
-        // vector of strings which we append each call, and then at the end we
-        // can join all the outputs and compare against what we expect.
-        let actual_conout = Rc::new(RefCell::new(Vec::new()));
-        let expect_actual_conout = actual_conout.clone();
-        mock_efi.con_out.expect_write_str().returning_st(move |s| {
-            expect_actual_conout.borrow_mut().push(s.to_string());
-            Ok(())
-        });
-
         let installed = mock_efi.install();
         let mut ops = Ops::new(installed.entry(), &[], None, 0);
 
         let r = ops.fixup_device_tree(base);
         assert_eq!(base, base_after_fixup);
-        assert_eq!(expected_conout, actual_conout.borrow().join(""));
         r
     }
 
@@ -2351,8 +2403,6 @@ mod test {
                 WITH_FIXUP,
                 // No protocol lookup error.
                 None,
-                // Supported version.
-                false,
                 // No protocol call error.
                 Ok(()),
             ),
@@ -2371,8 +2421,6 @@ mod test {
                 WITH_FIXUP,
                 // No protocol lookup error.
                 None,
-                // Supported version.
-                false,
                 // Protocol returns error.
                 Err(Error::BufferTooSmall(Some(100))),
             ),
@@ -2389,26 +2437,6 @@ mod test {
                 &[],
                 // Protocol not found.
                 Some(Error::NotFound),
-                // Supported version.
-                false,
-                // No protocol call error.
-                Ok(()),
-            ),
-            // Protocol is optional, so passed.
-            Ok(()),
-        );
-    }
-
-    #[test]
-    fn test_fixup_device_tree_protocol_unsupported_revision() {
-        assert_eq!(
-            test_fixup_device_tree(
-                &mut [],
-                &[],
-                // No protocol lookup error.
-                None,
-                // Unsupported version.
-                true,
                 // No protocol call error.
                 Ok(()),
             ),
@@ -2425,8 +2453,6 @@ mod test {
                 &[],
                 // Protocol lookup failed.
                 Some(Error::AccessDenied),
-                // Supported version.
-                false,
                 // No protocol call error.
                 Ok(()),
             ),
