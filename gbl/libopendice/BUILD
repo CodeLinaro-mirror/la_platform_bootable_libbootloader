@@ -14,7 +14,7 @@
 
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_C_INCLUDE")
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 
 package(
@@ -33,8 +33,9 @@ rust_library(
     deps = [
         ":opendice_android_bindgen",
         ":opendice_cbor_bindgen",
-        "@open_dice//:libopen_dice_android_baremetal_ed25519_static",
-        "@open_dice//:libopen_dice_cbor_baremetal_ed25519_static",
+        "@ciborium_ll",
+        "@open_dice//:libopen_dice_android_baremetal_multialg_static",
+        "@open_dice//:libopen_dice_cbor_baremetal_multialg_static",
         "@zeroize",
     ] + select({
         "@gbl//toolchain:gbl_rust_uefi_aarch64": [
@@ -42,6 +43,12 @@ rust_library(
         ],
         "//conditions:default": [],
     }),
+)
+
+rust_test(
+    name = "libopendice_test",
+    crate = ":libopendice",
+    rustc_flags = ANDROID_RUST_LINTS,
 )
 
 rust_bindgen(
@@ -55,6 +62,7 @@ rust_bindgen(
         "--rustified-enum=DiceMode",
         "--rustified-enum=DiceResult",
         "--rustified-enum=DicePrincipal",
+        "--rustified-enum=DiceKeyAlgorithm",
         "--allowlist-function=DiceDeriveCdiPrivateKeySeed",
         "--allowlist-function=DiceDeriveCdiCertificateId",
         "--allowlist-function=DiceMainFlow",
@@ -73,8 +81,10 @@ rust_bindgen(
         "--allowlist-var=DICE_PRIVATE_KEY_SEED_SIZE",
         "--allowlist-var=DICE_ID_SIZE",
         "--allowlist-var=DICE_PRIVATE_KEY_BUFFER_SIZE",
+        "--allowlist-var=kCoseAlg.*",
+        "--allowlist-var=kCoseKey.*",
     ],
-    cc_lib = "@open_dice//:libopen_dice_android_baremetal_ed25519",
+    cc_lib = "@open_dice//:libopen_dice_android_baremetal_multialg",
     clang_flags = select({
         "//conditions:default": ["-m64"],
     }) + [
@@ -102,7 +112,6 @@ rust_bindgen(
         "--raw-line=#![no_std]",
         "--ctypes-prefix=core::ffi",
         "--allowlist-function=DiceAndroidFormatConfigDescriptor",
-        "--allowlist-function=DiceAndroidMainFlow",
         "--allowlist-function=DiceAndroidHandoverMainFlow",
         "--allowlist-function=DiceAndroidHandoverParse",
         "--allowlist-var=DICE_ANDROID_CONFIG_.*",
@@ -112,14 +121,14 @@ rust_bindgen(
         "--blocklist-type=DiceResult",
         "--raw-line=pub use opendice_cbor_bindgen::DiceResult;",
     ],
-    cc_lib = "@open_dice//:libopen_dice_android_baremetal_ed25519",
+    cc_lib = "@open_dice//:libopen_dice_android_baremetal_multialg",
     clang_flags = select({
         "//conditions:default": ["-m64"],
     }) + [
         "-I{}".format(LLVM_PREBUILTS_C_INCLUDE),
         "-nostdinc",
     ],
-    header = "@open_dice//:include/dice/android.h",
+    header = "bindgen/dice/dice.h",
 )
 
 rust_library(

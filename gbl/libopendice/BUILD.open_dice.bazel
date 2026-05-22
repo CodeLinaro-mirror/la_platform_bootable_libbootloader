@@ -28,28 +28,28 @@ generate_license(
 
 exports_files(glob(["include/**/*.h"]))
 
-# TODO(b/413054304#comment5): Compile multialg opendice to support ECSDA
-# (P-256, P-384) backend.
-cbor_baremetal_ed25519_srcs = [
+# Multialg variant supporting Ed25519, P-256 and P-384.
+cbor_baremetal_multialg_srcs = [
     "src/boringssl_hash_kdf_ops.c",
     "src/cbor_cert_op.c",
     "src/cbor_writer.c",
-    "src/boringssl_ed25519_ops.c",
+    "src/boringssl_multialg_ops.c",
+    "src/boringssl_ecdsa_utils.c",
     "src/dice.c",
     "src/utils.c",
 ]
 
-cbor_baremetal_ed25519_hdrs = glob(["include/**/*.h"]) + ["@gbl//libopendice:bindgen/dice/dice.h"]
+cbor_baremetal_hdrs = glob(["include/**/*.h"]) + ["@gbl//libopendice:bindgen/dice/dice.h"]
 
 cc_library(
-    name = "libopen_dice_cbor_baremetal_ed25519",
-    srcs = cbor_baremetal_ed25519_srcs,
-    hdrs = cbor_baremetal_ed25519_hdrs,
+    name = "libopen_dice_cbor_baremetal_multialg",
+    srcs = cbor_baremetal_multialg_srcs,
+    hdrs = cbor_baremetal_hdrs,
     copts = ["-fno-lto"],
     includes = [
         "include",
         "include/dice/config/android",
-        "include/dice/config/boringssl_ed25519",
+        "include/dice/config/boringssl_multialg",
     ],
     deps = [
         "@boringssl//:crypto_baremetal",
@@ -58,8 +58,8 @@ cc_library(
 )
 
 link_static_cc_library(
-    name = "libopen_dice_cbor_baremetal_ed25519_static",
-    cc_library = ":libopen_dice_cbor_baremetal_ed25519",
+    name = "libopen_dice_cbor_baremetal_multialg_static",
+    cc_library = ":libopen_dice_cbor_baremetal_multialg",
 )
 
 android_srcs = [
@@ -72,19 +72,19 @@ android_hdrs = [
 ]
 
 cc_library(
-    name = "libopen_dice_android_baremetal_ed25519",
+    name = "libopen_dice_android_baremetal_multialg",
     srcs = android_srcs,
     hdrs = android_hdrs,
     copts = ["-fno-lto"],
     includes = ["include"],
     deps = [
-        ":libopen_dice_cbor_baremetal_ed25519",
+        ":libopen_dice_cbor_baremetal_multialg",
         "@boringssl//:crypto_baremetal",
         "@gbl//libc:headers",
     ],
 )
 
 link_static_cc_library(
-    name = "libopen_dice_android_baremetal_ed25519_static",
-    cc_library = ":libopen_dice_android_baremetal_ed25519",
+    name = "libopen_dice_android_baremetal_multialg_static",
+    cc_library = ":libopen_dice_android_baremetal_multialg",
 )

@@ -461,6 +461,37 @@ gbl_rust_crate_repository(
     path = "external/rust/android-crates-io/crates/libc",
 )
 
+gbl_rust_crate_repository(
+    name = "half",
+    features = [],
+    path = "external/rust/android-crates-io/crates/half",
+    deps = [
+        "@cfg_if",
+        "@zerocopy",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "ciborium_io",
+    features = [],
+    path = "external/rust/android-crates-io/crates/ciborium-io",
+)
+
+gbl_rust_crate_repository(
+    name = "ciborium_ll",
+    features = [],
+    path = "external/rust/android-crates-io/crates/ciborium-ll",
+    rustc_flags = [
+        "-A",
+        "mismatched_lifetime_syntaxes",
+    ],
+    deps = [
+        "@ciborium_io",
+        "@half",
+    ],
+)
+
+# TODO(b/383783832): migrate to android-crates-io
 gbl_new_local_repository(
     name = "libfdt_c",
     build_file = "@gbl//libfdt:BUILD.libfdt_c.bazel",

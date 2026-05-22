@@ -21,8 +21,8 @@ use crate::{
     check_result,
     error::{DiceError, Result},
 };
-use core::{ffi::c_void, marker::PhantomData, ptr};
-use opendice_android_bindgen::{DiceAndroidHandoverParse, DiceAndroidMainFlow};
+use core::{marker::PhantomData, ptr};
+use opendice_android_bindgen::DiceAndroidHandoverParse;
 
 pub use opendice_cbor_bindgen::{DiceConfigType, DiceInputValues, DiceMode};
 
@@ -43,22 +43,6 @@ pub type Cdi = [u8; CDI_SIZE];
 type Hidden = [u8; HIDDEN_SIZE];
 /// Array type of hashes used by DICE.
 type Hash = [u8; HASH_SIZE];
-
-/// CDI values
-#[derive(Debug, Default)]
-pub struct CdiValues {
-    /// Attestation CDI.
-    pub cdi_attest: Cdi,
-    /// Sealing CDI.
-    pub cdi_seal: Cdi,
-}
-
-/// Context provided by the caller that is opaque to open dice library and is passed through to
-/// the integration-provided operations declared in dice/ops.h. The value is integration-specific
-/// and may be null.
-pub(crate) fn context() -> *mut c_void {
-    ptr::null_mut()
-}
 
 /// Wrap of DiceInputValues
 #[derive(Clone, Debug)]
@@ -140,45 +124,6 @@ impl Config<'_> {
             _ => 0,
         }
     }
-}
-
-/// Executes the main Android DICE flow.
-///
-/// Given a full set of input values along with the current DICE chain and CDI values,
-/// computes the next CDI values and matching updated DICE chain.
-pub fn dice_android_main_flow(
-    current_cdi_attest: &Cdi,
-    current_cdi_seal: &Cdi,
-    current_chain: &[u8],
-    input_values: &InputValues,
-    next_cdi_values: &mut CdiValues,
-    next_chain: &mut [u8],
-) -> Result<usize> {
-    let mut next_chain_size = 0;
-    check_result(
-        // SAFETY: `DiceAndroidMainFlow` only reads the `current_chain` and CDI values and writes
-        // to `next_chain` and next CDI values within its bounds. It also reads `input_values` as a
-        // constant input and doesn't store any pointer.
-        // The first argument is a pointer to a valid |DiceContext_| object for multi-alg open-dice
-        // and a null pointer otherwise.
-        unsafe {
-            DiceAndroidMainFlow(
-                context(),
-                current_cdi_attest.as_ptr(),
-                current_cdi_seal.as_ptr(),
-                current_chain.as_ptr(),
-                current_chain.len(),
-                input_values.as_ptr(),
-                next_chain.len(),
-                next_chain.as_mut_ptr(),
-                &mut next_chain_size,
-                next_cdi_values.cdi_attest.as_mut_ptr(),
-                next_cdi_values.cdi_seal.as_mut_ptr(),
-            )
-        },
-        next_chain_size,
-    )?;
-    Ok(next_chain_size)
 }
 
 /// An Android DICE handover object combines the DICE chain and CDIs in a single CBOR object.

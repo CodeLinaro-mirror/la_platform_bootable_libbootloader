@@ -31,8 +31,6 @@ pub enum DiceError {
     PlatformError,
     /// Unsupported key algorithm.
     UnsupportedKeyAlgorithm,
-    /// A failed fallible allocation. Used in no_std environments.
-    MemoryAllocationError,
     /// DICE chain not found in artifacts.
     DiceChainNotFound,
 }
@@ -48,7 +46,6 @@ impl fmt::Display for DiceError {
             Self::UnsupportedKeyAlgorithm => {
                 write!(f, "Unsupported key algorithm")
             }
-            Self::MemoryAllocationError => write!(f, "Memory allocation failed"),
             Self::DiceChainNotFound => write!(f, "DICE chain not found in artifacts"),
         }
     }
