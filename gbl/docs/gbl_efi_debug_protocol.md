@@ -1,9 +1,10 @@
 # GBL EFI Debug Protocol
 
-|             |            |
-| :---------- | :--------- |
-| **Status**  | Pre-frozen |
-| **Created** | 2025-09-11 |
+|                |            |
+| :------------- | :--------- |
+| **Status**     | Stable     |
+| **Created**    | 2025-09-11 |
+| **Stabilized** | 2026-05-22 |
 
 ## GBL_EFI_DEBUG_PROTOCOL
 
@@ -27,7 +28,7 @@ firmware to handle debug-related events, such as fatal errors.
 ### Revision Number
 
 ```c
-#define GBL_EFI_DEBUG_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
+#define GBL_EFI_DEBUG_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(1, 0)
 ```
 
 See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about

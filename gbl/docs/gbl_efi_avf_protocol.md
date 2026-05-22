@@ -1,9 +1,10 @@
 # GBL EFI AVF Protocol
 
-|             |            |
-| :---------- | :--------- |
-| **Status**  | Pre-frozen |
-| **Created** | 2025-03-31 |
+|                |            |
+| :------------- | :--------- |
+| **Status**     | Stable     |
+| **Created**    | 2025-03-31 |
+| **Stabilized** | 2026-05-22 |
 
 ## GBL_EFI_AVF_PROTOCOL
 
@@ -33,7 +34,7 @@ available on such devices.
 ### Revision Number
 
 ```c
-#define GBL_EFI_AVF_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
+#define GBL_EFI_AVF_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(1, 0)
 ```
 
 See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about

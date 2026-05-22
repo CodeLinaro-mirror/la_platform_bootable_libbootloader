@@ -450,7 +450,7 @@ pub mod gbl_efi_boot_control {
     }
 
     impl Versioned for MockGblBootControlProtocol {
-        const REVISION: Revision = Revision { major: 0, minor: 3 };
+        const REVISION: Revision = Revision { major: 1, minor: 0 };
 
         fn revision(&self) -> Revision {
             Self::REVISION
