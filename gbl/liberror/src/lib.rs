@@ -129,11 +129,6 @@ pub enum GptError {
         /// The expected size.
         expect: usize,
     },
-    /// Zero partition type GUID.
-    ZeroPartitionTypeGUID {
-        /// Partition index (1-based).
-        idx: usize,
-    },
     /// Zero partition unique GUID.
     ZeroPartitionUniqueGUID {
         /// Partition index (1-based).
