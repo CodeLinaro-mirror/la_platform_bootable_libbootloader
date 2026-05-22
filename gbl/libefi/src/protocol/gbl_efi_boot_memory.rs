@@ -36,9 +36,7 @@ use efi_types::defs::{
     PARTITION_NAME_LEN_U16,
 };
 use liberror::{Error, Result};
-use spin::{Mutex, Spin};
-
-type MutexGuard<'a, T> = spin::MutexGuard<'a, T, Spin>;
+use spin::{Mutex, MutexGuard};
 
 /// Represents a borrowed or heap allocated buffer managed by `BufferPool`.
 #[derive(Debug)]
