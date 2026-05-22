@@ -1078,7 +1078,7 @@ pub(crate) mod test {
     use libprofile::{ProfileTimer, Reporter};
     use libutils::snprintf;
     use std::{
-        cell::{Cell, RefMut},
+        cell::{Cell, RefCell, RefMut},
         collections::{HashMap, VecDeque},
         ffi::CString,
         fmt::Debug,
@@ -1250,15 +1250,29 @@ pub(crate) mod test {
     }
 
     /// A fake implementation of [GblTime].
-    pub struct FakeGblTime;
+    pub struct FakeGblTime(RefCell<FakeGblTimeState>);
+
+    struct FakeGblTimeState {
+        ticks: Vec<u64>,
+        index: usize,
+    }
+
+    impl FakeGblTime {
+        pub fn new(ticks: Vec<u64>) -> Self {
+            Self(RefCell::new(FakeGblTimeState { ticks, index: 0 }))
+        }
+    }
 
     impl GblTime for FakeGblTime {
         fn current_tick(&self) -> Result<u64, Error> {
-            Err(Error::NotFound)
+            let mut state = self.0.borrow_mut();
+            let val = state.ticks[state.index];
+            state.index += 1;
+            Ok(val)
         }
 
-        fn elapsed_ticks(&self, _start: u64) -> Result<u64, Error> {
-            Err(Error::NotFound)
+        fn elapsed_ticks(&self, start: u64) -> Result<u64, Error> {
+            Ok(self.current_tick()? - start)
         }
 
         fn ticks_to_us(&self, ticks: u64) -> u64 {
