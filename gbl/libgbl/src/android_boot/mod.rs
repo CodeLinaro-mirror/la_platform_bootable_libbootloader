@@ -24,6 +24,7 @@ use crate::{
     },
     gbl_avb::{ArrayMaxParts, ArrayMaxSpecializedParts, LoadPartition, Verification},
     gbl_println,
+    metrics::{GblMetrics, GblTime},
     misc::{read_bootloader_message_to, write_bootloader_message},
     ops::{OneShotBootMode, PartitionBuffer},
     slots::{slotted_part, Slot},
@@ -148,6 +149,8 @@ pub fn android_load_verify_fixup<'a, 'b>(
         }
     }
 
+    let start = ops.get_time().and_then(|t| t.current_tick().ok());
+
     #[allow(unused_mut)]
     let mut res = avb_verify_slot(ops, slot, &mut partitions_to_verify);
     #[cfg(feature = "gbl_dev")]
@@ -168,6 +171,14 @@ pub fn android_load_verify_fixup<'a, 'b>(
             res = avb_fake_verify_slot(ops, slot, &mut partitions_to_verify);
         }
     }
+
+    if let Some(start) = start
+        && let Some(delta) = ops.get_time().and_then(|t| t.elapsed_ticks(start).ok())
+        && let Some(mut metrics) = ops.get_metrics()
+    {
+        metrics.add_avb_ticks(delta);
+    }
+
     let (verify_data, status, unlocked) = res?;
     // Boot items are added from fastboot. It shall only be used when device is unlocked because it
     // effectively modifies boot images. The lock/unlock state should be the same one used by
@@ -347,6 +358,30 @@ fn finalize_dt<'b>(
     Ok(fdt.header_ref()?.actual_size())
 }
 
+/// Serializes GBL perf metrics to bootconfig.
+fn add_perf_metrics(
+    builder: &mut BootConfigBuilder,
+    metrics: &GblMetrics,
+    time: &impl GblTime,
+) -> Result<()> {
+    if let Some(start) = metrics.start_tick
+        && let Ok(ticks) = time.elapsed_ticks(start)
+    {
+        builder.add_item("androidboot.gbl.perf.boot_time", time.ticks_to_us(ticks))?;
+    }
+    if let Some(ticks) = metrics.avb_ticks {
+        builder.add_item("androidboot.gbl.perf.avb", time.ticks_to_us(ticks))?;
+    }
+    for (name, ticks) in metrics.io_timings_ticks.iter() {
+        if STANDARD_PARTITIONS.iter().any(|p| p.name() == name) {
+            let us = time.ticks_to_us(*ticks);
+            writeln!(builder, "androidboot.gbl.perf.io.{name}={us}").map_err(Error::from)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Helper for performing platform custom bootconfig fixup.
 ///
 /// # Args
@@ -390,6 +425,13 @@ fn finalize_bootconfig<'a, 'b, 'c>(
     builder.add_raw_with(|bytes, out| {
         Ok(ops.fixup_bootconfig(&bytes, out)?.map(|slice| slice.len()).unwrap_or(0))
     })?;
+
+    if let Some(metrics) = ops.get_metrics()
+        && let Some(time) = ops.get_time()
+    {
+        add_perf_metrics(&mut builder, &metrics, time)?;
+    }
+
     Ok(builder.config_bytes().len())
 }
 
@@ -736,7 +778,7 @@ pub(crate) mod tests {
         },
         misc::test::read_bootloader_message,
         ops::{
-            test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage},
+            test::{into_refmut_bytes, slot, FakeGblOps, FakeGblOpsStorage, FakeGblTime},
             PartitionBuffer,
         },
         tests::{read_test_data, read_test_data_as_str, test_data_exists},
@@ -3026,5 +3068,28 @@ pub(crate) mod tests {
         } else {
             assert_eq!(r.unwrap_err(), liberror::Error::Unsupported.into());
         }
+    }
+
+    #[test]
+    fn test_add_perf_metrics() {
+        let mut buffer = vec![0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+        let mut metrics = GblMetrics::default();
+        metrics.start_tick = Some(100);
+        metrics.avb_ticks = Some(200);
+        metrics.add_io_timing_ticks("boot", 300);
+        let time = FakeGblTime::new(vec![1000]);
+
+        add_perf_metrics(&mut builder, &metrics, &time).unwrap();
+
+        let bootconfig = builder.config_bytes();
+        let content_len = bootconfig.len() - BOOTCONFIG_TRAILER_SIZE;
+        assert_eq!(
+            &bootconfig[..content_len],
+            b"androidboot.gbl.perf.boot_time=900
+androidboot.gbl.perf.avb=200
+androidboot.gbl.perf.io.boot=300
+"
+        );
     }
 }
