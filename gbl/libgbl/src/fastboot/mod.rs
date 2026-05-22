@@ -2109,7 +2109,7 @@ pub(crate) mod test {
     use liberror::Error;
     use libtestutils::AlignedBuffer;
     use libutils::cstr_buffer;
-    use spin::{Mutex, MutexGuard};
+    use spin::{Mutex, Spin};
     use std::{
         cell::RefCell,
         collections::{HashMap, VecDeque},
@@ -2117,6 +2117,8 @@ pub(crate) mod test {
         io::Read,
     };
     use zerocopy::IntoBytes;
+
+    type MutexGuard<'a, T> = spin::MutexGuard<'a, T, Spin>;
 
     /// A test implementation of [InfoSender] and [OkaySender].
     #[derive(Default)]
