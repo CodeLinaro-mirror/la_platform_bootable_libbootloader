@@ -191,7 +191,8 @@ A single UTF-8 encoded character representing the slot suffix (e.g., 'a' or
 ##### UnbootableReason
 
 A `GBL_EFI_SLOT_UNBOOTABLE_REASON` value indicating why the slot is considered
-unbootable.
+unbootable. This field is only used when the slot is in an unbootable state
+(`RemainingTries` and `Successful` are both zero).
 
 ##### Priority
 
