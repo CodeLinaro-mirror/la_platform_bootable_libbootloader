@@ -110,6 +110,7 @@ rust_library(
     data = [":efi_defs_genrule"],
     rustc_flags = ANDROID_RUST_LINTS,
     deps = [
+        "@spin",
         "@zerocopy",
     ],
 )

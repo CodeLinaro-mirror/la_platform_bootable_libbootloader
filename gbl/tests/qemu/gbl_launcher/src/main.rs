@@ -19,8 +19,13 @@
 
 extern crate alloc;
 
-use efi::{efi_println, initialize, EfiAllocator};
-use efi_types::{EfiHandle, EfiSystemTable};
+use efi::{
+    efi_println, initialize, protocol::gbl_efi_boot_memory::GblBootMemoryProtocol, EfiAllocator,
+};
+use efi_types::{
+    protocol::gbl_efi_boot_memory::GblEfiBootMemoryManaged, EfiHandle, EfiSystemTable,
+};
+use gbl_efi_boot_memory::GblEfiBootMemoryImpl;
 
 #[unsafe(no_mangle)]
 #[global_allocator]
@@ -58,6 +63,14 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
     let mut fdt_buffer = alloc::vec![0u8; file.len().unwrap()];
     let read_size = file.read(&mut fdt_buffer).unwrap();
     semihosting::println!("Loaded FDT with {} bytes", read_size);
+
+    static GBL_EFI_BOOT_MEMORY_MANAGED: GblEfiBootMemoryManaged<GblEfiBootMemoryImpl> =
+        GblEfiBootMemoryManaged::new(GblEfiBootMemoryImpl);
+    entry
+        .system_table()
+        .boot_services()
+        .install_protocol_from_rust::<GblBootMemoryProtocol, _>(None, &GBL_EFI_BOOT_MEMORY_MANAGED)
+        .unwrap();
     // TODO(b/499359597): Mock EFI protocols and launch GBL.
 
     // TODO(b/509953349): Remove this once kernel is assembled into boot image.
