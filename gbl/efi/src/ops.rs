@@ -96,7 +96,13 @@ const_assert_eq!(PARTITION_NAME_LEN_U16 as usize, IMAGE_NAME_MAX_LEN);
 const_assert!(FASTBOOT_PARTITION_TYPE_LEN >= GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF_LEN);
 
 fn dt_component_to_efi_dt(component: &DtComponent) -> GblEfiVerifiedDeviceTree {
-    let metadata = component.selection_metadata.unwrap_or_default();
+    let (id, rev, custom_size, custom) = match component.selection_metadata.as_ref() {
+        Some(m) => {
+            let custom = m.custom.as_bytes();
+            (m.id, m.rev, custom.len(), custom.as_ptr())
+        }
+        None => (0, 0, 0, core::ptr::null()),
+    };
 
     GblEfiVerifiedDeviceTree {
         metadata: GblEfiDeviceTreeMetadata {
@@ -114,9 +120,10 @@ fn dt_component_to_efi_dt(component: &DtComponent) -> GblEfiVerifiedDeviceTree {
                     efi_types::GBL_EFI_DEVICE_TREE_TYPE_PVM_DA_OVERLAY
                 }
             } as _,
-            id: metadata.id,
-            rev: metadata.rev,
-            custom: metadata.custom,
+            id,
+            rev,
+            custom_size,
+            custom,
         },
         device_tree: component.dt.as_ptr() as _,
         selected: component.selected,

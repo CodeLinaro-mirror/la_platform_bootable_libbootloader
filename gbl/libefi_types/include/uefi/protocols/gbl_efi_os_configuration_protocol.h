@@ -52,12 +52,10 @@ EFI_ENUM(GblEfiDeviceTreeSource, uint32_t,
 typedef struct {
   GblEfiDeviceTreeSource source;
   GblEfiDeviceTreeType type;
-  // Values are zeroed and must not be used in case of BOOT / VENDOR_BOOT source
   uint32_t id;
   uint32_t rev;
-  // TODO(b/495417516): Migrate to a `size + pointer` approach to support
-  // various custom metadata sizes.
-  uint32_t custom[4];
+  size_t custom_size;
+  const uint8_t* custom;
 } GblEfiDeviceTreeMetadata;
 
 typedef struct {
@@ -72,7 +70,7 @@ typedef struct {
 } GblEfiVerifiedDeviceTree;
 
 static const uint64_t GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 256);
+    GBL_PROTOCOL_REVISION(0, 257);
 
 typedef struct GblEfiOsConfigurationProtocol {
   uint64_t revision;
