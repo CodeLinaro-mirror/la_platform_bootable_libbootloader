@@ -1003,10 +1003,17 @@ The _DEVICE_ lock has the following effects:
 | Locked            | Enforced, verification failures prevent boot   | Green      | Prohibited                          |
 | Unlocked          | Checked, but verification failures are allowed | Orange     | Allowed for non-critical partitions |
 
-Changing the state of the _DEVICE_ lock MUST be preceded by a factory data
-reset. GBL guarantees that changing the _DEVICE_ lock with `WriteLockState()`
-will always be immediately preceded by erasing non-secure partitions and
-performing FDR in this order:
+When changing _DEVICE_ lock state, this function implementation must:
+
+1. Display a relevant UI dialog and obtain user consent
+2. Reset all stored vbmeta rollback indices to zero
+3. Ensure a factory data reset is performed; see below for details
+
+###### Lock State FDR
+
+Changing the state of the _DEVICE_ lock MUST be accompanied by a factory data
+reset. To make this easier, GBL guarantees that it will always execute this
+sequence when changing the _DEVICE_ lock with `WriteLockState()`:
 
 1. Use Block I/O protocols to erase all partitions marked with
    `GBL_EFI_AVB_PARTITION_FLAG_FDR`
@@ -1021,9 +1028,6 @@ concurrently (e.g. at a higher TPL or on another core). If there is any chance
 of user data modification in-between these calls, the implementation is
 responsible for ensuring another FDR is performed atomically with the lock state
 update.
-
-Additionally, it is the responsibility of the implementation to display a
-relevant UI dialog and obtain user consent before unlocking the device.
 
 ##### GBL_EFI_AVB_LOCK_TYPE_CRITICAL
 
