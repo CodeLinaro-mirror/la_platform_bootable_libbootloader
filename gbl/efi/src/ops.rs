@@ -69,7 +69,7 @@ use libgbl::{
         LoadPartition, SpecializedPartition,
     },
     gbl_println,
-    metrics::{GblMetrics, GblTime},
+    metrics::{FirmwareVersion, FirmwareVersionMetrics, GblMetrics, GblTime},
     ops::{
         AvbIoError, AvbIoResult, CertPermanentAttributes, FailSender, FastbootPartitionType,
         InfoSender, LockState, LockType, OkaySender, OneShotBootMode, PartitionBuffer,
@@ -1001,6 +1001,15 @@ impl<'a, 'b> GblOps<'b> for Ops<'a, 'b> {
 
     fn get_profiling_backend(&self) -> impl ProfileBackend {
         EfiProfileBackend::new(self.efi_entry)
+    }
+
+    fn get_firmware_version_metrics(&self) -> FirmwareVersionMetrics {
+        let mut metrics = FirmwareVersionMetrics::new();
+        for (tag, rev) in efi::opened_protocols() {
+            let _ = metrics.try_push((tag, FirmwareVersion { major: rev.major, minor: rev.minor }));
+        }
+        metrics.sort_by(|a, b| a.0.cmp(b.0));
+        metrics
     }
 
     fn get_fw_api_level(&self) -> Result<u64> {

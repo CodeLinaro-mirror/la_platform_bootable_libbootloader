@@ -43,8 +43,8 @@ use std::cell::RefCell;
 
 /// libefi types that can be used in tests as-is.
 pub use efi::{
-    efi_print, efi_println, DeviceHandle, EventNotify, EventType, GBL_EFI_FW_API_LEVEL,
-    GBL_EFI_VENDOR_GUID,
+    efi_print, efi_println, opened_protocols, DeviceHandle, EventNotify, EventType,
+    GBL_EFI_FW_API_LEVEL, GBL_EFI_VENDOR_GUID,
 };
 
 /// Holds state to set up a mock UEFI environment.

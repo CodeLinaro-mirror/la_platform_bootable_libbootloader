@@ -34,6 +34,8 @@ impl ProtocolInfo for GblAvfProtocol {
         EfiGuid::new(0xe7f1c4a6, 0x0a52, 0x4f61, [0xbd, 0x98, 0x9e, 0x60, 0xb5, 0x59, 0x45, 0x2a]);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
+
+    const METRICS_TAG: Option<&'static str> = Some("gbl_avf");
 }
 
 // Protocol interface wrappers.

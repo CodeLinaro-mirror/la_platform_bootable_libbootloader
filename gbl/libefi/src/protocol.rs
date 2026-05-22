@@ -14,7 +14,7 @@
 
 //! EFI protocol wrappers to provide Rust-safe APIs for usage.
 
-use crate::{efi_println, DeviceHandle, EfiEntry};
+use crate::{efi_println, record_protocol, DeviceHandle, EfiEntry};
 use core::{
     ops::{Deref, DerefMut},
     ptr::NonNull,
@@ -234,6 +234,8 @@ pub trait ProtocolInfo {
     const GUID: EfiGuid;
     /// Whether the protocol is mandatory or optional.
     const REQUIREMENT: Requirement = Requirement::Mandatory;
+    /// An optional tag to identify this protocol in metrics.
+    const METRICS_TAG: Option<&'static str> = None;
 }
 
 /// Temporary trait to abstract over protocols using [ProtocolInfo] vs [Client].
@@ -251,6 +253,8 @@ pub trait ProtocolImpl {
     const GUID: EfiGuid;
     /// Whether the protocol is mandatory or optional.
     const REQUIREMENT: Requirement = Requirement::Mandatory;
+    /// An optional tag to identify this protocol in metrics.
+    const METRICS_TAG: Option<&'static str> = None;
 
     /// Creates the corresponding `ImplType` from a raw C struct.
     ///
@@ -269,6 +273,7 @@ impl<T: ProtocolInfo> ProtocolImpl for T {
     type ImplType = NonNull<T::InterfaceType>;
     const GUID: EfiGuid = T::GUID;
     const REQUIREMENT: Requirement = T::REQUIREMENT;
+    const METRICS_TAG: Option<&'static str> = T::METRICS_TAG;
 
     unsafe fn new_impl(c_interface: NonNull<Self::CInterface>) -> Self::ImplType {
         // Just pass the c_interface pointer through, we use it directly.
@@ -281,6 +286,7 @@ impl<T: Identified + MaybeVersioned> ProtocolImpl for Client<T> {
     type CInterface = T;
     type ImplType = Self;
     const GUID: EfiGuid = T::GUID;
+    const METRICS_TAG: Option<&'static str> = None;
 
     unsafe fn new_impl(c_interface: NonNull<Self::CInterface>) -> Self::ImplType {
         // SAFETY: by function safety,
@@ -320,10 +326,17 @@ impl<'a, T: ProtocolImpl> Protocol<'a, T> {
         c_interface: NonNull<T::CInterface>,
         efi_entry: &'a EfiEntry,
     ) -> Self {
+        // Safety: By precondition, `c_interface` must point to a valid `T::CInterface`.
+        let interface_revision = unsafe { c_interface.as_ref() }.revision();
+
+        // TODO(b/445016017): If a protocol is first opened *after* bootconfig has already been
+        // finalized and metrics serialized, then the protocol version would not be recorded in the
+        // final metrics. Revisit if this becomes a problem in the future.
+        if let (Some(tag), Some(revision)) = (T::METRICS_TAG, interface_revision) {
+            record_protocol(tag, revision);
+        }
         if let Some(expected) = T::CInterface::REVISION {
-            // Safety:
-            // * By precondition, `c_interface` must point to a valid `T::CInterface`.
-            if let Some(actual) = unsafe { c_interface.as_ref() }.revision() {
+            if let Some(actual) = interface_revision {
                 if actual.major != expected.major {
                     efi_println!(
                         efi_entry,
@@ -488,9 +501,12 @@ macro_rules! efi_call {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use efi_types::{
-        EfiStatus, EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_DEVICE_ERROR, EFI_STATUS_SUCCESS,
+        EfiStatus, GblEfiAvbProtocol, EFI_STATUS_BUFFER_TOO_SMALL, EFI_STATUS_DEVICE_ERROR,
+        EFI_STATUS_SUCCESS,
     };
+    use gbl_efi_avb::GblAvbProtocol;
     use liberror::Error;
 
     #[test]
@@ -579,5 +595,20 @@ mod test {
 
         let mut size = 10;
         assert_eq!(efi_call!(@bufsize size, test_func, &mut size), Err(Error::NotFound));
+    }
+
+    #[test]
+    fn test_protocol_new_records_version() {
+        let c_interface = GblEfiAvbProtocol { revision: 0x0001_0000, ..Default::default() };
+
+        crate::test::run_test_with_mock_protocol::<GblAvbProtocol>(c_interface, |_| {
+            assert_eq!(
+                crate::opened_protocols().as_slice(),
+                [(
+                    <GblAvbProtocol as ProtocolInfo>::METRICS_TAG.unwrap(),
+                    Revision { major: 1, minor: 0 }
+                )]
+            );
+        });
     }
 }

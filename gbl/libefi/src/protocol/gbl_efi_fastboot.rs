@@ -49,6 +49,8 @@ impl ProtocolInfo for GblFastbootProtocol {
         EfiGuid::new(0xc67e48a0, 0x5eb8, 0x4127, [0xbe, 0x89, 0xdf, 0x2e, 0xd9, 0x3d, 0x8a, 0x9a]);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
+
+    const METRICS_TAG: Option<&'static str> = Some("gbl_fastboot");
 }
 
 impl Protocol<'_, GblFastbootProtocol> {

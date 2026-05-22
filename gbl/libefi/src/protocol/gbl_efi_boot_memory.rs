@@ -167,6 +167,8 @@ impl ProtocolInfo for GblBootMemoryProtocol {
 
     const GUID: EfiGuid =
         EfiGuid::new(0x309f2874, 0xad59, 0x4fd2, [0xaf, 0x5e, 0xce, 0x0f, 0x4a, 0xb4, 0x01, 0xa6]);
+
+    const METRICS_TAG: Option<&'static str> = Some("gbl_boot_memory");
 }
 
 /// Helper for getting 'GblBootMemoryProtocol'.
