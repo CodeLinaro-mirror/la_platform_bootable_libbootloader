@@ -19,7 +19,7 @@ use crate::{
     protocol::{Protocol, ProtocolInfo, Requirement},
     versioned_protocol,
 };
-use efi_types::{EfiDtFixupProtocol, EfiGuid, EFI_DT_APPLY_FIXUPS, EFI_DT_FIXUP_PROTOCOL_REVISION};
+use efi_types::{EfiDtFixupProtocol, EfiGuid, EFI_DT_FIXUP_PROTOCOL_REVISION};
 use liberror::Result;
 
 /// `EFI_DT_FIXUP_PROTOCOL` implementation.
@@ -29,7 +29,7 @@ impl ProtocolInfo for DtFixupProtocol {
     type InterfaceType = EfiDtFixupProtocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0xe617d64c, 0xfe08, 0x46da, [0xf4, 0xdc, 0xbb, 0xd5, 0x87, 0x0c, 0x73, 0x00]);
+        EfiGuid::new(0x60ed6ba9, 0xdfef, 0x4799, [0xac, 0x7b, 0x75, 0xe0, 0xf8, 0x33, 0x45, 0x6c]);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }
@@ -53,8 +53,7 @@ impl Protocol<'_, DtFixupProtocol> {
                 self.interface().fixup,
                 self.interface_ptr(),
                 device_tree.as_mut_ptr() as _,
-                &mut buffer_size,
-                EFI_DT_APPLY_FIXUPS
+                &mut buffer_size
             )?;
         }
 
@@ -82,9 +81,7 @@ mod test {
             _: *mut EfiDtFixupProtocol,
             device_tree: *mut c_void,
             buffer_size: *mut usize,
-            flags: u32,
         ) -> EfiStatus {
-            assert_eq!(flags, EFI_DT_APPLY_FIXUPS);
             // SAFETY:
             // * `device_tree` is a valid pointer to the writtable buffer at least `buffer_size`
             // size.
@@ -116,7 +113,6 @@ mod test {
             _: *mut EfiDtFixupProtocol,
             _: *mut c_void,
             buffer_size: *mut usize,
-            _: u32,
         ) -> EfiStatus {
             // SAFETY:
             // * `buffer_size` is a valid pointer to writtable usize buffer.
