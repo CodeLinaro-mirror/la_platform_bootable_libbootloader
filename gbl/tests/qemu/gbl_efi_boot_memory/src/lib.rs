@@ -30,7 +30,7 @@ use efi_types::{
 pub struct GblEfiBootMemoryImpl;
 
 impl GblEfiBootMemorySafe for GblEfiBootMemoryImpl {
-    type PartitionBuffer = spin::MutexGuard<'static, [u8], spin::Spin>;
+    type PartitionBuffer = spin::MutexGuard<'static, [u8]>;
 
     fn revision(&self) -> u64 {
         GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION

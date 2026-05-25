@@ -41,7 +41,9 @@ extern crate efi_rng;
 // Embed the test kernel binary at compile-time using include_bytes!
 // Path is relative to this main.rs file path:
 // TODO(b/509953349): Remove this once kernel is assembled into boot image.
-static KERNEL_BYTES: &[u8] = include_bytes!("../test_kernel.bin");
+#[repr(C, align(4096))]
+struct AlignedBytes<const N: usize>([u8; N]);
+static KERNEL_BYTES: &[u8] = &AlignedBytes(*include_bytes!("../test_kernel.bin")).0;
 
 /// EFI application main entry.
 ///
