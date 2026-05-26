@@ -18,12 +18,39 @@ This file defines `build_and_run_tests` rule
 
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
+TestArgsInfo = provider(
+    doc = "Propagates test args from target to build_and_run",
+    fields = {
+        "args": "List of string arguments",
+    },
+)
+
+def _test_args_aspect_impl(_target, ctx):
+    args = []
+    if hasattr(ctx.rule.attr, "args"):
+        args = ctx.rule.attr.args
+    return [TestArgsInfo(args = args)]
+
+test_args_aspect = aspect(
+    implementation = _test_args_aspect_impl,
+    attr_aspects = [],
+)
+
 def _build_and_run_impl(ctx):
     # Executable file from the attribute.
     executable = ctx.executable.executable
 
     # Output log file.
     logfile = ctx.actions.declare_file("%s.txt" % ctx.attr.name)
+
+    # Args from the target itself (extracted via aspect)
+    args = []
+    if TestArgsInfo in ctx.attr.executable:
+        args = ctx.attr.executable[TestArgsInfo].args
+
+    # Escape arguments for shell
+    escaped_args = ["'%s'" % a.replace("'", "'\\''") for a in args]
+    args_str = " ".join(escaped_args)
 
     ctx.actions.run_shell(
         inputs = [executable] + ctx.files.data,
@@ -33,13 +60,13 @@ def _build_and_run_impl(ctx):
         command = """\
         BIN="%s" && \
         OUT="%s" && \
-        ($BIN > $OUT || \
+        ($BIN %s > $OUT || \
         if [ $? == 0 ]; then
             true
         else
             echo "\n%s failed." && cat $OUT && false
         fi)
-""" % (executable.path, logfile.path, executable.short_path),
+""" % (executable.path, logfile.path, args_str, executable.short_path),
     )
 
     return [DefaultInfo(files = depset([logfile]))]
@@ -52,6 +79,7 @@ build_and_run = rule(
             cfg = "target",
             allow_files = True,
             mandatory = True,
+            aspects = [test_args_aspect],
         ),
         "data": attr.label_list(
             allow_files = True,

@@ -38,6 +38,8 @@ rust_library(
 
 rust_test(
     name = "sysdeps_test",
+    # TODO(b/516910638): sysdeps_test fails with multiple threads. We need to investigate how
+    # to avoid this.
     # BoringSSL baremetal is built with OPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED.
     # Running the unit tests in parallel threads causes memory corruption and a segfault.
     args = ["--test-threads=1"],
