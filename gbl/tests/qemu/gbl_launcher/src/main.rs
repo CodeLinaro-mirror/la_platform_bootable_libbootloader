@@ -38,13 +38,6 @@ extern crate boringssl_sysdeps;
 /// Pull in the getentropy implementation.
 extern crate efi_rng;
 
-// Embed the test kernel binary at compile-time using include_bytes!
-// Path is relative to this main.rs file path:
-// TODO(b/509953349): Remove this once kernel is assembled into boot image.
-#[repr(C, align(4096))]
-struct AlignedBytes<const N: usize>([u8; N]);
-static KERNEL_BYTES: &[u8] = &AlignedBytes(*include_bytes!("../test_kernel.bin")).0;
-
 /// EFI application main entry.
 ///
 /// # Safety
@@ -73,14 +66,21 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
         .boot_services()
         .install_protocol_from_rust::<GblBootMemoryProtocol, _>(None, &GBL_EFI_BOOT_MEMORY_MANAGED)
         .unwrap();
+
+    let mut gbl_file =
+        semihosting::File::open(c"gbl.bin", semihosting::OpenMode::ReadBinary).unwrap();
+    let mut gbl_buffer = alloc::vec![0u8; gbl_file.len().unwrap()];
+    let gbl_read_size = gbl_file.read(&mut gbl_buffer).unwrap();
+    semihosting::println!("Loaded GBL with {} bytes", gbl_read_size);
+
     // TODO(b/499359597): Mock EFI protocols and launch GBL.
 
-    // TODO(b/509953349): Remove this once kernel is assembled into boot image.
-    let mut mmap_buf = alloc::vec![0u8; 65536];
-    let _ = efi::exit_boot_services(entry, &mut mmap_buf).unwrap();
+    semihosting::println!("Starting GBL..");
     // SAFETY:
-    // * `KERNEL_BYTES` is a custom test kernel blob.
-    unsafe { boot::aarch64::jump_linux_el2_or_lower(KERNEL_BYTES, &[], &[]) };
+    // `gbl_buffer` contains a valid PE image.
+    unsafe { entry.system_table().boot_services().load_and_start_image(&mut gbl_buffer).unwrap() };
+
+    unreachable!();
 }
 
 #[panic_handler]

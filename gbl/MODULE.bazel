@@ -292,6 +292,12 @@ local_repository(
     path = "prebuilts/fuchsia_sdk/",
 )
 
+gbl_new_local_repository(
+    name = "mkbootimg",
+    exist_marker_path = "repo_exists",
+    path = "tools/mkbootimg",
+)
+
 gbl_rust_crate_repository(
     name = "zerocopy",
     features = [

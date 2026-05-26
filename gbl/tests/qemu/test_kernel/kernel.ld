@@ -32,4 +32,5 @@ SECTIONS
     .data : { *(.data*) }
     .bss : { *(.bss*) }
     .dynamic : { *(.dynamic) }
+    _end = .;
 }

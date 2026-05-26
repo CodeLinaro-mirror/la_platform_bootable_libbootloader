@@ -19,6 +19,18 @@
 .hidden _start
 
 _start:
+    b real_start
+    .long 0               // code1
+    .quad 0               // text_offset
+    .quad _end - _start   // image_size
+    .quad 2               // flags (bit 1 set for 4K page size)
+    .quad 0               // res2
+    .quad 0               // res3
+    .quad 0               // res4
+    .ascii "ARM\x64"      // magic
+    .long 0               // pe_header_offset
+
+real_start:
     // For now we resuse the stack from previous stage. If it runs into issues,
     // we will need to set up our own stack.
 
