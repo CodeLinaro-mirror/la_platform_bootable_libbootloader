@@ -35,11 +35,10 @@ use efi::{
 #[cfg(any(target_arch = "x86_64", feature = "fuchsia"))]
 use efi_types::EfiMemoryType;
 use efi_types::{
-    EfiGuid, EfiInputKey, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD, GBL_EFI_BOOT_BUFFER_TYPE_FDT,
+    EfiInputKey, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD, GBL_EFI_BOOT_BUFFER_TYPE_FDT,
     GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
     GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA, GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK,
 };
-use fdt::FdtHeader;
 use liberror::Error;
 use libgbl::{android_boot::BootBuffer, metrics::GblTime};
 
@@ -77,22 +76,6 @@ pub fn image_base(entry: &EfiEntry) -> Result<usize> {
         .open_protocol::<LoadedImageProtocol>(entry.image_handle())
         .inspect_err(|e| efi_println!(entry, "Failed to open LoadedImageProtocol: {e}"))?
         .image_base())
-}
-
-pub(crate) const EFI_DTB_TABLE_GUID: EfiGuid =
-    EfiGuid::new(0xb1b621d5, 0xf19c, 0x41a5, [0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0]);
-
-/// Find FDT from EFI configuration table.
-pub fn get_efi_fdt(entry: &EfiEntry) -> Option<(&FdtHeader, &[u8])> {
-    if let Some(config_tables) = entry.system_table().configuration_table() {
-        for table in config_tables {
-            if table.vendor_guid == EFI_DTB_TABLE_GUID {
-                // SAFETY: Buffer provided by EFI configuration table.
-                return unsafe { FdtHeader::from_raw(table.vendor_table as *const _).ok() };
-            }
-        }
-    }
-    None
 }
 
 #[cfg(any(target_arch = "x86_64"))]
