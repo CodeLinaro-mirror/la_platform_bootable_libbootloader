@@ -46,31 +46,20 @@ gbl_new_local_repository = use_repo_rule("//toolchain:gbl_new_local_repository.b
 
 gbl_rust_crate_repository = use_repo_rule("//toolchain:gbl_new_local_repository.bzl", "gbl_rust_crate_repository")
 
-gbl_new_local_repository(
-    name = "linux_x86_64_sysroot",
-    build_file = "@gbl//libboot:BUILD.linux_x86_64_sysroot.bazel",
-    path = "prebuilts/kernel-build-tools/sysroots/x86_64-unknown-linux-musl",
+# Set up a repo to export LLVM tool/library/header/sysroot paths
+gbl_llvm_prebuilts = use_repo_rule("@gbl//toolchain:gbl_workspace_util.bzl", "gbl_llvm_prebuilts")
+
+gbl_config = use_repo_rule("@gbl//toolchain:gbl_workspace_util.bzl", "gbl_config")
+
+gbl_rust_crate_repository(
+    name = "anstyle",
+    path = "external/rust/android-crates-io/crates/anstyle",
 )
 
-gbl_new_local_repository(
-    name = "bindgen",
-    build_file_content = """exports_files(["bindgen"])""",
-    path = "prebuilts/clang-tools/linux-x86/bin",
-)
-
-gbl_new_local_repository(
-    name = "libfdt_c",
-    build_file = "@gbl//libfdt:BUILD.libfdt_c.bazel",
-    # The upstream build rule almost works for us, but we want to inject
-    # license information and instrumentation hooks.
-    exclude_files = ["BUILD.bazel"],
-    path = "external/dtc",
-)
-
-gbl_new_local_repository(
-    name = "libufdt_c",
-    build_file = "@gbl//libfdt:BUILD.libufdt_c.bazel",
-    path = "external/libufdt",
+gbl_rust_crate_repository(
+    name = "arc_swap",
+    path = "external/rust/android-crates-io/crates/arc-swap",
+    proc_macro_deps = ["@rustversion"],
 )
 
 gbl_new_local_repository(
@@ -79,55 +68,349 @@ gbl_new_local_repository(
     path = "external/arm-trusted-firmware",
 )
 
+gbl_rust_crate_repository(
+    name = "arrayvec",
+    path = "external/rust/android-crates-io/crates/arrayvec",
+    rustc_flags = [
+        "-A",
+        "dead_code",
+        "-A",
+        "mismatched_lifetime_syntaxes",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "async_trait",
+    path = "external/rust/android-crates-io/crates/async-trait",
+    rule = "rust_proc_macro",
+    deps = [
+        "@proc_macro2",
+        "@quote",
+        "@syn",
+    ],
+)
+
 gbl_new_local_repository(
     name = "avb",
     build_file = "@gbl//libavb:BUILD.avb.bazel",
     path = "external/avb",
 )
 
+gbl_rust_crate_repository(
+    name = "base64",
+    path = "external/rust/android-crates-io/crates/base64",
+)
+
 gbl_new_local_repository(
-    name = "vmm",
-    build_file_content = """exports_files(glob(["**/*"]))""",
-    exist_marker_path = "repo_exists",
-    path = "prebuilts/vmm",
+    name = "bindgen",
+    build_file_content = """exports_files(["bindgen"])""",
+    path = "prebuilts/clang-tools/linux-x86/bin",
 )
 
 gbl_rust_crate_repository(
-    name = "uuid",
-    path = "external/rust/android-crates-io/crates/uuid",
+    name = "bitflags",
+    path = "external/rust/android-crates-io/crates/bitflags",
 )
 
 gbl_rust_crate_repository(
-    name = "spin",
+    name = "bitflags_1_3_2",
+    crate_name = "bitflags",
+    path = "external/rust/android-crates-io/extra_versions/crates/bitflags",
+    proc_macro_deps = [
+        "@rustversion",
+        "@serde_derive",
+    ],
+)
+
+gbl_new_local_repository(
+    name = "boringssl",
+    build_file = "@gbl//libboringssl:BUILD.boringssl.bazel",
+    exclude_files = [
+        # We replace the top-level BUILD file with our own.
+        "BUILD",
+        # Exclude this subdir build file, otherwise it masks rules we use from
+        # src/gen/sources.bzl by making them private.
+        "src/BUILD.bazel",
+    ],
+    path = "external/boringssl",
+)
+
+gbl_rust_crate_repository(
+    name = "byteorder",
+    path = "external/rust/android-crates-io/crates/byteorder",
+)
+
+gbl_rust_crate_repository(
+    name = "bytes",
+    path = "external/rust/android-crates-io/crates/bytes",
+)
+
+gbl_rust_crate_repository(
+    name = "cfg_if",
+    path = "external/rust/android-crates-io/crates/cfg-if",
+)
+
+gbl_rust_crate_repository(
+    name = "clap",
+    compile_data = ["examples/demo.md"],
     features = [
-        "mutex",
-        "spin_mutex",
+        "derive",
+        "error-context",
+        "help",
+        "std",
+        "usage",
     ],
-    path = "external/rust/android-crates-io/crates/spin",
-    rustc_flags = [
-        "-A",
-        "unused_imports",
-        "-A",
-        "mismatched_lifetime_syntaxes",
+    path = "external/rust/android-crates-io/crates/clap",
+    proc_macro_deps = ["@clap_derive"],
+    deps = ["@clap_builder"],
+)
+
+gbl_rust_crate_repository(
+    name = "clap_builder",
+    compile_data = ["README.md"],
+    features = [
+        "error-context",
+        "help",
+        "std",
+        "string",
+        "suggestions",
+        "usage",
+    ],
+    path = "external/rust/android-crates-io/crates/clap_builder",
+    deps = [
+        "@anstyle",
+        "@clap_lex",
+        "@strsim",
     ],
 )
 
 gbl_rust_crate_repository(
-    name = "static_assertions",
-    path = "external/rust/android-crates-io/crates/static_assertions",
+    name = "clap_derive",
+    compile_data = ["README.md"],
+    path = "external/rust/android-crates-io/crates/clap_derive",
+    rule = "rust_proc_macro",
+    deps = [
+        "@heck",
+        "@proc_macro2",
+        "@quote",
+        "@syn",
+    ],
 )
 
 gbl_rust_crate_repository(
-    name = "managed",
-    features = ["map"],
-    path = "external/rust/android-crates-io/crates/managed",
-    rustc_flags = [
-        "-A",
-        "unused_macros",
-        "-A",
-        "redundant_semicolons",
-        "-A",
-        "mismatched_lifetime_syntaxes",
+    name = "clap_lex",
+    path = "external/rust/android-crates-io/crates/clap_lex",
+)
+
+gbl_rust_crate_repository(
+    name = "config",
+    features = [
+        "json",
+        "serde_json",
+        "toml",
+        "yaml",
+        "yaml-rust",
+    ],
+    path = "external/rust/android-crates-io/crates/config",
+    proc_macro_deps = ["@async_trait"],
+    deps = [
+        "@lazy_static",
+        "@nom",
+        "@pathdiff",
+        "@serde",
+        "@serde_json",
+        "@toml",
+        "@yaml_rust",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "crc32fast",
+    # Current version of the crate doesn't compile with newer editions.
+    edition = "2015",
+    path = "external/rust/android-crates-io/crates/crc32fast",
+    deps = ["@cfg_if"],
+)
+
+gbl_rust_crate_repository(
+    name = "downcast",
+    features = [
+        "default",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/downcast",
+)
+
+gbl_rust_crate_repository(
+    name = "either",
+    features = [
+        "default",
+        "use_std",
+    ],
+    path = "external/rust/android-crates-io/crates/either",
+)
+
+gbl_rust_crate_repository(
+    name = "either_noalloc",
+    crate_name = "either",
+    features = [],
+    path = "external/rust/android-crates-io/crates/either",
+)
+
+gbl_rust_crate_repository(
+    name = "env_filter",
+    path = "external/rust/android-crates-io/crates/env_filter",
+    deps = ["@log"],
+)
+
+gbl_rust_crate_repository(
+    name = "env_logger",
+    path = "external/rust/android-crates-io/crates/env_logger",
+    deps = [
+        "@env_filter",
+        "@log",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "epoll",
+    path = "external/rust/android-crates-io/crates/epoll",
+    deps = [
+        "@bitflags",
+        "@libc",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "equivalent",
+    path = "external/rust/android-crates-io/crates/equivalent",
+)
+
+gbl_rust_crate_repository(
+    name = "errno",
+    features = [
+        "default",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/errno",
+    deps = ["@libc"],
+)
+
+gbl_rust_crate_repository(
+    name = "fastrand",
+    features = [
+        "alloc",
+        "default",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/fastrand",
+)
+
+gbl_rust_crate_repository(
+    name = "figment",
+    edition = "2018",
+    features = ["yaml"],
+    path = "external/rust/android-crates-io/crates/figment",
+    deps = [
+        "@parking_lot",
+        "@serde",
+        "@serde_json",
+        "@serde_yaml",
+        "@tempfile",
+        "@toml_edit",
+        "@uncased",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "flagset",
+    path = "external/rust/android-crates-io/crates/flagset",
+)
+
+gbl_rust_crate_repository(
+    name = "foldhash",
+    features = [
+        "default",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/foldhash",
+)
+
+gbl_rust_crate_repository(
+    name = "fragile",
+    path = "external/rust/android-crates-io/crates/fragile",
+)
+
+gbl_config(name = "gbl_config")
+
+gbl_llvm_prebuilts(name = "gbl_llvm_prebuilts")
+
+gbl_rust_crate_repository(
+    name = "getrandom",
+    compile_data = ["README.md"],
+    features = ["std"],
+    path = "external/rust/android-crates-io/crates/getrandom",
+    deps = [
+        "@cfg_if",
+        "@libc",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "hash32",
+    path = "external/rust/android-crates-io/crates/hash32",
+    deps = ["@byteorder"],
+)
+
+gbl_rust_crate_repository(
+    name = "hashbrown",
+    features = [
+        "default-hasher",
+        "equivalent",
+        "inline-more",
+        "raw-entry",
+    ],
+    path = "external/rust/android-crates-io/crates/hashbrown",
+    deps = [
+        "@equivalent",
+        "@foldhash",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "heapless",
+    path = "external/rust/android-crates-io/crates/heapless",
+    deps = [
+        "@hash32",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "heck",
+    path = "external/rust/android-crates-io/crates/heck",
+)
+
+gbl_rust_crate_repository(
+    name = "hex",
+    features = [
+        "alloc",
+        "default",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/hex",
+)
+
+gbl_rust_crate_repository(
+    name = "indexmap",
+    features = [
+        "serde",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/indexmap",
+    deps = [
+        "@equivalent",
+        "@hashbrown",
+        "@serde_core",
     ],
 )
 
@@ -159,56 +442,120 @@ gbl_rust_crate_repository(
 )
 
 gbl_rust_crate_repository(
-    name = "either",
+    name = "itoa",
+    path = "external/rust/android-crates-io/crates/itoa",
+)
+
+gbl_rust_crate_repository(
+    name = "lazy_static",
+    path = "external/rust/android-crates-io/crates/lazy_static",
+)
+
+gbl_rust_crate_repository(
+    name = "libc",
     features = [
         "default",
-        "use_std",
+        "extra_traits",
+        "std",
     ],
-    path = "external/rust/android-crates-io/crates/either",
+    path = "external/rust/android-crates-io/crates/libc",
 )
 
-gbl_rust_crate_repository(
-    name = "either_noalloc",
-    crate_name = "either",
-    features = [],
-    path = "external/rust/android-crates-io/crates/either",
-)
-
-# TODO(b/383783832): migrate to android-crates-io
 gbl_new_local_repository(
-    name = "smoltcp",
-    build_file = "@gbl//smoltcp:BUILD.smoltcp.bazel",
-    path = "external/rust/android-crates-io/crates/smoltcp",
+    name = "libfdt_c",
+    build_file = "@gbl//libfdt:BUILD.libfdt_c.bazel",
+    # The upstream build rule almost works for us, but we want to inject
+    # license information and instrumentation hooks.
+    exclude_files = ["BUILD.bazel"],
+    path = "external/dtc",
+)
+
+gbl_new_local_repository(
+    name = "libufdt_c",
+    build_file = "@gbl//libfdt:BUILD.libufdt_c.bazel",
+    path = "external/libufdt",
 )
 
 gbl_rust_crate_repository(
-    name = "arrayvec",
-    path = "external/rust/android-crates-io/crates/arrayvec",
+    name = "linked_hash_map",
+    path = "external/rust/android-crates-io/crates/linked-hash-map",
+)
+
+gbl_new_local_repository(
+    name = "linux_x86_64_sysroot",
+    build_file = "@gbl//libboot:BUILD.linux_x86_64_sysroot.bazel",
+    path = "prebuilts/kernel-build-tools/sysroots/x86_64-unknown-linux-musl",
+)
+
+gbl_rust_crate_repository(
+    name = "lock_api",
+    features = [
+        "arc_lock",
+        "atomic_usize",
+        "default",
+    ],
+    path = "external/rust/android-crates-io/crates/lock_api",
+    deps = ["@scopeguard"],
+)
+
+gbl_rust_crate_repository(
+    name = "log",
+    features = ["std"],
+    path = "external/rust/android-crates-io/crates/log",
+)
+
+gbl_rust_crate_repository(
+    name = "lz4_flex",
+    features = ["safe-decode"],
+    path = "external/rust/android-crates-io/crates/lz4_flex",
     rustc_flags = [
         "-A",
         "dead_code",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "managed",
+    features = ["map"],
+    path = "external/rust/android-crates-io/crates/managed",
+    rustc_flags = [
+        "-A",
+        "unused_macros",
+        "-A",
+        "redundant_semicolons",
         "-A",
         "mismatched_lifetime_syntaxes",
     ],
 )
 
 gbl_rust_crate_repository(
-    name = "downcast",
+    name = "memchr",
+    features = [
+        "alloc",
+        "default",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/memchr",
+)
+
+gbl_rust_crate_repository(
+    name = "memoffset",
+    path = "external/rust/android-crates-io/crates/memoffset",
+)
+
+gbl_rust_crate_repository(
+    name = "minimal_lexical",
     features = [
         "default",
         "std",
     ],
-    path = "external/rust/android-crates-io/crates/downcast",
+    path = "external/rust/android-crates-io/crates/minimal-lexical",
 )
 
-gbl_rust_crate_repository(
-    name = "fragile",
-    path = "external/rust/android-crates-io/crates/fragile",
-)
-
-gbl_rust_crate_repository(
-    name = "lazy_static",
-    path = "external/rust/android-crates-io/crates/lazy_static",
+gbl_new_local_repository(
+    name = "mkbootimg",
+    exist_marker_path = "repo_exists",
+    path = "tools/mkbootimg",
 )
 
 gbl_rust_crate_repository(
@@ -238,6 +585,97 @@ gbl_rust_crate_repository(
 )
 
 gbl_rust_crate_repository(
+    name = "nix",
+    features = [
+        "event",
+        "feature",
+        "fs",
+        "inotify",
+        "ioctl",
+        "memoffset",
+        "mman",
+        "mount",
+        "net",
+        "poll",
+        "process",
+        "resource",
+        "sched",
+        "signal",
+        "socket",
+        "term",
+        "time",
+        "uio",
+        "user",
+    ],
+    path = "external/rust/android-crates-io/crates/nix",
+    rustc_flags = [
+        "--cfg=linux",
+        "--cfg=linux_android",
+        "--cap-lints=allow",
+    ],
+    deps = [
+        "@bitflags",
+        "@cfg_if",
+        "@libc",
+        "@memoffset",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "nom",
+    path = "external/rust/android-crates-io/crates/nom",
+    deps = [
+        "@memchr",
+        "@minimal_lexical",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "once_cell",
+    features = [
+        "alloc",
+        "default",
+        "race",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/once_cell",
+)
+
+gbl_new_local_repository(
+    name = "open_dice",
+    build_file = "@gbl//libopendice:BUILD.open_dice.bazel",
+    path = "external/open-dice",
+)
+
+gbl_rust_crate_repository(
+    name = "parking_lot",
+    features = [
+        "arc_lock",
+        "default",
+    ],
+    path = "external/rust/android-crates-io/crates/parking_lot",
+    deps = [
+        "@lock_api",
+        "@parking_lot_core",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "parking_lot_core",
+    path = "external/rust/android-crates-io/crates/parking_lot_core",
+    deps = [
+        "@cfg_if",
+        "@libc",
+        "@smallvec",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "pathdiff",
+    path = "external/rust/android-crates-io/crates/pathdiff",
+)
+
+gbl_rust_crate_repository(
     name = "predicates",
     path = "external/rust/android-crates-io/crates/predicates",
     deps = [
@@ -262,6 +700,251 @@ gbl_rust_crate_repository(
 )
 
 gbl_rust_crate_repository(
+    name = "proc_macro2",
+    features = [
+        "default",
+        "proc-macro",
+        "span-locations",
+    ],
+    path = "external/rust/android-crates-io/crates/proc-macro2",
+    deps = ["@unicode_ident"],
+)
+
+gbl_rust_crate_repository(
+    name = "quote",
+    features = [
+        "default",
+        "proc-macro",
+    ],
+    path = "external/rust/android-crates-io/crates/quote",
+    deps = ["@proc_macro2"],
+)
+
+gbl_rust_crate_repository(
+    name = "rustix",
+    aliases = {
+        "@errno": "libc_errno",
+    },
+    features = [
+        "alloc",
+        "event",
+        "fs",
+        "libc",
+        "libc_errno",
+        "mm",
+        "net",
+        "param",
+        "pipe",
+        "std",
+        "use-libc",
+        "use-libc-auxv",
+    ],
+    path = "external/rust/android-crates-io/crates/rustix",
+    rustc_flags = [
+        "--cfg=libc",
+        "--cfg=rustix_no_linux_raw",
+        "--cfg=linux_kernel",
+        "--cfg=linux_like",
+    ],
+    deps = [
+        "@bitflags",
+        "@errno",
+        "@libc",
+    ],
+)
+
+gbl_new_local_repository(
+    name = "rustversion",
+    build_file = "@gbl//rustversion:BUILD.rustversion.bazel",
+    path = "external/rust/android-crates-io/crates/rustversion",
+)
+
+gbl_rust_crate_repository(
+    name = "ryu",
+    path = "external/rust/android-crates-io/crates/ryu",
+)
+
+gbl_rust_crate_repository(
+    name = "scopeguard",
+    features = [
+        "default",
+        "use_std",
+    ],
+    path = "external/rust/android-crates-io/crates/scopeguard",
+)
+
+gbl_rust_crate_repository(
+    name = "serde",
+    features = [
+        "default",
+        "derive",
+        "rc",
+        "serde_derive",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/serde",
+    proc_macro_deps = ["@serde_derive"],
+    rustc_env = {
+        "OUT_DIR": "../out",
+    },
+    deps = ["@serde_core"],
+)
+
+gbl_rust_crate_repository(
+    name = "serde_core",
+    edition = "2021",
+    features = [
+        "rc",
+        "result",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/serde_core",
+    rustc_env = {
+        "OUT_DIR": "../out",
+    },
+)
+
+gbl_rust_crate_repository(
+    name = "serde_derive",
+    path = "external/rust/android-crates-io/crates/serde_derive",
+    rule = "rust_proc_macro",
+    rustc_env = {
+        # Android uses a pregenerated `_private228` module named after the
+        # `CARGO_PKG_VERSION_PATCH`. Thus we need to set the right version so that
+        # the derive processor code, which uses
+        # `__private<CARGO_PKG_VERSION_PATCH>` to search for the private
+        # module, can find it.
+        "CARGO_PKG_VERSION_PATCH": "228",
+    },
+    deps = [
+        "@proc_macro2",
+        "@quote",
+        "@syn",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "serde_json",
+    features = [
+        "default",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/serde_json",
+    rustc_flags = [
+        "--cfg",
+        "fast_arithmetic=\\\"64\\\"",
+    ],
+    deps = [
+        "@itoa",
+        "@memchr",
+        "@ryu",
+        "@serde_core",
+        "@zmij",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "serde_spanned",
+    features = [
+        "serde",
+    ],
+    path = "external/rust/android-crates-io/crates/serde_spanned",
+    deps = ["@serde_core"],
+)
+
+gbl_rust_crate_repository(
+    name = "serde_yaml",
+    path = "external/rust/android-crates-io/crates/serde_yaml",
+    rustc_flags = [
+        "-A",
+        "dangerous_implicit_autorefs",
+    ],
+    deps = [
+        "@indexmap",
+        "@itoa",
+        "@ryu",
+        "@serde",
+        "@unsafe_libyaml",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "smallvec",
+    features = [
+        "const_generics",
+        "const_new",
+        "write",
+    ],
+    path = "external/rust/android-crates-io/crates/smallvec",
+)
+
+# TODO(b/383783832): migrate to android-crates-io
+gbl_new_local_repository(
+    name = "smoltcp",
+    build_file = "@gbl//smoltcp:BUILD.smoltcp.bazel",
+    path = "external/rust/android-crates-io/crates/smoltcp",
+)
+
+gbl_rust_crate_repository(
+    name = "spin",
+    features = [
+        "mutex",
+        "spin_mutex",
+    ],
+    path = "external/rust/android-crates-io/crates/spin",
+    rustc_flags = [
+        "-A",
+        "unused_imports",
+        "-A",
+        "mismatched_lifetime_syntaxes",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "static_assertions",
+    path = "external/rust/android-crates-io/crates/static_assertions",
+)
+
+gbl_rust_crate_repository(
+    name = "strsim",
+    path = "external/rust/android-crates-io/crates/strsim",
+)
+
+gbl_rust_crate_repository(
+    name = "syn",
+    features = [
+        "clone-impls",
+        "default",
+        "derive",
+        "extra-traits",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro",
+        "quote",
+        "visit",
+        "visit-mut",
+    ],
+    path = "external/rust/android-crates-io/crates/syn",
+    deps = [
+        "@proc_macro2",
+        "@quote",
+        "@unicode_ident",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "tempfile",
+    path = "external/rust/android-crates-io/crates/tempfile",
+    deps = [
+        "@fastrand",
+        "@getrandom",
+        "@once_cell",
+        "@rustix",
+    ],
+)
+
+gbl_rust_crate_repository(
     name = "termcolor",
     path = "external/rust/android-crates-io/crates/termcolor",
 )
@@ -272,30 +955,282 @@ gbl_rust_crate_repository(
 )
 
 gbl_rust_crate_repository(
-    name = "zune_inflate",
-    features = ["gzip"],
-    path = "external/rust/android-crates-io/crates/zune-inflate",
+    name = "thiserror",
+    path = "external/rust/android-crates-io/crates/thiserror",
+    proc_macro_deps = ["@thiserror_impl"],
+    rustc_env = {
+        "OUT_DIR": "../out",
+    },
 )
 
 gbl_rust_crate_repository(
-    name = "lz4_flex",
-    features = ["safe-decode"],
-    path = "external/rust/android-crates-io/crates/lz4_flex",
-    rustc_flags = [
-        "-A",
-        "dead_code",
+    name = "thiserror_impl",
+    path = "external/rust/android-crates-io/crates/thiserror-impl",
+    rule = "rust_proc_macro",
+    rustc_env = {
+        # Android uses a pregenerated `_private18` module named after the
+        # `CARGO_PKG_VERSION_PATCH`. Thus we need to set the right version so that
+        # the derive processor code, which uses
+        # `__private<CARGO_PKG_VERSION_PATCH>` to search for the private
+        # module, can find it.
+        "CARGO_PKG_VERSION_PATCH": "18",
+    },
+    deps = [
+        "@proc_macro2",
+        "@quote",
+        "@syn",
     ],
+)
+
+gbl_rust_crate_repository(
+    name = "toml",
+    features = [
+        "default",
+        "display",
+        "parse",
+        "serde",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/toml",
+    deps = [
+        "@serde_core",
+        "@serde_spanned",
+        "@toml_datetime",
+        "@toml_parser",
+        "@toml_writer",
+        "@winnow",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "toml_datetime",
+    features = [
+        "alloc",
+        "serde",
+    ],
+    path = "external/rust/android-crates-io/crates/toml_datetime",
+    deps = ["@serde_core"],
+)
+
+gbl_rust_crate_repository(
+    name = "toml_edit",
+    features = [
+        "default",
+        "display",
+        "parse",
+    ],
+    path = "external/rust/android-crates-io/crates/toml_edit",
+    deps = [
+        "@indexmap",
+        "@serde_core",
+        "@serde_spanned",
+        "@toml_datetime",
+        "@toml_parser",
+        "@toml_writer",
+        "@winnow",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "toml_parser",
+    features = [
+        "alloc",
+        "default",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/toml_parser",
+    deps = ["@winnow"],
+)
+
+gbl_rust_crate_repository(
+    name = "toml_writer",
+    features = [
+        "alloc",
+        "default",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/toml_writer",
+)
+
+gbl_rust_crate_repository(
+    name = "uncased",
+    features = ["alloc"],
+    path = "external/rust/android-crates-io/crates/uncased",
+    deps = ["@serde"],
+)
+
+gbl_rust_crate_repository(
+    name = "unicode_ident",
+    path = "external/rust/android-crates-io/crates/unicode-ident",
+)
+
+gbl_rust_crate_repository(
+    name = "unsafe_libyaml",
+    path = "external/rust/android-crates-io/crates/unsafe-libyaml",
+)
+
+gbl_rust_crate_repository(
+    name = "uuid",
+    path = "external/rust/android-crates-io/crates/uuid",
+)
+
+gbl_rust_crate_repository(
+    name = "vhost",
+    features = [
+        "default",
+        "vhost-user",
+        "vhost-user-backend",
+        "vhost-user-slave",
+    ],
+    path = "external/rust/android-crates-io/crates/vhost",
+    deps = [
+        "@bitflags",
+        "@libc",
+        "@uuid",
+        "@vm_memory",
+        "@vmm_sys_util",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "vhost_device_vsock",
+    features = [
+        "backend_vsock",
+        "default",
+        "libc",
+        "vsock",
+    ],
+    path = "external/rust/android-crates-io/crates/vhost-device-vsock",
+    rule = "rust_binary",
+    deps = [
+        "@byteorder",
+        "@clap",
+        "@env_logger",
+        "@epoll",
+        "@figment",
+        "@libc",
+        "@log",
+        "@serde",
+        "@thiserror",
+        "@vhost",
+        "@vhost_user_backend",
+        "@virtio_bindings",
+        "@virtio_queue",
+        "@virtio_vsock",
+        "@vm_memory",
+        "@vmm_sys_util",
+        "@vsock",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "vhost_user_backend",
+    path = "external/rust/android-crates-io/crates/vhost-user-backend",
+    deps = [
+        "@libc",
+        "@log",
+        "@vhost",
+        "@virtio_bindings",
+        "@virtio_queue",
+        "@vm_memory",
+        "@vmm_sys_util",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "virtio_bindings",
+    path = "external/rust/android-crates-io/crates/virtio-bindings",
+)
+
+gbl_rust_crate_repository(
+    name = "virtio_queue",
+    license_bsd_type = [
+        "@rules_license//licenses/spdx:BSD-3-Clause",
+    ],
+    path = "external/rust/android-crates-io/crates/virtio-queue",
+    deps = [
+        "@log",
+        "@virtio_bindings",
+        "@vm_memory",
+        "@vmm_sys_util",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "virtio_vsock",
+    path = "external/rust/android-crates-io/crates/virtio-vsock",
+    deps = [
+        "@virtio_bindings",
+        "@virtio_queue",
+        "@vm_memory",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "vm_memory",
+    features = [
+        "arc-swap",
+        "backend-atomic",
+        "backend-bitmap",
+        "backend-mmap",
+        "default",
+    ],
+    path = "external/rust/android-crates-io/crates/vm-memory",
+    deps = [
+        "@arc_swap",
+        "@libc",
+        "@thiserror",
+    ],
+)
+
+gbl_new_local_repository(
+    name = "vmm",
+    build_file_content = """exports_files(glob(["**/*"]))""",
+    exist_marker_path = "repo_exists",
+    path = "prebuilts/vmm",
+)
+
+gbl_rust_crate_repository(
+    name = "vmm_sys_util",
+    license_bsd_type = ["@rules_license//licenses/spdx:BSD-3-Clause"],
+    path = "external/rust/android-crates-io/crates/vmm-sys-util",
+    deps = [
+        "@bitflags_1_3_2",
+        "@libc",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "vsock",
+    path = "external/rust/android-crates-io/crates/vsock",
+    deps = [
+        "@libc",
+        "@nix",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "winnow",
+    features = [
+        "alloc",
+        "ascii",
+        "binary",
+        "default",
+        "parser",
+        "std",
+    ],
+    path = "external/rust/android-crates-io/crates/winnow",
+)
+
+gbl_rust_crate_repository(
+    name = "yaml_rust",
+    path = "external/rust/android-crates-io/crates/yaml-rust",
+    deps = ["@linked_hash_map"],
 )
 
 local_repository(
     name = "zbi",
     path = "prebuilts/fuchsia_sdk/",
-)
-
-gbl_new_local_repository(
-    name = "mkbootimg",
-    exist_marker_path = "repo_exists",
-    path = "tools/mkbootimg",
 )
 
 gbl_rust_crate_repository(
@@ -327,210 +1262,15 @@ gbl_rust_crate_repository(
 )
 
 gbl_rust_crate_repository(
-    name = "bitflags",
-    path = "external/rust/android-crates-io/crates/bitflags",
+    name = "zmij",
+    path = "external/rust/android-crates-io/crates/zmij",
 )
 
 gbl_rust_crate_repository(
-    name = "flagset",
-    path = "external/rust/android-crates-io/crates/flagset",
+    name = "zune_inflate",
+    features = ["gzip"],
+    path = "external/rust/android-crates-io/crates/zune-inflate",
 )
-
-gbl_rust_crate_repository(
-    name = "byteorder",
-    path = "external/rust/android-crates-io/crates/byteorder",
-)
-
-gbl_rust_crate_repository(
-    name = "cfg_if",
-    path = "external/rust/android-crates-io/crates/cfg-if",
-)
-
-gbl_rust_crate_repository(
-    name = "crc32fast",
-    # Current version of the crate doesn't compile with newer editions.
-    edition = "2015",
-    path = "external/rust/android-crates-io/crates/crc32fast",
-    deps = ["@cfg_if"],
-)
-
-gbl_rust_crate_repository(
-    name = "hex",
-    features = [
-        "alloc",
-        "default",
-        "std",
-    ],
-    path = "external/rust/android-crates-io/crates/hex",
-)
-
-gbl_rust_crate_repository(
-    name = "quote",
-    features = [
-        "default",
-        "proc-macro",
-    ],
-    path = "external/rust/android-crates-io/crates/quote",
-    deps = ["@proc_macro2"],
-)
-
-gbl_rust_crate_repository(
-    name = "unicode_ident",
-    path = "external/rust/android-crates-io/crates/unicode-ident",
-)
-
-gbl_rust_crate_repository(
-    name = "syn",
-    features = [
-        "clone-impls",
-        "default",
-        "derive",
-        "extra-traits",
-        "full",
-        "parsing",
-        "printing",
-        "proc-macro",
-        "quote",
-        "visit",
-        "visit-mut",
-    ],
-    path = "external/rust/android-crates-io/crates/syn",
-    deps = [
-        "@proc_macro2",
-        "@quote",
-        "@unicode_ident",
-    ],
-)
-
-gbl_rust_crate_repository(
-    name = "proc_macro2",
-    features = [
-        "default",
-        "proc-macro",
-        "span-locations",
-    ],
-    path = "external/rust/android-crates-io/crates/proc-macro2",
-    deps = ["@unicode_ident"],
-)
-
-gbl_new_local_repository(
-    name = "boringssl",
-    build_file = "@gbl//libboringssl:BUILD.boringssl.bazel",
-    exclude_files = [
-        # We replace the top-level BUILD file with our own.
-        "BUILD",
-        # Exclude this subdir build file, otherwise it masks rules we use from
-        # src/gen/sources.bzl by making them private.
-        "src/BUILD.bazel",
-    ],
-    path = "external/boringssl",
-)
-
-gbl_new_local_repository(
-    name = "open_dice",
-    build_file = "@gbl//libopendice:BUILD.open_dice.bazel",
-    path = "external/open-dice",
-)
-
-gbl_rust_crate_repository(
-    name = "bytes",
-    path = "external/rust/android-crates-io/crates/bytes",
-)
-
-gbl_rust_crate_repository(
-    name = "base64",
-    path = "external/rust/android-crates-io/crates/base64",
-)
-
-gbl_rust_crate_repository(
-    name = "strsim",
-    path = "external/rust/android-crates-io/crates/strsim",
-)
-
-gbl_rust_crate_repository(
-    name = "anstyle",
-    path = "external/rust/android-crates-io/crates/anstyle",
-)
-
-gbl_rust_crate_repository(
-    name = "clap_lex",
-    path = "external/rust/android-crates-io/crates/clap_lex",
-)
-
-gbl_rust_crate_repository(
-    name = "clap_builder",
-    compile_data = ["README.md"],
-    features = [
-        "error-context",
-        "help",
-        "std",
-        "string",
-        "suggestions",
-        "usage",
-    ],
-    path = "external/rust/android-crates-io/crates/clap_builder",
-    deps = [
-        "@anstyle",
-        "@clap_lex",
-        "@strsim",
-    ],
-)
-
-gbl_rust_crate_repository(
-    name = "heck",
-    path = "external/rust/android-crates-io/crates/heck",
-)
-
-gbl_rust_crate_repository(
-    name = "clap_derive",
-    compile_data = ["README.md"],
-    path = "external/rust/android-crates-io/crates/clap_derive",
-    rule = "rust_proc_macro",
-    deps = [
-        "@heck",
-        "@proc_macro2",
-        "@quote",
-        "@syn",
-    ],
-)
-
-gbl_rust_crate_repository(
-    name = "clap",
-    compile_data = ["examples/demo.md"],
-    features = [
-        "derive",
-        "error-context",
-        "help",
-        "std",
-        "usage",
-    ],
-    path = "external/rust/android-crates-io/crates/clap",
-    proc_macro_deps = ["@clap_derive"],
-    deps = ["@clap_builder"],
-)
-
-gbl_rust_crate_repository(
-    name = "hash32",
-    path = "external/rust/android-crates-io/crates/hash32",
-    deps = ["@byteorder"],
-)
-
-gbl_rust_crate_repository(
-    name = "heapless",
-    path = "external/rust/android-crates-io/crates/heapless",
-    deps = [
-        "@hash32",
-    ],
-)
-
-# Set up a repo to export LLVM tool/library/header/sysroot paths
-gbl_llvm_prebuilts = use_repo_rule("@gbl//toolchain:gbl_workspace_util.bzl", "gbl_llvm_prebuilts")
-
-gbl_llvm_prebuilts(name = "gbl_llvm_prebuilts")
-
-gbl_config = use_repo_rule("@gbl//toolchain:gbl_workspace_util.bzl", "gbl_config")
-
-gbl_config(name = "gbl_config")
 
 # We don't register GBL toolchains here because they will be masked by toolchains from
 # `build/kleaf//:` as they are registered earlier. Instead, we will pass GBL toolchains via
