@@ -15,6 +15,8 @@
 #ifndef DICE_BINDGEN_DICE_H_
 #define DICE_BINDGEN_DICE_H_
 
+#include <dice/android.h>
+#include <dice/config/cose_key_config.h>
 #include <dice/dice.h>
 #include <dice/ops.h>
 #include <dice/ops/trait/cose.h>
