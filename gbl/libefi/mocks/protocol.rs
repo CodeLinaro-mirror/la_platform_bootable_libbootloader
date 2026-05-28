@@ -34,6 +34,57 @@ use mockall::mock;
 /// Mock `Protocol` type.
 pub type Protocol<'a, T> = T;
 
+/// Constructs a mock pre-set to the given [`Versioned::revision`].
+pub trait WithRevision: Default {
+    /// Returns a default mock with [`Versioned::revision`] overridden to `revision`.
+    fn with_revision(revision: Revision) -> Self;
+}
+
+/// Wraps a protocol mock to add an overridable [`Versioned::revision`].
+/// [`Deref`](core::ops::Deref)s to the inner mock so `.expect_*()` calls flow through.
+#[derive(Clone)]
+pub struct VersionedMock<T, const MAJOR: u16 = 1, const MINOR: u16 = 0> {
+    /// Revision reported by [`Versioned::revision`].
+    pub revision: Revision,
+    inner: T,
+}
+
+impl<T: Default, const MAJOR: u16, const MINOR: u16> Default for VersionedMock<T, MAJOR, MINOR> {
+    fn default() -> Self {
+        Self { revision: Revision { major: MAJOR, minor: MINOR }, inner: T::default() }
+    }
+}
+
+impl<T, const MAJOR: u16, const MINOR: u16> core::ops::Deref for VersionedMock<T, MAJOR, MINOR> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T, const MAJOR: u16, const MINOR: u16> core::ops::DerefMut for VersionedMock<T, MAJOR, MINOR> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+}
+
+impl<T, const MAJOR: u16, const MINOR: u16> Versioned for VersionedMock<T, MAJOR, MINOR> {
+    const REVISION: Revision = Revision { major: MAJOR, minor: MINOR };
+
+    fn revision(&self) -> Revision {
+        self.revision
+    }
+}
+
+impl<T: Default, const MAJOR: u16, const MINOR: u16> WithRevision
+    for VersionedMock<T, MAJOR, MINOR>
+{
+    fn with_revision(revision: Revision) -> Self {
+        Self { revision, inner: T::default() }
+    }
+}
+
 /// Mock device_path module.
 pub mod device_path {
     use super::*;
@@ -222,7 +273,7 @@ pub mod gbl_efi_os_configuration {
     }
 
     /// Map to the libefi name so code under test can just use one name.
-    pub type GblOsConfigurationProtocol = MockGblOsConfigurationProtocol;
+    pub type GblOsConfigurationProtocol = VersionedMock<MockGblOsConfigurationProtocol>;
 }
 
 /// Mock dt_fixup protocol.
@@ -262,7 +313,7 @@ pub mod gbl_efi_avb {
     /// `validate_vbmeta_public_key.public_key_metadata` argument to have a `'static` lifetime,
     /// which is not practical for our use case.
     #[derive(Clone, Default)]
-    pub struct GblAvbProtocol {
+    pub struct MockGblAvbProtocol {
         /// Expected return value from `read_partition_attributes`.
         pub read_partition_attributes_result: Option<Result<Vec<SpecializedPartition>>>,
         /// Expected return value from `read_device_status`
@@ -285,7 +336,7 @@ pub mod gbl_efi_avb {
         pub factory_data_reset_result: Option<Result<()>>,
     }
 
-    impl GblAvbProtocol {
+    impl MockGblAvbProtocol {
         /// Wraps `GBL_EFI_AVB_PROTOCOL.read_partition_attributes()`.
         pub fn read_partition_attributes<const N: usize>(
             &self,
@@ -357,6 +408,9 @@ pub mod gbl_efi_avb {
             self.factory_data_reset_result.unwrap()
         }
     }
+
+    /// Map to the libefi name so code under test can just use one name.
+    pub type GblAvbProtocol = VersionedMock<MockGblAvbProtocol>;
 }
 
 /// Mock gbl_efi_fastboot protocol.
@@ -373,9 +427,10 @@ pub mod gbl_efi_fastboot {
     }
 
     /// Mock [efi::GblFastbootProtocol].
-    pub struct GblFastbootProtocol {}
+    #[derive(Default)]
+    pub struct MockGblFastbootProtocol {}
 
-    impl GblFastbootProtocol {
+    impl MockGblFastbootProtocol {
         /// Protocol<'_, GblFastbootProtocol>::get_var.
         pub fn get_var<'a>(
             &self,
@@ -415,6 +470,8 @@ pub mod gbl_efi_fastboot {
 
     /// Map to the libefi name so code under test can just use one name.
     pub type Var = MockVar;
+    /// Map to the libefi name so code under test can just use one name.
+    pub type GblFastbootProtocol = VersionedMock<MockGblFastbootProtocol>;
 }
 
 /// Mock gbl_efi_boot_control
@@ -449,16 +506,8 @@ pub mod gbl_efi_boot_control {
         }
     }
 
-    impl Versioned for MockGblBootControlProtocol {
-        const REVISION: Revision = Revision { major: 1, minor: 0 };
-
-        fn revision(&self) -> Revision {
-            Self::REVISION
-        }
-    }
-
     /// Map to the libefi name so code under test can just use one name.
-    pub type GblBootControlProtocol = MockGblBootControlProtocol;
+    pub type GblBootControlProtocol = VersionedMock<MockGblBootControlProtocol>;
 }
 
 /// Mock gbl_efi_boot_memory
@@ -533,5 +582,5 @@ pub mod gbl_efi_avf {
     }
 
     /// Map to the libefi name so code under test can just use one name.
-    pub type GblAvfProtocol = MockGblAvfProtocol;
+    pub type GblAvfProtocol = VersionedMock<MockGblAvfProtocol>;
 }
