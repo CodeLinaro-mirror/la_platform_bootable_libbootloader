@@ -31,8 +31,6 @@ extern void mcount_return_override();
 // A copy of system table.
 static EfiSystemTable* gST = NULL;
 
-#define EFI_PAGE_SIZE 4096
-
 // Helper to Reset system.
 __attribute__((no_instrument_function)) static void Reset(const uint16_t* msg) {
   if (!gST) {
