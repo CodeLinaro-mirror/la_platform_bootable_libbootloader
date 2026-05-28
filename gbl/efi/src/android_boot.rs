@@ -69,6 +69,8 @@ pub fn efi_android_boot(
         use liberror::Error;
         use libgbl::android_boot::device_tree::PROP_BOOTARGS;
 
+        const EFI_PAGE_SIZE: u64 = efi_types::EFI_PAGE_SIZE as u64;
+
         let fdt = Fdt::new(&fdt[..])?;
         let efi_mmap = exit_boot_services(entry, remains)?;
         // SAFETY: We currently target at Cuttlefish emulator where images are provided valid.
@@ -85,7 +87,7 @@ pub fn efi_android_boot(
                     for (idx, mem) in efi_mmap.into_iter().enumerate() {
                         e820_entries[idx] = boot::x86::e820entry {
                             addr: mem.physical_start,
-                            size: mem.number_of_pages * 4096,
+                            size: mem.number_of_pages * EFI_PAGE_SIZE,
                             type_: crate::utils::efi_to_e820_mem_type(mem.memory_type),
                         };
                     }

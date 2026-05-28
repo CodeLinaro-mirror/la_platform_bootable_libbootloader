@@ -29,7 +29,7 @@ use safemath::SafeNum;
 // Alignment guaranteed by EFI AllocatePoll()
 const EFI_ALLOCATE_POOL_ALIGNMENT: usize = 8;
 // Page size of AllocatePages() by UEFI spec.
-const EFI_PAGE_SIZE: usize = 4096;
+const EFI_PAGE_SIZE: usize = efi_types::EFI_PAGE_SIZE as usize;
 
 /// Implements a global allocator using `EFI_BOOT_SERVICES.AllocatePool()/FreePool()`
 ///

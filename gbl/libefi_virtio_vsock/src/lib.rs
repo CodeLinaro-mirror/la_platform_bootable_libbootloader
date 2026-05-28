@@ -39,8 +39,7 @@ use virtio_drivers::{
     BufferDirection, Hal, PhysAddr,
 };
 
-// TODO(b/486979232): Move this constant to the EFI crate and unifies all similar constants.
-const EFI_PAGE_SIZE: usize = 4096;
+const EFI_PAGE_SIZE: usize = efi_types::EFI_PAGE_SIZE as usize;
 
 #[derive(Clone)]
 struct GblAcpiHandler;
