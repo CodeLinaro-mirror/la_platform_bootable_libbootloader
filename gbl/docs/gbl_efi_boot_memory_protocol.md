@@ -1,9 +1,10 @@
 # GBL EFI Boot Memory Protocol
 
-|             |            |
-| :---------- | :--------- |
-| **Status**  | Pre-frozen |
-| **Created** | 2025-07-13 |
+|                |            |
+| :------------- | :--------- |
+| **Status**     | Stable     |
+| **Created**    | 2025-07-13 |
+| **Stabilized** | 2026-05-22 |
 
 ## GBL_EFI_BOOT_MEMORY_PROTOCOL
 
@@ -29,7 +30,7 @@ Fastboot mode.
 ### Revision Number
 
 ```c
-#define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
+#define GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(1, 0)
 ```
 
 See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about

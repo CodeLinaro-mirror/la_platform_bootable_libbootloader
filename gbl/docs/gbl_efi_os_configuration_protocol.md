@@ -1,9 +1,10 @@
 # GBL EFI OS Configuration Protocol
 
-|             |            |
-| :---------- | :--------- |
-| **Status**  | Pre-frozen |
-| **Created** | 2024-07-17 |
+|                |            |
+| :------------- | :--------- |
+| **Status**     | Stable     |
+| **Created**    | 2024-07-17 |
+| **Stabilized** | 2026-05-22 |
 
 ## GBL_EFI_OS_CONFIGURATION_PROTOCOL
 
@@ -40,7 +41,7 @@ unimplemented, in which case GBL autoselection logic will be used. Refer to
 ### Revision Number
 
 ```c
-#define GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 257)
+#define GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(1, 0)
 ```
 
 See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about
@@ -54,7 +55,6 @@ typedef struct _GBL_EFI_OS_CONFIGURATION_PROTOCOL {
   GBL_EFI_FIXUP_BOOTCONFIG         FixupBootConfig;
   GBL_EFI_SELECT_DEVICE_TREES      SelectDeviceTrees;
   GBL_EFI_SELECT_FIT_CONFIGURATION SelectFitConfiguration;
-  GBL_EFI_FIXUP_ZBI                FixupZbi;
 } GBL_EFI_OS_CONFIGURATION_PROTOCOL;
 ```
 
@@ -81,11 +81,6 @@ information.
 
 Selects the FIT configuration corresponding to the platform. See
 [`SelectFitConfiguration()`][select_fit_configuration] for more information.
-
-#### FixupZbi
-
-Applies ZBI fixups (Fuchsia kernels only). See [`FixupZbi()`][fixup_zbi] for
-more information.
 
 ## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupBootConfig()
 
@@ -456,10 +451,6 @@ traditional device tree selection and ignore the FIT image entirely.
 | `EFI_SUCCESS`           | FIT configuration has been selected.                  |
 | `EFI_UNSUPPORTED`       | No configuration selected; GBL will continue to boot. |
 | `EFI_INVALID_PARAMETER` | Unexpected input; GBL will refuse to boot.            |
-
-## GBL_EFI_OS_CONFIGURATION_PROTOCOL.FixupZbi()
-
-TODO(b/353272981)
 
 [fixup_bootconfig]: #gbl_efi_os_configuration_protocol_fixupbootconfig
 [select_device_trees]: #gbl_efi_os_configuration_protocol_selectdevicetrees

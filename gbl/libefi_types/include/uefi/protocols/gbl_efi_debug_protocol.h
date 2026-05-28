@@ -30,7 +30,7 @@
 #include <uefi/types.h>
 
 static const uint64_t GBL_EFI_DEBUG_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 256);
+    GBL_PROTOCOL_REVISION(1, 0);
 
 // TODO (b/446226293): add additional tags.
 EFI_ENUM(GblEfiDebugErrorTag, uint64_t, GBL_EFI_DEBUG_ERROR_TAG_ASSERTION_ERROR,

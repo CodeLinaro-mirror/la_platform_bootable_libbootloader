@@ -31,7 +31,7 @@
 #include <uefi/types.h>
 
 static const uint64_t GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION =
-    GBL_PROTOCOL_REVISION(0, 256);
+    GBL_PROTOCOL_REVISION(1, 0);
 
 EFI_ENUM(GblEfiUnbootableReason, uint8_t,
          GBL_EFI_UNBOOTABLE_REASON_UNKNOWN_REASON,
