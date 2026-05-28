@@ -15,6 +15,7 @@
 #
 
 
+from contextlib import contextmanager
 from pathlib import Path
 import shutil
 import subprocess
@@ -43,6 +44,10 @@ class GblSigntoolTest(unittest.TestCase):
 
   def testInfo_success(self):
     Gblsigntool('info', TEST_EFI_PATH)
+
+  def testInfo_withTail_success(self):
+    with tmp_appended_tail(TEST_EFI_PATH) as test_efi_with_tail:
+      Gblsigntool('info', test_efi_with_tail)
 
   def testInfo_notPEImage_failure(self):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -73,6 +78,10 @@ class GblSigntoolTest(unittest.TestCase):
 
   def testVerify_success(self):
     Gblsigntool('verify', TEST_EFI_PATH)
+
+  def testVerify_withTail_success(self):
+    with tmp_appended_tail(TEST_EFI_PATH) as test_efi_with_tail:
+      Gblsigntool('verify', test_efi_with_tail)
 
   def testVerify_pubkeyMismatch_failure(self):
     with self.assertRaises(subprocess.CalledProcessError):
@@ -142,6 +151,18 @@ class GblSigntoolTest(unittest.TestCase):
       shutil.unpack_archive(signed_zip, unpack_signed_dir)
       for signed_efi in unpack_signed_dir.glob('gbl*.efi'):
         Gblsigntool('verify', signed_efi, '--key', TEST_PUBKEY_PATH)
+
+
+@contextmanager
+def tmp_appended_tail(path):
+  with tempfile.TemporaryDirectory() as temp_dir:
+    appended_path = Path(temp_dir) / path.name
+    with open(path, 'rb') as f:
+      content = f.read()
+    with open(appended_path, 'wb') as f:
+      f.write(content)
+      f.write(b'\x00' * 4 * 4096)
+    yield appended_path
 
 
 if __name__ == '__main__':

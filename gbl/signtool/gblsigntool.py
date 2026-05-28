@@ -26,7 +26,7 @@ import shutil
 import struct
 import tempfile
 
-from avbtool import (AvbFooter, AvbTool)
+from avbtool import (AvbError, AvbFooter, AvbTool, AvbVBMetaHeader)
 
 
 # Source of truth is winnt.h
@@ -55,6 +55,58 @@ OFFSET_SECTION_HEADER_SIZE_OF_RAW_DATA = 16
 OFFSET_SECTION_HEADER_POINTER_TO_RAW_DATA = 20
 
 CERTIFICATE_TABLE_IDX = 4
+
+BLOCK_SIZE = 4096
+
+
+def align_up(num, align):
+  """Return num rounded up to the next multiple of align."""
+  return (num + align - 1) // align * align
+
+
+def get_avb_footer(buffer):
+  """Extract AVB footer from the end of the buffer."""
+  if len(buffer) >= AvbFooter.SIZE:
+    try:
+      avb_footer = AvbFooter(buffer[-AvbFooter.SIZE :])
+      vbmeta_header_start = avb_footer.vbmeta_offset
+      vbmeta_header_end = vbmeta_header_start + AvbVBMetaHeader.SIZE
+      # Check avb footer points to a valid vbmeta header.
+      AvbVBMetaHeader(buffer[vbmeta_header_start:vbmeta_header_end])
+      return avb_footer
+    except (AvbError, LookupError, struct.error):
+      pass
+  return None
+
+
+def find_avb_footer(buffer, pe_end_offset):
+  """Search for AVB footer.
+
+  Attempts to find an AVB footer at the end of the buffer or within trailing
+  data after the PE image.
+
+  Returns:
+    A tuple of (AvbFooter, offset) if found, where offset is the end of the
+    signed image, excluding trailing data after the AvbFooter.
+    (None, None) if not found.
+  """
+  # Check AVB footer at the end of the image first
+  footer = get_avb_footer(buffer)
+  if footer is not None:
+    return footer, len(buffer)
+
+  # Avoid scanning inside the PE binary
+  pe_end_offset_aligned = align_up(pe_end_offset, BLOCK_SIZE)
+  # AVB footer must be at the end of a block-aligned slice
+  for offset in range(pe_end_offset_aligned, len(buffer) + 1, BLOCK_SIZE):
+    footer = get_avb_footer(buffer[:offset])
+    if footer is not None:
+      footer_offset = offset - AvbFooter.SIZE
+      print(
+          f'WARNING: AVB footer found at offset: {footer_offset}. Expected at the end.'
+      )
+      return footer, offset
+  return None, None
 
 
 def unpack_word(buf, off):
@@ -166,6 +218,11 @@ class PEImage:
     if self._optional_header.number_of_data_entries() < 5:
       raise PEError('PE Optional header data directories table is too small')
 
+    # Ensure AVB footer can be found even if not at the image end
+    self.avb_footer, offset = find_avb_footer(self._buf, self._pe_end_offset())
+    if offset is not None:
+      self._buf = self._buf[:offset]
+
   def erase_existing_win_certificates(self):
     offset, size = self._optional_header.data_entry(CERTIFICATE_TABLE_IDX)
     certificate_table_offset = (
@@ -187,13 +244,31 @@ class PEImage:
   def erase_checksum(self):
     self._buf[self._checksum_offset : self._checksum_offset + 4] = 4 * b'\x00'
 
-  def get_avb_footer(self):
-    if len(self._buf) >= AvbFooter.SIZE:
-      try:
-        return AvbFooter(self._buf[-AvbFooter.SIZE :])
-      except (LookupError, struct.error):
-        pass
-    return None
+  def _section_offsets(self):
+    """Yields (start, end) for each section."""
+    for idx in range(self._pe_header.number_of_sections()):
+      off = self._section_headers_offset + idx * 40
+      size = unpack_dword(
+          self._buf, off + OFFSET_SECTION_HEADER_SIZE_OF_RAW_DATA
+      )
+      data = unpack_dword(
+          self._buf, off + OFFSET_SECTION_HEADER_POINTER_TO_RAW_DATA
+      )
+      yield (data, data + size)
+
+  def _pe_end_offset(self):
+    """Returns the end offset of a PE file.
+
+    The end of PE file is detected as the maximum of:
+    - The end of the last section.
+    - The end of the certificate table (if present).
+    """
+    cert_offset, cert_size = self._optional_header.data_entry(
+        CERTIFICATE_TABLE_IDX
+    )
+    certs_end_offset = cert_offset + cert_size
+    sections_end_offset = max(end for _, end in self._section_offsets())
+    return max(certs_end_offset, sections_end_offset)
 
   def authenticode_digest(self):
     data_directory_certificate_table_offset = (
@@ -215,15 +290,7 @@ class PEImage:
             self._optional_header.size_of_headers(),
         ),
     ]
-    for idx in range(self._pe_header.number_of_sections()):
-      off = self._section_headers_offset + idx * 40
-      size = unpack_dword(
-          self._buf, off + OFFSET_SECTION_HEADER_SIZE_OF_RAW_DATA
-      )
-      data = unpack_dword(
-          self._buf, off + OFFSET_SECTION_HEADER_POINTER_TO_RAW_DATA
-      )
-      regions.append((data, data + size))
+    regions.extend(self._section_offsets())
     regions.sort(key=lambda e: e[0])
 
     # End junk
@@ -244,15 +311,14 @@ def gbl_info(args):
   gbl_image.erase_checksum()
   print('Authenticode digest (sha256):', gbl_image.authenticode_digest())
 
-  avb_footer = gbl_image.get_avb_footer()
-  if not avb_footer:
+  if not gbl_image.avb_footer:
     raise ValueError('No AVB footer found, image is unsigned')
 
   with tempfile.TemporaryDirectory() as temp_dir:
     gbl_efi = os.path.join(temp_dir, 'gbl.efi')
     with open(gbl_efi, 'wb') as f:
       f.write(gbl_image._buf)
-    gbl_image._buf = gbl_image._buf[: avb_footer.original_image_size]
+    gbl_image._buf = gbl_image._buf[: gbl_image.avb_footer.original_image_size]
     print(
         'Authenticode digest (without AVB footer):',
         gbl_image.authenticode_digest(),
@@ -268,9 +334,8 @@ def gbl_sign_one(gbl_image, output, avbtool_args):
   gbl_image = PEImage(gbl_bytes)
   gbl_image.erase_existing_win_certificates()
   gbl_image.erase_checksum()
-  avb_footer = gbl_image.get_avb_footer()
-  if avb_footer:
-    gbl_image._buf = gbl_image._buf[: avb_footer.original_image_size]
+  if gbl_image.avb_footer:
+    gbl_image._buf = gbl_image._buf[: gbl_image.avb_footer.original_image_size]
     print('Erased existing AVB footer')
   digest = gbl_image.authenticode_digest()
 
@@ -356,9 +421,8 @@ def gbl_remove(args):
   gbl_image = PEImage(gbl_bytes)
   gbl_image.erase_existing_win_certificates()
   gbl_image.erase_checksum()
-  avb_footer = gbl_image.get_avb_footer()
-  if avb_footer:
-    gbl_image._buf = gbl_image._buf[: avb_footer.original_image_size]
+  if gbl_image.avb_footer:
+    gbl_image._buf = gbl_image._buf[: gbl_image.avb_footer.original_image_size]
     print('Erased existing AVB footer')
   with open(args.output, 'wb') as f:
     f.write(gbl_image._buf)
