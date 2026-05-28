@@ -285,6 +285,33 @@ parsable_int!(u32);
 parsable_int!(u64);
 parsable_int!(usize);
 
+/// Get timestamp from architecture specific timer.
+#[cfg(target_arch = "aarch64")]
+pub fn arch_timestamp() -> core::time::Duration {
+    let (cnt, freq): (u64, u64);
+    // SAFETY: Generic timer is always available on AArch64 and safe to read.
+    unsafe {
+        asm!(
+            "isb",
+            "mrs {cnt}, cntpct_el0",
+            "mrs {freq}, cntfrq_el0",
+            cnt = out(reg) cnt,
+            freq = out(reg) freq,
+        );
+    }
+    let (cnt, freq): (u128, u128) = (cnt as _, freq as _);
+    let nanos = cnt * 1000 * 1000 * 1000 / freq;
+    core::time::Duration::from_nanos(nanos as u64)
+}
+
+/// Get timestamp from architecture specific timer.
+#[cfg(not(target_arch = "aarch64"))]
+pub fn arch_timestamp() -> core::time::Duration {
+    // Implement for other architectures if needed. For riscv64, we can use `rdtime`. For x86_64,
+    // we can use `rdtsc`.
+    unimplemented!("Architecture not implemented yet")
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
