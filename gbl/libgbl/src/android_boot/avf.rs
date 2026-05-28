@@ -88,8 +88,13 @@ impl AVFVerificationData for SlotVerifyData<'_> {
         // must add the hashtree digest of the vendor image as a device tree property value.
         // See details:
         // https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/docs/microdroid_vendor_modules.md,
+        // AVF expects this property in the vendor.img footer (vbmeta_vendor), so
+        // limit lookup to the root vbmeta and vbmeta_vendor partitions.
         const HASHTREE_DIGEST_PROPNAME: &str = "com.android.build.microdroid-vendor.root_digest";
-        self.vbmeta_data().iter().find_map(|data| data.get_property_value(HASHTREE_DIGEST_PROPNAME))
+        self.vbmeta_data()
+            .iter()
+            .filter(|data| matches!(data.partition_name().to_str(), Ok("vbmeta" | "vbmeta_vendor")))
+            .find_map(|data| data.get_property_value(HASHTREE_DIGEST_PROPNAME))
     }
 
     fn vbmeta_digest_sha256(&self) -> [u8; Sha256::DIGEST_SIZE] {
