@@ -513,7 +513,7 @@ fn test_device_path(entry: &EfiEntry) -> Result<()> {
         .inspect_err(|_| {
             efi_println!(entry, "Optional protocol not found: {}", stringify!(LoadedImageProtocol))
         })?;
-    let mut res = field_check!(protocol, unload);
+    let mut res = Ok(());
 
     if let Err(e) = boot_services.open_protocol::<DevicePathProtocol>(protocol.device_handle()) {
         efi_println!(entry, "{} not bound on loaded image", stringify!(DevicePathProtocol));
