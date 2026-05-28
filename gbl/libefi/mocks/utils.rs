@@ -16,11 +16,11 @@
 
 use crate::MockEfiEntry;
 use core::time::Duration;
-use liberror::Result;
-use mockall::mock;
-
 /// Stuff that can be used in tests as-is.
 pub use efi::utils::parse_fw_api_level;
+use fdt::FdtHeader;
+use liberror::Result;
+use mockall::mock;
 
 mock! {
     /// Mock [efi::utils::Timeout].
@@ -35,3 +35,8 @@ mock! {
 }
 /// Map to the libefi name so code under test can just use one name.
 pub type Timeout = MockTimeout;
+
+/// Mock [efi::utils::find_fdt_configuration_table].
+pub fn find_fdt_configuration_table(_: &MockEfiEntry) -> Option<(&FdtHeader, &[u8])> {
+    None
+}

@@ -42,6 +42,9 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument(
       "--disk", action="append", help="Path to a disk image to attach as virtio-blk"
   )
+  parser.add_argument(
+      "--vhost_device_vsock", help="Path to the vhost device vsock binary"
+  )
 
   return parser.parse_args()
 
@@ -66,9 +69,29 @@ def launch_qemu(args):
     gbl_path = os.path.abspath(args.gbl)
     os.symlink(gbl_path, test_dir / "gbl.bin")
 
+    # Starts vhost device vsock bridge first. Otherwise QEMU will fail to start.
+    socket_path = test_dir / "vsock-guest.sock"
+    uds_path = test_dir / "vsock-host.sock"
+    if args.vhost_device_vsock:
+      vhost_proc = subprocess.Popen(
+          [
+              os.path.abspath(args.vhost_device_vsock),
+              "--vm",
+              f"guest-cid=3,socket={socket_path},uds-path={uds_path}",
+          ],
+          stderr=subprocess.STDOUT,
+          cwd=test_dir,
+          env=env,
+      )
+
     try:
       cmd_args = [qemu, "-nographic", "-cpu", "max"]
-      cmd_args += ["-m", "256M"]  # 256mb is minimum requirement by edk2
+      cmd_args += [
+          "-m",
+          "256M",  # 256mb is minimum requirement by edk2
+          "-object",
+          "memory-backend-memfd,id=mem,size=256M,share=on",
+      ]
       # Skips the 5 seconds delay spent waiting for user input in the boot menu
       cmd_args += ["-boot", "menu=on,splash-time=0"]
       # EDK2 firmware
@@ -78,11 +101,16 @@ def launch_qemu(args):
       # Add extra disks
       disks = args.disk or []
       for i, disk in enumerate(disks):
-        disk_path = os.path.abspath(disk)
+        # GBL needs read/write access to the disk image.
+        # Bazel output artifacts are read-only, so create a copy of the disk
+        # image.
+        disk_path = test_dir / f"disk_{i}.img"
+        shutil.copyfile(disk, disk_path)
+        os.chmod(disk_path, 0o644)
         drive_id = f"hd{i}"
         cmd_args += [
             "-drive",
-            f"file={disk_path},format=raw,if=none,id={drive_id},readonly=on",
+            f"file={disk_path},format=raw,if=none,id={drive_id}",
         ]
         cmd_args += ["-device", f"virtio-blk-device,drive={drive_id}"]
       # Re-direct all sources of serial log to a log file
@@ -94,10 +122,14 @@ def launch_qemu(args):
           "-chardev",
           "socket,id=console,path=con_in.sock,server=on,wait=off,mux=on,logfile=console.log",
       ]
+      # userspace vsock interface
+      if args.vhost_device_vsock:
+        cmd_args += ["-chardev", f"socket,id=char0,reconnect=0,path={socket_path}"]
+        cmd_args += ["-device", "vhost-user-vsock-pci,chardev=char0"]
 
       # Generate FDT
       subprocess.run(
-          cmd_args + ["-machine", "virt,dumpdtb=fdt.dtb"],
+          cmd_args + ["-machine", "virt,dumpdtb=fdt.dtb,memory-backend=mem"],
           check=True,
           stderr=subprocess.STDOUT,
           cwd=test_dir,
@@ -119,6 +151,9 @@ def launch_qemu(args):
       print(f"QEMU error: {e}")
       raise
     finally:
+      if args.vhost_device_vsock:
+        vhost_proc.terminate()
+        vhost_proc.wait()
       if args.log_output:
         shutil.copyfile(test_dir / "console.log", args.log_output)
         if failed:

@@ -25,6 +25,7 @@ use efi::{
 use efi_types::{
     protocol::gbl_efi_boot_memory::GblEfiBootMemoryManaged, EfiHandle, EfiSystemTable,
 };
+use efi_virtio_vsock::gbl_vsock_init;
 use gbl_efi_boot_memory::GblEfiBootMemoryImpl;
 
 #[unsafe(no_mangle)]
@@ -66,6 +67,9 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
         .boot_services()
         .install_protocol_from_rust::<GblBootMemoryProtocol, _>(None, &GBL_EFI_BOOT_MEMORY_MANAGED)
         .unwrap();
+
+    // Fastboot over vsock
+    semihosting::println!("Initializing vsock {:?}", gbl_vsock_init(&entry));
 
     let mut gbl_file =
         semihosting::File::open(c"gbl.bin", semihosting::OpenMode::ReadBinary).unwrap();
