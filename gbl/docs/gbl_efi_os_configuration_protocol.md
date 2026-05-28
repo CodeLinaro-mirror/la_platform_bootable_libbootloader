@@ -40,7 +40,7 @@ unimplemented, in which case GBL autoselection logic will be used. Refer to
 ### Revision Number
 
 ```c
-#define GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 256)
+#define GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION GBL_PROTOCOL_REVISION(0, 257)
 ```
 
 See [GBL Custom Protocol Revisions][custom_protocol_revisions] for details about
@@ -234,10 +234,10 @@ typedef UINT32 GBL_EFI_DEVICE_TREE_TYPE;
 typedef struct {
   GBL_EFI_DEVICE_TREE_SOURCE Source;
   GBL_EFI_DEVICE_TREE_TYPE   Type;
-  // values are zeroed and must not be used in case of BOOT / VENDOR_BOOT source
   UINT32                     Id;
   UINT32                     Rev;
-  UINT32                     Custom[4];
+  UINTN                      CustomSize;
+  CONST UINT8                *Custom;
 } GBL_EFI_DEVICE_TREE_METADATA;
 ```
 
@@ -253,17 +253,23 @@ component.
 
 ##### Id
 
-The ID value from the `dttable` `entry.id`. Guaranteed to be zero for `BOOT` and
-`VENDOR_BOOT` sources.
+The ID value from the `dttable` `entry.id`. Zero when the component is loaded as
+a raw image without a `dttable` structure.
 
 ##### Rev
 
-The revision value from the `dttable` `entry.rev`. Guaranteed to be zero for
-`BOOT` and `VENDOR_BOOT` sources.
+The revision value from the `dttable` `entry.rev`. Zero when the component is
+loaded as a raw image without a `dttable` structure.
+
+##### CustomSize
+
+Size, in bytes, of the `Custom` buffer. Zero when no custom metadata is
+associated with the component.
 
 ##### Custom
 
-Additional custom metadata values.
+Pointer to the buffer of `CustomSize` bytes with component metadata, or `NULL`
+if no custom metadata is associated with the component.
 
 #### GBL_EFI_VERIFIED_DEVICE_TREE
 
