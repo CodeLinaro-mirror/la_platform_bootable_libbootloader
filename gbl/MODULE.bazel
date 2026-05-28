@@ -52,6 +52,22 @@ gbl_llvm_prebuilts = use_repo_rule("@gbl//toolchain:gbl_workspace_util.bzl", "gb
 gbl_config = use_repo_rule("@gbl//toolchain:gbl_workspace_util.bzl", "gbl_config")
 
 gbl_rust_crate_repository(
+    name = "acpi",
+    aliases = {
+        "@log_no_std": "log",
+    },
+    edition = "2024",
+    path = "external/rust/android-crates-io/crates/acpi",
+    deps = [
+        "@bit_field",
+        "@bitflags",
+        "@byteorder",
+        "@log_no_std",
+        "@pci_types",
+    ],
+)
+
+gbl_rust_crate_repository(
     name = "anstyle",
     path = "external/rust/android-crates-io/crates/anstyle",
 )
@@ -105,6 +121,11 @@ gbl_new_local_repository(
     name = "bindgen",
     build_file_content = """exports_files(["bindgen"])""",
     path = "prebuilts/clang-tools/linux-x86/bin",
+)
+
+gbl_rust_crate_repository(
+    name = "bit_field",
+    path = "external/rust/android-crates-io/crates/bit_field",
 )
 
 gbl_rust_crate_repository(
@@ -269,6 +290,17 @@ gbl_rust_crate_repository(
     deps = [
         "@env_filter",
         "@log",
+    ],
+)
+
+gbl_rust_crate_repository(
+    name = "enumn",
+    path = "external/rust/android-crates-io/crates/enumn",
+    rule = "rust_proc_macro",
+    deps = [
+        "@proc_macro2",
+        "@quote",
+        "@syn",
     ],
 )
 
@@ -536,6 +568,11 @@ gbl_rust_crate_repository(
 )
 
 gbl_rust_crate_repository(
+    name = "log_no_std",
+    path = "external/rust/android-crates-io/crates/log",
+)
+
+gbl_rust_crate_repository(
     name = "lz4_flex",
     features = ["safe-decode"],
     path = "external/rust/android-crates-io/crates/lz4_flex",
@@ -707,6 +744,15 @@ gbl_rust_crate_repository(
 )
 
 gbl_rust_crate_repository(
+    name = "pci_types",
+    path = "external/rust/android-crates-io/crates/pci_types",
+    deps = [
+        "@bit_field",
+        "@bitflags",
+    ],
+)
+
+gbl_rust_crate_repository(
     name = "predicates",
     path = "external/rust/android-crates-io/crates/predicates",
     deps = [
@@ -793,6 +839,12 @@ gbl_new_local_repository(
 gbl_rust_crate_repository(
     name = "ryu",
     path = "external/rust/android-crates-io/crates/ryu",
+)
+
+gbl_rust_crate_repository(
+    name = "safe_mmio",
+    path = "external/rust/android-crates-io/crates/safe-mmio",
+    deps = ["@zerocopy_alloc"],
 )
 
 gbl_rust_crate_repository(
@@ -1174,6 +1226,34 @@ gbl_rust_crate_repository(
 )
 
 gbl_rust_crate_repository(
+    name = "virtio_drivers",
+    aliases = {
+        "@log_no_std": "log",
+    },
+    edition = "2024",
+    features = ["alloc"],
+    path = "external/rust/android-crates-io/crates/virtio-drivers",
+    proc_macro_deps = ["@enumn"],
+    rustc_flags = [
+        "-A",
+        "unused_imports",
+        "-A",
+        "mismatched_lifetime_syntaxes",
+        "-A",
+        "unused_macros",
+        "-A",
+        "unused_variables",
+    ],
+    deps = [
+        "@bitflags",
+        "@log_no_std",
+        "@safe_mmio",
+        "@thiserror",
+        "@zerocopy_alloc",
+    ],
+)
+
+gbl_rust_crate_repository(
     name = "virtio_queue",
     license_bsd_type = [
         "@rules_license//licenses/spdx:BSD-3-Clause",
@@ -1270,6 +1350,19 @@ gbl_rust_crate_repository(
         "derive",
         "simd",
         "zerocopy-derive",
+    ],
+    path = "external/rust/android-crates-io/crates/zerocopy",
+    proc_macro_deps = ["@zerocopy_derive"],
+)
+
+gbl_rust_crate_repository(
+    name = "zerocopy_alloc",
+    crate_name = "zerocopy",
+    features = [
+        "derive",
+        "simd",
+        "zerocopy-derive",
+        "alloc",
     ],
     path = "external/rust/android-crates-io/crates/zerocopy",
     proc_macro_deps = ["@zerocopy_derive"],

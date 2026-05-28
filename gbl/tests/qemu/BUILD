@@ -67,7 +67,8 @@ genrule(
             --qemu $(location @vmm//:qemu/x86_64-linux-gnu/bin/gbl-qemu-system-aarch64) \
             --bios $(location @vmm//:qemu/x86_64-linux-gnu/usr/share/qemu/edk2-aarch64-code.fd) \
             --log_output $@ \
-            --disk $(location :test_gpt_disk)
+            --disk $(location :test_gpt_disk) \
+            --vhost_device_vsock $(location @vhost_device_vsock)
     """,
     tools = [
         "@gbl//tools/gpt_gen",

@@ -12,40 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform")
-load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
+load("@rules_rust//rust:defs.bzl", "rust_library")
 
 package(
     default_applicable_licenses = ["@gbl//licensing:gbl_license"],
     default_visibility = ["//visibility:public"],
 )
 
-rust_binary(
-    name = "gbl_launcher_bin",
-    srcs = ["src/main.rs"],
+rust_library(
+    name = "libefi_virtio_vsock",
+    srcs = glob(
+        ["src/**/*.rs"],
+    ),
+    crate_name = "efi_virtio_vsock",
     edition = "2024",
-    rustc_flags = [
-        "-C",
-        "panic=abort",
-    ],
+    rustc_flags = ANDROID_RUST_LINTS,
     deps = [
-        "@avb//:libavb_c_sha_staticlib",
-        "@gbl//libavb:sysdeps",
-        "@gbl//libboot",
-        "@gbl//libboringssl:libcrypto_c_baremetal_static",
-        "@gbl//libboringssl:sysdeps",
+        "@acpi",
+        "@gbl//libasync",
         "@gbl//libefi",
-        "@gbl//libefi:libefi_rng",
         "@gbl//libefi_types",
-        "@gbl//libefi_virtio_vsock",
-        "@gbl//libsemihosting",
-        "@gbl//libstack",
-        "@gbl//tests/qemu/gbl_efi_boot_memory",
+        "@gbl//liberror",
+        "@gbl//libfdt",
+        "@gbl//libutils",
+        "@spin",
+        "@virtio_drivers",
     ],
-)
-
-build_with_platform(
-    name = "gbl_launcher_aarch64",
-    platform = "@gbl//toolchain:gbl_uefi_aarch64_dev",
-    deps = [":gbl_launcher_bin"],
 )

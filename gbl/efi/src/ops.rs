@@ -14,11 +14,7 @@
 
 //! Implements [Gbl::Ops] for the EFI environment.
 
-use crate::{
-    efi,
-    efi_blocks::EfiGblDisk,
-    utils::{get_efi_fdt, EfiTime},
-};
+use crate::{efi, efi_blocks::EfiGblDisk, utils::EfiTime};
 #[cfg(feature = "fuchsia")]
 use alloc::vec::Vec;
 use arrayvec::ArrayVec;
@@ -38,7 +34,7 @@ use efi::{
         timestamp::TimestampProtocol,
         Protocol, Versioned,
     },
-    utils::parse_fw_api_level,
+    utils::{find_fdt_configuration_table, parse_fw_api_level},
     EfiEntry, GBL_EFI_FW_API_LEVEL, GBL_EFI_VENDOR_GUID,
 };
 use efi_types::{
@@ -176,7 +172,7 @@ impl<'a, 'b> Ops<'a, 'b> {
 
     /// Gets the EFI FDT.
     fn get_efi_fdt(&self) -> Option<Fdt<&'a [u8]>> {
-        let (_, fdt_bytes) = get_efi_fdt(&self.efi_entry)?;
+        let (_, fdt_bytes) = find_fdt_configuration_table(self.efi_entry)?;
         Fdt::new(fdt_bytes).ok()
     }
 
