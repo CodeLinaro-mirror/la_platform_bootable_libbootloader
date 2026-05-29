@@ -210,9 +210,9 @@ pub fn android_load_verify_fixup<'a, 'b>(
 
     let bootconfig_buf = loader.expand_bootconfig_buffer()?;
     let mut bootconfig_builder = BootConfigBuilder::new(bootconfig_buf)?;
-    for entry in CommandlineParser::new(verify_data.cmdline().to_str().unwrap()) {
-        writeln!(bootconfig_builder, "{}", entry?).map_err(Error::from)?;
-    }
+
+    // Emit GBL-generated configs first to ensure they take precedence over any duplicates in
+    // the commandline passthroughs (due to first-match resolution).
     bootconfig_builder.add_item("androidboot.verifiedbootstate", status.color)?;
     if !is_recovery {
         bootconfig_builder.add_item("androidboot.force_normal_boot", 1)?;
@@ -229,13 +229,30 @@ pub fn android_load_verify_fixup<'a, 'b>(
     if let Ok(fw_api_level) = ops.get_fw_api_level() {
         bootconfig_builder.add_item("androidboot.gbl.fw.api_level", fw_api_level)?;
     }
-    // Add bootconfig from vendor_boot
+
+    // Copy bootconfig items from the avb commandline with filtering to prevent chained vbmeta
+    // blobs from trying to override or shadow properties we control.
+    //
+    // libavb doesn't indicate which commandline descriptors came from which blob, it just mashes
+    // them all together, so we treat this whole commandline input as less-trusted.
+    vbmeta_cmdline_to_bootconfig(
+        ops,
+        verify_data.cmdline().to_str().unwrap(),
+        &mut bootconfig_builder,
+    )?;
+
+    // Add bootconfig from vendor_boot.
+    //
+    // This does not need to be filtered because we know it's coming from the vendor boot image
+    // which is a higher level of trust than arbitrary chained vbmeta blobs; if it's compromised
+    // then we've already lost control of the ramdisk so the bootconfig params are irrelevant.
     bootconfig_builder.add_raw_with(|_, out| {
         out.get_mut(..images.vendor_bootconfig.len())
             .ok_or(Error::BufferTooSmall(Some(images.vendor_bootconfig.len())))?
             .clone_from_slice(images.vendor_bootconfig);
         Ok(images.vendor_bootconfig.len())
     })?;
+
     let bootconfig_sz = bootconfig_builder.config_bytes().len();
     loader.set_bootconfig_size(bootconfig_sz);
     // Notes: We keep bootconfig in the ramdisk regardless of whether it is supported for simplicity
@@ -321,6 +338,58 @@ pub fn android_load_verify_fixup<'a, 'b>(
     let [ramdisk, fdt, kernel, unused] = loader.into_splits();
 
     Ok((&ramdisk[..ramdisk_len], &fdt[..fdt_sz], &kernel[..kernel_len], unused))
+}
+
+/// Validates and appends command line entries to bootconfig.
+///
+/// The validation prevents any entries which might attempt to modify existing values. The idea here
+/// is that GBL has already added its bootconfig values e.g. `androidboot.verifiedbootstate`, and we
+/// do not want vbmeta commandline properties to be able to override these entries.
+///
+/// It's difficult to get the validation exactly right because it depends on how the kernel and init
+/// process the bootconfig, and they aren't always in agreement (for example init doesn't currently
+/// handle quoting, but just splits on `\n` without considering quotes). To avoid dependencies on
+/// specific implementation details, this function is overly cautious and prohibits some entries
+/// that might technically be valid. This should be OK because more complicated bootconfigs can
+/// still be specified in the boot images; this only filters parameters coming from vbmeta
+/// commandline descriptors which should be very simple.
+fn vbmeta_cmdline_to_bootconfig<'a>(
+    ops: &mut impl GblOps<'a>,
+    cmdline: &str,
+    builder: &mut BootConfigBuilder,
+) -> Result<()> {
+    for entry in CommandlineParser::new(cmdline) {
+        let entry = entry?;
+
+        // For now, prohibit any use of `:=` or `+=`.
+        //
+        // There are some subtleties here and we mask out some technically valid entries:
+        //   * foo=bar:=baz - valid, creates one item {"foo": "bar:=baz"}
+        //   * foo=bar\nbaz:=qux - invalid, creates {"foo": "bar"} and overrides {"baz": "qux"}
+        //   * foo="bar\nbaz:=qux" - valid, creates one item {"foo": "bar\nbaz:=qux"}
+        //     * note: _not_ valid for init, which doesn't properly escape `\n` inside quotes
+        //
+        // But this behavior depends on the particular implementation details in the OS, so to
+        // be extra safe we just prohibit anything that looks like it might be attempting to
+        // override a value.
+        let check = |config: &str| match config.contains(":=") || config.contains("+=") {
+            true => Err(Error::SecurityViolation),
+            false => Ok(()),
+        };
+
+        // Log the exact descriptor and error out if we fail - the expectation of vbmeta is that all
+        // commandline parameters will get passed into the kernel, if we cannot do this then we
+        // should fail loudly instead of silently dropping them.
+        builder.add_checked_item(&entry, check).inspect_err(|e| {
+            gbl_println!(
+                ops,
+                "Error: failed to convert commandline descriptor {} to bootconfig: {}",
+                &entry,
+                e
+            );
+        })?
+    }
+    Ok(())
 }
 
 /// Sets `linux,initrd-start/end` and optionally appending bootconfig as bootarg in FDT.
@@ -995,9 +1064,9 @@ pub(crate) mod tests {
             self
         }
 
-        pub(crate) fn build_no_avb_string(&self) -> String {
+        /// Returns the bootconfig properties we expect GBL to add at runtime.
+        pub(crate) fn build_string_gbl_props(&self) -> String {
             let mut result = String::new();
-
             writeln!(result, "androidboot.verifiedbootstate={}", self.color).unwrap();
             if self.force_normal_boot {
                 writeln!(result, "androidboot.force_normal_boot=1").unwrap();
@@ -1008,38 +1077,16 @@ pub(crate) mod tests {
             writeln!(result, "androidboot.gbl.version={}", self.gbl_version).unwrap();
             writeln!(result, "androidboot.gbl.build_number={}", self.gbl_build_number).unwrap();
             writeln!(result, "androidboot.gbl.fw.api_level={}", self.fw_api_level).unwrap();
-
-            if let Some(vendor_bootconfig) = &self.vendor_bootconfig {
-                result.push_str(vendor_bootconfig);
-            }
-
-            if let Some(dtb_idx) = self.dtb_idx {
-                writeln!(result, "androidboot.dtb_idx={dtb_idx}").unwrap();
-            }
-            if let Some(dtb_source) = &self.dtb_source {
-                writeln!(result, "androidboot.dtb_source={dtb_source}").unwrap();
-            }
-
-            if !self.dtbo_idx.is_empty() {
-                let idx =
-                    self.dtbo_idx.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
-                writeln!(result, "androidboot.dtbo_idx={idx}").unwrap();
-            }
-            if !self.dtbo_source.is_empty() {
-                writeln!(result, "androidboot.dtbo_source={}", self.dtbo_source.join(",")).unwrap();
-            }
-
-            result.push_str(&self.extra);
             result
         }
 
-        pub(crate) fn build_string(self) -> String {
+        /// Returns the bootconfig properties we expect AVB to add during verification.
+        pub(crate) fn build_string_avb_props(&self) -> String {
             let mut result = String::new();
             let device_state = match self.unlocked {
                 true => "unlocked",
                 false => "locked",
             };
-
             write!(
                 result,
                 "androidboot.vbmeta.device=PARTUUID=00000000-0000-0000-0000-000000000000\n\
@@ -1059,17 +1106,59 @@ pub(crate) mod tests {
                 writeln!(result, "androidboot.vbmeta.{k}.hash_alg=sha256").unwrap();
                 writeln!(result, "androidboot.vbmeta.{k}.digest={v}").unwrap();
             }
-
-            result.push_str(&self.build_no_avb_string());
             result
         }
 
-        pub(crate) fn build_no_avb(self) -> Vec<u8> {
-            make_bootconfig(self.build_no_avb_string())
+        /// Returns the bootconfig properties we expect from the vendor_boot image.
+        pub(crate) fn build_string_vendor_props(&self) -> String {
+            let mut result = String::new();
+            if let Some(vendor_bootconfig) = &self.vendor_bootconfig {
+                result.push_str(vendor_bootconfig);
+            }
+            result
         }
 
+        /// Returns the bootconfig properties we expect indicating the DTB selection.
+        pub(crate) fn build_string_dtb_props(&self) -> String {
+            let mut result = String::new();
+            if let Some(dtb_idx) = self.dtb_idx {
+                writeln!(result, "androidboot.dtb_idx={dtb_idx}").unwrap();
+            }
+            if let Some(dtb_source) = &self.dtb_source {
+                writeln!(result, "androidboot.dtb_source={dtb_source}").unwrap();
+            }
+            if !self.dtbo_idx.is_empty() {
+                let idx =
+                    self.dtbo_idx.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
+                writeln!(result, "androidboot.dtbo_idx={idx}").unwrap();
+            }
+            if !self.dtbo_source.is_empty() {
+                writeln!(result, "androidboot.dtbo_source={}", self.dtbo_source.join(",")).unwrap();
+            }
+            result
+        }
+
+        /// Returns the full bootconfig properties expected without any verified boot.
+        pub(crate) fn build_no_avb(self) -> Vec<u8> {
+            let mut result = String::new();
+            // GBL props should come first, the OS consumers use first-match.
+            result.push_str(&self.build_string_gbl_props());
+            result.push_str(&self.build_string_vendor_props());
+            result.push_str(&self.build_string_dtb_props());
+            result.push_str(&self.extra);
+            make_bootconfig(result)
+        }
+
+        /// Returns the full bootconfig properties expected including verified boot.
         pub(crate) fn build(self) -> Vec<u8> {
-            make_bootconfig(self.build_string())
+            let mut result = String::new();
+            // GBL props should come first, the OS consumers use first-match.
+            result.push_str(&self.build_string_gbl_props());
+            result.push_str(&self.build_string_avb_props());
+            result.push_str(&self.build_string_vendor_props());
+            result.push_str(&self.build_string_dtb_props());
+            result.push_str(&self.extra);
+            make_bootconfig(result)
         }
     }
 
@@ -3126,5 +3215,70 @@ androidboot.gbl.perf.io.boot=300
 androidboot.gbl.fw_version.gbl_avf=2.1
 "
         );
+    }
+
+    #[test]
+    fn test_vbmeta_cmdline_to_bootconfig_valid() {
+        let storage = FakeGblOpsStorage::default();
+        let mut ops = FakeGblOps::new(&storage);
+        let mut buffer = vec![0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+
+        vbmeta_cmdline_to_bootconfig(&mut ops, "foo=bar baz=qux", &mut builder).unwrap();
+
+        assert_eq!(builder.config_str(), "foo=bar\nbaz=qux\n");
+    }
+
+    #[test]
+    fn test_vbmeta_cmdline_to_bootconfig_invalid_override() {
+        let storage = FakeGblOpsStorage::default();
+        let mut ops = FakeGblOps::new(&storage);
+        let mut buffer = vec![0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+
+        let res = vbmeta_cmdline_to_bootconfig(
+            &mut ops,
+            "normal_arg=val1 invalid_arg:=val2",
+            &mut builder,
+        );
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_vbmeta_cmdline_to_bootconfig_invalid_append() {
+        let storage = FakeGblOpsStorage::default();
+        let mut ops = FakeGblOps::new(&storage);
+        let mut buffer = vec![0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+
+        let res = vbmeta_cmdline_to_bootconfig(
+            &mut ops,
+            "normal_arg=val1 invalid_arg+=val2",
+            &mut builder,
+        );
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_vbmeta_cmdline_to_bootconfig_invalid_embedded_override() {
+        let storage = FakeGblOpsStorage::default();
+        let mut ops = FakeGblOps::new(&storage);
+        let mut buffer = vec![0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+
+        // Reject attempts to sneak a second bootconfig param into a single commandline arg.
+        let res = vbmeta_cmdline_to_bootconfig(
+            &mut ops,
+            "normal_arg=val1\ninvalid_arg+=val2",
+            &mut builder,
+        );
+        assert!(res.is_err());
+
+        let res = vbmeta_cmdline_to_bootconfig(
+            &mut ops,
+            "normal_arg=val1;invalid_arg+=val2",
+            &mut builder,
+        );
+        assert!(res.is_err());
     }
 }

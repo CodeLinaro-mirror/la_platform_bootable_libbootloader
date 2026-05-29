@@ -91,11 +91,16 @@ impl<'a> BootConfigBuilder<'a> {
     {
         let remaining = self.remaining_capacity();
         let (current_buffer, remaining_buffer) = self.buffer.split_at_mut(self.current_size);
-        let size = reader(&current_buffer[..], &mut remaining_buffer[..remaining])?;
-        assert!(size <= remaining);
-        self.current_size += size;
-        // Content may have been modified. Re-compute trailer.
-        self.update_trailer()
+
+        let res = reader(&current_buffer[..], &mut remaining_buffer[..remaining]);
+        if let Ok(size) = res {
+            assert!(size <= remaining);
+            self.current_size += size;
+        }
+        // Update the trailer regardless of whether `reader` succeeded or not, since in either case
+        // it may have overwritten part or all of the previous trailer, but prioritize `reader()`
+        // error if both failed somehow.
+        res.and(self.update_trailer())
     }
 
     /// Append a new config from string.
@@ -116,6 +121,40 @@ impl<'a> BootConfigBuilder<'a> {
         value: impl core::fmt::Display,
     ) -> Result<()> {
         writeln!(self, "{}={}", key, value).map_err(|_| Error::BufferTooSmall(None))
+    }
+
+    /// Append a displayable item after passing a check on the serialized string.
+    ///
+    /// This is useful for callers which want to use the bootconfig buffer to serialize, but then
+    /// do some checks on the final value before actually adding it to the bootconfig.
+    ///
+    /// # Arguments
+    ///
+    /// * `item`: an item that will be written via `Display`
+    /// * `check`: a closure that will be called on the bootconfig line without the trailing
+    ///            `\n`. Returning `Err` from the closure will cancel the insertion, leaving
+    ///            the bootconfig unmodified.
+    ///
+    /// # Returns
+    ///
+    /// `Ok` on success, `Err` if the value failed to write or the check failed.
+    pub fn add_checked_item<F>(&mut self, item: impl core::fmt::Display, check: F) -> Result<()>
+    where
+        F: FnOnce(&str) -> Result<()>,
+    {
+        self.add_raw_with(|_, out| {
+            // Serialize the item to the buffer first.
+            let mut writer = SliceWriter::new(out);
+            writeln!(writer, "{}", item).map_err(|_| Error::BufferTooSmall(None))?;
+            let len = writer.len();
+
+            // `len - 1` to allow the caller to do their checks without the trailing `\n` added by
+            // `writeln!()`.
+            let s = from_utf8(&out[..len - 1]).map_err(|_| Error::InvalidInput)?;
+            check(s)?;
+
+            Ok(len)
+        })
     }
 
     /// Append a bootconfig array item.
@@ -315,6 +354,27 @@ androidboot.verifiedbootstate=orange
     }
 
     #[test]
+    fn test_add_raw_with_failure_restores_trailer() {
+        let mut buffer = [0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+
+        // Add some initial data so we have a non-empty config.
+        assert_eq!(builder.add_item("foo", "bar"), Ok(()));
+        let expected_config = "foo=bar\n";
+        assert_eq!(extract_bootconfig(builder.config_bytes()).unwrap(), expected_config);
+
+        // Call `add_raw_with()` which fails after clobbering the trailer.
+        let res = builder.add_raw_with(|_, out| {
+            out[..BOOTCONFIG_TRAILER_SIZE].fill(0xAA);
+            Err(Error::OutOfResources)
+        });
+        assert_eq!(res, Err(Error::OutOfResources));
+
+        // Verify that the trailer was restored and we can still extract the old config.
+        assert_eq!(extract_bootconfig(builder.config_bytes()).unwrap(), expected_config);
+    }
+
+    #[test]
     fn test_add_incremental_via_fmt_write() {
         let mut buffer = [0u8; TEST_CONFIG.len() + TEST_CONFIG_TRAILER.len()];
         let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
@@ -392,5 +452,26 @@ androidboot.verifiedbootstate=orange
         builder.add_item("baz", 123).unwrap();
 
         assert_eq!(extract_bootconfig(builder.config_bytes()).unwrap(), "foo=bar\nbaz=123\n");
+    }
+    #[test]
+    fn test_add_checked_item_success() {
+        let mut buffer = [0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+
+        assert_eq!(builder.add_checked_item("foo=bar", |_| Ok(())), Ok(()));
+        assert_eq!(extract_bootconfig(builder.config_bytes()).unwrap(), "foo=bar\n");
+    }
+
+    #[test]
+    fn test_add_checked_item_failure() {
+        let mut buffer = [0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+
+        assert_eq!(
+            builder.add_checked_item("foo=bar", |_| Err(Error::SecurityViolation)),
+            Err(Error::SecurityViolation)
+        );
+        // Buffer should not have been modified.
+        assert_eq!(extract_bootconfig(builder.config_bytes()).unwrap(), "");
     }
 }
