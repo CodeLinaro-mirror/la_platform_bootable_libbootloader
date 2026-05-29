@@ -20,9 +20,11 @@ load(
     ":src/gen/sources.bzl",
     "bcm_internal_headers",
     "bcm_sources",
+    "bcm_sources_asm",
     "crypto_headers",
     "crypto_internal_headers",
     "crypto_sources",
+    "crypto_sources_asm",
     "rust_bssl_crypto_sources",
 )
 
@@ -52,44 +54,54 @@ boringssl_baremetal_copts = [
     "-DOPENSSL_NO_POSIX_IO",
     "-DOPENSSL_NO_SOCK",
     "-DOPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED",
-    "-DOPENSSL_STATIC_ARMCAP",
     "-D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE",
-    "-UOPENSSL_WINDOWS",
-    "-U_WIN32",
-    "-U_MSC_VER",
     "-std=c++17",
     "-fno-exceptions",
     "-fno-rtti",
     "-Wno-macro-redefined",
-    "-DOPENSSL_NO_ASM",
 ] + select({
     "@platforms//cpu:aarch64": [
         "-DOPENSSL_AARCH64",
-        "-Xclang",
-        "-target-feature",
-        "-Xclang",
-        "-sve",
+        "-Xclang -target-feature",
+        "-Xclang -sve",
     ],
     "@platforms//cpu:x86_64": [
+        "-DOPENSSL_NO_ASM",
         "-DOPENSSL_X86_64",
         "-msse2",
     ],
-    "@platforms//cpu:riscv64": [
-    ],
     "//conditions:default": [
+        "-DOPENSSL_NO_ASM",
     ],
 })
 
 cc_library(
-    name = "crypto_baremetal",
-    srcs = ["src/" + f for f in bcm_sources + crypto_sources + bcm_internal_headers + crypto_internal_headers],
-    hdrs = ["src/" + f for f in crypto_headers] + ["src/rust/bssl-sys/wrapper.h"],
+    name = "crypto_asm",
+    srcs = ["src/" + f for f in bcm_sources_asm + crypto_sources_asm],
+    hdrs = ["src/" + f for f in crypto_headers],
     copts = boringssl_baremetal_copts,
+    includes = ["src/include"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "crypto_baremetal",
+    srcs = ["src/" + f for f in bcm_sources + crypto_sources],
+    hdrs = ["src/" + f for f in crypto_headers + bcm_internal_headers + crypto_internal_headers] + ["src/rust/bssl-sys/wrapper.h"],
+    copts = boringssl_baremetal_copts + [
+        # This prevents BoringSsl from relying on Win32 specific libraries.
+        # Since they are not readily available on baremetal.
+        # And everything that is used would need to be implemented in GBL.
+        "-U_WIN32",
+    ],
     includes = [
         "src",
         "src/include",
     ],
     visibility = ["//visibility:public"],
+    deps = [
+        ":crypto_asm",
+    ],
 )
 
 filegroup(
