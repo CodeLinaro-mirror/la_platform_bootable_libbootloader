@@ -40,6 +40,9 @@ use virtio_drivers::{
     BufferDirection, Hal, PhysAddr,
 };
 
+mod fastboot_transport;
+pub use fastboot_transport::FastbootTransport;
+
 const EFI_PAGE_SIZE: usize = efi_types::EFI_PAGE_SIZE as usize;
 
 #[derive(Clone)]

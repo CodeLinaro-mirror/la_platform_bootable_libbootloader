@@ -139,7 +139,7 @@ def launch_qemu(args):
       # Launch GBL
       failed = False
       subprocess.run(
-          cmd_args + ["-machine", "virt"],
+          cmd_args + ["-machine", "virt,memory-backend=mem"],
           timeout=args.timeout,
           check=True,
           stderr=subprocess.STDOUT,
