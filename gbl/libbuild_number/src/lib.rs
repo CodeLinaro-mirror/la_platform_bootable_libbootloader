@@ -20,4 +20,4 @@
 pub const BUILD_NUMBER: &str = env!("BUILD_NUMBER", "BUILD_NUMBER must be defined");
 
 /// The string describing the GBL version release.
-pub const VERSION: &str = "mainline-18";
+pub const VERSION: &str = "17.0";
