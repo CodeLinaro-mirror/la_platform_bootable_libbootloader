@@ -56,7 +56,8 @@ pub extern "C" fn kernel_main() -> ! {
 }
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
+fn panic(p_info: &core::panic::PanicInfo) -> ! {
+    semihosting::println!("Panic! {}", p_info);
     semihosting::shutdown(1);
 }
 

@@ -20,12 +20,17 @@
 extern crate alloc;
 
 use efi::{
-    efi_println, initialize, protocol::gbl_efi_boot_memory::GblBootMemoryProtocol, EfiAllocator,
+    efi_println, initialize,
+    protocol::{
+        gbl_efi_boot_control::GblBootControlProtocol, gbl_efi_boot_memory::GblBootMemoryProtocol,
+    },
+    EfiAllocator,
 };
 use efi_types::{
     protocol::gbl_efi_boot_memory::GblEfiBootMemoryManaged, EfiHandle, EfiSystemTable,
 };
 use efi_virtio_vsock::gbl_vsock_init;
+use gbl_efi_boot_control::GblEfiBootControlImpl;
 use gbl_efi_boot_memory::GblEfiBootMemoryImpl;
 
 #[unsafe(no_mangle)]
@@ -58,28 +63,31 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
     let mut file = semihosting::File::open(c"fdt.dtb", semihosting::OpenMode::ReadBinary).unwrap();
     let mut fdt_buffer = alloc::vec![0u8; file.len().unwrap()];
     let read_size = file.read(&mut fdt_buffer).unwrap();
-    semihosting::println!("Loaded FDT with {} bytes", read_size);
+    efi_println!(entry, "Loaded FDT with {} bytes", read_size);
+
+    let bs = entry.system_table().boot_services();
 
     static GBL_EFI_BOOT_MEMORY_MANAGED: GblEfiBootMemoryManaged<GblEfiBootMemoryImpl> =
         GblEfiBootMemoryManaged::new(GblEfiBootMemoryImpl);
-    entry
-        .system_table()
-        .boot_services()
-        .install_protocol_from_rust::<GblBootMemoryProtocol, _>(None, &GBL_EFI_BOOT_MEMORY_MANAGED)
+    bs.install_protocol_from_rust::<GblBootMemoryProtocol, _>(None, &GBL_EFI_BOOT_MEMORY_MANAGED)
+        .unwrap();
+
+    static GBL_EFI_BOOT_CONTROL_IMPL: GblEfiBootControlImpl = GblEfiBootControlImpl;
+    bs.install_protocol_from_rust::<GblBootControlProtocol, _>(None, &GBL_EFI_BOOT_CONTROL_IMPL)
         .unwrap();
 
     // Fastboot over vsock
-    semihosting::println!("Initializing vsock {:?}", gbl_vsock_init(&entry));
+    efi_println!(entry, "Initializing vsock {:?}", gbl_vsock_init(&entry));
 
     let mut gbl_file =
         semihosting::File::open(c"gbl.bin", semihosting::OpenMode::ReadBinary).unwrap();
     let mut gbl_buffer = alloc::vec![0u8; gbl_file.len().unwrap()];
     let gbl_read_size = gbl_file.read(&mut gbl_buffer).unwrap();
-    semihosting::println!("Loaded GBL with {} bytes", gbl_read_size);
+    efi_println!(entry, "Loaded GBL with {} bytes", gbl_read_size);
 
     // TODO(b/499359597): Mock EFI protocols and launch GBL.
 
-    semihosting::println!("Starting GBL..");
+    efi_println!(entry, "Starting GBL..");
     // SAFETY:
     // `gbl_buffer` contains a valid PE image.
     unsafe { entry.system_table().boot_services().load_and_start_image(&mut gbl_buffer).unwrap() };
