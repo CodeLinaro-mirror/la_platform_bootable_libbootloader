@@ -211,6 +211,10 @@ pub struct GblVsockConnectionManager {
     next_sid: u64,
 }
 
+fn timestamp() -> Duration {
+    arch_timestamp().unwrap_or(Duration::from_millis(0))
+}
+
 impl GblVsockConnectionManager {
     /// Creates a new instance.
     pub fn new(
@@ -229,7 +233,7 @@ impl GblVsockConnectionManager {
             return Err(Error::NotReady);
         };
         let sid = self.next_sid;
-        *slot = Some(Slot { sid, remote: None, port, timeout, last_event_ts: arch_timestamp() });
+        *slot = Some(Slot { sid, remote: None, port, timeout, last_event_ts: timestamp() });
         self.next_sid += 1;
         self.connection_manager.listen(port);
         Ok(sid)
@@ -250,7 +254,7 @@ impl GblVsockConnectionManager {
         // Clears timeout connections.
         for slot in self.slots.iter_mut() {
             if let Some(v) = slot {
-                if (arch_timestamp() - v.last_event_ts) > v.timeout {
+                if (timestamp() - v.last_event_ts) > v.timeout {
                     v.remote.map(|remote| self.connection_manager.shutdown(remote, v.port));
                     *slot = None;
                 }
@@ -266,7 +270,7 @@ impl GblVsockConnectionManager {
         for (i, v) in self.slots.iter_mut().enumerate() {
             if let Some(v) = v {
                 if v.remote == Some(source) && v.port == destination.port {
-                    v.last_event_ts = arch_timestamp();
+                    v.last_event_ts = timestamp();
                     active_idx = Some(i);
                     break;
                 }
@@ -286,7 +290,7 @@ impl GblVsockConnectionManager {
                         v.as_mut().filter(|v| v.remote.is_none() && v.port == destination.port)
                     {
                         v.remote = Some(source);
-                        v.last_event_ts = arch_timestamp();
+                        v.last_event_ts = timestamp();
                         return true;
                     }
                 }
@@ -319,7 +323,7 @@ impl GblVsockConnectionManager {
                     Ok(sz) => {
                         if sz > 0 {
                             // Update last event timestamp if progress is made.
-                            v.last_event_ts = arch_timestamp();
+                            v.last_event_ts = timestamp();
                         }
                         if self
                             .connection_manager
@@ -357,7 +361,7 @@ impl GblVsockConnectionManager {
                 match self.connection_manager.send(remote, v.port, buffer) {
                     Ok(_) => {
                         if buffer.len() > 0 {
-                            v.last_event_ts = arch_timestamp();
+                            v.last_event_ts = timestamp();
                         }
                         return Ok(());
                     }

@@ -59,6 +59,7 @@ use efi_types::{
     protocol::{BridgeToRust, Provider},
     Identified,
 };
+pub use libutils::arch_timestamp;
 
 #[cfg(not(test))]
 mod allocation;
@@ -1295,6 +1296,10 @@ macro_rules! efi_print {
 macro_rules! efi_println {
     ( $efi_entry:expr, $( $x:expr ),* $(,)? ) => {
         {
+            // Can also use EFI_TIMESTAMP_PROTOCOL if provided.
+            let _ = $crate::arch_timestamp().inspect(|v| {
+                $crate::efi_print!($efi_entry, "[{:.4}] ", v.as_secs_f32());
+            });
             $crate::efi_print!($efi_entry, $($x,)*);
             $crate::efi_print!($efi_entry, "\r\n");
         }

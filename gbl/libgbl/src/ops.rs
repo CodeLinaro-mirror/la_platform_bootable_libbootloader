@@ -54,6 +54,7 @@ pub use fastboot::{
 };
 pub use gbl_storage::{BlockIo, Disk, Gpt};
 use liberror::Error;
+pub use libutils::arch_timestamp;
 pub use slots::Slot;
 #[cfg(feature = "fuchsia")]
 pub use zbi::{ZbiContainer, ZBI_ALIGNMENT_USIZE};
@@ -716,6 +717,10 @@ macro_rules! gbl_print {
 macro_rules! gbl_println {
     ( $ops:expr, $( $x:expr ),* $(,)? ) => {
         {
+            // Print timestamp if supported
+            let _ = $crate::ops::arch_timestamp().inspect(|v| {
+                $crate::gbl_print!($ops, "[{:.4}] ", v.as_secs_f32());
+            });
             let newline = $ops.console_newline();
             $crate::gbl_print!($ops, $($x,)*);
             $crate::gbl_print!($ops, "{}", newline);
