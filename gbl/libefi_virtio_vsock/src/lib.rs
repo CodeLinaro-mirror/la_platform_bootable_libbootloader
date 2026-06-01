@@ -19,16 +19,17 @@ extern crate alloc;
 
 use acpi::{sdt::mcfg::Mcfg, AcpiTables, Handler as AcpiHandler, PciAddress, PhysicalMapping};
 use alloc::alloc::{alloc, dealloc, Layout};
-use core::ptr::NonNull;
+use core::{ptr::NonNull, time::Duration};
 use efi::{
     utils::{find_acpi_configuration_table, find_fdt_configuration_table},
     EfiEntry,
 };
 use liberror::Error;
+use libutils::arch_timestamp;
 use spin::Mutex;
 pub use virtio_drivers::device::socket::VsockAddr;
 use virtio_drivers::{
-    device::socket::{VirtIOSocket, VsockConnectionManager},
+    device::socket::{VirtIOSocket, VsockConnectionManager, VsockEvent, VsockEventType},
     transport::{
         pci::{
             bus::{Cam, MmioCam, PciRoot},
@@ -175,12 +176,39 @@ unsafe impl Hal for GblVirtIoHal {
     }
 }
 
-// Recommended buffer size for virtio-vsock.
+/// Session status
+#[derive(Debug, Copy, Clone)]
+pub enum SessionStatus {
+    /// Session is listening for a new connection.
+    Listening,
+    /// Session is connected to a remote address.
+    Connected(VsockAddr),
+    /// Session is closed.
+    Closed,
+}
+
+const MAX_SLOT: usize = 8;
 const MAX_BUFFER_SIZE: usize = 64 * 1024;
 
+/// Tracks state of a connection.
+struct Slot {
+    /// Session ID.
+    sid: u64,
+    /// Remote address. None -- listening, Some -- connected
+    remote: Option<VsockAddr>,
+    /// Port number.
+    port: u32,
+    /// Timeout duration.
+    timeout: Duration,
+    /// Last event timestamp.
+    last_event_ts: Duration,
+}
+
 /// GBL VirtIO VSOCK Connection Manager.
-struct GblVsockConnectionManager {
-    _connection_manager: VsockConnectionManager<GblVirtIoHal, PciTransport, MAX_BUFFER_SIZE>,
+pub struct GblVsockConnectionManager {
+    slots: [Option<Slot>; MAX_SLOT],
+    connection_manager: VsockConnectionManager<GblVirtIoHal, PciTransport, MAX_BUFFER_SIZE>,
+    next_sid: u64,
 }
 
 impl GblVsockConnectionManager {
@@ -188,14 +216,187 @@ impl GblVsockConnectionManager {
     pub fn new(
         connection_manager: VsockConnectionManager<GblVirtIoHal, PciTransport, MAX_BUFFER_SIZE>,
     ) -> Self {
-        Self { _connection_manager: connection_manager }
+        Self { slots: [const { None }; MAX_SLOT], connection_manager, next_sid: 0 }
     }
 
-    // TODO(b/486979232): Implement the vsock manager APIs.
+    /// Listens for a new connection.
+    ///
+    /// On success returns the session id.
+    pub fn listen(&mut self, port: u32, timeout: Duration) -> Result<u64, Error> {
+        self.poll();
+        // Allocates an unuesd slot for tracking this connection.
+        let Some(slot) = self.slots.iter_mut().find(|s| s.is_none()) else {
+            return Err(Error::NotReady);
+        };
+        let sid = self.next_sid;
+        *slot = Some(Slot { sid, remote: None, port, timeout, last_event_ts: arch_timestamp() });
+        self.next_sid += 1;
+        self.connection_manager.listen(port);
+        Ok(sid)
+    }
+
+    /// Returns the session status.
+    pub fn session_status(&mut self, sid: u64) -> SessionStatus {
+        self.poll();
+        match self.slots.iter().find_map(|v| v.as_ref().filter(|v| v.sid == sid)) {
+            None => SessionStatus::Closed,
+            Some(Slot { remote: None, .. }) => SessionStatus::Listening,
+            Some(Slot { remote: Some(remote), .. }) => SessionStatus::Connected(*remote),
+        }
+    }
+
+    /// Polls for new connections and events
+    pub fn poll_once(&mut self) -> bool {
+        // Clears timeout connections.
+        for slot in self.slots.iter_mut() {
+            if let Some(v) = slot {
+                if (arch_timestamp() - v.last_event_ts) > v.timeout {
+                    v.remote.map(|remote| self.connection_manager.shutdown(remote, v.port));
+                    *slot = None;
+                }
+            }
+        }
+
+        // Checks for new events
+        let Ok(Some(v)) = self.connection_manager.poll() else { return false };
+        let VsockEvent { source, destination, buffer_status: _, event_type } = v;
+
+        // Find if there is any on-going session for this event.
+        let mut active_idx = None;
+        for (i, v) in self.slots.iter_mut().enumerate() {
+            if let Some(v) = v {
+                if v.remote == Some(source) && v.port == destination.port {
+                    v.last_event_ts = arch_timestamp();
+                    active_idx = Some(i);
+                    break;
+                }
+            }
+        }
+
+        // Handles the event.
+        match event_type {
+            VsockEventType::ConnectionRequest => {
+                // It shouldn't be tracked. If it is, we are out of sync and need to clear it.
+                if let Some(i) = active_idx {
+                    self.slots[i] = None;
+                }
+                // Check if any slot is listening on the port.
+                for v in self.slots.iter_mut() {
+                    if let Some(v) =
+                        v.as_mut().filter(|v| v.remote.is_none() && v.port == destination.port)
+                    {
+                        v.remote = Some(source);
+                        v.last_event_ts = arch_timestamp();
+                        return true;
+                    }
+                }
+                // No one is listening for the port.
+                let _ = self.connection_manager.shutdown(source, destination.port);
+                self.connection_manager.unlisten(destination.port);
+            }
+            VsockEventType::Disconnected { .. } => {
+                if let Some(i) = active_idx {
+                    self.slots[i] = None;
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Polls for new connections and events until no more events are available.
+    fn poll(&mut self) {
+        while self.poll_once() {}
+    }
+
+    /// Read data from connection
+    pub fn read(&mut self, target_sid: u64, buffer: &mut [u8]) -> Result<usize, Error> {
+        self.poll();
+        for slot in self.slots.iter_mut() {
+            if let Some(v) = slot.as_mut().filter(|v| v.sid == target_sid) {
+                let remote = v.remote.ok_or(Error::InvalidState)?;
+                match self.connection_manager.recv(remote, v.port, buffer) {
+                    Ok(sz) => {
+                        if sz > 0 {
+                            // Update last event timestamp if progress is made.
+                            v.last_event_ts = arch_timestamp();
+                        }
+                        if self
+                            .connection_manager
+                            .recv_buffer_available_bytes(remote, v.port)
+                            .map_err(|_| {
+                                Error::Other(Some("vsock recv buffer available bytes error"))
+                            })?
+                            == 0
+                        {
+                            // Update credit to allow more data to be sent.
+                            self.connection_manager
+                                .update_credit(remote, v.port)
+                                .map_err(|_| Error::Other(Some("vsock update credit error")))?;
+                        }
+                        return Ok(sz);
+                    }
+                    Err(_e) => {
+                        // Abort the connection on any error.
+                        let _ = self.connection_manager.force_close(remote, v.port);
+                        *slot = None;
+                        return Err(Error::Other(Some("vsock recv error")));
+                    }
+                }
+            }
+        }
+        Err(Error::InvalidState)
+    }
+
+    /// Write data to connection
+    pub fn write(&mut self, target_sid: u64, buffer: &[u8]) -> Result<(), Error> {
+        self.poll();
+        for slot in self.slots.iter_mut() {
+            if let Some(v) = slot.as_mut().filter(|v| v.sid == target_sid) {
+                let remote = v.remote.ok_or(Error::InvalidState)?;
+                match self.connection_manager.send(remote, v.port, buffer) {
+                    Ok(_) => {
+                        if buffer.len() > 0 {
+                            v.last_event_ts = arch_timestamp();
+                        }
+                        return Ok(());
+                    }
+                    Err(_e) => {
+                        // Abort the connection on any error.
+                        let _ = self.connection_manager.force_close(remote, v.port);
+                        *slot = None;
+                        return Err(Error::Other(Some("vsock send error")));
+                    }
+                }
+            }
+        }
+        Err(Error::InvalidState)
+    }
+
+    /// Close the connection.
+    pub fn close(&mut self, target_sid: u64) {
+        self.poll();
+        for slot in self.slots.iter_mut() {
+            if let Some(v) = slot.as_mut().filter(|v| v.sid == target_sid) {
+                if let Some(remote) = v.remote {
+                    let _ = self.connection_manager.shutdown(remote, v.port);
+                }
+                *slot = None;
+                return;
+            }
+        }
+    }
 }
 
 /// Represents the global vsock manager.
 struct GblVsockInitState(Option<Result<GblVsockConnectionManager, Error>>);
+
+impl GblVsockInitState {
+    /// Gets the vsock manager if it has been initialized.
+    pub fn get(&mut self) -> Result<&mut GblVsockConnectionManager, Error> {
+        self.0.as_mut().ok_or(Error::InvalidState)?.as_mut().map_err(|e| *e)
+    }
+}
 
 static GBL_VSOCK_MANAGER: Mutex<GblVsockInitState> = Mutex::new(GblVsockInitState(None));
 
@@ -233,4 +434,75 @@ pub fn gbl_vsock_init(entry: &EfiEntry) -> Result<(), Error> {
         .as_ref()
         .map_err(|e| *e)?;
     Ok(())
+}
+
+/// Listens for a new connection.
+pub fn gbl_vsock_listen(port: u32, timeout: Duration) -> Result<u64, Error> {
+    GBL_VSOCK_MANAGER.try_lock().ok_or(Error::NotReady)?.get()?.listen(port, timeout)
+}
+
+/// Returns the session status.
+pub fn gbl_vsock_session_status(sid: u64) -> Result<SessionStatus, Error> {
+    Ok(GBL_VSOCK_MANAGER.try_lock().ok_or(Error::NotReady)?.get()?.session_status(sid))
+}
+
+/// Polls the driver and processes events
+pub fn gbl_vsock_poll() -> Result<(), Error> {
+    Ok(GBL_VSOCK_MANAGER.try_lock().ok_or(Error::NotReady)?.get()?.poll())
+}
+
+/// Reads data from the vsock.
+pub fn gbl_vsock_read(sid: u64, buffer: &mut [u8]) -> Result<usize, Error> {
+    GBL_VSOCK_MANAGER.try_lock().ok_or(Error::NotReady)?.get()?.read(sid, buffer)
+}
+
+/// Writes one or more buffers to the vsock.
+pub fn gbl_vsock_write(sid: u64, buffers: &[&[u8]]) -> Result<(), Error> {
+    let mut manager = GBL_VSOCK_MANAGER.try_lock().ok_or(Error::NotReady)?;
+    let manager = manager.get()?;
+    for b in buffers {
+        manager.write(sid, b)?;
+    }
+    Ok(())
+}
+
+/// Closes the vsock.
+pub fn gbl_vsock_close(sid: u64) -> Result<(), Error> {
+    Ok(GBL_VSOCK_MANAGER.try_lock().ok_or(Error::NotReady)?.get()?.close(sid))
+}
+
+/// Helper function to wait for a result, yielding if it's not ready.
+pub async fn wait<T>(mut f: impl FnMut() -> Result<T, Error>) -> Result<T, Error> {
+    loop {
+        match f() {
+            Err(Error::NotReady) => gbl_async::yield_now().await,
+            v => return v,
+        }
+    }
+}
+
+/// Reads data from the vsock until the buffer is full.
+pub async fn gbl_vsock_read_exact(sid: u64, mut out: &mut [u8]) -> Result<(), Error> {
+    while !out.is_empty() {
+        let sz = wait(|| gbl_vsock_read(sid, out)).await?;
+        if sz == 0 {
+            gbl_async::yield_now().await;
+            continue;
+        }
+        out = out.split_at_mut(sz).1;
+    }
+    Ok(())
+}
+
+/// Listens on a port and waits until a new connection is established.
+pub async fn gbl_vsock_accept(port: u32, timeout: Duration) -> Result<u64, Error> {
+    let mut sid = wait(|| gbl_vsock_listen(port, timeout)).await?;
+    loop {
+        match wait(|| gbl_vsock_session_status(sid)).await? {
+            SessionStatus::Connected(_) => return Ok(sid),
+            SessionStatus::Closed => sid = wait(|| gbl_vsock_listen(port, timeout)).await?,
+            SessionStatus::Listening => {}
+        }
+        gbl_async::yield_now().await;
+    }
 }
