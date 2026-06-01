@@ -87,6 +87,7 @@
 pub mod block_io;
 pub mod gbl_efi_boot_control;
 pub mod gbl_efi_boot_memory;
+pub mod gbl_efi_fastboot_transport;
 
 use crate::Identified;
 use core::{marker::PhantomPinned, pin::Pin};
