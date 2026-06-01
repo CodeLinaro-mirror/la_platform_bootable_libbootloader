@@ -223,7 +223,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
     }
     // Placeholder value for now. Userspace can use this value to tell if device is booted with GBL.
     // TODO(yochiang): Generate useful value like version, build_incremental in the bootconfig.
-    bootconfig_builder.add_item("androidboot.gbl.version", "17.0")?;
+    bootconfig_builder.add_item("androidboot.gbl.version", 0)?;
     bootconfig_builder.add_item("androidboot.gbl.build_number", BUILD_NUMBER)?;
     // TODO(b/484066914): Error if this var is missing.
     if let Ok(fw_api_level) = ops.get_fw_api_level() {
@@ -891,7 +891,7 @@ pub(crate) mod tests {
         color: BootStateColor,
         unlocked: bool,
         force_normal_boot: bool,
-        gbl_version: String,
+        gbl_version: usize,
         gbl_build_number: String,
         fw_api_level: u64,
         vendor_bootconfig: Option<String>,
@@ -913,7 +913,7 @@ pub(crate) mod tests {
                 color: BootStateColor::Green,
                 unlocked: false,
                 force_normal_boot: true,
-                gbl_version: "17.0".to_string(),
+                gbl_version: 0,
                 gbl_build_number: BUILD_NUMBER.to_string(),
                 fw_api_level: 202604,
                 vendor_bootconfig: None,
