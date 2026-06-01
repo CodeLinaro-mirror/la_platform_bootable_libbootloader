@@ -38,7 +38,7 @@ use bootparams::{
 use core::{ffi::CStr, fmt::Write, mem::take, ops::Range};
 use fdt::Fdt;
 use gbl_async::block_on;
-use libbuild_number::BUILD_NUMBER;
+use libbuild_number::{BUILD_NUMBER, VERSION};
 use liberror::Error;
 use libutils::{aligned_subslice, buffer_pool::BufferPool, shared::Shared};
 use misc::AndroidBootMode;
@@ -223,7 +223,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
     }
     // Placeholder value for now. Userspace can use this value to tell if device is booted with GBL.
     // TODO(yochiang): Generate useful value like version, build_incremental in the bootconfig.
-    bootconfig_builder.add_item("androidboot.gbl.version", 0)?;
+    bootconfig_builder.add_item("androidboot.gbl.version", VERSION)?;
     bootconfig_builder.add_item("androidboot.gbl.build_number", BUILD_NUMBER)?;
     // TODO(b/484066914): Error if this var is missing.
     if let Ok(fw_api_level) = ops.get_fw_api_level() {
@@ -873,7 +873,7 @@ pub(crate) mod tests {
     use bootparams::bootconfig::{BootConfigBuilder, BOOTCONFIG_TRAILER_SIZE};
     use cfg_if::cfg_if;
     use fdt::std_props;
-    use libbuild_number::BUILD_NUMBER;
+    use libbuild_number::{BUILD_NUMBER, VERSION};
     use libtestutils::AlignedBuffer;
     use libutils::cstr_buffer;
     use std::{
@@ -960,7 +960,7 @@ pub(crate) mod tests {
         color: BootStateColor,
         unlocked: bool,
         force_normal_boot: bool,
-        gbl_version: usize,
+        gbl_version: String,
         gbl_build_number: String,
         fw_api_level: u64,
         vendor_bootconfig: Option<String>,
@@ -982,7 +982,7 @@ pub(crate) mod tests {
                 color: BootStateColor::Green,
                 unlocked: false,
                 force_normal_boot: true,
-                gbl_version: 0,
+                gbl_version: VERSION.to_string(),
                 gbl_build_number: BUILD_NUMBER.to_string(),
                 fw_api_level: 202604,
                 vendor_bootconfig: None,
