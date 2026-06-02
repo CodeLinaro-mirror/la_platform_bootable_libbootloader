@@ -107,7 +107,7 @@ config_setting(
     if build_file and build_file_content:
         fail("{}: cannot specify both build_file and build_file_content", _original_name(repo_ctx))
     elif build_file:
-        repo_ctx.symlink(build_file, "BUILD")
+        repo_ctx.file("BUILD", repo_ctx.read(repo_ctx.path(build_file)))
     elif build_file_content:
         repo_ctx.file("BUILD", build_file_content)
 
