@@ -373,7 +373,6 @@ int sscanf(const char* str, const char* format, ...) { return -1; }
 void perror(const char* s) {}
 char* strerror(int errnum) { return "unknown"; }
 
-FILE* fopen(const char* path, const char* mode) { return NULL; }
 int fclose(FILE* fp) { return -1; }
 size_t fread(void* ptr, size_t size, size_t nmemb, FILE* stream) { return 0; }
 size_t fwrite(const void* ptr, size_t size, size_t nmemb, FILE* stream) {
@@ -386,6 +385,4 @@ int ferror(FILE* stream) { return 0; }
 int fflush(FILE* stream) { return -1; }
 char* fgets(char* s, int size, FILE* stream) { return NULL; }
 int fputs(const char* str, FILE* stream) { return -1; }
-int remove(const char* filename) { return -1; }
-int puts(const char* s) { return -1; }
 #endif  // __GBL_LIBC_STUBS__

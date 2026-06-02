@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-#include <locale.h>
-#include <nl_types.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>

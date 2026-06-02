@@ -54,7 +54,6 @@ int vsscanf(const char *str, const char *format, va_list ap);
 int sscanf(const char *str, const char *format, ...);
 
 // Stubs for BoringSSL
-FILE *fopen(const char *path, const char *mode);
 int fclose(FILE *fp);
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);

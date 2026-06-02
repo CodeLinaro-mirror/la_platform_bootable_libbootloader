@@ -58,14 +58,10 @@ cc_library(
         "include/ctype.h",
         "include/debug.h",
         "include/errno.h",
-        "include/fcntl.h",
-        "include/features.h",
         "include/gbl/defs.h",
         "include/gbl/print.h",
         "include/intrin.h",
         "include/inttypes.h",
-        "include/io.h",
-        "include/limits.h",
         "include/locale.h",
         "include/nl_types.h",
         "include/stdio.h",
@@ -81,7 +77,6 @@ cc_library(
 cc_library(
     name = "libc_c",
     srcs = [
-        "src/ctype.c",
         "src/format.c",
         "src/stdlib.c",
     ],
