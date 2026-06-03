@@ -15,7 +15,7 @@
 load("@gbl//licensing:licenses.bzl", "merged_license")
 load("@gbl//toolchain:gbl_toolchain.bzl", "build_with_platform", "dev_test", "extract_pdb_file", "rename_output")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
-load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
+load("@gbl_config//:variables.bzl", "IMG_ARCHIVE_TAG")
 load("@gbl_llvm_prebuilts//:info.bzl", "gbl_llvm_tool_path")
 load("@rules_pkg//pkg:install.bzl", "pkg_install")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
@@ -384,7 +384,7 @@ filegroup(
 pkg_zip(
     name = "gbl_efi_prod_zip",
     srcs = [":all_platforms_prod"],
-    out = "gbl-img-{}.zip".format(BUILD_NUMBER),
+    out = "gbl-img-{}.zip".format(IMG_ARCHIVE_TAG),
     visibility = ["//visibility:private"],
 )
 

@@ -47,6 +47,7 @@ build_and_run_tests(
         "@gbl//libbootparams:test",
         # TODO(b/413054304): seems to be flaky need to address it before enabling back.
         # "@gbl//libboringssl:sysdeps_test",
+        "@gbl//libbuild_number:libbuild_number_test",
         "@gbl//libc:libc_c_test",
         "@gbl//libc:libc_test",
         "@gbl//libdttable:libdttable_test",

@@ -38,7 +38,7 @@ use bootparams::{
 use core::{ffi::CStr, fmt::Write, mem::take, ops::Range};
 use fdt::Fdt;
 use gbl_async::block_on;
-use libbuild_number::{BUILD_NUMBER, VERSION};
+use libbuild_number::{format_build_fingerprint, format_build_vcs_info, BUILD_NUMBER, VERSION};
 use liberror::Error;
 use libutils::{aligned_subslice, buffer_pool::BufferPool, shared::Shared};
 use misc::AndroidBootMode;
@@ -221,14 +221,7 @@ pub fn android_load_verify_fixup<'a, 'b>(
         bootconfig_builder
             .add_item("androidboot.slot_suffix", format_args!("_{}", s.suffix.as_char()))?;
     }
-    // Placeholder value for now. Userspace can use this value to tell if device is booted with GBL.
-    // TODO(yochiang): Generate useful value like version, build_incremental in the bootconfig.
-    bootconfig_builder.add_item("androidboot.gbl.version", VERSION)?;
-    bootconfig_builder.add_item("androidboot.gbl.build_number", BUILD_NUMBER)?;
-    // TODO(b/484066914): Error if this var is missing.
-    if let Ok(fw_api_level) = ops.get_fw_api_level() {
-        bootconfig_builder.add_item("androidboot.gbl.fw.api_level", fw_api_level)?;
-    }
+    add_android_gbl_bootconfig(&mut bootconfig_builder, ops.get_fw_api_level().ok())?;
 
     // Copy bootconfig items from the avb commandline with filtering to prevent chained vbmeta
     // blobs from trying to override or shadow properties we control.
@@ -338,6 +331,20 @@ pub fn android_load_verify_fixup<'a, 'b>(
     let [ramdisk, fdt, kernel, unused] = loader.into_splits();
 
     Ok((&ramdisk[..ramdisk_len], &fdt[..fdt_sz], &kernel[..kernel_len], unused))
+}
+
+/// Add gbl properties to be exported to android boot properties.
+fn add_android_gbl_bootconfig(builder: &mut impl Write, fw_api_level: Option<u64>) -> Result<()> {
+    writeln!(builder, "androidboot.gbl.version={VERSION}").map_err(Error::from)?;
+    writeln!(builder, "androidboot.gbl.build_number={BUILD_NUMBER}").map_err(Error::from)?;
+    writeln!(builder, "androidboot.gbl.fingerprint={}", format_build_fingerprint!())
+        .map_err(Error::from)?;
+    writeln!(builder, "androidboot.gbl.vcs={}", format_build_vcs_info!()).map_err(Error::from)?;
+    // TODO(b/484066914): Error if this var is missing.
+    if let Some(fw_api_level) = fw_api_level {
+        writeln!(builder, "androidboot.gbl.fw.api_level={fw_api_level}").map_err(Error::from)?;
+    }
+    Ok(())
 }
 
 /// Validates and appends command line entries to bootconfig.
@@ -873,7 +880,7 @@ pub(crate) mod tests {
     use bootparams::bootconfig::{BootConfigBuilder, BOOTCONFIG_TRAILER_SIZE};
     use cfg_if::cfg_if;
     use fdt::std_props;
-    use libbuild_number::{BUILD_NUMBER, VERSION};
+    use libbuild_number::{BUILD_BRANCH, BUILD_NUMBER, BUILD_REVISION, VERSION};
     use libtestutils::AlignedBuffer;
     use libutils::cstr_buffer;
     use std::{
@@ -960,9 +967,6 @@ pub(crate) mod tests {
         color: BootStateColor,
         unlocked: bool,
         force_normal_boot: bool,
-        gbl_version: String,
-        gbl_build_number: String,
-        fw_api_level: u64,
         vendor_bootconfig: Option<String>,
         dtb_idx: Option<usize>,
         dtb_source: Option<String>,
@@ -982,9 +986,6 @@ pub(crate) mod tests {
                 color: BootStateColor::Green,
                 unlocked: false,
                 force_normal_boot: true,
-                gbl_version: VERSION.to_string(),
-                gbl_build_number: BUILD_NUMBER.to_string(),
-                fw_api_level: 202604,
                 vendor_bootconfig: None,
                 dtb_idx: None,
                 dtb_source: None,
@@ -1074,9 +1075,7 @@ pub(crate) mod tests {
             if let Some(slot) = self.slot {
                 writeln!(result, "androidboot.slot_suffix=_{slot}").unwrap();
             }
-            writeln!(result, "androidboot.gbl.version={}", self.gbl_version).unwrap();
-            writeln!(result, "androidboot.gbl.build_number={}", self.gbl_build_number).unwrap();
-            writeln!(result, "androidboot.gbl.fw.api_level={}", self.fw_api_level).unwrap();
+            add_android_gbl_bootconfig(&mut result, Some(202604)).unwrap();
             result
         }
 
@@ -3280,5 +3279,53 @@ androidboot.gbl.fw_version.gbl_avf=2.1
             &mut builder,
         );
         assert!(res.is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "gbl_dev")]
+    fn test_add_android_gbl_bootconfig_dev() {
+        let mut buffer = vec![0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+
+        add_android_gbl_bootconfig(&mut builder, Some(202604)).unwrap();
+
+        let bootconfig = builder.config_bytes();
+        let content_len = bootconfig.len() - BOOTCONFIG_TRAILER_SIZE;
+        assert_eq!(
+            &bootconfig[..content_len],
+            format!(
+                "androidboot.gbl.version={VERSION}
+androidboot.gbl.build_number={BUILD_NUMBER}
+androidboot.gbl.fingerprint=dev/{VERSION}/{BUILD_NUMBER}
+androidboot.gbl.vcs={BUILD_BRANCH}:{BUILD_REVISION}
+androidboot.gbl.fw.api_level=202604
+"
+            )
+            .as_bytes(),
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "gbl_dev"))]
+    fn test_add_android_gbl_bootconfig_prod() {
+        let mut buffer = vec![0u8; 1024];
+        let mut builder = BootConfigBuilder::new(&mut buffer[..]).unwrap();
+
+        add_android_gbl_bootconfig(&mut builder, Some(202604)).unwrap();
+
+        let bootconfig = builder.config_bytes();
+        let content_len = bootconfig.len() - BOOTCONFIG_TRAILER_SIZE;
+        assert_eq!(
+            &bootconfig[..content_len],
+            format!(
+                "androidboot.gbl.version={VERSION}
+androidboot.gbl.build_number={BUILD_NUMBER}
+androidboot.gbl.fingerprint=prod/{VERSION}/{BUILD_NUMBER}
+androidboot.gbl.vcs={BUILD_BRANCH}:{BUILD_REVISION}
+androidboot.gbl.fw.api_level=202604
+"
+            )
+            .as_bytes(),
+        );
     }
 }
