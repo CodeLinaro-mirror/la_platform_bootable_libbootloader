@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
-load("@gbl_config//:variables.bzl", "BUILD_NUMBER")
+load("@gbl_config//:variables.bzl", "BUILD_BRANCH", "BUILD_NUMBER", "BUILD_REVISION")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
 package(
@@ -26,6 +26,8 @@ rust_library(
     edition = "2021",
     rustc_env = {
         "BUILD_NUMBER": BUILD_NUMBER,
+        "BUILD_BRANCH": BUILD_BRANCH,
+        "BUILD_REVISION": BUILD_REVISION,
     },
     rustc_flags = ANDROID_RUST_LINTS,
     visibility = ["//visibility:public"],
