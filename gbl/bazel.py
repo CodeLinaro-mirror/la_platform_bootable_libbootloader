@@ -184,10 +184,6 @@ class BazelWrapper(object):
   def _build_environ(self):
     """Adds extra environment variables."""
     env = os.environ.copy()
-    if "BUILD_NUMBER" not in env:
-      # Changing the environment causes rebuild. In order to *not* cause
-      # superfluous rebuilds, append a low-precision timestamp.
-      env["BUILD_NUMBER"] = f"eng.{os.environ.get('USER')}.{date.today()}"
     return env
 
   def run(self) -> int:

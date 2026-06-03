@@ -147,9 +147,7 @@ GBL_RUST_VERSION = "1.93.1"
 def _gbl_config_impl(repo_ctx):
     """Exports configurable value to build rules."""
 
-    build_number = repo_ctx.getenv("BUILD_NUMBER")
-    if not build_number:
-        build_number = "eng.{}".format(repo_ctx.getenv("USER"))
+    img_archive_tag = repo_ctx.getenv("BUILD_NUMBER") or "eng.{}".format(repo_ctx.getenv("USER"))
 
     # Query rustc LLVM version
     rust_llvm_ver = ""
@@ -182,9 +180,9 @@ def _gbl_config_impl(repo_ctx):
 
     # Create a file to export environment variables.
     variables_content = """
-BUILD_NUMBER = "{}"
+IMG_ARCHIVE_TAG = "{}"
 ENABLE_CROSS_LANG_LTO = {}
-""".format(build_number, enable_cross_lang_lto)
+""".format(img_archive_tag, enable_cross_lang_lto)
 
     repo_ctx.file("variables.bzl", variables_content)
     repo_ctx.file("BUILD", "")
