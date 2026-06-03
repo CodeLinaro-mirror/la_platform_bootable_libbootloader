@@ -23,13 +23,14 @@ use efi::{
     efi_println, initialize,
     protocol::{
         gbl_efi_boot_control::GblBootControlProtocol, gbl_efi_boot_memory::GblBootMemoryProtocol,
+        gbl_efi_fastboot_transport::GblFastbootTransportProtocol,
     },
     EfiAllocator,
 };
 use efi_types::{
     protocol::gbl_efi_boot_memory::GblEfiBootMemoryManaged, EfiHandle, EfiSystemTable,
 };
-use efi_virtio_vsock::gbl_vsock_init;
+use efi_virtio_vsock::{gbl_vsock_init, FastbootTransport};
 use gbl_efi_boot_control::GblEfiBootControlImpl;
 use gbl_efi_boot_memory::GblEfiBootMemoryImpl;
 
@@ -78,6 +79,15 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
 
     // Fastboot over vsock
     efi_println!(entry, "Initializing vsock {:?}", gbl_vsock_init(&entry));
+    static FASTBOOT_VSOCK_TRANSPORT: [FastbootTransport; 2] = [
+        FastbootTransport::new(1, c"Fastboot over vsock port 1"),
+        FastbootTransport::new(2, c"Fastboot over vsock port 2"),
+    ];
+    efi_println!(entry, "Installing fastboot over vsock transports");
+    for transport in FASTBOOT_VSOCK_TRANSPORT.iter() {
+        transport.init().unwrap();
+        bs.install_protocol_from_rust::<GblFastbootTransportProtocol, _>(None, transport).unwrap();
+    }
 
     let mut gbl_file =
         semihosting::File::open(c"gbl.bin", semihosting::OpenMode::ReadBinary).unwrap();
