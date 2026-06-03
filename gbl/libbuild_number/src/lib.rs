@@ -21,3 +21,15 @@ pub const BUILD_NUMBER: &str = env!("BUILD_NUMBER", "BUILD_NUMBER must be define
 
 /// The string describing the GBL version release.
 pub const VERSION: &str = "mainline-18";
+
+/// The string describing the branch this is built on.
+pub const BUILD_BRANCH: &str = match option_env!("BUILD_BRANCH") {
+    Some(branch) if !branch.is_empty() => branch,
+    _ => "<unknown_branch>",
+};
+
+/// The git revision of the gbl repo.
+pub const BUILD_REVISION: &str = match option_env!("BUILD_REVISION") {
+    Some(revision) if !revision.is_empty() => revision,
+    _ => "<unknown_revision>",
+};
