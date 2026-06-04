@@ -25,5 +25,8 @@ rust_library(
     srcs = ["src/lib.rs"],
     crate_name = "semihosting",
     rustc_flags = ANDROID_RUST_LINTS,
-    deps = ["@gbl//liberror"],
+    deps = [
+        "@gbl//liberror",
+        "@gbl//libutils",
+    ],
 )

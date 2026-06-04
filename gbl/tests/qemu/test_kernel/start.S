@@ -34,6 +34,10 @@ real_start:
     // For now we resuse the stack from previous stage. If it runs into issues,
     // we will need to set up our own stack.
 
+    // Preserve original x0 and x1 on the stack (16-byte alignment)
+    sub sp, sp, #16
+    stp x0, x1, [sp]
+
     // Get current programmatic offset (runtime base of image data).
     // The `adr` instruction is PC relative and retrieves address of _start.
     adr x0, _start
@@ -45,6 +49,10 @@ real_start:
 
     // Call ApplyRelocation(program_base, dynamic_section) in relocation.cpp
     bl ApplyRelocation
+
+    // Restore x0 and x1
+    ldp x0, x1, [sp]
+    add sp, sp, #16
 
     // Now the runtime is successfully relocated. Pass Execution to C code.
     bl kernel_main

@@ -525,7 +525,7 @@ gbl_clang_cc_toolchain(
         "-march=armv8-a",
     ],
     target_cpu = "aarch64",
-    target_system_triple = "aarch64-unknown-linux",
+    target_system_triple = "aarch64-none-elf",
 )
 
 toolchain(
@@ -1040,13 +1040,18 @@ toolchain(
 )
 
 rust_toolchain(
-    name = "aarch64-unknown-linux-gnu",
+    name = "aarch64-unknown-none",
     allocator_library = None,
     binary_ext = "",
     default_edition = "2021",
     dylib_ext = ".so",
     exec_triple = "x86_64-unknown-linux-gnu",
-    extra_rustc_flags = rustc_common_flags + rustc_opt_flags,
+    extra_rustc_flags = rustc_common_flags + rustc_opt_flags + [
+        "-C",
+        "relocation-model=pic",
+        "-C",
+        "link-arg=-pie",
+    ],
     global_allocator_library = None,
     rust_doc = "@rust_prebuilts//:bin/rustdoc",
     rust_std = select({
@@ -1056,14 +1061,14 @@ rust_toolchain(
     rustc = "@rust_prebuilts//:bin/rustc",
     staticlib_ext = ".a",
     stdlib_linkflags = [],
-    target_triple = "aarch64-unknown-linux-gnu",
+    target_triple = "aarch64-unknown-none",
 )
 
 toolchain(
-    name = "aarch64-unknown-linux-gnu_toolchain",
+    name = "aarch64-unknown-none_toolchain",
     exec_compatible_with = ["@platforms//os:linux"],
     target_settings = ["@gbl//toolchain:gbl_rust_elf_aarch64"],
-    toolchain = ":aarch64-unknown-linux-gnu",
+    toolchain = ":aarch64-unknown-none",
     toolchain_type = "@rules_rust//rust:toolchain",
 )
 
