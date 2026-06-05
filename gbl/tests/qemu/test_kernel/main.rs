@@ -17,7 +17,9 @@
 #![no_std]
 #![no_main]
 
+use bootparams::bootconfig::extract_bootconfig;
 use core::alloc::{GlobalAlloc, Layout};
+use fdt::Fdt;
 
 // Noop allocator to meet dependency requirement.
 struct StubAllocator;
@@ -46,9 +48,46 @@ pub extern "C" fn __stack_chk_fail() -> ! {
 #[no_mangle]
 pub extern "C" fn rust_eh_personality() {}
 
+/// Linux like kernel main entry
+///
+/// # Safety
+///
+/// * Caller must guarantee that `fdt_addr` points to a valid device tree blob.
+/// * Caller must guarantee that `linux,initrd-start` and `linux,initrd-end` mark a valid ramdisk
+///   address range if specified
 #[no_mangle]
-pub extern "C" fn kernel_main() -> ! {
+pub unsafe extern "C" fn kernel_main(fdt_addr: *const u8) -> ! {
     semihosting::println!("GBL Custom Kernel loaded and self-relocated successfully from Rust!");
+
+    // For now we don't expect fdt to be null.
+    assert!(!fdt_addr.is_null());
+
+    // Parses FDT
+    // SAFETY: By safety contract, if fdt_addr is not null, it points to a valid dtb.
+    let (_, slice) = unsafe { fdt::FdtHeader::from_raw(fdt_addr) }
+        .inspect_err(|e| semihosting::println!("Failed to parse fdt {e}"))
+        .unwrap();
+    let fdt = Fdt::new(slice).unwrap();
+    // Extract ramdisk range
+    let initrd_start_prop = fdt.get_property("chosen", c"linux,initrd-start").unwrap();
+    let initrd_end_prop = fdt.get_property("chosen", c"linux,initrd-end").unwrap();
+    let initrd_start = u64::from_be_bytes(initrd_start_prop.try_into().unwrap());
+    let initrd_end = u64::from_be_bytes(initrd_end_prop.try_into().unwrap());
+    let ramdisk_len = usize::try_from(initrd_end - initrd_start).unwrap();
+
+    // SAFETY: By safety contract, `linux,initrd-start` and `linux,initrd-end` marks a valid
+    // ramdisk address range.
+    let ramdisk_slice =
+        unsafe { core::slice::from_raw_parts(initrd_start as *const u8, ramdisk_len) };
+    let bootconfig = extract_bootconfig(ramdisk_slice)
+        .inspect_err(|e| semihosting::println!("Failed to extract bootconfig: {:?}", e))
+        .unwrap();
+
+    let is_normal = bootconfig
+        .rfind("androidboot.force_normal_boot")
+        .filter(|v| bootconfig[*v..].starts_with("androidboot.force_normal_boot=1\n"))
+        .is_some();
+    semihosting::println!("Normal Mode: {is_normal:?}",);
 
     semihosting::println!("Exiting QEMU test via semihosting.");
     // Terminate QEMU cleanly via libsemihosting

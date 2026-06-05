@@ -24,6 +24,7 @@
 
 use core::{ffi::CStr, num::NonZeroUsize};
 use liberror::Error;
+pub use libutils::arch_timestamp;
 
 /// Semihosting operation codes.
 #[derive(Copy, Clone, Debug)]
@@ -139,6 +140,10 @@ macro_rules! print {
 macro_rules! println {
     ( $( $x:expr ),* $(,)? ) => {
         {
+            // Print timestamp if supported
+            let _ = $crate::arch_timestamp().inspect(|v| {
+                $crate::print!("[{:.4}] ", v.as_secs_f32());
+            });
             $crate::print!($($x,)*);
             $crate::print!("\r\n");
         }
