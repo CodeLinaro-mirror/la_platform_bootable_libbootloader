@@ -65,7 +65,11 @@ boringssl_baremetal_copts = [
         "-Xclang -target-feature",
         "-Xclang -sve",
     ],
-    "@platforms//cpu:x86_64": [
+    "@gbl//toolchain:gbl_rust_host_x86_64": [
+        "-DOPENSSL_X86_64",
+        "-msse2",
+    ],
+    "@gbl//toolchain:gbl_rust_uefi_x86_64": [
         "-DOPENSSL_NO_ASM",
         "-DOPENSSL_X86_64",
         "-msse2",
