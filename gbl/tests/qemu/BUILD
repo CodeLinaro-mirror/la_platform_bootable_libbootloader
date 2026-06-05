@@ -12,11 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 load("//tools/gpt_gen:gpt_gen.bzl", "gpt_gen")
 
 package(
     default_applicable_licenses = ["@gbl//licensing:gbl_license"],
     default_visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "qemu_test_utils",
+    srcs = ["qemu_test_utils.py"],
+)
+
+py_binary(
+    name = "fastboot_reboot_test",
+    srcs = ["fastboot_reboot_test.py"],
+    imports = ["."],
+    deps = [":qemu_test_utils"],
 )
 
 genrule(
@@ -45,8 +59,17 @@ gpt_gen(
             "file": ":test_boot_img",
         },
         "boot_b": {"size": "1M"},
-        "misc": {"size": "1M"},
+        "misc": {
+            "size": "1M",
+            "file": ":misc_boot_bootloader",
+        },
     },
+)
+
+write_file(
+    name = "misc_boot_bootloader",
+    out = "misc_boot_bootloader.img",
+    content = ["bootonce-bootloader\0"],
 )
 
 genrule(
@@ -68,9 +91,11 @@ genrule(
             --bios $(location @vmm//:qemu/x86_64-linux-gnu/usr/share/qemu/edk2-aarch64-code.fd) \
             --log_output $@ \
             --disk $(location :test_gpt_disk) \
-            --vhost_device_vsock $(location @vhost_device_vsock)
+            --vhost_device_vsock $(location @vhost_device_vsock) \
+            --test_script $(location :fastboot_reboot_test)
     """,
     tools = [
+        ":fastboot_reboot_test",
         "@gbl//tools/gpt_gen",
         "@vhost_device_vsock",
     ],

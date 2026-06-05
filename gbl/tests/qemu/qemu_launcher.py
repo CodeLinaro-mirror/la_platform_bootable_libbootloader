@@ -40,10 +40,15 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument("--log_output", help="Output path for serial log")
   parser.add_argument(
-      "--disk", action="append", help="Path to a disk image to attach as virtio-blk"
+      "--disk",
+      action="append",
+      help="Path to a disk image to attach as virtio-blk",
   )
   parser.add_argument(
       "--vhost_device_vsock", help="Path to the vhost device vsock binary"
+  )
+  parser.add_argument(
+      "--test_script", help="Path to a user-provided Python script to execute"
   )
 
   return parser.parse_args()
@@ -54,6 +59,8 @@ def launch_qemu(args):
   bios = os.path.abspath(args.bios)
   with tempfile.TemporaryDirectory() as test_dir:
     env = os.environ.copy()
+    # Flushes any log immediately.
+    env["PYTHONUNBUFFERED"] = "1"
     # The script will be run in a sandbox, so we need to set the temp dir.
     env["TMPDIR"] = test_dir
     env["TEMP"] = test_dir
@@ -72,6 +79,12 @@ def launch_qemu(args):
     # Starts vhost device vsock bridge first. Otherwise QEMU will fail to start.
     socket_path = test_dir / "vsock-guest.sock"
     uds_path = test_dir / "vsock-host.sock"
+
+    # Shares the fastboot vsock socket path and log path to test script.
+    env["FASTBOOT_OVER_VSOCK_UDS_PATH"] = str(uds_path)
+    env["GBL_CONSOLE_LOG"] = str(test_dir / "console.log")
+    script_log_path = test_dir / "test_script.log"
+
     if args.vhost_device_vsock:
       vhost_proc = subprocess.Popen(
           [
@@ -124,7 +137,10 @@ def launch_qemu(args):
       ]
       # userspace vsock interface
       if args.vhost_device_vsock:
-        cmd_args += ["-chardev", f"socket,id=char0,reconnect=0,path={socket_path}"]
+        cmd_args += [
+            "-chardev",
+            f"socket,id=char0,reconnect=0,path={socket_path}",
+        ]
         cmd_args += ["-device", "vhost-user-vsock-pci,chardev=char0"]
 
       # Generate FDT
@@ -136,29 +152,59 @@ def launch_qemu(args):
           env=env,
       )
 
-      # Launch GBL
+      # Launch QEMU
       failed = False
-      subprocess.run(
+      qemu_proc = subprocess.Popen(
           cmd_args + ["-machine", "virt,memory-backend=mem"],
-          timeout=args.timeout,
-          check=True,
           stderr=subprocess.STDOUT,
           cwd=test_dir,
           env=env,
       )
+
+      # Run test script if provided
+      #
+      # Notes: The launching and management of qemu can also be driven by the
+      # test script. This may allow the test script to be written like unittest.
+      # For example, a test scripts may contain several python unittest and each
+      # test launches its own instance of qemu.
+      if args.test_script:
+        with open(script_log_path, "w") as script_log:
+          subprocess.run(
+              [sys.executable, os.path.abspath(args.test_script)],
+              timeout=args.timeout,
+              check=True,
+              stdout=script_log,
+              stderr=subprocess.STDOUT,
+              cwd=test_dir,
+              env=env,
+          )
+
+      # Wait for QEMU to exit
+      qemu_proc.wait(timeout=args.timeout)
+      if qemu_proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            qemu_proc.returncode, qemu_proc.args
+        )
     except Exception as e:
       failed = True
       print(f"QEMU error: {e}")
       raise
     finally:
+      qemu_proc.terminate()
+      qemu_proc.wait()
       if args.vhost_device_vsock:
         vhost_proc.terminate()
         vhost_proc.wait()
       if args.log_output:
-        shutil.copyfile(test_dir / "console.log", args.log_output)
+        with open(args.log_output, "w") as outfile:
+          outfile.write("=== Device Console Log ===\n")
+          outfile.write((test_dir / "console.log").read_text())
+          if script_log_path.exists():
+            outfile.write("\n=== Host Test Script Log ===\n")
+            outfile.write(script_log_path.read_text())
         if failed:
-          print(f"\nQEMU Test Failed! Console log:\n")
-          log_text = (test_dir / "console.log").read_text()
+          print(f"\nQEMU Test Failed! Output log:\n")
+          log_text = pathlib.Path(args.log_output).read_text()
           # Strip ANSI escape codes (like clear screen)
           clean_text = re.sub(r"\x1b\[[0-9;]*[mGHKJ]", "", log_text)
           print(clean_text)

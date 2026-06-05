@@ -18,8 +18,8 @@
 
 use efi_types::{
     defs::{
-        GblEfiBootBufferType, GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD,
-        GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION,
+        GblEfiBootBufferType, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD,
+        GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD, GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION,
     },
     protocol::gbl_efi_boot_memory::{BootBuffer, GblEfiBootMemorySafe},
     status::{EfiError, EfiResult},
@@ -53,6 +53,9 @@ impl GblEfiBootMemorySafe for GblEfiBootMemoryImpl {
                 // GBL by default allocates 256mb of general load buffer, which is too much for
                 // test. Instruct GBL to use smaller size using this protocol.
                 // TODO(b/499359597): Make the size configurable.
+                Ok(BootBuffer::ToAllocate(16 * 1024 * 1024))
+            }
+            GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD => {
                 Ok(BootBuffer::ToAllocate(16 * 1024 * 1024))
             }
             _ => Err(EfiError::NotFound),
