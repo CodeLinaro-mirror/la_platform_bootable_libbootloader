@@ -15,29 +15,41 @@
 # limitations under the License.
 """QEMU fastboot reboot test script"""
 
+import logging
 import os
 import sys
-from qemu_test_utils import VsockFastbootClient, wait_for_log_pattern
+import time
+from qemu_test_utils import VsockFastbootClient, default_logging, wait_for_fastboot_ready, wait_for_log_pattern
 
 
 def main():
-  print("Starting fastboot reboot test...")
+  default_logging()
+  logging.info("Starting fastboot reboot test...")
   uds_path = os.environ.get("FASTBOOT_OVER_VSOCK_UDS_PATH")
   if not uds_path:
-    print("Error: VSOCK UDS path not specified in environment variable.")
+    logging.info("Error: VSOCK UDS path not specified in environment variable.")
     sys.exit(1)
 
+  console_log_path = os.environ.get("GBL_CONSOLE_LOG")
+  assert console_log_path, "GBL_CONSOLE_LOG not set"
+
   port = 1
+
+  # Wait for device to be ready before connecting to vsock. Otherwise vhost-device-vsock
+  # may become out of sync if VsockFastbootClient timeout first.
+  wait_for_fastboot_ready(console_log_path)
+
   client = VsockFastbootClient(port=port)
   client.run_command(b"getvar:all", assert_ok=True)
   client.run_command(b"reboot-bootloader", assert_ok=True)
+  client.close()
+
+  wait_for_fastboot_ready(console_log_path, 2)
 
   client = VsockFastbootClient(port=port)
   client.run_command(b"reboot-recovery", assert_ok=True)
 
   # Poll the console log file for success pattern
-  console_log_path = os.environ.get("GBL_CONSOLE_LOG")
-  assert console_log_path, "GBL_CONSOLE_LOG not set"
   wait_for_log_pattern(
       console_log_path,
       [
