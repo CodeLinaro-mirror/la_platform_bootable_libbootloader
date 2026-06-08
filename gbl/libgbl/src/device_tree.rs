@@ -574,7 +574,7 @@ pub(crate) mod test {
 
     #[test]
     fn test_components_append_from_dttable() {
-        let dttable = include_bytes!("../../libdttable/test/data/dttable.img").to_vec();
+        let dttable = include_bytes!("../../libdttable/test/data/dttable_v0.img").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut registry = DtComponentsRegistry::new();
 
@@ -605,7 +605,7 @@ pub(crate) mod test {
 
     #[test]
     fn test_components_append_from_dttable_invalid_totalsize() {
-        let mut dttable = include_bytes!("../../libdttable/test/data/dttable.img").to_vec();
+        let mut dttable = include_bytes!("../../libdttable/test/data/dttable_v0.img").to_vec();
         let mut buffer = vec![0u8; 2 * 1024 * 1024]; // 2 MB
         let mut registry = DtComponentsRegistry::new();
 

@@ -94,7 +94,7 @@ const_assert!(FASTBOOT_PARTITION_TYPE_LEN >= GBL_EFI_FASTBOOT_PARTITION_TYPE_BUF
 fn dt_component_to_efi_dt(component: &DtComponent) -> GblEfiVerifiedDeviceTree {
     let (id, rev, custom_size, custom) = match component.selection_metadata.as_ref() {
         Some(m) => {
-            let custom = m.custom.as_bytes();
+            let custom = m.custom().as_bytes();
             (m.id, m.rev, custom.len(), custom.as_ptr())
         }
         None => (0, 0, 0, core::ptr::null()),
