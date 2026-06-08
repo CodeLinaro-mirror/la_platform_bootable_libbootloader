@@ -38,9 +38,9 @@ use bootparams::{
 use core::{ffi::CStr, fmt::Write, mem::take, ops::Range};
 use fdt::Fdt;
 use gbl_async::block_on;
-use libbuild_number::{BUILD_BRANCH, BUILD_NUMBER, BUILD_REVISION, VERSION};
+use libbuild_number::{format_build_fingerprint, format_build_vcs_info, BUILD_NUMBER, VERSION};
 use liberror::Error;
-use libutils::{aligned_subslice, buffer_pool::BufferPool, shared::Shared, BUILD_TYPE_STR};
+use libutils::{aligned_subslice, buffer_pool::BufferPool, shared::Shared};
 use misc::AndroidBootMode;
 
 mod avf;
@@ -335,10 +335,11 @@ pub fn android_load_verify_fixup<'a, 'b>(
 
 /// Add gbl properties to be exported to android boot properties.
 fn add_android_gbl_bootconfig(builder: &mut impl Write, fw_api_level: Option<u64>) -> Result<()> {
-    writeln!(builder, "androidboot.gbl.variant={BUILD_TYPE_STR}:{BUILD_BRANCH}:{BUILD_REVISION}")
-        .map_err(Error::from)?;
     writeln!(builder, "androidboot.gbl.version={VERSION}").map_err(Error::from)?;
     writeln!(builder, "androidboot.gbl.build_number={BUILD_NUMBER}").map_err(Error::from)?;
+    writeln!(builder, "androidboot.gbl.fingerprint={}", format_build_fingerprint!())
+        .map_err(Error::from)?;
+    writeln!(builder, "androidboot.gbl.vcs={}", format_build_vcs_info!()).map_err(Error::from)?;
     // TODO(b/484066914): Error if this var is missing.
     if let Some(fw_api_level) = fw_api_level {
         writeln!(builder, "androidboot.gbl.fw.api_level={fw_api_level}").map_err(Error::from)?;
@@ -879,6 +880,7 @@ pub(crate) mod tests {
     use bootparams::bootconfig::{BootConfigBuilder, BOOTCONFIG_TRAILER_SIZE};
     use cfg_if::cfg_if;
     use fdt::std_props;
+    use libbuild_number::{BUILD_BRANCH, BUILD_NUMBER, BUILD_REVISION, VERSION};
     use libtestutils::AlignedBuffer;
     use libutils::cstr_buffer;
     use std::{
@@ -3292,9 +3294,10 @@ androidboot.gbl.fw_version.gbl_avf=2.1
         assert_eq!(
             &bootconfig[..content_len],
             format!(
-                "androidboot.gbl.variant=dev:{BUILD_BRANCH}:{BUILD_REVISION}
-androidboot.gbl.version={VERSION}
+                "androidboot.gbl.version={VERSION}
 androidboot.gbl.build_number={BUILD_NUMBER}
+androidboot.gbl.fingerprint=dev/{VERSION}/{BUILD_NUMBER}
+androidboot.gbl.vcs={BUILD_BRANCH}:{BUILD_REVISION}
 androidboot.gbl.fw.api_level=202604
 "
             )
@@ -3315,9 +3318,10 @@ androidboot.gbl.fw.api_level=202604
         assert_eq!(
             &bootconfig[..content_len],
             format!(
-                "androidboot.gbl.variant=prod:{BUILD_BRANCH}:{BUILD_REVISION}
-androidboot.gbl.version={VERSION}
+                "androidboot.gbl.version={VERSION}
 androidboot.gbl.build_number={BUILD_NUMBER}
+androidboot.gbl.fingerprint=prod/{VERSION}/{BUILD_NUMBER}
+androidboot.gbl.vcs={BUILD_BRANCH}:{BUILD_REVISION}
 androidboot.gbl.fw.api_level=202604
 "
             )

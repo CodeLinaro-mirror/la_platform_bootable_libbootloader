@@ -13,22 +13,34 @@
 # limitations under the License.
 
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
-load("@gbl_config//:variables.bzl", "BUILD_BRANCH", "BUILD_NUMBER", "BUILD_REVISION")
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(
     default_applicable_licenses = ["@gbl//licensing:gbl_license"],
+)
+
+genrule(
+    name = "workspace_status_env",
+    outs = ["workspace_status.env"],
+    cmd = """
+        grep -E '^STABLE_' bazel-out/stable-status.txt |
+        sed -E 's/^STABLE_([^[:space:]]+) (.*)$$/\\1=\\2/' >$@
+    """,
+    stamp = 1,
 )
 
 rust_library(
     name = "libbuild_number",
     srcs = glob(["src/**/*.rs"]),
     edition = "2021",
-    rustc_env = {
-        "BUILD_NUMBER": BUILD_NUMBER,
-        "BUILD_BRANCH": BUILD_BRANCH,
-        "BUILD_REVISION": BUILD_REVISION,
-    },
+    rustc_env_files = [":workspace_status_env"],
+    rustc_flags = ANDROID_RUST_LINTS,
+    visibility = ["//visibility:public"],
+)
+
+rust_test(
+    name = "libbuild_number_test",
+    crate = ":libbuild_number",
     rustc_flags = ANDROID_RUST_LINTS,
     visibility = ["//visibility:public"],
 )

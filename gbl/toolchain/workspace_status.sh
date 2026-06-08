@@ -14,12 +14,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-revision=""
-
-if command -v git >/dev/null 2>/dev/null; then
-  revision=$(git -C bootable/libbootloader rev-parse --verify HEAD 2>/dev/null)
+build_branch="$BUILD_BRANCH"
+if [ -z "$build_branch" ]; then
+  build_branch="gbl-mainline"
 fi
 
-[ "$revision" ] && echo "STABLE_BUILD_REVISION" "$revision"
+build_number="$BUILD_NUMBER"
+if [ -z "$build_number" ]; then
+  build_number="eng.${USER}.$(date +%Y-%m-%d)"
+fi
+
+revision=""
+if command -v git >/dev/null 2>/dev/null; then
+  PROJECT_DIR="$(realpath "$(dirname "${BASH_SOURCE[0]}")/../..")"
+
+  revision=$(git -C "$PROJECT_DIR" rev-parse --verify --short=12 HEAD)
+
+  if [ "$revision" ]; then
+    dirty="$(
+      { git -C "$PROJECT_DIR" --no-optional-locks status -uno --porcelain ||
+        git -C "$PROJECT_DIR" diff-index --name-only HEAD
+      } 2>/dev/null
+    )"
+
+    if [ "$dirty" ]; then
+      revision="${revision}-dirty"
+    fi
+  fi
+fi
+
+echo "STABLE_BUILD_BRANCH ${build_branch}"
+echo "STABLE_BUILD_NUMBER ${build_number}"
+[ "$revision" ] && echo "STABLE_BUILD_REVISION ${revision}"
+
+# Print debug messages to stderr.
+( echo "BUILD_BRANCH=${build_branch}"
+  echo "BUILD_NUMBER=${build_number}"
+  echo "BUILD_REVISION=${revision}"
+) >&2
 
 exit 0

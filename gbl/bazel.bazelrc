@@ -65,3 +65,5 @@ common:android_ci --noshow_progress
 test:android_ci --config=ants
 
 common --incompatible_autoload_externally=-@rules_python,-@rules_java,-@com_google_protobuf,-@protobuf,-@rules_shell,-@rules_android
+
+build --workspace_status_command=bootable/libbootloader/gbl/toolchain/workspace_status.sh

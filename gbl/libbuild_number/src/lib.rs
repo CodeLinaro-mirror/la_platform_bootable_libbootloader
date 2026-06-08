@@ -33,3 +33,55 @@ pub const BUILD_REVISION: &str = match option_env!("BUILD_REVISION") {
     Some(revision) if !revision.is_empty() => revision,
     _ => "<unknown_revision>",
 };
+
+/// The string describing the build type.
+pub const BUILD_TYPE: &str = if cfg!(feature = "gbl_dev") { "dev" } else { "prod" };
+
+/// Creates a fmt::Arguments of the build fingerprint.
+#[macro_export]
+macro_rules! format_build_fingerprint {
+    () => {
+        format_args!("{}/{}/{}", $crate::BUILD_TYPE, $crate::VERSION, $crate::BUILD_NUMBER)
+    };
+}
+
+/// Creates a fmt::Arguments of the build vcs info.
+#[macro_export]
+macro_rules! format_build_vcs_info {
+    () => {
+        format_args!("{}:{}", $crate::BUILD_BRANCH, $crate::BUILD_REVISION)
+    };
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[cfg(feature = "gbl_dev")]
+    #[test]
+    fn test_build_type_dev() {
+        assert_eq!(BUILD_TYPE, "dev");
+    }
+
+    #[cfg(not(feature = "gbl_dev"))]
+    #[test]
+    fn test_build_type_prod() {
+        assert_eq!(BUILD_TYPE, "prod");
+    }
+
+    #[test]
+    fn test_format_build_fingerprint() {
+        assert_eq!(
+            format!("{}", format_build_fingerprint!()),
+            format!("{BUILD_TYPE}/{VERSION}/{BUILD_NUMBER}")
+        );
+    }
+
+    #[test]
+    fn test_format_build_vcs_info() {
+        assert_eq!(
+            format!("{}", format_build_vcs_info!()),
+            format!("{BUILD_BRANCH}:{BUILD_REVISION}")
+        );
+    }
+}

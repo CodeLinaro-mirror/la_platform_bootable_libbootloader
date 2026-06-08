@@ -57,9 +57,8 @@ use {
     },
     cfg_if::cfg_if,
     efi::{efi_println, report_error_and_reset, EfiEntry},
-    libbuild_number::BUILD_NUMBER,
+    libbuild_number::{format_build_fingerprint, format_build_vcs_info},
     libgbl::{Os, Result},
-    libutils::BUILD_TYPE_STR,
     utils::loaded_image_path,
 };
 
@@ -105,8 +104,8 @@ fn get_target_os(_entry: &EfiEntry, _disks: &[EfiGblDisk]) -> TargetOs {
 pub fn app_main(entry: EfiEntry) -> Result<()> {
     use libutils::get_sp;
     efi_println!(entry, "**** Generic Bootloader (GBL) ****");
-    efi_println!(entry, "Version: {BUILD_NUMBER}");
-    efi_println!(entry, "Board type: {BUILD_TYPE_STR}");
+    efi_println!(entry, "Fingerprint: {}", format_build_fingerprint!());
+    efi_println!(entry, "VCS info: {}", format_build_vcs_info!());
     if let Ok(v) = loaded_image_path(&entry) {
         efi_println!(entry, "Image path: {v}");
     }
