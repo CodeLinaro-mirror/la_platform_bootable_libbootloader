@@ -285,12 +285,6 @@ parsable_int!(u32);
 parsable_int!(u64);
 parsable_int!(usize);
 
-/// String describing the build type.
-pub const BUILD_TYPE_STR: &'static str = match cfg!(feature = "gbl_dev") {
-    true => "dev",
-    false => "prod",
-};
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -384,17 +378,5 @@ mod test {
     #[should_panic]
     fn cstr_buffer_overflow_terminator_panics() {
         let _ = cstr_buffer::<3>("foo");
-    }
-
-    #[cfg(feature = "gbl_dev")]
-    #[test]
-    fn build_type_str_dev() {
-        assert_eq!(BUILD_TYPE_STR, "dev");
-    }
-
-    #[cfg(not(feature = "gbl_dev"))]
-    #[test]
-    fn build_type_str_prod() {
-        assert_eq!(BUILD_TYPE_STR, "prod");
     }
 }

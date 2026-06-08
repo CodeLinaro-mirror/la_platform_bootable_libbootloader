@@ -144,28 +144,12 @@ gbl_llvm_prebuilts = repository_rule(
 # prebuilts is uploaded to https://android.googlesource.com/platform/prebuilts/rust/
 GBL_RUST_VERSION = "1.91.1.p2"
 
-BUILD_BRANCH = "gbl-android17"
-
 def _gbl_config_impl(repo_ctx):
     """Exports configurable value to build rules."""
 
     build_number = repo_ctx.getenv("BUILD_NUMBER")
     if not build_number:
         build_number = "eng.{}".format(repo_ctx.getenv("USER"))
-
-    build_branch = BUILD_BRANCH
-
-    build_revision = ""
-    status_res = repo_ctx.execute(["bootable/libbootloader/gbl/toolchain/workspace_status.sh"], working_directory = str(repo_ctx.workspace_root))
-    if status_res.return_code == 0:
-        for line in status_res.stdout.splitlines():
-            parts = line.strip().split(" ")
-            if len(parts) == 2 and parts[0] == "STABLE_BUILD_REVISION":
-                build_revision = parts[1]
-
-    print("env[BUILD_NUMBER] = {}\n".format(build_number))  # buildifier: disable=print
-    print("env[BUILD_BRANCH] = {}\n".format(build_branch))  # buildifier: disable=print
-    print("env[BUILD_REVISION] = {}\n".format(build_revision))  # buildifier: disable=print
 
     # Query rustc LLVM version
     rust_llvm_ver = ""
@@ -199,10 +183,8 @@ def _gbl_config_impl(repo_ctx):
     # Create a file to export environment variables.
     variables_content = """
 BUILD_NUMBER = "{}"
-BUILD_BRANCH = "{}"
-BUILD_REVISION = "{}"
 ENABLE_CROSS_LANG_LTO = {}
-""".format(build_number, build_branch, build_revision, enable_cross_lang_lto)
+""".format(build_number, enable_cross_lang_lto)
 
     repo_ctx.file("variables.bzl", variables_content)
     repo_ctx.file("BUILD", "")
