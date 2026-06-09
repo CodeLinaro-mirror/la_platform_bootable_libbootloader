@@ -22,7 +22,10 @@ package(
 
 rust_binary(
     name = "gbl_launcher_bin",
-    srcs = ["src/main.rs"],
+    srcs = [
+        "src/aarch64.rs",
+        "src/main.rs",
+    ],
     edition = "2024",
     rustc_flags = [
         "-C",
@@ -40,6 +43,7 @@ rust_binary(
         "@gbl//libefi_virtio_vsock",
         "@gbl//libsemihosting",
         "@gbl//libstack",
+        "@gbl//libutils",
         "@gbl//tests/qemu/gbl_efi_boot_control",
         "@gbl//tests/qemu/gbl_efi_boot_memory",
     ],

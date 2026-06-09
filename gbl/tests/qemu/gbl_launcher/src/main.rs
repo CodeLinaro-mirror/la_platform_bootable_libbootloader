@@ -34,6 +34,9 @@ use efi_virtio_vsock::{gbl_vsock_init, FastbootTransport};
 use gbl_efi_boot_control::GblEfiBootControlImpl;
 use gbl_efi_boot_memory::GblEfiBootMemoryImpl;
 
+#[cfg(target_arch = "aarch64")]
+mod aarch64;
+
 #[unsafe(no_mangle)]
 #[global_allocator]
 static mut EFI_GLOBAL_ALLOCATOR: EfiAllocator = EfiAllocator::new();
@@ -97,11 +100,32 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
 
     // TODO(b/499359597): Mock EFI protocols and launch GBL.
 
-    efi_println!(entry, "Starting GBL..");
+    efi_println!(entry, "Loading GBL...");
     // SAFETY:
     // `gbl_buffer` contains a valid PE image.
-    unsafe { entry.system_table().boot_services().load_and_start_image(&mut gbl_buffer).unwrap() };
+    let loaded_gbl =
+        unsafe { entry.system_table().boot_services().load_image(&mut gbl_buffer).unwrap() };
+    let range = loaded_gbl.loaded_range();
+    efi_println!(entry, "GBL loaded at {:#x}:{:#x}", range.start, range.end);
 
+    // Mark EFI execution pages as guarded. This tests that GBL BTI setting is correct and
+    // functional and inter-operability with UEFI firmware code in non-guarded pages is feasible as
+    // expected.
+    //
+    // Notes: It seems modern EDK2 will check for a special flag
+    // EFI_IMAGE_DLLCHARACTERISTICS_EX_FORWARD_CFI_COMPAT1 in the Debug directory to take care of
+    // BTI bit setting. However our custom EFI build system doesn't support generating custom
+    // directories. Thus for now we manually mark the GBL execution range as guarded.
+    //
+    // SAFETY:
+    // * System is operating with a valid MMU page table set up by EDK.
+    // * In the qemu test setup, nothing else is accessing the page table.
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        aarch64::mark_memory_guarded(range.start, range.len()).unwrap()
+    };
+    efi_println!(entry, "Starting GBL..");
+    loaded_gbl.start().unwrap();
     unreachable!();
 }
 
