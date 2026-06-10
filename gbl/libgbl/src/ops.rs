@@ -1235,6 +1235,12 @@ pub(crate) mod test {
         }
     }
 
+    impl<T, E> From<E> for DefaultOk<T, E> {
+        fn from(value: E) -> Self {
+            Self(Err(value))
+        }
+    }
+
     impl<T: Default, E> DefaultOk<T, E> {
         /// Assigns an error.
         pub fn set_err(&mut self, err: E) {

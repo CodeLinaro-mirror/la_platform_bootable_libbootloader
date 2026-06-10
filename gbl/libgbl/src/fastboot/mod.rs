@@ -26,7 +26,7 @@ use crate::{
     android_boot::{
         android_load_verify_fixup, get_boot_slot, load::sub_slice_range, BootBuffer, LoadedImages,
     },
-    gbl_avb::{Critical, Fdr},
+    gbl_avb::{ops::GblAvbOps, Critical, Fdr},
     gbl_println,
     misc::{read_bootloader_message_to, write_bootloader_message, AndroidBootMode},
     ops::{CommandExecType, RambootOps},
@@ -1141,7 +1141,7 @@ where
 
     /// Returns `Ok` if the device lock is unlocked.
     fn check_unlocked(&mut self) -> CommandResult<()> {
-        match self.gbl_ops.avb_read_device_status() {
+        match GblAvbOps::new(self.gbl_ops, None, &mut [], false).avb_read_device_status() {
             Err(e) => Err(format_args!("Failed to read lock state: {e}").into()),
             Ok(status) if status.is_unlocked => Ok(()),
             _ => Err(ERR_DEVICE_LOCKED.into()),
@@ -1150,7 +1150,7 @@ where
 
     /// Returns `Ok` if the critical lock is unlocked.
     fn check_critical_unlocked(&mut self) -> CommandResult<()> {
-        match self.gbl_ops.avb_read_device_status() {
+        match GblAvbOps::new(self.gbl_ops, None, &mut [], false).avb_read_device_status() {
             Err(e) => Err(format_args!("Failed to read lock state: {e}").into()),
             Ok(status) if status.is_unlocked_critical => Ok(()),
             _ => Err(ERR_CRITICAL_LOCKED.into()),
@@ -6680,6 +6680,55 @@ pub(crate) mod test {
         check_fastboot_locked(
             &[b"flashing unlock_critical", b"continue"],
             &[b"FAILDevice is locked", b"OKAY"],
+        );
+    }
+
+    #[test]
+    fn test_avb_unavailable_dev_fallback_lock_state() {
+        use avb::IoError as AvbIoError;
+
+        let mut storage = FakeGblOpsStorage::default();
+        storage.add_raw_device(c"boot_a", [0u8; KiB!(4)]);
+        let buffers = vec![Some(vec![0u8; KiB!(1)]); 1];
+        let mut gbl_ops = FakeGblOps::new(&storage);
+        gbl_ops.avb_device_status = AvbIoError::NotImplemented.into();
+        let listener: SharedTestListener = Default::default();
+        let (transports, tcp) = (&mut [&listener], &listener);
+
+        let commands = [
+            b"download:0x4".as_slice(),
+            b"test".as_slice(),
+            b"flash:boot_a".as_slice(),
+            b"continue".as_slice(),
+        ];
+        for cmd in commands {
+            listener.add_transport_input(cmd);
+        }
+
+        let mut general = vec![0u8; 1024];
+        block_on(run_gbl_fastboot_stack::<2>(
+            &mut gbl_ops,
+            buffers,
+            transports,
+            Some(tcp),
+            GblFbData { boot_buffer: (&mut general[..]).into(), ..Default::default() },
+        ));
+
+        let expected = make_expected_transport_out(&[
+            b"DATA00000004",
+            b"OKAY",
+            #[cfg(feature = "gbl_dev")]
+            b"OKAY",
+            #[cfg(not(feature = "gbl_dev"))]
+            b"FAILFailed to read lock state: Function not implemented",
+            b"OKAY",
+        ]);
+
+        assert_eq!(
+            listener.transport_out_queue(),
+            expected,
+            "\nActual Transport output:\n{}",
+            listener.dump_transport_out_queue()
         );
     }
 }
