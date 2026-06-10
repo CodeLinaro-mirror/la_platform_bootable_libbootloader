@@ -169,10 +169,9 @@ def _gbl_config_impl(repo_ctx):
 
     enable_cross_lang_lto = False
     if rust_llvm_ver and clang_llvm_ver:
-        # Match major version (e.g. "22" from "22.0.1")
-        rust_major = rust_llvm_ver.split(".")[0]
-        clang_major = clang_llvm_ver.split(".")[0]
-        enable_cross_lang_lto = (rust_major == clang_major)
+        # Match the full version string (major.minor.patch) to avoid linker errors
+        # due to minor/patch version mismatches (e.g. LLVM 22.0.2 vs 22.0.1).
+        enable_cross_lang_lto = (rust_llvm_ver == clang_llvm_ver)
 
     if not enable_cross_lang_lto:
         # buildifier: disable=print
