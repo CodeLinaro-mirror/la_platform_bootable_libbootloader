@@ -27,11 +27,39 @@ dtc -I dts -O dtb -o ${TMP_DIR}/d.dtb ${SCRIPT_DIR}/d.dts
 
 echo "corrupted dttable" > ${DATA_DIR}/corrupted_dttable.img
 
-# mkdtboimg is built by cd aosp/system/libufdt/utils && mm
-mkdtboimg create ${DATA_DIR}/dttable.img \
+# Use the python script in external/libufdt
+readonly MKDTBOIMG="python3 ${SCRIPT_DIR}/../../../../../external/libufdt/utils/src/mkdtboimg.py"
+
+$MKDTBOIMG create ${DATA_DIR}/dttable_v0.img --version=0 \
   ${TMP_DIR}/a.dtb --id=0x0 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3 \
   ${TMP_DIR}/b.dtb --id=0x1 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3 \
   ${TMP_DIR}/c.dtb --id=0x2 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3 \
   ${TMP_DIR}/d.dtb --id=0x3 --rev=0x0 --custom0=0x0 --custom1=0x1 --custom2=0x2 --custom3=0x3
 
-mkdtboimg dump ${DATA_DIR}/dttable.img
+$MKDTBOIMG create ${DATA_DIR}/dttable_v1.img --version=1 \
+  ${TMP_DIR}/a.dtb --id=0x0 --rev=0x0 --flags=0x10 --custom0=0x0 --custom1=0x1 --custom2=0x2 \
+  ${TMP_DIR}/b.dtb --id=0x1 --rev=0x0 --flags=0x10 --custom0=0x0 --custom1=0x1 --custom2=0x2 \
+  ${TMP_DIR}/c.dtb --id=0x2 --rev=0x0 --flags=0x10 --custom0=0x0 --custom1=0x1 --custom2=0x2 \
+  ${TMP_DIR}/d.dtb --id=0x3 --rev=0x0 --flags=0x10 --custom0=0x0 --custom1=0x1 --custom2=0x2
+
+$MKDTBOIMG create ${DATA_DIR}/dttable_v2.img --version=2 \
+  ${TMP_DIR}/a.dtb --id=0x0 --rev=0x0 --flags=0x20 --custom0=0x0 --custom1=0x1 --custom2=0x2 \
+  --custom3=0x3 --custom4=0x4 --custom5=0x5 --custom6=0x6 --custom7=0x7 --custom8=0x8 --custom9=0x9 \
+  --custom10=0xa \
+  ${TMP_DIR}/b.dtb --id=0x1 --rev=0x0 --flags=0x20 --custom0=0x0 --custom1=0x1 --custom2=0x2 \
+  --custom3=0x3 --custom4=0x4 --custom5=0x5 --custom6=0x6 --custom7=0x7 --custom8=0x8 --custom9=0x9 \
+  --custom10=0xa \
+  ${TMP_DIR}/c.dtb --id=0x2 --rev=0x0 --flags=0x20 --custom0=0x0 --custom1=0x1 --custom2=0x2 \
+  --custom3=0x3 --custom4=0x4 --custom5=0x5 --custom6=0x6 --custom7=0x7 --custom8=0x8 --custom9=0x9 \
+  --custom10=0xa \
+  ${TMP_DIR}/d.dtb --id=0x3 --rev=0x0 --flags=0x20 --custom0=0x0 --custom1=0x1 --custom2=0x2 \
+  --custom3=0x3 --custom4=0x4 --custom5=0x5 --custom6=0x6 --custom7=0x7 --custom8=0x8 --custom9=0x9 \
+  --custom10=0xa
+
+echo "Dumping v0:"
+$MKDTBOIMG dump ${DATA_DIR}/dttable_v0.img
+echo "Dumping v1:"
+$MKDTBOIMG dump ${DATA_DIR}/dttable_v1.img
+echo "Dumping v2:"
+$MKDTBOIMG dump ${DATA_DIR}/dttable_v2.img
+
