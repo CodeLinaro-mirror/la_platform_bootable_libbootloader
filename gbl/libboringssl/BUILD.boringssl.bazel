@@ -48,12 +48,10 @@ exports_files([
 
 boringssl_baremetal_copts = [
     "-DBORINGSSL_IMPLEMENTATION",
-    "-DANDROID_BAREMETAL",
     "-DOPENSSL_SMALL",
     "-DOPENSSL_NO_FILESYSTEM",
     "-DOPENSSL_NO_POSIX_IO",
     "-DOPENSSL_NO_SOCK",
-    "-DOPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED",
     "-D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE",
     "-std=c++17",
     "-fno-exceptions",
@@ -64,18 +62,22 @@ boringssl_baremetal_copts = [
         "-DOPENSSL_AARCH64",
         "-Xclang -target-feature",
         "-Xclang -sve",
+        "-DANDROID_BAREMETAL",
     ],
     "@gbl//toolchain:gbl_rust_host_x86_64": [
         "-DOPENSSL_X86_64",
         "-msse2",
+        "-Wno-unused-function",
     ],
     "@gbl//toolchain:gbl_rust_uefi_x86_64": [
         "-DOPENSSL_NO_ASM",
         "-DOPENSSL_X86_64",
         "-msse2",
+        "-DANDROID_BAREMETAL",
     ],
     "//conditions:default": [
         "-DOPENSSL_NO_ASM",
+        "-DANDROID_BAREMETAL",
     ],
 })
 
