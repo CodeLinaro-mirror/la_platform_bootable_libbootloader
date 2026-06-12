@@ -820,12 +820,15 @@ impl<'a> BootServices<'a> {
         Ok(())
     }
 
-    /// Loads and starts an EFI application.
+    /// Loads an EFI application.
+    ///
+    /// On success, [`LoadedEfiImage`] is returned which represents the loaded image.
+    /// The image can be started by calling [`LoadedEfiImage::start`].
     ///
     /// # Safety
     ///
     /// Caller must guarantee that `src` is a valid EFI application
-    pub unsafe fn load_and_start_image(&self, src: &mut [u8]) -> Result<()> {
+    pub unsafe fn load_image(&self, src: &mut [u8]) -> Result<LoadedEfiImage<'a>> {
         let mut image_handle: EfiHandle = null_mut();
 
         // SAFETY:
@@ -844,15 +847,46 @@ impl<'a> BootServices<'a> {
             )?;
         }
 
-        let mut exit_data_size: usize = 0;
+        let loaded_image = self
+            .open_protocol::<protocol::loaded_image::LoadedImageProtocol>(DeviceHandle::new(
+                image_handle,
+            ))
+            .inspect_err(|e| {
+                efi_println!(
+                    self.efi_entry,
+                    "Failed to open LoadedImageProtocol on image handle: {e:?}",
+                )
+            })?;
 
+        let base = loaded_image.image_base();
+        let size = usize::try_from(loaded_image.interface().image_size)?;
+        let range = base..base.checked_add(size).unwrap();
+        Ok(LoadedEfiImage { efi_entry: self.efi_entry, image_handle, range })
+    }
+}
+
+/// A loaded EFI image.
+pub struct LoadedEfiImage<'a> {
+    efi_entry: &'a EfiEntry,
+    image_handle: EfiHandle,
+    range: core::ops::Range<usize>,
+}
+
+impl LoadedEfiImage<'_> {
+    /// Starts the loaded EFI application.
+    pub fn start(self) -> Result<()> {
+        let mut exit_data_size: usize = 0;
+        let bs = self.efi_entry.system_table().boot_services().boot_services;
         // SAFETY:
         // * `exit_data` is an optional output parameter and set to NULL.
         // * `exit_data_size` is an output parameter. It is not retained and outlives the call.
         //   The value is set to 0 to indicate exit_data is not used.
-        unsafe {
-            efi_call!(self.boot_services.start_image, image_handle, &mut exit_data_size, null_mut())
-        }
+        unsafe { efi_call!(bs.start_image, self.image_handle, &mut exit_data_size, null_mut()) }
+    }
+
+    /// Returns the memory range occupied by the loaded EFI image.
+    pub fn loaded_range(&self) -> core::ops::Range<usize> {
+        self.range.clone()
     }
 }
 

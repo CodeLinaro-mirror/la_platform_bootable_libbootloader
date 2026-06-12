@@ -29,6 +29,7 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = [
         "@gbl//libasync",
+        "@gbl//libboot",
         "@gbl//liberror",
         "@gbl//libsafemath",
         "@static_assertions",
