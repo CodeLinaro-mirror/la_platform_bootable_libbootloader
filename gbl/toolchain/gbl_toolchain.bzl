@@ -400,3 +400,25 @@ int_flag_to_c_def = rule(
         "macro": attr.string(mandatory = True),
     },
 )
+
+# A transition rule that emits the "@gbl//toolchain:enable_tracing" option.
+def _tracing_transition_impl(_settings, _attr):
+    return {"@gbl//toolchain:enable_tracing": True}
+
+_tracing_transition = transition(
+    implementation = _tracing_transition_impl,
+    inputs = [],
+    outputs = ["@gbl//toolchain:enable_tracing"],
+)
+
+build_with_tracing = rule(
+    implementation = _forward_and_symlink,
+    cfg = _tracing_transition,
+    attrs = {
+        # Mandatory attribute for rules with transition.
+        "_allowlist_function_transition": attr.label(
+            default = Label("@bazel_tools//tools/allowlists/function_transition_allowlist"),
+        ),
+        "deps": attr.label_list(allow_files = True, mandatory = True),
+    },
+)

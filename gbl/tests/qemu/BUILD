@@ -15,6 +15,7 @@
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 load("//tests/qemu:qemu_test.bzl", "qemu_test")
+load("//toolchain:gbl_toolchain.bzl", "build_with_tracing")
 load("//tools/gpt_gen:gpt_gen.bzl", "gpt_gen")
 
 package(
@@ -79,6 +80,11 @@ gpt_gen(
     partitions = {"misc": {"size": "1M"}},
 )
 
+build_with_tracing(
+    name = "aarch64_dev_tracing",
+    deps = ["@gbl//efi:aarch64_dev"],
+)
+
 py_binary(
     name = "fastboot_reboot_test",
     srcs = ["fastboot_reboot_test.py"],
@@ -119,4 +125,21 @@ qemu_test(
     },
     gbl = "@gbl//efi:aarch64_dev",
     test_script = ":boot_memory_test",
+)
+
+py_binary(
+    name = "trace_test",
+    srcs = ["trace_test.py"],
+    imports = ["."],
+    deps = [":qemu_test_utils"],
+)
+
+qemu_test(
+    name = "qemu_trace_test",
+    disk = [
+        ":test_gpt_boot",
+        ":test_gpt_misc_normal_mode",
+    ],
+    gbl = ":aarch64_dev_tracing",
+    test_script = ":trace_test",
 )

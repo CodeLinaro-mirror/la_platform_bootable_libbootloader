@@ -519,6 +519,13 @@ fn finalize_bootconfig<'a, 'b, 'c>(
         add_perf_metrics(&mut builder, &metrics, time)?;
     }
 
+    #[cfg(feature = "gbl_tracing")]
+    if let Some(v) = trace::gbl_trace_buffer_info() {
+        gbl_println!(ops, "Adding trace buffer info {:#x}:{:#x}", v.start, v.len());
+        writeln!(builder, "androidboot.gbl.trace_addr={:#x}", v.start).map_err(Error::from)?;
+        writeln!(builder, "androidboot.gbl.trace_size={:#x}", v.len()).map_err(Error::from)?;
+    }
+
     add_firmware_version_metrics(&mut builder, &ops.get_firmware_version_metrics())?;
 
     Ok(builder.config_bytes().len())

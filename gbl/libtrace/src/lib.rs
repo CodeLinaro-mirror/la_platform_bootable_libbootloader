@@ -16,6 +16,12 @@
 
 #![cfg_attr(not(test), no_std)]
 
+use core::mem::size_of;
+pub use gbl_trace_format::{GblTraceMetadata, GBL_TRACE_MAGIC};
+use liberror::Error;
+use safemath::SafeNum;
+use zerocopy::FromBytes;
+
 #[cfg(feature = "gbl_tracing")]
 unsafe extern "C" {
     // The following are system wide APIs to be implemented by backend.
@@ -49,6 +55,22 @@ unsafe extern "C" {
         out_buffer_size: *mut usize,
         out_data_size: *mut usize,
     );
+
+    /// Returns the trace buffer address.
+    ///
+    /// This and gbl_trace_buffer_size() are intended for passing buffer range info to the kernel
+    /// for processing. To access buffer content within GBL, please use `gbl_trace_take_buffer`
+    pub safe fn _gbl_trace_buffer_address() -> usize;
+
+    /// Returns the trace buffer size.
+    pub safe fn _gbl_trace_buffer_size() -> usize;
+}
+
+/// Returns the trace buffer address range
+pub fn gbl_trace_buffer_info() -> Option<core::ops::Range<usize>> {
+    let addr = _gbl_trace_buffer_address();
+    let sz = _gbl_trace_buffer_size();
+    (addr != 0 && sz != 0).then_some(addr..addr.checked_add(sz)?)
 }
 
 /// Leaks and return trace buffer.
@@ -70,6 +92,15 @@ pub fn gbl_trace_take_buffer() -> Option<(&'static mut [u8], usize)> {
     (!out.is_null()).then_some((unsafe { from_raw_parts_mut(out, buffer_size) }, data_size))
 }
 
+/// Returns the total size of GBL trace data.
+pub fn trace_total_size(buffer: &[u8]) -> Result<usize, liberror::Error> {
+    let meta = GblTraceMetadata::ref_from_prefix(buffer).map_err(|_| Error::InvalidInput)?.0;
+    Ok(match meta.magic {
+        GBL_TRACE_MAGIC => (SafeNum::from(meta.size) + size_of::<GblTraceMetadata>()).try_into()?,
+        _ => return Err(Error::BadMagic),
+    })
+}
+
 #[cfg(not(feature = "gbl_tracing"))]
 mod placeholder {
     /// Placeholder
@@ -86,6 +117,16 @@ mod placeholder {
     /// Placeholder
     pub fn gbl_trace_take_buffer() -> Option<(&'static mut [u8], usize)> {
         None
+    }
+
+    /// Placeholder
+    pub fn _gbl_trace_buffer_address() -> usize {
+        0
+    }
+
+    /// Placeholder
+    pub fn _gbl_trace_buffer_size() -> usize {
+        0
     }
 }
 

@@ -59,7 +59,7 @@ extern "C" {
 }
 
 /// Flush all data cache for the given buffer.
-fn flush_dcache_buffer(buf: &[u8]) {
+pub fn flush_dcache_buffer(buf: &[u8]) {
     unsafe { flush_dcache_range(buf.as_ptr() as usize, buf.len()) }
     // SAFETY: Assembly code for instruction synchronization.
     unsafe { asm!("isb") };

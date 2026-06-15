@@ -18,9 +18,14 @@
 #![no_main]
 
 use bootparams::bootconfig::extract_bootconfig;
-use core::alloc::{GlobalAlloc, Layout};
+use core::{
+    alloc::{GlobalAlloc, Layout},
+    slice::from_raw_parts,
+};
 use fdt::Fdt;
-
+use libutils::FromHexStr;
+use semihosting::{File, OpenMode};
+use trace::trace_total_size;
 // Noop allocator to meet dependency requirement.
 struct StubAllocator;
 
@@ -55,6 +60,8 @@ pub extern "C" fn rust_eh_personality() {}
 /// * Caller must guarantee that `fdt_addr` points to a valid device tree blob.
 /// * Caller must guarantee that `linux,initrd-start` and `linux,initrd-end` mark a valid ramdisk
 ///   address range if specified
+/// * Caller must guarantee that `androidboot.gbl.trace_addr` and `androidboot.gbl.trace_size`
+///   mark a valid GBL trace address range if specified.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_main(fdt_addr: *const u8) -> ! {
     semihosting::println!("GBL Custom Kernel loaded and self-relocated successfully from Rust!");
@@ -77,21 +84,40 @@ pub unsafe extern "C" fn kernel_main(fdt_addr: *const u8) -> ! {
 
     // SAFETY: By safety contract, `linux,initrd-start` and `linux,initrd-end` marks a valid
     // ramdisk address range.
-    let ramdisk_slice =
-        unsafe { core::slice::from_raw_parts(initrd_start as *const u8, ramdisk_len) };
+    let ramdisk_slice = unsafe { from_raw_parts(initrd_start as *const u8, ramdisk_len) };
     let bootconfig = extract_bootconfig(ramdisk_slice)
         .inspect_err(|e| semihosting::println!("Failed to extract bootconfig: {:?}", e))
         .unwrap();
 
-    let is_normal = bootconfig
-        .rfind("androidboot.force_normal_boot")
-        .filter(|v| bootconfig[*v..].starts_with("androidboot.force_normal_boot=1\n"))
-        .is_some();
-    semihosting::println!("Normal Mode: {is_normal:?}",);
+    let trace_addr: Option<usize> = find_bootconfig(bootconfig, "androidboot.gbl.trace_addr")
+        .and_then(|v| FromHexStr::try_from_hex_str(v).ok());
+    let trace_size: Option<usize> = find_bootconfig(bootconfig, "androidboot.gbl.trace_size")
+        .and_then(|v| FromHexStr::try_from_hex_str(v).ok());
+    if let Some((addr, sz)) = trace_addr.zip(trace_size) {
+        semihosting::println!("Found trace buffer at {addr:#x}, sz: {sz:#x}");
+        // SAFETY: By safety contract, `trace_addr` and `trace_size` marks a valid
+        // trace address range.
+        let trace = unsafe { from_raw_parts(addr as *const u8, sz) };
+        // Make sure D-cache is flushed for the trace data.
+        boot::aarch64::flush_dcache_buffer(trace);
+        if let Some(v) = trace_total_size(trace).ok().filter(|v| *v != 0) {
+            semihosting::println!("trace data size: {v}");
+            let mut f = File::open(c"trace.bin", OpenMode::WriteBinary).unwrap();
+            f.write(trace).unwrap();
+        }
+    }
 
+    let is_normal = find_bootconfig(bootconfig, "androidboot.force_normal_boot") == Some("1");
+    semihosting::println!("Normal Mode: {is_normal:?}",);
     semihosting::println!("Exiting QEMU test via semihosting.");
     // Terminate QEMU cleanly via libsemihosting
     semihosting::shutdown(0);
+}
+
+/// Helper function to find a bootconfig value by key. If multiple entries with the same
+/// key exist, the last one is returned. Assignment ":=" operator is not supported.
+fn find_bootconfig<'a>(config: &'a str, key: &str) -> Option<&'a str> {
+    Some(config.lines().filter_map(|v| v.split_once('=').filter(|(k, _)| *k == key)).last()?.1)
 }
 
 #[panic_handler]

@@ -38,9 +38,13 @@ rust_binary(
     ],
     deps = [
         ":kernel_start",
+        "@gbl//libboot",
         "@gbl//libbootparams",
         "@gbl//libfdt",
         "@gbl//libsemihosting",
+        "@gbl//libtrace",
+        "@gbl//libutils",
+        "@zerocopy",
     ],
 )
 
