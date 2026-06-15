@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 
 def parse_args() -> argparse.Namespace:
@@ -152,6 +153,7 @@ def launch_qemu(args):
           env=env,
       )
 
+      qemu_end_time = time.time() + args.timeout
       # Launch QEMU
       failed = False
       qemu_proc = subprocess.Popen(
@@ -180,7 +182,7 @@ def launch_qemu(args):
           )
 
       # Wait for QEMU to exit
-      qemu_proc.wait(timeout=args.timeout)
+      qemu_proc.wait(timeout=max(qemu_end_time - time.time(), 0))
       if qemu_proc.returncode != 0:
         raise subprocess.CalledProcessError(
             qemu_proc.returncode, qemu_proc.args
@@ -190,11 +192,11 @@ def launch_qemu(args):
       print(f"QEMU error: {e}")
       raise
     finally:
-      qemu_proc.terminate()
-      qemu_proc.wait()
       if args.vhost_device_vsock:
         vhost_proc.terminate()
         vhost_proc.wait()
+      qemu_proc.terminate()
+      qemu_proc.wait()
       if args.log_output:
         with open(args.log_output, "w") as outfile:
           outfile.write("=== Device Console Log ===\n")

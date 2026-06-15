@@ -358,12 +358,14 @@ pub(crate) fn efi_gbl_fastboot_entry<'a, G: GblOps<'a>>(
     let tcp = tcp.as_mut().map(|v| EfiFastbootTcpTransport::new(v));
 
     if !transport_protocols.is_empty() || tcp.is_some() {
+        // LINT.IfChange
         let _ = entry
             .system_table()
             .boot_services()
             .set_watchdog_timer(Duration::ZERO, FASTBOOT_WATCHDOG_TIMER_CODE)
             .inspect(|_| efi_println!(entry, "Watchdog successfully reset for fastboot."))
             .inspect_err(|e| efi_println!(entry, "Failed to reset watchdog. {:?}.", e));
+        // LINT.ThenChange(/gbl/tests/qemu/qemu_test_utils.py)
     }
 
     // We currently only consider 1 parallel flash + 1 parallel download.
