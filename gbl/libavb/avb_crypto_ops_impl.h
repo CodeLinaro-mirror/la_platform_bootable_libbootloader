@@ -19,6 +19,7 @@
 #define __AVB_CRYPTO_OPS_IMPL_H__
 
 #include <openssl/is_boringssl.h>
+#include <openssl/mldsa.h>
 #include <openssl/sha.h>
 
 #ifdef __cplusplus
@@ -49,13 +50,8 @@ typedef struct {
   AVB_SHA_CTX_TAG tag;
 } AvbSHA512ImplCtx;
 
-// TODO(b/413054304#comment8): migrate to real boringssl types.
-typedef struct {
-  int dummy;
-} AvbMLDSA65PrehashImplCtx;
-typedef struct {
-  int dummy;
-} AvbMLDSA87PrehashImplCtx;
+typedef struct MLDSA65_prehash AvbMLDSA65PrehashImplCtx;
+typedef struct MLDSA87_prehash AvbMLDSA87PrehashImplCtx;
 
 #ifdef __cplusplus
 }

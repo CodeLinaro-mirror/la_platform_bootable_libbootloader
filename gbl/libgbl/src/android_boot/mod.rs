@@ -903,9 +903,25 @@ pub(crate) mod tests {
     pub(crate) const TEST_VENDOR_BOOTCONFIG: &str =
         "androidboot.config_1=val_1\x0aandroidboot.config_2=val_2\x0a";
 
-    /// Digest of public key used to execute AVB.
-    pub(crate) const TEST_PUBLIC_KEY_DIGEST: &str =
-        "7ec02ee1be696366f3fa91240a8ec68125c4145d698f597aa2b3464b59ca7fc3";
+    /// A key used to sign test vbmeta images. Each variant carries the public-key
+    /// digest libavb reports in `androidboot.vbmeta.public_key_digest` (the sha256
+    /// of the AVB-serialized public key).
+    #[derive(Clone, Copy)]
+    pub(crate) enum TestVbmetaKey {
+        Rsa4096,
+        Mldsa65,
+        Mldsa87,
+    }
+
+    impl TestVbmetaKey {
+        pub(crate) fn public_key_digest(self) -> &'static str {
+            match self {
+                Self::Rsa4096 => "7ec02ee1be696366f3fa91240a8ec68125c4145d698f597aa2b3464b59ca7fc3",
+                Self::Mldsa65 => "0e84a0f0725841b15919a9db89705791c13d39be002516d2481dec3ed3f2b6ce",
+                Self::Mldsa87 => "2ec52b1617dfd35327a766571a410c46a5d3299d2d0f858300a49bd614a8df21",
+            }
+        }
+    }
 
     /// Expected AVB properties provided by the test data.
     pub(crate) const EXPECTED_AVB_PROPS: &[(&str, &str)] = &[
@@ -1015,8 +1031,8 @@ pub(crate) mod tests {
             self
         }
 
-        pub(crate) fn public_key_digest(mut self, pk_digest: impl Into<String>) -> Self {
-            self.public_key_digest = pk_digest.into();
+        pub(crate) fn public_key_digest(mut self, key: TestVbmetaKey) -> Self {
+            self.public_key_digest = key.public_key_digest().to_string();
             self
         }
 
@@ -1086,18 +1102,22 @@ pub(crate) mod tests {
                 true => "unlocked",
                 false => "locked",
             };
+            let vbmeta_hash_alg = match self.digest.len() {
+                64 => "sha256",
+                _ => "sha512",
+            };
             write!(
                 result,
                 "androidboot.vbmeta.device=PARTUUID=00000000-0000-0000-0000-000000000000\n\
                 androidboot.vbmeta.public_key_digest={}\n\
                 androidboot.vbmeta.avb_version=1.4\n\
                 androidboot.vbmeta.device_state={device_state}\n\
-                androidboot.vbmeta.hash_alg=sha512\n\
+                androidboot.vbmeta.hash_alg={}\n\
                 androidboot.vbmeta.size={}\n\
                 androidboot.vbmeta.digest={}\n\
                 androidboot.veritymode=enforcing\n\
                 androidboot.veritymode.managed=yes\n",
-                self.public_key_digest, self.vbmeta_size, self.digest
+                self.public_key_digest, vbmeta_hash_alg, self.vbmeta_size, self.digest
             )
             .unwrap();
 
@@ -1192,6 +1212,7 @@ pub(crate) mod tests {
         slot: char,
         vendor_config: &str,
         fixup_config: &str,
+        key: TestVbmetaKey,
     ) -> Vec<u8> {
         let mut builder = ExpectedBootconfigBuilder::new()
             .color(color)
@@ -1216,13 +1237,14 @@ pub(crate) mod tests {
         match vbmeta_file {
             Some(vbmeta_file) => {
                 let vbmeta_file = Path::new(vbmeta_file);
+                let vbmeta_name = vbmeta_file.to_str().unwrap();
                 let vbmeta_digest = vbmeta_file.with_extension("digest.txt");
                 let vbmeta_digest = vbmeta_digest.to_str().unwrap();
 
                 builder = builder
-                    .vbmeta_size(read_test_data(vbmeta_file.to_str().unwrap()).len())
+                    .vbmeta_size(read_test_data(vbmeta_name).len())
                     .digest(read_test_data_as_str(vbmeta_digest))
-                    .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+                    .public_key_digest(key)
                     .unlocked(unlocked);
 
                 for (part, _) in partitions {
@@ -1436,6 +1458,7 @@ pub(crate) mod tests {
         expected_bootargs: &str,
         expected_fdt_property: &[(&str, &CStr, Option<&[u8]>)],
         bootconfig_supported: bool,
+        key: TestVbmetaKey,
     ) {
         let test_common = |unlock, color, rollback_idx, vbmeta: Option<&str>| {
             let mut partitions = partitions.to_vec();
@@ -1453,6 +1476,7 @@ pub(crate) mod tests {
                 slot_name,
                 expected_vendor_bootconfig,
                 FakeGblOps::GBL_TEST_BOOTCONFIG,
+                key,
             );
             let mut expected_bootargs = String::from(expected_bootargs);
             // Appended via dtbo/bootargs_ext.
@@ -1553,6 +1577,7 @@ pub(crate) mod tests {
             EXPECTED_V2_CMDLINE,
             additional_expected_fdt_properties,
             false,
+            TestVbmetaKey::Rsa4096,
         )
     }
 
@@ -1654,6 +1679,7 @@ pub(crate) mod tests {
         expected_vendor_bootconfig: &str,
         additional_expected_fdt_properties: &[(&str, &CStr, Option<&[u8]>)],
         bootconfig_supported: bool,
+        key: TestVbmetaKey,
     ) {
         test_android_load_verify_fixup_success(
             slot,
@@ -1665,6 +1691,7 @@ pub(crate) mod tests {
             EXPECTED_V3_V4_CMDLINE,
             additional_expected_fdt_properties,
             bootconfig_supported,
+            key,
         )
     }
 
@@ -1693,6 +1720,7 @@ pub(crate) mod tests {
             expected_vendor_bootconfig,
             additional_expected_fdt_properties,
             boot_ver > 3 || vendor_ver > 3,
+            TestVbmetaKey::Rsa4096,
         );
     }
 
@@ -1856,6 +1884,38 @@ pub(crate) mod tests {
         test_android_load_verify_fixup_v3_or_v4_no_init_boot(4, 4, 'b', config, parts, &fdt_prop);
     }
 
+    #[test]
+    fn test_android_load_verify_fixup_pqc_mldsa65_slot_a() {
+        test_android_load_verify_fixup_v3_or_v4(
+            'a',
+            &[
+                (String::from("boot_a"), String::from("android/boot_v4_a.img")),
+                (String::from("vendor_boot_a"), String::from("android/vendor_boot_v4_a.img")),
+            ],
+            "android/vbmeta_v4_v4_mldsa65_a.img",
+            TEST_VENDOR_BOOTCONFIG,
+            EXPECTED_FDT_PROPS,
+            true,
+            TestVbmetaKey::Mldsa65,
+        );
+    }
+
+    #[test]
+    fn test_android_load_verify_fixup_pqc_mldsa87_slot_a() {
+        test_android_load_verify_fixup_v3_or_v4(
+            'a',
+            &[
+                (String::from("boot_a"), String::from("android/boot_v4_a.img")),
+                (String::from("vendor_boot_a"), String::from("android/vendor_boot_v4_a.img")),
+            ],
+            "android/vbmeta_v4_v4_mldsa87_a.img",
+            TEST_VENDOR_BOOTCONFIG,
+            EXPECTED_FDT_PROPS,
+            true,
+            TestVbmetaKey::Mldsa87,
+        );
+    }
+
     /// Helper for testing `android_load_verify_fixup` with dttable vendor_boot
     fn test_android_load_verify_fixup_v4_vendor_boot_dttable(
         slot: char,
@@ -1876,6 +1936,7 @@ pub(crate) mod tests {
             expected_vendor_bootconfig,
             additional_expected_fdt_properties,
             true,
+            TestVbmetaKey::Rsa4096,
         );
     }
 
@@ -1917,6 +1978,7 @@ pub(crate) mod tests {
             expected_vendor_bootconfig,
             additional_expected_fdt_properties,
             true, // init_boot implies Android 13+.
+            TestVbmetaKey::Rsa4096,
         );
     }
 
@@ -2076,6 +2138,7 @@ pub(crate) mod tests {
                 'a',
                 TEST_VENDOR_BOOTCONFIG,
                 FakeGblOps::GBL_TEST_BOOTCONFIG,
+                TestVbmetaKey::Rsa4096,
             ),
             &format!("{EXPECTED_V3_V4_CMDLINE} fixup"),
             &[],
@@ -2155,6 +2218,7 @@ pub(crate) mod tests {
             EXPECTED_V3_V4_CMDLINE,
             &[("/chosen", c"vendor_kernel", Some(b"1\0"))],
             true,
+            TestVbmetaKey::Rsa4096,
         );
     }
 
@@ -2246,6 +2310,7 @@ pub(crate) mod tests {
             'a',
             TEST_VENDOR_BOOTCONFIG,
             TEST_BOOTCONFIG_FIXUP,
+            TestVbmetaKey::Rsa4096,
         );
         let expected_ramdisk = &[
             read_test_data("android/vendor_ramdisk_a.img"),
@@ -2270,7 +2335,7 @@ pub(crate) mod tests {
             .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
             .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
-            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .public_key_digest(TestVbmetaKey::Rsa4096)
             .slot('a')
             .dtb_idx(0)
             .dtb_source("boot")
@@ -2290,7 +2355,7 @@ pub(crate) mod tests {
             .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
             .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
-            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .public_key_digest(TestVbmetaKey::Rsa4096)
             .dtb_idx(0)
             .dtb_source("boot")
             .extra(FakeGblOps::GBL_TEST_BOOTCONFIG)
@@ -2309,7 +2374,7 @@ pub(crate) mod tests {
             .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
             .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
-            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .public_key_digest(TestVbmetaKey::Rsa4096)
             .slot('a')
             .dtb_idx(0)
             .dtb_source("boot")
@@ -2331,7 +2396,7 @@ pub(crate) mod tests {
             .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
             .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
-            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .public_key_digest(TestVbmetaKey::Rsa4096)
             .force_normal_boot(false)
             .slot('a')
             .dtb_idx(0)
@@ -2487,7 +2552,7 @@ pub(crate) mod tests {
             .vbmeta_size(read_test_data("android/vbmeta_v2_b.img").len())
             .digest(read_test_data_as_str("android/vbmeta_v2_b.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_b.boot.digest.txt"))
-            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .public_key_digest(TestVbmetaKey::Rsa4096)
             .slot('b')
             .dtb_idx(0)
             .dtb_source("boot")
@@ -2507,7 +2572,7 @@ pub(crate) mod tests {
             .vbmeta_size(read_test_data("android/vbmeta_v2_b.img").len())
             .digest(read_test_data_as_str("android/vbmeta_v2_b.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_b.boot.digest.txt"))
-            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .public_key_digest(TestVbmetaKey::Rsa4096)
             .slot('b')
             .dtb_idx(0)
             .dtb_source("boot")
@@ -2949,7 +3014,7 @@ pub(crate) mod tests {
             .vbmeta_size(read_test_data("android/vbmeta_v2_a.img").len())
             .digest(read_test_data_as_str("android/vbmeta_v2_a.digest.txt"))
             .partition_digest("boot", read_test_data_as_str("android/vbmeta_v2_a.boot.digest.txt"))
-            .public_key_digest(TEST_PUBLIC_KEY_DIGEST)
+            .public_key_digest(TestVbmetaKey::Rsa4096)
             .unlocked(true)
             .color(BootStateColor::Orange)
             .slot('a')

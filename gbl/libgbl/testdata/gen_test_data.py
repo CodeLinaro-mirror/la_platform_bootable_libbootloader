@@ -35,14 +35,6 @@ AVB_TOOL = AVB_DIR / "avbtool.py"
 MKBOOTIMG_TOOL = AOSP_ROOT / "tools" / "mkbootimg" / "mkbootimg.py"
 UNPACKBOOTIMG_TOOL = AOSP_ROOT / "tools" / "mkbootimg" / "unpack_bootimg.py"
 AVB_TEST_DATA_DIR = AVB_DIR / "test" / "data"
-DTC_TOOL = (
-    AOSP_ROOT
-    / "prebuilts"
-    / "kernel-build-tools"
-    / "linux_musl-x86"
-    / "bin"
-    / "dtc"
-)
 MKDTBOIMG_TOOL = (
     AOSP_ROOT
     / "prebuilts"
@@ -51,7 +43,19 @@ MKDTBOIMG_TOOL = (
     / "bin"
     / "mkdtboimg"
 )
+IMG2SIMG_TOOL = (
+    AOSP_ROOT
+    / "prebuilts"
+    / "kernel-build-tools"
+    / "linux_musl-x86"
+    / "bin"
+    / "img2simg"
+)
+OPENSSL_DIR = AOSP_ROOT / "prebuilts" / "build-tools" / "linux-x86" / "bin"
+
+# Expected to be provided by host.
 LZ4_TOOL = "lz4"
+DTC_TOOL = "dtc"
 SZ_KB = 1024
 
 # Manually downloaded from Android CI:
@@ -68,8 +72,29 @@ RNG_SEED_ANDROID = {"a": 6, "b": 7}
 
 # AVB related constants.
 PSK = AVB_TEST_DATA_DIR / "testkey_cert_psk.pem"
+MLDSA_KEYS = {
+    "MLDSA65": AVB_TEST_DATA_DIR / "testkey_mldsa65.pem",
+    "MLDSA87": AVB_TEST_DATA_DIR / "testkey_mldsa87.pem",
+}
 TEST_ROLLBACK_INDEX_LOCATION = 1
 TEST_ROLLBACK_INDEX = 2
+
+
+def avb_signing_env():
+  """Returns the environment for avbtool's signing step, or None to inherit.
+
+  avbtool signs by shelling out to `openssl`, and ML-DSA (post-quantum) signing
+  needs OpenSSL >= 3.5, which the host's system openssl may predate.
+  """
+  openssl = OPENSSL_DIR / "openssl"
+
+  if openssl.exists():
+    return {
+        **os.environ,
+        "PATH": f"{OPENSSL_DIR}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
+
+  return None
 
 
 # A helper for writing bytes to a file at a given offset.
@@ -154,15 +179,12 @@ def gen_sparse_test_file():
     # 8k filled with 0xEFCDAB90
     write_file(f, 48 * SZ_KB, b"\x90\xab\xcd\xef" * 1024 * 2)
 
-  # For now this requires that img2simg exists on $PATH.
-  # It can be built from an Android checkout via `m img2simg`; the resulting
-  # binary will be at out/host/linux-x86/bin/img2simg.
   subprocess.run(
-      ["img2simg", "-s", out_file_raw, SCRIPT_DIR / "sparse_test.bin"]
+      [IMG2SIMG_TOOL, "-s", out_file_raw, SCRIPT_DIR / "sparse_test.bin"]
   )
   subprocess.run(
       [
-          "img2simg",
+          IMG2SIMG_TOOL,
           "-s",
           out_file_raw,
           SCRIPT_DIR / "sparse_test_blk1024.bin",
@@ -272,7 +294,12 @@ def gen_android_test_dtb():
 
 # Generate vbmeta data for a set of images.
 def gen_android_test_vbmeta(
-    partition_file_pairs, out_vbmeta, kernel_cmdline=None
+    partition_file_pairs,
+    out_vbmeta,
+    kernel_cmdline=None,
+    key=PSK,
+    algorithm="SHA512_RSA4096",
+    digest_hash_alg="sha512",
 ):
   with tempfile.TemporaryDirectory() as temp_dir:
     desc_args = []
@@ -306,9 +333,9 @@ def gen_android_test_vbmeta(
         "--output",
         out_vbmeta,
         "--key",
-        PSK,
+        key,
         "--algorithm",
-        "SHA512_RSA4096",
+        algorithm,
         "--rollback_index",
         f"{TEST_ROLLBACK_INDEX}",
         "--rollback_index_location",
@@ -326,6 +353,7 @@ def gen_android_test_vbmeta(
         cmd,
         stderr=subprocess.STDOUT,
         check=True,
+        env=avb_signing_env(),
     )
 
     # Generates vbmeta digest file
@@ -337,7 +365,7 @@ def gen_android_test_vbmeta(
             "--image",
             out_vbmeta,
             "--hash_algorithm",
-            "sha512",
+            digest_hash_alg,
         ],
         check=True,
         text=True,
@@ -608,6 +636,23 @@ androidboot.config_2=val_2
               vbmeta_out = prefix + f"_{slot}.img"
 
             gen_android_test_vbmeta(parts, out_dir / vbmeta_out)
+
+            if (
+                not use_init_boot
+                and slot == "a"
+                and boot_ver == 4
+                and vendor_ver == 4
+            ):
+              for mldsa_alg, mldsa_key in MLDSA_KEYS.items():
+                gen_android_test_vbmeta(
+                    parts,
+                    out_dir / f"{prefix}_{mldsa_alg.lower()}_{slot}.img",
+                    key=mldsa_key,
+                    algorithm=mldsa_alg,
+                    # ML-DSA has no external hash; libavb uses sha256 for the
+                    # top-level vbmeta digest (see avb_cmdline.c).
+                    digest_hash_alg="sha256",
+                )
 
       # Generate v4 vbmeta image for vendor_boot with dttable structure
       vbmeta_out = out_dir / f"vbmeta_v4_dttable_{slot}.img"

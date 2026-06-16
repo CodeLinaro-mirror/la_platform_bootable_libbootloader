@@ -191,8 +191,7 @@ cc_library(
         "libavb/avb_util.c",
         "libavb/avb_vbmeta_image.c",
         "libavb/avb_version.c",
-        # TODO(b/413054304#comment8): use real mldsa implementation.
-        "libavb/crypto/mldsa_impl.c",
+        "libavb/boringssl/mldsa.c",
     ],
     copts = [
         "-D_FILE_OFFSET_BITS=64",
