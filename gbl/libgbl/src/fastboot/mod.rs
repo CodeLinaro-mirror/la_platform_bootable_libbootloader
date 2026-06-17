@@ -1046,7 +1046,10 @@ where
 
         let idx = self
             .slots_iter()?
-            .position(|slot| slot.is_ok() && slot.unwrap().suffix.as_char() == suffix)
+            .position(|slot| match slot {
+                Ok(slot) => slot.suffix.as_char() == suffix,
+                _ => false,
+            })
             .ok_or("Invalid slot")?;
         Ok(self.gbl_ops.set_active_slot(idx as _)?)
     }

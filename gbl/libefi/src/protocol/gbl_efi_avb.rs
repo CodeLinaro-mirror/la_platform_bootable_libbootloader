@@ -43,6 +43,9 @@ impl ProtocolInfo for GblAvbProtocol {
         EfiGuid::new(0x6bc66b9a, 0xd5c9, 0x4c02, [0x9d, 0xa9, 0x50, 0xaf, 0x19, 0x8d, 0x91, 0x2c]);
 
     const METRICS_TAG: Option<&'static str> = Some("gbl_avb");
+
+    #[cfg(feature = "gbl_dev")]
+    const REQUIREMENT: crate::protocol::Requirement = crate::protocol::Requirement::Optional;
 }
 
 // Protocol interface wrappers.

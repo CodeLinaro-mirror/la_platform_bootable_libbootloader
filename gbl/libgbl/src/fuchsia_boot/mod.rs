@@ -14,7 +14,9 @@
 
 //! This file provides APIs for loading, verifying and booting Fuchsia/Zircon.
 
-use crate::{gbl_println, ops::OneShotBootMode, GblOps, Result as GblResult};
+use crate::{
+    gbl_avb::ops::GblAvbOps, gbl_println, ops::OneShotBootMode, GblOps, Result as GblResult,
+};
 pub use abr::{get_and_clear_one_shot_bootloader, get_boot_slot, Ops as AbrOps, SlotIndex};
 use bytes::buf::UninitSlice;
 use core::fmt::Write;
@@ -136,14 +138,12 @@ pub(crate) fn fixup_zbi_items<'a>(
 
     // Appends device specific ZBI items.
     ops.zircon_add_device_zbi_items(zbi_items)?;
-
     // Appends staged bootloader file if present.
-    if ops.avb_read_device_status()?.is_unlocked {
-        if let Some(Ok(v)) =
+    if GblAvbOps::new(ops, None, &mut [], false).avb_read_device_status()?.is_unlocked
+        && let Some(Ok(v)) =
             ops.get_zbi_bootloader_files_buffer_aligned().map(|v| ZbiContainer::parse(v))
-        {
-            zbi_items.extend(&v)?;
-        }
+    {
+        zbi_items.extend(&v)?;
     }
     Ok(())
 }

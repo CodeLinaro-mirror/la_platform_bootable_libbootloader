@@ -189,13 +189,14 @@ mod test {
             TEST_CERT_PSK_VERSION, TEST_KERNEL_RESERVED_MEMORY_SIZE, TEST_ROLLBACK_INDEX_LOCATION,
             TEST_ROLLBACK_INDEX_VALUE, ZIRCON_A_ZBI_FILE, ZIRCON_SLOTLESS_ZBI_FILE,
         },
-        ops::test::FakeGblOps,
+        ops::test::{DefaultOk, FakeGblOps},
         tests::read_test_data,
     };
     use abr::{
         mark_slot_active, mark_slot_successful, mark_slot_unbootable, set_one_shot_bootloader,
         ABR_MAX_TRIES_REMAINING,
     };
+    use avb::IoError as AvbIoError;
     use avb_bindgen::{AVB_CERT_PIK_VERSION_LOCATION, AVB_CERT_PSK_VERSION_LOCATION};
     use fastboot::LockState;
     use libtestutils::AlignedBuffer;
@@ -747,6 +748,33 @@ mod test {
         append_cmd_line(&mut expected_zbi_items, FakeGblOps::ADDED_ZBI_COMMANDLINE_CONTENTS);
         append_cmd_line(&mut expected_zbi_items, b"vb_prop_0=val\0");
         append_cmd_line(&mut expected_zbi_items, b"vb_prop_1=val\0");
+
+        assert_zbi_eq!(kernel, &expected_kernel);
+        assert_zbi_eq!(zbi_items, &expected_zbi_items);
+    }
+
+    #[test]
+    #[cfg(feature = "gbl_dev")]
+    fn test_zircon_load_verify_no_avb_status() {
+        let storage = create_storage();
+        let mut ops = create_gbl_ops(&storage);
+        ops.avb_device_status = DefaultOk(Err(AvbIoError::NotImplemented));
+
+        let mut load_buffer = AlignedBuffer::new(256 * 1024, ZIRCON_KERNEL_ALIGNMENT);
+        let (zbi_items, kernel) =
+            zircon_load_verify_fixup(&mut ops, None, true, &mut load_buffer).unwrap();
+
+        let expected_kernel = read_test_data(ZIRCON_SLOTLESS_ZBI_FILE);
+
+        // Create ZBI Items without slot (mostly taken from make_expected_zbi_items_wo_avb)
+        let mut expected_zbi_items = AlignedBuffer::new(256 * 1024, ZBI_ALIGNMENT_USIZE);
+        let mut items = ZbiContainer::new(&mut expected_zbi_items[..]).unwrap();
+        items.extend(&ZbiContainer::parse(&expected_kernel[..]).unwrap()).unwrap();
+        append_cmd_line(&mut expected_zbi_items, FakeGblOps::ADDED_ZBI_COMMANDLINE_CONTENTS);
+        append_cmd_line(&mut expected_zbi_items, b"vb_prop_0=val\0");
+        append_cmd_line(&mut expected_zbi_items, b"vb_prop_1=val\0");
+        append_zbi_file(&mut expected_zbi_items, FakeGblOps::TEST_BOOTLOADER_FILE_1);
+        append_zbi_file(&mut expected_zbi_items, FakeGblOps::TEST_BOOTLOADER_FILE_2);
 
         assert_zbi_eq!(kernel, &expected_kernel);
         assert_zbi_eq!(zbi_items, &expected_zbi_items);

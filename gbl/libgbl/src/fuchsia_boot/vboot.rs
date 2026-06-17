@@ -71,14 +71,17 @@ fn zircon_verify_kernel_internal<'a, 'b, B: SplitByteSliceMut + PartialEq>(
             gbl_println!(avb_ops.gbl_ops, "{} successfully verified", part);
             v
         }
-        Err(ref e) if e.verification_data().is_some() && unlocked => {
+        Err(ref e)
+            if let Some(data) = e.verification_data()
+                && unlocked =>
+        {
             // Verification failed but was able to load the images from disk,
             // and we're unlocked so it's OK to proceed.
             gbl_println!(
                 avb_ops.gbl_ops,
                 "Verification failed, but device is unlocked - continuing boot"
             );
-            e.verification_data().unwrap()
+            data
         }
         Err(SlotVerifyError::InvalidMetadata) | Err(SlotVerifyError::UnsupportedVersion)
             if unlocked =>
