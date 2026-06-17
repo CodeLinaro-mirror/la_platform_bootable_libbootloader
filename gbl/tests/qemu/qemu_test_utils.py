@@ -75,7 +75,9 @@ class VsockFastbootClient:
           return s
         s.close()
       except Exception as e:
-        logging.warning(f"Connection attempt exception: {type(e).__name__}: {e}")
+        logging.warning(
+            f"Connection attempt exception: {type(e).__name__}: {e}"
+        )
       time.sleep(0.5)
     raise ConnectionError(
         f"Failed to establish VSock connection to port {self.port}"
@@ -127,7 +129,11 @@ def wait_for_log_pattern(
     count: int = 1,
     timeout_secs: float = 15.0,
 ):
-  """Wait for a list of regex patterns to appear in consecutive lines in the log file"""
+  """Wait for a list of regex patterns to appear in consecutive lines in the log file.
+
+  Returns:
+    A list of lists of re.Match objects for each occurrence.
+  """
   logging.info(f"Waiting for {count} occurrences of {patterns} in console log")
   regexes = [re.compile(p) for p in patterns]
   end_time = time.time() + timeout_secs
@@ -139,19 +145,24 @@ def wait_for_log_pattern(
           num_lines = len(lines)
           num_patterns = len(regexes)
           matched_n = 0
+          matches = []
           for i in range(num_lines - num_patterns + 1):
+            cur_matches = []
             match = True
             for j in range(num_patterns):
-              if not regexes[j].search(lines[i + j]):
+              m = regexes[j].search(lines[i + j])
+              if not m:
                 match = False
                 break
+              cur_matches.append(m)
             if match:
               matched_n = matched_n + 1
+              matches.append(cur_matches)
               if matched_n == count:
                 logging.info(
                     f"Found {count} occurrences of {patterns} in console log!"
                 )
-                return
+                return matches
       except Exception as e:
         logging.warning(f"Failed to read console log file: {e}")
     time.sleep(0.2)
@@ -165,7 +176,7 @@ def wait_for_fastboot_ready(
     log_path: str, count: int = 1, timeout_secs: float = 15.0
 ):
   """Wait for fastboot ready logs to appear in console log."""
-  wait_for_log_pattern(
+  return wait_for_log_pattern(
       log_path,
       [r"^\[\d+\.\d+\] Watchdog successfully reset for fastboot\."],
       count,

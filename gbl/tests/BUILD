@@ -89,7 +89,10 @@ build_and_run_tests(
     # Put as a different test target so that it can be parallelized with other tests.
     data = select(
         {
-            ":qemu_test_dependencies_exist": ["@gbl//tests/qemu:qemu_test"],
+            ":qemu_test_dependencies_exist": [
+                "@gbl//tests/qemu:qemu_boot_memory_test",
+                "@gbl//tests/qemu:qemu_fastboot_reboot_test",
+            ],
             "//conditions:default": [],
         },
     ),

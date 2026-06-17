@@ -51,6 +51,9 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument(
       "--test_script", help="Path to a user-provided Python script to execute"
   )
+  parser.add_argument(
+      "--test_name", help="Name of the test target", default="qemu_test"
+  )
 
   return parser.parse_args()
 
@@ -199,6 +202,7 @@ def launch_qemu(args):
       qemu_proc.wait()
       if args.log_output:
         with open(args.log_output, "w") as outfile:
+          outfile.write(f"=== Test Name: {args.test_name} ===\n\n")
           outfile.write("=== Device Console Log ===\n")
           outfile.write((test_dir / "console.log").read_text())
           if script_log_path.exists():

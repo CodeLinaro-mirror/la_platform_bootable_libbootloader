@@ -357,7 +357,11 @@ fn boot_buffer_op(entry: &EfiEntry, op: BootBufferOp) -> Result<Option<GblVendor
                 (Ok((NULL_PTR, size)), _) | (Err(Error::NotFound), size) if size > 0 => {
                     let buffer = vec![0u8; size + align - 1];
                     let offset = buffer.as_ptr().align_offset(align);
-                    efi_println!(entry, "Allocated {size:#x} bytes for {name:?} buffer.");
+                    efi_println!(
+                        entry,
+                        "Allocated {size:#x} bytes for {name:?} buffer at {:#x}.",
+                        buffer.as_ptr() as usize + offset,
+                    );
                     Buffer::Allocated { buffer, offset, size }
                 }
                 (Ok((addr, sz)), _) => {
