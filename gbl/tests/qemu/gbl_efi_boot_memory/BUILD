@@ -25,6 +25,8 @@ rust_library(
     edition = "2024",
     deps = [
         "@gbl//libefi_types",
+        "@gbl//liberror",
+        "@gbl//libsemihosting",
         "@spin",
     ],
 )

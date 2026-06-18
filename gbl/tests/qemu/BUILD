@@ -14,6 +14,7 @@
 
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+load("//tests/qemu:qemu_test.bzl", "qemu_test")
 load("//tools/gpt_gen:gpt_gen.bzl", "gpt_gen")
 
 package(
@@ -24,13 +25,6 @@ package(
 py_library(
     name = "qemu_test_utils",
     srcs = ["qemu_test_utils.py"],
-)
-
-py_binary(
-    name = "fastboot_reboot_test",
-    srcs = ["fastboot_reboot_test.py"],
-    imports = ["."],
-    deps = [":qemu_test_utils"],
 )
 
 genrule(
@@ -51,7 +45,7 @@ genrule(
 )
 
 gpt_gen(
-    name = "test_gpt_disk",
+    name = "test_gpt_boot",
     disk_size = "10M",
     partitions = {
         "boot_a": {
@@ -59,10 +53,6 @@ gpt_gen(
             "file": ":test_boot_img",
         },
         "boot_b": {"size": "1M"},
-        "misc": {
-            "size": "1M",
-            "file": ":misc_boot_bootloader",
-        },
     },
 )
 
@@ -72,31 +62,61 @@ write_file(
     content = ["bootonce-bootloader\0"],
 )
 
-genrule(
-    name = "qemu_test",
-    srcs = [
-        "qemu_launcher.py",
-        "@gbl//tests/qemu/gbl_launcher:gbl_launcher_aarch64",
-        "@gbl//efi:aarch64_dev",
-        "@vmm//:qemu/x86_64-linux-gnu/bin/gbl-qemu-system-aarch64",
-        "@vmm//:qemu/x86_64-linux-gnu/usr/share/qemu/edk2-aarch64-code.fd",
-        ":test_gpt_disk",
+gpt_gen(
+    name = "test_gpt_misc_fastboot_mode",
+    disk_size = "4M",
+    partitions = {
+        "misc": {
+            "size": "1M",
+            "file": ":misc_boot_bootloader",
+        },
+    },
+)
+
+gpt_gen(
+    name = "test_gpt_misc_normal_mode",
+    disk_size = "4M",
+    partitions = {"misc": {"size": "1M"}},
+)
+
+py_binary(
+    name = "fastboot_reboot_test",
+    srcs = ["fastboot_reboot_test.py"],
+    imports = ["."],
+    deps = [":qemu_test_utils"],
+)
+
+qemu_test(
+    name = "qemu_fastboot_reboot_test",
+    disk = [
+        ":test_gpt_boot",
+        ":test_gpt_misc_fastboot_mode",
     ],
-    outs = ["output_result.txt"],
-    cmd = """
-        python3 $(location qemu_launcher.py) \
-            $(location @gbl//tests/qemu/gbl_launcher:gbl_launcher_aarch64) \
-            $(location @gbl//efi:aarch64_dev) \
-            --qemu $(location @vmm//:qemu/x86_64-linux-gnu/bin/gbl-qemu-system-aarch64) \
-            --bios $(location @vmm//:qemu/x86_64-linux-gnu/usr/share/qemu/edk2-aarch64-code.fd) \
-            --log_output $@ \
-            --disk $(location :test_gpt_disk) \
-            --vhost_device_vsock $(location @vhost_device_vsock) \
-            --test_script $(location :fastboot_reboot_test)
-    """,
-    tools = [
-        ":fastboot_reboot_test",
-        "@gbl//tools/gpt_gen",
-        "@vhost_device_vsock",
+    gbl = "@gbl//efi:aarch64_dev",
+    test_script = ":fastboot_reboot_test",
+)
+
+py_binary(
+    name = "boot_memory_test",
+    srcs = ["boot_memory_test.py"],
+    imports = ["."],
+    deps = [":qemu_test_utils"],
+)
+
+qemu_test(
+    name = "qemu_boot_memory_test",
+    disk = [
+        ":test_gpt_boot",
+        ":test_gpt_misc_normal_mode",
     ],
+    env = {
+        "GBL_GENERAL_LOAD_SIZE": "0x100000",  # 1MB
+        "GBL_FASTBOOT_DOWNLOAD_SIZE": "0x1000000",  # 16MB
+        "GBL_KERNEL_SIZE": "0x100000",  # 1MB
+        "GBL_RAMDISK_SIZE": "0x100000",  # 1MB
+        "GBL_FDT_SIZE": "0x100000",  # 1MB
+        "GBL_PVMFW_DATA_SIZE": "0x100000",  # 1MB
+    },
+    gbl = "@gbl//efi:aarch64_dev",
+    test_script = ":boot_memory_test",
 )

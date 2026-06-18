@@ -25,6 +25,7 @@
 use core::{ffi::CStr, num::NonZeroUsize};
 use liberror::Error;
 pub use libutils::arch_timestamp;
+use libutils::snprintf;
 
 /// Semihosting operation codes.
 #[derive(Copy, Clone, Debug)]
@@ -35,6 +36,7 @@ enum OpCode {
     WriteC,
     Write,
     Read,
+    Remove,
     FLen,
     System,
     ExitExtended,
@@ -48,6 +50,7 @@ impl From<OpCode> for usize {
             OpCode::WriteC => 0x3,
             OpCode::Write => 0x5,
             OpCode::Read => 0x6,
+            OpCode::Remove => 0x0E,
             OpCode::FLen => 0x0C,
             OpCode::System => 0x12,
             OpCode::ExitExtended => 0x20,
@@ -269,4 +272,63 @@ impl Drop for File {
 /// Write the given data to a file
 pub fn save_to_file(path: &CStr, data: &[u8]) -> Result<(), Error> {
     File::open(path, OpenMode::WriteCreate)?.write(data)
+}
+
+/// Deletes a file on the host.
+pub fn remove(path: &CStr) -> Result<(), Error> {
+    match semihosting_call_with_args(OpCode::Remove, [path.as_ptr() as _, path.count_bytes()])? {
+        0 => Ok(()),
+        _ => Err(Error::Other(Some("remove() failed"))),
+    }
+}
+
+/// Queries the value of a host environment variable or all environment variables.
+///
+/// If `name` is `Some`, uses the semihosting `system` command to dump the specific
+/// variable value to a temporary file on the host. If `name` is `None`, dumps all
+/// environment variables (the output of `env`).
+/// Reads the file into `buf` and removes the temporary file.
+///
+/// Returns the string slice of `buf` containing the output.
+pub fn getenv<'a>(name: Option<&str>, buf: &'a mut [u8]) -> Result<&'a str, Error> {
+    const TMP_FILE: &CStr = c"getenv.tmp";
+    let mut cmd_buf = [0u8; 128];
+    // Construct host commands. i.e.:
+    //  - `printf "%s" "${}" > getenv.tmp\0`
+    //  - `env > getenv.tmp\0`
+    let cmd_str = match name {
+        Some(var) => snprintf!(cmd_buf, "printf \"%s\" \"${}\" > {}\0", var, TMP_FILE.to_str()?),
+        None => snprintf!(cmd_buf, "env > {}\0", TMP_FILE.to_str()?),
+    };
+
+    // Execute the command.
+    if system(CStr::from_bytes_with_nul(cmd_str.as_bytes())?) != 0 {
+        return Err(Error::Other(Some("system() call failed")));
+    }
+
+    // Read the content of tmp file.
+    let read_len = (|| {
+        let mut file = File::open(TMP_FILE, OpenMode::ReadOnly)?;
+        match file.len()? {
+            v if v <= buf.len() => file.read(&mut buf[..v]),
+            v => Err(Error::BufferTooSmall(Some(v))),
+        }
+    })();
+
+    // Remove tmp file.
+    let _ = remove(TMP_FILE);
+    match read_len? {
+        0 => Err(Error::NotFound),
+        n => Ok(core::str::from_utf8(&buf[..n])?),
+    }
+}
+
+/// Queries a host environment variable and parses its value as a hexadecimal integer.
+///
+/// Supports optional `"0x"` or `"0X"` prefixes.
+pub fn getenv_as_usize(name: &str) -> Result<usize, Error> {
+    let mut buf = [0u8; 32];
+    let val = getenv(Some(name), &mut buf)?.trim();
+    let val = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")).unwrap_or(val);
+    Ok(usize::from_str_radix(val, 16)?)
 }

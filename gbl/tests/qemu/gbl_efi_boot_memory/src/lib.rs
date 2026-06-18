@@ -19,7 +19,9 @@
 use efi_types::{
     defs::{
         GblEfiBootBufferType, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD,
-        GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD, GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION,
+        GBL_EFI_BOOT_BUFFER_TYPE_FDT, GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD,
+        GBL_EFI_BOOT_BUFFER_TYPE_KERNEL, GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA,
+        GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION,
     },
     protocol::gbl_efi_boot_memory::{BootBuffer, GblEfiBootMemorySafe},
     status::{EfiError, EfiResult},
@@ -44,21 +46,31 @@ impl GblEfiBootMemorySafe for GblEfiBootMemoryImpl {
         &self,
         _: &core::ffi::CStr,
     ) -> EfiResult<(Self::PartitionBuffer, GblEfiPartitionBufferFlag)> {
+        // TODO(b/525176052): Support configuring partition buffers.
         Err(EfiError::NotFound)
     }
 
     fn take_boot_buffer(&self, buffer_type: GblEfiBootBufferType) -> EfiResult<BootBuffer> {
-        match buffer_type {
+        let (env_name, default_size) = match buffer_type {
             GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD => {
-                // GBL by default allocates 256mb of general load buffer, which is too much for
-                // test. Instruct GBL to use smaller size using this protocol.
-                // TODO(b/499359597): Make the size configurable.
-                Ok(BootBuffer::ToAllocate(16 * 1024 * 1024))
+                ("GBL_GENERAL_LOAD_SIZE", Some(16 * 1024 * 1024))
             }
+            GBL_EFI_BOOT_BUFFER_TYPE_KERNEL => ("GBL_KERNEL_SIZE", None),
+            GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK => ("GBL_RAMDISK_SIZE", None),
+            GBL_EFI_BOOT_BUFFER_TYPE_FDT => ("GBL_FDT_SIZE", None),
+            GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA => ("GBL_PVMFW_DATA_SIZE", None),
             GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD => {
-                Ok(BootBuffer::ToAllocate(16 * 1024 * 1024))
+                ("GBL_FASTBOOT_DOWNLOAD_SIZE", Some(16 * 1024 * 1024))
             }
-            _ => Err(EfiError::NotFound),
-        }
+            _ => unreachable!(),
+        };
+
+        let size = match semihosting::getenv_as_usize(env_name) {
+            Ok(sz) => sz,
+            Err(liberror::Error::NotFound) => default_size.ok_or(EfiError::NotFound)?,
+            Err(e) => return Err(e.into()),
+        };
+
+        Ok(BootBuffer::ToAllocate(size))
     }
 }
