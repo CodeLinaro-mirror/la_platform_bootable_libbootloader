@@ -320,6 +320,12 @@ cc_flags_common = [
     # initialization. The problematic sources are all C. There's an upstream fix that disables
     # this warning for non-C++ sources. (https://github.com/llvm/llvm-project/pull/138507)
     "-Wno-microsoft-goto",
+    # Newer Clang versions (e.g. r596125) mark certain intrinsic headers as
+    # `constexpr`, but their implementations contain builtins that are not
+    # valid constant expressions when evaluated in a constant expression
+    # context. This leads to -Winvalid-constexpr errors when building targets
+    # (such as BoringSSL) that include these headers. Disable it.
+    "-Wno-invalid-constexpr",
 ]
 
 # Linux host LLVM toolchain.
