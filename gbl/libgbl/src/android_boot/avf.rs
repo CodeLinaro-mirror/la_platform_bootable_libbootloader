@@ -642,8 +642,8 @@ fn prepare_dice_inputs(
     };
     let mode = match (is_recovery, unlocked) {
         (false, false) => DiceMode::kDiceModeNormal,
-        (false, true) => DiceMode::kDiceModeDebug,
-        (true, _) => DiceMode::kDiceModeMaintenance,
+        (true, false) => DiceMode::kDiceModeMaintenance,
+        (_, true) => DiceMode::kDiceModeDebug,
     };
     let code = verify_data.vbmeta_digest_sha512();
     let hidden = [0u8; HIDDEN_SIZE]; // Leave hidden input empty.
@@ -1130,6 +1130,7 @@ pub(crate) mod test {
         for (unlocked, is_recovery, exp_mode) in [
             (false, false, DiceMode::kDiceModeNormal),
             (true, false, DiceMode::kDiceModeDebug),
+            (true, true, DiceMode::kDiceModeDebug),
             (false, true, DiceMode::kDiceModeMaintenance),
         ] {
             let (authority, code, hidden, mode, rollback_idx) =
