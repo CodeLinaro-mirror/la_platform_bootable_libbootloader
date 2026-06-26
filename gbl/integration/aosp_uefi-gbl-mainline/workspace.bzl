@@ -17,10 +17,9 @@ This file contains rules and logic for setting up GBL workspace dependencies in 
 u-boot-mainline branch.
 """
 
+load("@gbl//toolchain:constants.scl", "CLANG_VERSION")
 load("@gbl//toolchain:gbl_new_local_repository.bzl", "gbl_new_local_repository")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "GBL_RUST_VERSION")
-
-_CLANG_VERSION = "r596125"
 
 def define_gbl_workspace(name = None):
     """Set up worksapce dependencies for GBL
@@ -34,7 +33,7 @@ def define_gbl_workspace(name = None):
 
     gbl_new_local_repository(
         name = "llvm_linux_x86_64_prebuilts",
-        path = "prebuilts/clang/host/linux-x86/clang-{}".format(_CLANG_VERSION),
+        path = "prebuilts/clang/host/linux-x86/clang-{}".format(CLANG_VERSION),
         build_file_content = "",
     )
 
