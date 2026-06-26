@@ -21,6 +21,7 @@ import re
 import socket
 import sys
 import time
+import pathlib
 
 
 def default_logging():
@@ -118,6 +119,16 @@ class VsockFastbootClient:
       if assert_ok:
         assert reply.startswith(b"OKAY"), f"{cmd} failed: {reply}"
       return reply, info_messages
+
+  def download(self, image_path):
+    """Downloads a file via fastboot"""
+    image = pathlib.Path(image_path).read_bytes()
+    data, _ = self.run_command(f"download:{len(image):08x}".encode())
+    assert data.startswith(b"DATA"), f"Download failed: {data}"
+    self.send(image)
+    reply = self.recv()
+    assert reply.startswith(b"OKAY"), f"Download failed: {reply}"
+
 
   def close(self):
     self.sock.close()

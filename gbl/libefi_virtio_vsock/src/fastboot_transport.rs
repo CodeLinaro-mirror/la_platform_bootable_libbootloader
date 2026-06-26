@@ -180,6 +180,7 @@ impl GblEfiFastbootTransport for FastbootTransport {
     fn receive(&self, buffer: &mut [u8], mode: GblEfiFastbootRxMode) -> EfiResult<usize> {
         let mut shared = self.poll()?;
         match mode {
+            _ if shared.curr_pkt_len == 0 => Err(EfiError::NotReady),
             GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET => {
                 // Single packet mode needs to receive everything.
                 let buffer =

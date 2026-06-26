@@ -63,6 +63,11 @@ def parse_args():
   parser.add_argument("bin", help="Path to the binary file.")
   parser.add_argument("out", help="output file")
   parser.add_argument("--llvm-symbolizer", help="Path to llvm-symbolizer")
+  parser.add_argument(
+      "--verbose-progress",
+      action="store_true",
+      help="Display progress prints for collection and event generation.",
+  )
   return parser.parse_args()
 
 
@@ -155,7 +160,8 @@ def main():
   max_tick = 0
   while off < len(trace_bin):
     progress_percent = off * 100 // len(trace_bin)
-    print(f"\rCollecting raw traces {progress_percent}%    ", end="")
+    if args.verbose_progress:
+      print(f"\rCollecting raw traces {progress_percent}%    ", end="")
     type, tick, fields, off = parse_entry(trace_bin, off)
     min_tick = min(min_tick, tick)
     max_tick = max(max_tick, tick)
@@ -163,7 +169,8 @@ def main():
       # Function address, callsite address
       addrs.update([fields[0], fields[1]])
     entries.append((type, tick, fields))
-  print("Done")
+  if args.verbose_progress:
+    print("Done")
 
   # Display trace/platform info and params
   print(f"Tick frequency: {freq} Hz")
@@ -186,8 +193,8 @@ def main():
 
   # Generates function call, stack snapshot events
   for i, (type, tick, fields) in enumerate(entries, 1):
-    # Show progress
-    print(f"\rGenerating function events {i}/{len(entries)}   ", end="")
+    if args.verbose_progress:
+      print(f"\rGenerating function events {i}/{len(entries)}   ", end="")
     ts = tick_to_micros(tick, freq)
     if type == FUNCTION_ENTRY:
       addr, callsite_addr, sys_stack, func_stack = fields
@@ -284,7 +291,8 @@ def main():
               "args": {"heap usage": fields[0]},
           },
       )
-  print("Done")
+  if args.verbose_progress:
+    print("Done")
 
   # For function calls that didn't return, assume they return at `max_tick`.
   for t, addr in unmatched_entry:

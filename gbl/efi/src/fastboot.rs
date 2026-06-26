@@ -197,11 +197,11 @@ impl<'a> EfiFastbootTransport<'a> {
         match &mut self.prefetched {
             (pkt, len) if *len == 0 => {
                 match self.protocol.receive(pkt, ReceiveMode::SinglePacket) {
+                    Ok(0) | Err(Error::NotReady) => return Ok(false),
                     Ok(out_size) => {
                         *len = out_size;
                         return Ok(true);
                     }
-                    Err(Error::NotReady) => return Ok(false),
                     Err(e) => return Err(e),
                 }
             }

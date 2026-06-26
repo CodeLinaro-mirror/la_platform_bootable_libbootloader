@@ -103,7 +103,7 @@ pub unsafe extern "C" fn kernel_main(fdt_addr: *const u8) -> ! {
         if let Some(v) = trace_total_size(trace).ok().filter(|v| *v != 0) {
             semihosting::println!("trace data size: {v}");
             let mut f = File::open(c"trace.bin", OpenMode::WriteBinary).unwrap();
-            f.write(trace).unwrap();
+            f.write(&trace[..v]).unwrap();
         }
     }
 

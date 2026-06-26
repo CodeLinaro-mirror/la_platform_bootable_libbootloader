@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 import time
 
 
@@ -40,6 +41,18 @@ def parse_args() -> argparse.Namespace:
       "--timeout", type=int, help="timeout in seconds", default=10
   )
   parser.add_argument("--log_output", help="Output path for serial log")
+  parser.add_argument(
+      "--artifacts_output", help="Output path for artifacts archive"
+  )
+  parser.add_argument(
+      "--runfile",
+      action="append",
+      help=(
+          "Comma-separated pair of <mapped_name>,<source_file_path> to "
+          "symlink in the local working directory"
+      ),
+      default=[],
+  )
   parser.add_argument(
       "--disk",
       action="append",
@@ -77,8 +90,21 @@ def launch_qemu(args):
     # Make sure a log file always eixsts
     (test_dir / "console.log").write_text("")
 
+    # Symlinks mandatory GBL to the current work directory.
     gbl_path = os.path.abspath(args.gbl)
     os.symlink(gbl_path, test_dir / "gbl.bin")
+
+    # Symlinks all additional runfiles to the current work directory.
+    for runfile_str in args.runfile:
+      parts = runfile_str.split(",", 1)
+      if len(parts) == 2:
+        mapped_name, src_path = parts
+      else:
+        src_path = parts[0]
+        mapped_name = os.path.basename(src_path)
+      dest_path = test_dir / mapped_name
+      dest_path.parent.mkdir(parents=True, exist_ok=True)
+      os.symlink(os.path.abspath(src_path), dest_path)
 
     # Starts vhost device vsock bridge first. Otherwise QEMU will fail to start.
     socket_path = test_dir / "vsock-guest.sock"
@@ -88,6 +114,16 @@ def launch_qemu(args):
     env["FASTBOOT_OVER_VSOCK_UDS_PATH"] = str(uds_path)
     env["GBL_CONSOLE_LOG"] = str(test_dir / "console.log")
     script_log_path = test_dir / "test_script.log"
+
+    # Create artifacts directory and share it with the test script.
+    outputs_dir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR")
+    if outputs_dir:
+      artifacts_dir = pathlib.Path(outputs_dir)
+    else:
+      artifacts_dir = test_dir / "artifacts"
+      artifacts_dir.mkdir(parents=True, exist_ok=True)
+      env["TEST_UNDECLARED_OUTPUTS_DIR"] = str(artifacts_dir)
+    env["TEST_ARTIFACTS_OUT"] = args.artifacts_output
 
     if args.vhost_device_vsock:
       vhost_proc = subprocess.Popen(
@@ -214,6 +250,15 @@ def launch_qemu(args):
           # Strip ANSI escape codes (like clear screen)
           clean_text = re.sub(r"\x1b\[[0-9;]*[mGHKJ]", "", log_text)
           print(clean_text)
+      if args.artifacts_output:
+        try:
+          with tarfile.open(args.artifacts_output, "w") as tar:
+            tar.add(artifacts_dir, arcname=".")
+        except Exception as e:
+          print(f"Failed to create artifacts archive: {e}")
+          # Create an empty tar file if archiving failed, to satisfy Bazel outs
+          with tarfile.open(args.artifacts_output, "w") as _:
+            pass
 
 
 if __name__ == "__main__":
