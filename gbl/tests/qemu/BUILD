@@ -80,11 +80,6 @@ gpt_gen(
     partitions = {"misc": {"size": "1M"}},
 )
 
-build_with_tracing(
-    name = "aarch64_dev_tracing",
-    deps = ["@gbl//efi:aarch64_dev"],
-)
-
 py_binary(
     name = "fastboot_reboot_test",
     srcs = ["fastboot_reboot_test.py"],
@@ -127,19 +122,37 @@ qemu_test(
     test_script = ":boot_memory_test",
 )
 
+build_with_tracing(
+    name = "aarch64_dev_tracing",
+    deps = ["@gbl//efi:aarch64_dev"],
+)
+
+build_with_tracing(
+    name = "aarch64_dev_tracing_pdb",
+    deps = ["@gbl//efi:aarch64_dev_pdb"],
+)
+
 py_binary(
     name = "trace_test",
     srcs = ["trace_test.py"],
+    data = [
+        "//tools:gbl-trace-to-perfetto.py",
+        "@llvm_linux_x86_64_prebuilts//:common_binaries",
+    ],
     imports = ["."],
-    deps = [":qemu_test_utils"],
+    deps = [
+        ":qemu_test_utils",
+        "@rules_python//python/runfiles",
+    ],
 )
 
 qemu_test(
     name = "qemu_trace_test",
-    disk = [
-        ":test_gpt_boot",
-        ":test_gpt_misc_normal_mode",
-    ],
+    disk = [":test_gpt_misc_fastboot_mode"],
     gbl = ":aarch64_dev_tracing",
+    runfiles = [
+        ":aarch64_dev_tracing_pdb",
+        ":test_boot_img",
+    ],
     test_script = ":trace_test",
 )

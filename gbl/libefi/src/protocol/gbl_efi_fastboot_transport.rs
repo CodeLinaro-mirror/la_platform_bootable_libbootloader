@@ -141,8 +141,8 @@ impl Protocol<'_, GblFastbootTransportProtocol> {
         let _guard = trace::TraceGuard::new(false);
         loop {
             match self.receive(out, mode) {
+                Ok(0) | Err(Error::NotReady) => yield_now().await,
                 Ok(out_size) => return Ok(out_size),
-                Err(Error::NotReady) => yield_now().await,
                 Err(e) => return Err(e),
             }
         }

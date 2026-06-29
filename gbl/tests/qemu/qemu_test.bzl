@@ -24,6 +24,7 @@ def qemu_test(
         bios = "@vmm//:qemu/x86_64-linux-gnu/usr/share/qemu/edk2-aarch64-code.fd",
         vhost_device_vsock = "@vhost_device_vsock",
         out = None,
+        runfiles = [],
         timeout = None,
         env = {},
         **kwargs):
@@ -40,6 +41,8 @@ def qemu_test(
         vhost_device_vsock: Target label for vhost_device_vsock. Can be None.
         out: Name of the serial log output file. If None, defaults to
              `"{name}_log.txt"`.
+        runfiles: Optional list of labels or [label, mapped_name] lists to
+             include as runfiles.
         timeout: Optional Starlark integer timeout in seconds.
         env: Optional Starlark dictionary mapping custom environment variable
              names to their values.
@@ -49,6 +52,7 @@ def qemu_test(
     # Determine the default output result filename.
     if out == None:
         out = "{name}_log.txt".format(name = name)
+    artifacts_out = "{name}_artifacts.tar".format(name = name)
 
     # Collect input files required by the test launcher.
     srcs = [
@@ -83,8 +87,28 @@ def qemu_test(
         "--test_name " + name,
         "--qemu $(location " + qemu + ")",
         "--bios $(location " + bios + ")",
-        "--log_output $@",
+        "--log_output $(location :" + out + ")",
+        "--artifacts_output $(location :" + artifacts_out + ")",
     ]
+
+    # Add runfiles targets to srcs and format command args
+    for item in runfiles:
+        if type(item) == "string":
+            target = item
+            srcs.append(target)
+            cmd.append("--runfile $(location {})".format(target))
+        elif type(item) == "list" or type(item) == "tuple":
+            if len(item) != 2:
+                fail(
+                    "Each runfiles item must be a string label or a " +
+                    "list/tuple of 2 strings: [label, mapped_name]",
+                )
+            target = item[0]
+            dest = item[1]
+            srcs.append(target)
+            cmd.append("--runfile {},$(location {})".format(dest, target))
+        else:
+            fail("runfiles items must be strings or lists/tuples of strings")
 
     # Append disks
     for d in disks:
@@ -112,7 +136,7 @@ def qemu_test(
     native.genrule(
         name = name,
         srcs = srcs,
-        outs = [out],
+        outs = [out, artifacts_out],
         cmd = " ".join(env_prefix + cmd),
         tools = tools,
         **kwargs
