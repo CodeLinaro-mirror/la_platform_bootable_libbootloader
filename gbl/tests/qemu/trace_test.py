@@ -21,26 +21,15 @@ The script tests:
 2. Enforce maximum stack usage in currently known critical path "fastboot boot".
 """
 
-import json
 import logging
 import os
-from pathlib import Path
-import shutil
-import subprocess
-import sys
-import time
-from python.runfiles import runfiles
 from qemu_test_utils import (
     VsockFastbootClient,
     default_logging,
+    process_and_check_trace,
     wait_for_fastboot_ready,
-    wait_for_log_pattern,
+    wait_for_kernel_exit,
 )
-
-GBL_TRACE_MAGIC = 0x0641DAC6BD9D2EA3
-# At the time this script is written, "fastboot boot" is the critical path that
-# causes the highest stack use of 86176 bytes. Set to 128K bytes for now.
-MAX_STACK_ALLOWED = 128 * 1024  # 128k bytes
 
 
 def main():
@@ -60,75 +49,9 @@ def main():
   client.run_command(b"boot", assert_ok=True)
   client.close()
 
-  # Wait for the console log to confirm clean exit
-  wait_for_log_pattern(
-      console_log_path,
-      [r"^\[\d+\.\d+\] Exiting QEMU test via semihosting\.$"],
-  )
+  wait_for_kernel_exit(console_log_path)
 
-  # Wait for trace.bin to be written via semihosting, and read/validate it.
-  trace = Path("trace.bin")
-  # Caller of the test script (qemu_launcher.py) enforces timeout.
-  while True:
-    try:
-      assert trace.read_bytes()[:8] == GBL_TRACE_MAGIC.to_bytes(8, "little")
-      break
-    except Exception as e:
-      logging.info(f"Failed checking for trace.bin {e}. Retrying...")
-      pass
-    time.sleep(0.5)
-
-  outputs_dir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR")
-  if outputs_dir:
-    outputs_path = Path(outputs_dir)
-    shutil.copy(trace, outputs_path / "trace.bin")
-    logging.info(f"Copied trace.bin to artifact directory: {outputs_dir}")
-
-    # Convert trace.bin to perfetto trace format.
-    r = runfiles.Create()
-    script_path = r.Rlocation("gbl/tools/gbl-trace-to-perfetto.py")
-    symbolizer = r.Rlocation("llvm_linux_x86_64_prebuilts/bin/llvm-symbolizer")
-    assert script_path, "Could not find gbl-trace-to-perfetto.py in runfiles"
-    assert symbolizer, "Could not find llvm-symbolizer in runfiles"
-    perfetto_out = outputs_path / "trace.perfetto"
-
-    logging.info("Running gbl-trace-to-perfetto.py...")
-    start_time = time.perf_counter()
-    subprocess.run(
-        [
-            sys.executable,
-            str(script_path),
-            "trace.bin",
-            "gbl.bin",
-            str(perfetto_out),
-            "--llvm-symbolizer",
-            str(symbolizer),
-        ],
-        check=True,
-    )
-
-    duration = time.perf_counter() - start_time
-    logging.info(
-        f"Generated perfetto trace at: {perfetto_out} (took {duration:.2f}s)"
-    )
-
-    # Check stack usage. If not meet the limit, print error message and exit.
-    perfetto_data = json.loads(perfetto_out.read_text())
-    max_stack = 0
-    for event in perfetto_data:
-      if "args" in event and "stack usage" in event["args"]:
-        max_stack = max(max_stack, event["args"]["stack usage"])
-    logging.info(f"Maximum stack usage found in trace: {max_stack} bytes")
-    artifacts_out = os.environ.get("TEST_ARTIFACTS_OUT")
-    if max_stack > MAX_STACK_ALLOWED:
-      logging.error(
-          f"GBL stack usage limit exceeded: {max_stack} bytes used, "
-          f"limit is {MAX_STACK_ALLOWED} bytes. To inspect the detailed"
-          " callgraph, "
-          'open https://ui.perfetto.dev/ and load the "trace.perfetto" file '
-          f'extracted from "{artifacts_out}".'
-      )
-      sys.exit(1)
+  process_and_check_trace()
 
   logging.info("Trace test completed successfully.")
 

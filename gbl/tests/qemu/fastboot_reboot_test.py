@@ -23,6 +23,7 @@ from qemu_test_utils import (
     VsockFastbootClient,
     default_logging,
     wait_for_fastboot_ready,
+    wait_for_kernel_exit,
     wait_for_log_pattern,
 )
 
@@ -54,11 +55,9 @@ def main():
   # Poll the console log file for success pattern
   wait_for_log_pattern(
       console_log_path,
-      [
-          r"^\[\d+\.\d+\] Normal Mode: false$",
-          r"^\[\d+\.\d+\] Exiting QEMU test via semihosting\.$",
-      ],
+      [r"^\[\d+\.\d+\] Normal Mode: false$"],
   )
+  wait_for_kernel_exit(console_log_path)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,11 @@ package(
 py_library(
     name = "qemu_test_utils",
     srcs = ["qemu_test_utils.py"],
+    data = [
+        "//tools:gbl-trace-to-perfetto.py",
+        "@llvm_linux_x86_64_prebuilts//:common_binaries",
+    ],
+    deps = ["@rules_python//python/runfiles"],
 )
 
 genrule(
@@ -118,7 +123,8 @@ qemu_test(
         "GBL_FDT_SIZE": "0x100000",  # 1MB
         "GBL_PVMFW_DATA_SIZE": "0x100000",  # 1MB
     },
-    gbl = "@gbl//efi:aarch64_dev",
+    gbl = ":aarch64_dev_tracing",
+    runfiles = [":aarch64_dev_tracing_pdb"],
     test_script = ":boot_memory_test",
 )
 
@@ -135,14 +141,9 @@ build_with_tracing(
 py_binary(
     name = "trace_test",
     srcs = ["trace_test.py"],
-    data = [
-        "//tools:gbl-trace-to-perfetto.py",
-        "@llvm_linux_x86_64_prebuilts//:common_binaries",
-    ],
     imports = ["."],
     deps = [
         ":qemu_test_utils",
-        "@rules_python//python/runfiles",
     ],
 )
 

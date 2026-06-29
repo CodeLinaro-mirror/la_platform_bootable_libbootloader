@@ -18,7 +18,12 @@
 import logging
 import os
 import sys
-from qemu_test_utils import default_logging, wait_for_log_pattern
+from qemu_test_utils import (
+    default_logging,
+    process_and_check_trace,
+    wait_for_kernel_exit,
+    wait_for_log_pattern,
+)
 
 
 def main():
@@ -64,6 +69,9 @@ def main():
           rf" {ramdisk_addr}, fdt @ {fdt_addr}$"
       ],
   )
+
+  wait_for_kernel_exit(console_log_path)
+  process_and_check_trace()
 
   logging.info("Dedicated boot memory test completed successfully.")
 
