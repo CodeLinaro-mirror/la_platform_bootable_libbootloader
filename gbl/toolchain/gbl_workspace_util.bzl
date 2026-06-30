@@ -72,12 +72,14 @@ def gbl_llvm_tool_path(tool_name):
     info_bzl_content += """
 LLVM_PREBUILTS_C_INCLUDE = "{}"
 LLVM_PREBUILTS_CPP_INCLUDE = "{}"
+LLVM_PREBUILTS_LIB_DIR = "{}"
 LINUX_X86_MUSL_CPP_CONFIG = "{}"
 GBL_EFI_SYSROOT = "{}"
 GBL_CPP_CONFIG_INC = "{}"
 """.format(
         "{}/include".format(llvm_resource_dir),
         _abs_path(repo_ctx, "llvm-linux-x86/include/c++/v1"),
+        _abs_path(repo_ctx, "llvm-linux-x86/lib"),
         x86_musl_config_inc,
         gbl_sysroot,
         gbl_cpp_config_inc,

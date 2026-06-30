@@ -1,0 +1,47 @@
+# Copyright (C) 2026 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Custom Clang toolchain BUILD file for GBL.
+
+This replaces the upstream BUILD.bazel in the Clang prebuilt repository
+to add the lldb py_library target without modifying the prebuilt repository.
+"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob([
+    "bin/*",
+    "lib/*",
+]))
+
+# The LLDB Python extension file is named `_lldb.cpython-313-x86_64-linux-gnu.so`. However, the
+# Python interpreter we use is a special android prebuilt that only searches for extension
+# filenames ending in `.so` or `.cpython-311android-x86_64-linux-gnu.so`. Therefore we copy
+# (without dereferencing) the symlink to a file named `_lldb.so` in the same directory so that
+# Python's import machinery can find and load it natively.
+genrule(
+    name = "lldb_so_copy",
+    srcs = ["lib/python3.13/site-packages/lldb/_lldb.cpython-313-x86_64-linux-gnu.so"],
+    outs = ["lib/python3.13/site-packages/lldb/_lldb.so"],
+    cmd = "cp -P $< $@",
+)
+
+py_library(
+    name = "lldb_py",
+    srcs = glob(["lib/python3.13/site-packages/lldb/**/*.py"]),
+    data = [":lldb_so_copy"],
+    imports = ["lib/python3.13/site-packages"],
+)

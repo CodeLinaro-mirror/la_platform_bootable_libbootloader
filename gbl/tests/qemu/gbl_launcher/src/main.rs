@@ -113,6 +113,14 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
     let range = loaded_gbl.loaded_range();
     efi_println!(entry, "GBL loaded at {:#x}:{:#x}", range.start, range.end);
 
+    // If LAUNCHER_GDB_WAIT=1, wait for a marker file `gdb.ready` to be created as a signal of
+    // debugging host readiness.
+    if semihosting::getenv_as_usize("LAUNCHER_GDB_WAIT").unwrap_or(0) == 1 {
+        efi_println!(entry, "Waiting for GDB to attach...");
+        while semihosting::File::open(c"gdb.ready", semihosting::OpenMode::ReadOnly).is_err() {}
+        semihosting::remove(c"gdb.ready").unwrap();
+    }
+
     // Mark EFI execution pages as guarded. This tests that GBL BTI setting is correct and
     // functional and inter-operability with UEFI firmware code in non-guarded pages is feasible as
     // expected.

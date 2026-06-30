@@ -34,7 +34,8 @@ def define_gbl_workspace(name = None):
     gbl_new_local_repository(
         name = "llvm_linux_x86_64_prebuilts",
         path = "prebuilts/clang/host/linux-x86/clang-{}".format(CLANG_VERSION),
-        build_file_content = "",
+        exclude_files = ["BUILD.bazel"],
+        build_file = "@gbl//toolchain:BUILD.llvm_linux_x86_64_prebuilts.bazel",
     )
 
     gbl_new_local_repository(

@@ -22,8 +22,8 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import tarfile
+import tempfile
 import time
 
 
@@ -66,6 +66,14 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument(
       "--test_name", help="Name of the test target", default="qemu_test"
+  )
+  parser.add_argument(
+      "--gdb",
+      action="store_true",
+      help=(
+          "If provided, QEMU will wait for a GDB connection on a Unix socket in"
+          " the test directory and pause CPU at startup."
+      ),
   )
 
   return parser.parse_args()
@@ -183,6 +191,16 @@ def launch_qemu(args):
             f"socket,id=char0,reconnect=0,path={socket_path}",
         ]
         cmd_args += ["-device", "vhost-user-vsock-pci,chardev=char0"]
+
+      if args.gdb:
+        gdb_sock_path = test_dir / "gdb.sock"
+        env["GBL_GDB_SOCKET"] = str(gdb_sock_path)
+        # Configure GDB server over Unix socket and pause CPU at startup (-S)
+        cmd_args += [
+            "-gdb",
+            f"unix:{gdb_sock_path},server=on,wait=on",
+            "-S",
+        ]
 
       # Generate FDT
       subprocess.run(

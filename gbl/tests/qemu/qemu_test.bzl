@@ -27,6 +27,7 @@ def qemu_test(
         runfiles = [],
         timeout = None,
         env = {},
+        gdb = False,
         **kwargs):
     """Instantiates a QEMU test genrule.
 
@@ -46,6 +47,8 @@ def qemu_test(
         timeout: Optional Starlark integer timeout in seconds.
         env: Optional Starlark dictionary mapping custom environment variable
              names to their values.
+        gdb: Whether to enable GDB debugging. When true, QEMU will wait for
+             GDB to connect before starting GBL.
         **kwargs: General rule arguments passed to the underlying genrule.
     """
 
@@ -125,6 +128,10 @@ def qemu_test(
     # If timeout is set, add timeout.
     if timeout != None:
         cmd.append("--timeout " + str(timeout))
+
+    # If GDB debugging is enabled, configure QEMU to wait for GDB.
+    if gdb:
+        cmd.append("--gdb")
 
     # Add custom environment variables as inline shell assignments.
     env_prefix = []

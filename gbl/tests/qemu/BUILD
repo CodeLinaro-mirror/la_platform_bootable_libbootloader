@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_LIB_DIR")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 load("//tests/qemu:qemu_test.bzl", "qemu_test")
 load("//toolchain:gbl_toolchain.bzl", "build_with_tracing")
@@ -28,7 +29,7 @@ py_library(
     srcs = ["qemu_test_utils.py"],
     data = [
         "//tools:gbl-trace-to-perfetto.py",
-        "@llvm_linux_x86_64_prebuilts//:common_binaries",
+        "@llvm_linux_x86_64_prebuilts//:bin/llvm-symbolizer",
     ],
     deps = ["@rules_python//python/runfiles"],
 )
@@ -177,9 +178,7 @@ py_binary(
     name = "trace_test",
     srcs = ["trace_test.py"],
     imports = ["."],
-    deps = [
-        ":qemu_test_utils",
-    ],
+    deps = [":qemu_test_utils"],
 )
 
 qemu_test(
@@ -194,4 +193,32 @@ qemu_test(
         ":test_boot_img",
     ],
     test_script = ":trace_test",
+)
+
+py_binary(
+    name = "lldb_debugging_test",
+    srcs = ["lldb_debugging_test.py"],
+    imports = ["."],
+    deps = [
+        ":qemu_test_utils",
+        "@llvm_linux_x86_64_prebuilts//:lldb_py",
+    ],
+)
+
+qemu_test(
+    name = "qemu_lldb_debugging_test",
+    disk = [
+        ":test_gpt_boot",
+        ":test_gpt_misc_normal_mode",
+    ],
+    env = {
+        # Required by "import lldb" to locate other .so dependencies.
+        "LD_LIBRARY_PATH": LLVM_PREBUILTS_LIB_DIR,
+        # Let the gbl_launcher wait for debugger.
+        "LAUNCHER_GDB_WAIT": "1",
+    },
+    gbl = "@gbl//efi:aarch64_dev",
+    gdb = True,
+    runfiles = [("@gbl//efi:aarch64_dev_pdb", "gbl.pdb")],
+    test_script = ":lldb_debugging_test",
 )

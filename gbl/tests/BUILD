@@ -92,6 +92,7 @@ build_and_run_tests(
             ":qemu_test_dependencies_exist": [
                 "@gbl//tests/qemu:qemu_boot_memory_test",
                 "@gbl//tests/qemu:qemu_fastboot_misc_test",
+                "@gbl//tests/qemu:qemu_lldb_debugging_test",
                 "@gbl//tests/qemu:qemu_trace_test",
             ],
             "//conditions:default": [],
