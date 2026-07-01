@@ -26,7 +26,9 @@ rust_library(
     deps = [
         "@gbl//libefi_types",
         "@gbl//liberror",
+        "@gbl//libgbl",
         "@gbl//libsemihosting",
+        "@gbl//libutils",
         "@spin",
     ],
 )

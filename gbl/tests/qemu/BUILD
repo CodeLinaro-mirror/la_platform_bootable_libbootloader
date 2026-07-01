@@ -37,14 +37,12 @@ genrule(
     name = "test_boot_img",
     srcs = [
         "@gbl//tests/qemu/test_kernel:test_kernel_aarch64",
-        "@gbl//libgbl/testdata:android/dtb_a.img",
     ],
     outs = ["boot_a.img"],
     cmd = """
         $(location @mkbootimg//:mkbootimg) \
         --kernel $(location @gbl//tests/qemu/test_kernel:test_kernel_aarch64) \
-        --header_version 2 \
-        --dtb $(location @gbl//libgbl/testdata:android/dtb_a.img) \
+        --header_version 4 \
         -o $@
     """,
     tools = ["@mkbootimg"],
@@ -59,6 +57,16 @@ gpt_gen(
             "file": ":test_boot_img",
         },
         "boot_b": {"size": "1M"},
+        "vendor_boot_a": {
+            "size": "1M",
+            "file": "@gbl//libgbl/testdata:android/vendor_boot_v4_a.img",
+        },
+        "vendor_boot_b": {"size": "1M"},
+        "init_boot_a": {
+            "size": "1M",
+            "file": "@gbl//libgbl/testdata:android/init_boot_a.img",
+        },
+        "init_boot_b": {"size": "1M"},
     },
 )
 
@@ -109,10 +117,31 @@ py_binary(
     deps = [":qemu_test_utils"],
 )
 
+# GPT disk with empty boot_a/b partition. The image is expected to be provided via preloaded
+# partition or fastboot boot command.
+gpt_gen(
+    name = "test_gpt_no_boot_image",
+    disk_size = "10M",
+    partitions = {
+        "boot_a": {"size": "1M"},
+        "boot_b": {"size": "1M"},
+        "vendor_boot_a": {
+            "size": "1M",
+            "file": "@gbl//libgbl/testdata:android/vendor_boot_v4_a.img",
+        },
+        "vendor_boot_b": {"size": "1M"},
+        "init_boot_a": {
+            "size": "1M",
+            "file": "@gbl//libgbl/testdata:android/init_boot_a.img",
+        },
+        "init_boot_b": {"size": "1M"},
+    },
+)
+
 qemu_test(
     name = "qemu_boot_memory_test",
     disk = [
-        ":test_gpt_boot",
+        ":test_gpt_no_boot_image",
         ":test_gpt_misc_normal_mode",
     ],
     env = {
@@ -122,9 +151,15 @@ qemu_test(
         "GBL_RAMDISK_SIZE": "0x100000",  # 1MB
         "GBL_FDT_SIZE": "0x100000",  # 1MB
         "GBL_PVMFW_DATA_SIZE": "0x100000",  # 1MB
+        # Preloaded boot, designated vendor_boot, allocated init_boot
+        "PART_PRELOADED_boot": "boot_a.img",
+        "PART_DESIGNATED_vendor_boot": "0x100000",  # 1MB
     },
     gbl = ":aarch64_dev_tracing",
-    runfiles = [":aarch64_dev_tracing_pdb"],
+    runfiles = [
+        ":aarch64_dev_tracing_pdb",
+        ":test_boot_img",
+    ],
     test_script = ":boot_memory_test",
 )
 
@@ -149,7 +184,10 @@ py_binary(
 
 qemu_test(
     name = "qemu_trace_test",
-    disk = [":test_gpt_misc_fastboot_mode"],
+    disk = [
+        ":test_gpt_misc_fastboot_mode",
+        ":test_gpt_no_boot_image",
+    ],
     gbl = ":aarch64_dev_tracing",
     runfiles = [
         ":aarch64_dev_tracing_pdb",

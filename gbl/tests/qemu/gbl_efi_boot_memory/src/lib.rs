@@ -16,23 +16,57 @@
 
 #![cfg_attr(not(test), no_std)]
 
+extern crate alloc;
+
+use alloc::{vec, vec::Vec};
+use core::ffi::CStr;
 use efi_types::{
     defs::{
         GblEfiBootBufferType, GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD,
         GBL_EFI_BOOT_BUFFER_TYPE_FDT, GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD,
         GBL_EFI_BOOT_BUFFER_TYPE_KERNEL, GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA,
         GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK, GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION,
+        GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED,
     },
     protocol::gbl_efi_boot_memory::{BootBuffer, GblEfiBootMemorySafe},
     status::{EfiError, EfiResult},
     GblEfiPartitionBufferFlag,
 };
+use libgbl::partition::RAW_PARTITION_NAME_LEN;
 
 /// Test implementation of `GblEfiBootMemory`.
 pub struct GblEfiBootMemoryImpl;
 
+/// Helper to find preloaded partitions.
+///
+/// The function checks for environment variable `PART_PRELOADED_<part_name>` to look up
+/// the corresponding image file path.
+fn find_preloaded(part_name: &CStr) -> EfiResult<Vec<u8>> {
+    let mut buf = [0u8; RAW_PARTITION_NAME_LEN + 18];
+    libutils::snprintf!(buf, "PART_PRELOADED_{}\0", part_name.to_str().unwrap());
+    let env_key = CStr::from_bytes_until_nul(&buf).unwrap();
+    let mut out = [0u8; 128];
+    semihosting::getenv(Some(env_key.to_str().unwrap()), &mut out)?;
+    let file = CStr::from_bytes_until_nul(&out).unwrap();
+    let mut file = semihosting::File::open(file, semihosting::OpenMode::ReadOnly).unwrap();
+    let mut buffer = vec![0u8; file.len().unwrap()];
+    file.read(&mut buffer).unwrap();
+    Ok(buffer)
+}
+
+/// Helper to find designated partition buffer.
+///
+/// The function checks for environment variable `PART_DESIGNATED_<part_name>` to look up
+/// the corresponding buffer size.
+fn find_designated(part_name: &CStr) -> EfiResult<Vec<u8>> {
+    let mut buf = [0u8; RAW_PARTITION_NAME_LEN + 18];
+    libutils::snprintf!(buf, "PART_DESIGNATED_{}\0", part_name.to_str().unwrap());
+    let env_key = CStr::from_bytes_until_nul(&buf).unwrap();
+    Ok(vec![0u8; semihosting::getenv_as_usize(env_key.to_str().unwrap())?])
+}
+
 impl GblEfiBootMemorySafe for GblEfiBootMemoryImpl {
-    type PartitionBuffer = spin::MutexGuard<'static, [u8], spin::Spin>;
+    type PartitionBuffer = Vec<u8>;
 
     fn revision(&self) -> u64 {
         GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION
@@ -44,10 +78,13 @@ impl GblEfiBootMemorySafe for GblEfiBootMemoryImpl {
 
     fn get_partition_buffer(
         &self,
-        _: &core::ffi::CStr,
+        part: &CStr,
     ) -> EfiResult<(Self::PartitionBuffer, GblEfiPartitionBufferFlag)> {
-        // TODO(b/525176052): Support configuring partition buffers.
-        Err(EfiError::NotFound)
+        match find_preloaded(part) {
+            Ok(v) => Ok((v, GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED)),
+            Err(EfiError::NotFound) => Ok((find_designated(part)?, GblEfiPartitionBufferFlag(0))),
+            Err(e) => Err(e),
+        }
     }
 
     fn take_boot_buffer(&self, buffer_type: GblEfiBootBufferType) -> EfiResult<BootBuffer> {

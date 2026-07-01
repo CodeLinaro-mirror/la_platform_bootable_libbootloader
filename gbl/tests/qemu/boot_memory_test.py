@@ -33,6 +33,18 @@ def main():
   console_log_path = os.environ.get("GBL_CONSOLE_LOG")
   assert console_log_path, "GBL_CONSOLE_LOG not set"
 
+  # Wait for log messages indicating the partition buffer existence, i.e.:
+  #
+  # [2.3622] Found preloaded buffer for "boot"
+  # [2.3711] Found designated load buffer for "vendor_boot"
+  wait_for_log_pattern(
+      console_log_path,
+      [
+          r'^\[\d+\.\d+\] Found preloaded buffer for "boot"',
+          r'^\[\d+\.\d+\] Found designated load buffer for "vendor_boot"',
+      ],
+  )
+
   # Verify buffer allocation logs, i.e.:
   #
   # [1.2733] Allocated 0x100000 bytes for "kernel" buffer at 0x4c000000.
