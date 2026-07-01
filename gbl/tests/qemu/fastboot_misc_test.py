@@ -43,6 +43,30 @@ def main():
   wait_for_fastboot_ready(console_log_path)
 
   client = VsockFastbootClient(port=port)
+
+  client.run_command(b"oem gbl-integration-test-optional")
+  wait_for_log_pattern(
+      console_log_path,
+      [r"^\[\d+\.\d+\] Test passed: test_gbl_fastboot_transport"],
+  )
+  client.run_command(b"oem gbl-integration-test-required")
+  wait_for_log_pattern(
+      console_log_path,
+      [r"^\[\d+\.\d+\] Test passed: test_block_io"],
+  )
+
+  # Test readenv custom command
+  test_name = os.environ.get("GBL_TEST_NAME")
+  assert test_name, "GBL_TEST_NAME not set"
+  reply, _ = client.run_command(
+      f"oem readenv GBL_TEST_NAME".encode(), assert_ok=True
+  )
+  assert reply == f"OKAY{test_name}".encode()
+  reply, _ = client.run_command(
+      f"readenv:GBL_TEST_NAME".encode(), assert_ok=True
+  )
+  assert reply == f"OKAY{test_name}".encode()
+
   client.run_command(b"getvar:all", assert_ok=True)
   client.run_command(b"reboot-bootloader", assert_ok=True)
   client.close()

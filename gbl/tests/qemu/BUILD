@@ -86,20 +86,20 @@ gpt_gen(
 )
 
 py_binary(
-    name = "fastboot_reboot_test",
-    srcs = ["fastboot_reboot_test.py"],
+    name = "fastboot_misc_test",
+    srcs = ["fastboot_misc_test.py"],
     imports = ["."],
     deps = [":qemu_test_utils"],
 )
 
 qemu_test(
-    name = "qemu_fastboot_reboot_test",
+    name = "qemu_fastboot_misc_test",
     disk = [
         ":test_gpt_boot",
         ":test_gpt_misc_fastboot_mode",
     ],
     gbl = "@gbl//efi:aarch64_dev",
-    test_script = ":fastboot_reboot_test",
+    test_script = ":fastboot_misc_test",
 )
 
 py_binary(
