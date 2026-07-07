@@ -36,6 +36,9 @@ const DEFAULT: &CStr = c"default";
 const CONFIGURATIONS: &str = "/configurations";
 const IMAGES: &str = "/images";
 
+/// DTB(O) name length
+const DT_NAME_LEN: usize = 128;
+
 /// Structure for FIT partition buffer
 pub struct Fit<'a> {
     fdt: Fdt<&'a [u8]>,
@@ -47,7 +50,15 @@ impl<'a> Fit<'a> {
     pub fn from_bytes(buffer: &'a [u8]) -> Result<Self> {
         let header = FdtHeader::from_bytes_ref(buffer)?;
         let (fdt_buffer, image_buffer) = buffer.split_at(header.totalsize());
-        Ok(Self { fdt: Fdt::new(fdt_buffer)?, external_images: image_buffer })
+        let fit_fdt = Fdt::new(fdt_buffer)?;
+        let external_images_buffer = image_buffer;
+        let _images_node_offset = fit_fdt
+            .find_node_offset(IMAGES)
+            .map_err(|_| Error::Other(Some("'/images' node not found")))?;
+        let _configurations_node_offset = fit_fdt
+            .find_node_offset(CONFIGURATIONS)
+            .map_err(|_| Error::Other(Some("'/configurations' node not found")))?;
+        Ok(Self { fdt: fit_fdt, external_images: external_images_buffer })
     }
 
     /// Returns FIT FDT buffer and metadata buffer when reference to metadata
@@ -76,7 +87,7 @@ impl<'a> Fit<'a> {
     pub fn get_devicetrees_from_selected_configuration(
         &self,
         selected_offset: Option<usize>,
-    ) -> Result<(&'a [u8], ArrayVec<&'a [u8], MAXIMUM_OVERLAYS_TO_APPLY>)> {
+    ) -> Result<(usize, &'a [u8], ArrayVec<&'a [u8], MAXIMUM_OVERLAYS_TO_APPLY>)> {
         let mut base: Option<&[u8]> = None;
         let mut overlays: ArrayVec<&[u8], MAXIMUM_OVERLAYS_TO_APPLY> = ArrayVec::new();
         let selected_config = match selected_offset {
@@ -86,7 +97,7 @@ impl<'a> Fit<'a> {
 
         let fdt_iter = self.fdt.get_property_stringlist_by_node_offset(selected_config, FDT)?;
         for (idx, fdt_str) in fdt_iter.enumerate() {
-            let mut fdt_path: ArrayString<32> = ArrayString::new();
+            let mut fdt_path: ArrayString<DT_NAME_LEN> = ArrayString::new();
             write!(fdt_path, "{IMAGES}/{}", fdt_str.to_str()?)?;
             let fdt_image = self.get_image_by_node_path(fdt_path.as_str())?;
 
@@ -101,7 +112,7 @@ impl<'a> Fit<'a> {
             overlays.push(fdt_image);
         }
 
-        Ok((base.unwrap(), overlays))
+        Ok((selected_config, base.unwrap(), overlays))
     }
 
     /// Return offset for FIT default configuration node in FIT FDT
@@ -187,6 +198,15 @@ mod test {
     }
 
     #[test]
+    fn test_fit_image_with_invalid_configurations_node() {
+        let fit_buf =
+            include_bytes!("../test/data/fitimage_with_invalid_configurations.img").to_vec();
+        let fit_buf = fit_buf.as_slice();
+
+        assert!(Fit::from_bytes(fit_buf).is_err());
+    }
+
+    #[test]
     fn test_get_fit_selection_metadata() {
         let fit_buf = include_bytes!("../test/data/fit.img").to_vec();
         let fit_buf = fit_buf.as_slice();
@@ -240,6 +260,12 @@ mod test {
         let fit_image = Fit::from_bytes(fit_buf).unwrap();
         let default_configuration_offset = fit_image.get_default_configuration_offset().unwrap();
 
+        let (selected_config, _base, _overlays) = fit_image
+            .get_devicetrees_from_selected_configuration(Some(
+                fit_image.fdt.find_node_offset("/configurations/config-2").unwrap(),
+            ))
+            .unwrap();
+
         assert_eq!(
             CStr::from_bytes_with_nul(
                 fit_image
@@ -255,6 +281,13 @@ mod test {
             .unwrap(),
             "test config-1"
         );
+
+        assert_ne!(default_configuration_offset, selected_config);
+
+        let (selected_config, _base, _overlays) =
+            fit_image.get_devicetrees_from_selected_configuration(None).unwrap();
+
+        assert_eq!(default_configuration_offset, selected_config);
     }
 
     #[test]
@@ -273,7 +306,7 @@ mod test {
 
         let fit_image = Fit::from_bytes(fit_buf).unwrap();
 
-        let (base, overlays) = fit_image
+        let (_final_config, base, overlays) = fit_image
             .get_devicetrees_from_selected_configuration(Some(
                 fit_image.fdt.find_node_offset("/configurations/config-1").unwrap(),
             ))
@@ -292,7 +325,7 @@ mod test {
         let fit_buf = fit_buf.as_slice();
         let fit_image = Fit::from_bytes(fit_buf).unwrap();
 
-        let (base, overlays) = fit_image
+        let (_final_config, base, overlays) = fit_image
             .get_devicetrees_from_selected_configuration(Some(
                 fit_image.fdt.find_node_offset("/configurations/config-5").unwrap(),
             ))

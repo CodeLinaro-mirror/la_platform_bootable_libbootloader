@@ -20,7 +20,7 @@ use crate::{
         kernel::KernelAttributes,
         load::split,
     },
-    device_tree::{entry_is_vmdtbo, DtComponentSourceMetadata},
+    device_tree::{entry_is_vmdtbo, DtComponentSourceMetadata, DtSourceLocation},
     gbl_avb::state::BootStateColor,
     gbl_println, GblOps, KiB,
 };
@@ -614,8 +614,16 @@ pub fn avf_update_bootconfig<'a>(
         }
     }
     if let Some(metadata) = vmdtbo_metadata {
-        bootconfig.add_item(VMDTBO_IDX_PROP, metadata.source_index)?;
-        bootconfig.add_item(VMDTBO_SOURCE_PROP, metadata.source)?;
+        match metadata.location {
+            DtSourceLocation::DtIndex(source_index) => {
+                bootconfig.add_item(VMDTBO_IDX_PROP, source_index)?;
+                bootconfig.add_item(VMDTBO_SOURCE_PROP, metadata.source)?;
+            }
+            DtSourceLocation::FitConfigOffset(_) => {
+                // TODO(b/385690995): Add support for VMDTBO from FIT.
+                return Err(Error::Other(Some("VMDTBO is not supported by FIT")));
+            }
+        }
     }
     Ok(())
 }
@@ -1012,8 +1020,10 @@ pub(crate) mod test {
         assert_eq!(bootconfig.config_str().matches(PROTECTED_PROP).count(), 1);
         assert_eq!(bootconfig.config_str().matches(UNPROTECTED_PROP).count(), 1);
 
-        let metadata =
-            DtComponentSourceMetadata { source: DtComponentSource::Dtbo, source_index: 5 };
+        let metadata = DtComponentSourceMetadata {
+            source: DtComponentSource::Dtbo,
+            location: DtSourceLocation::DtIndex(5),
+        };
         avf_update_bootconfig(&mut ops, &mut bootconfig, Some(&metadata)).unwrap();
         assert_eq!(bootconfig.config_str().matches(PROTECTED_PROP).count(), 1);
         assert_eq!(bootconfig.config_str().matches(UNPROTECTED_PROP).count(), 1);

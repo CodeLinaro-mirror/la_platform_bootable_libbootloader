@@ -5,11 +5,10 @@ appropriate configuration as per the platform.
 
 [FIT specification][specification] provides a standard format for FIT image. The
 present state of the GBL implementation for handling of FIT image supports only
-device tree selection and loading via FIT image. FIT image can be flashed either
-in DTBO or DTB partition. If FIT image is present in either of these partitions,
-the DTBs or DTBOs from all other partitions (including `boot`/`vendor_boot`)
-will not be considered. GBL will refuse to boot up if FIT image is present in
-both DTBO and DTB partitions.
+device tree selection and loading via FIT image. FIT image must be flashed in
+DTBO partition. If FIT image is present in DTBO partition, the DTBs or DTBOs
+from all other partitions (including `dtb`/`boot`/`vendor_boot`) will not be
+considered.
 
 Each device tree image in the "/images" node should have `flat_dt` type. Each
 image binary is expected to be a payload external to the FIT FDT. The sub-node

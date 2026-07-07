@@ -16,7 +16,10 @@
 
 use crate::{
     android_boot::load::LoadedImages,
-    device_tree::{DtComponentSource, DtComponentType, DtComponentsRegistry, SelectedDtComponents},
+    device_tree::{
+        DtComponentSource, DtComponentSourceMetadata, DtComponentType, DtComponentsRegistry,
+        DtSourceLocation, SelectedDtComponent, SelectedDtComponents,
+    },
     fastboot::boot_items::{BootItem, BootItemContainer},
     gbl_println,
     random::get_random_seed,
@@ -27,6 +30,7 @@ use bootparams::commandline::CommandlineBuilder;
 use core::ffi::CStr;
 use dttable::DtTableImage;
 use fdt::{Fdt, FdtHeader, MAXIMUM_OVERLAYS_TO_APPLY};
+use fit::Fit;
 use liberror::{Error, Result};
 use safemath::SafeNum;
 
@@ -36,9 +40,54 @@ pub(crate) fn fdt_select<'b, 'a: 'b, 'c: 'b>(
     images: &LoadedImages<'b>,
     buffer: &'c mut [u8],
 ) -> Result<(SelectedDtComponents<'b>, &'c mut [u8])> {
-    // TODO(b/385690995): Handle DTs selection from FIT structure.
     // TODO(b/385690995): Track FIT usage in metrics.
+
+    // Detect FIT in DTBO partition
+    if images.dtbo.len() > 0 {
+        if let Ok(fit) = Fit::from_bytes(images.dtbo) {
+            gbl_println!(ops, "FIT image detected in DTBO partition");
+            return get_fit_selected_devicetree(ops, fit, buffer);
+        }
+    }
     fdt_select_from_boot_partitions(ops, images, buffer)
+}
+
+fn get_fit_selected_devicetree<'a, 'b, 'c>(
+    ops: &mut impl GblOps<'a>,
+    fit: Fit<'b>,
+    buffer: &'c mut [u8],
+) -> Result<(SelectedDtComponents<'b>, &'c mut [u8])> {
+    let (fit_fdt_buffer, metadata_buffer) = fit.get_fit_selection_metadata()?;
+    gbl_println!(ops, "Selecting FIT configuration");
+    let selected_config = ops.select_fit_configuration(fit_fdt_buffer, metadata_buffer)?;
+
+    let (final_config, base, overlays_res) =
+        fit.get_devicetrees_from_selected_configuration(selected_config)?;
+    gbl_println!(ops, "FIT configuration at {} offset got selected", final_config);
+
+    Ok((
+        SelectedDtComponents {
+            base_dt: SelectedDtComponent {
+                source_metadata: DtComponentSourceMetadata {
+                    source: DtComponentSource::Dtbo,
+                    location: DtSourceLocation::FitConfigOffset(final_config),
+                },
+                dt: base,
+            },
+            vmdtbo: None,
+            overlays: overlays_res
+                .into_iter()
+                .map(|dt| SelectedDtComponent {
+                    source_metadata: DtComponentSourceMetadata {
+                        source: DtComponentSource::Dtbo,
+                        location: DtSourceLocation::FitConfigOffset(final_config),
+                    },
+                    dt,
+                })
+                .collect(),
+        },
+        buffer,
+    ))
 }
 
 /// Helper function to select device trees from traditional Android boot partitions such as `boot`,
