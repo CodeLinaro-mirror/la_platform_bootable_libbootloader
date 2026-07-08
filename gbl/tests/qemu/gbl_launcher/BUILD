@@ -46,6 +46,7 @@ rust_binary(
         "@gbl//libutils",
         "@gbl//tests/qemu/gbl_efi_boot_control",
         "@gbl//tests/qemu/gbl_efi_boot_memory",
+        "@gbl//tests/qemu/gbl_efi_fastboot_protocol",
     ],
 )
 

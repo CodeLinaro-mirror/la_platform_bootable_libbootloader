@@ -113,6 +113,7 @@ def launch_qemu(args):
     # Shares the fastboot vsock socket path and log path to test script.
     env["FASTBOOT_OVER_VSOCK_UDS_PATH"] = str(uds_path)
     env["GBL_CONSOLE_LOG"] = str(test_dir / "console.log")
+    env["GBL_TEST_NAME"] = args.test_name
     script_log_path = test_dir / "test_script.log"
 
     # Create artifacts directory and share it with the test script.

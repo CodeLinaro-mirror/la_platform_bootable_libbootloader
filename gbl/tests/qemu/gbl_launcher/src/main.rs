@@ -23,6 +23,7 @@ use efi::{
     efi_println, initialize,
     protocol::{
         gbl_efi_boot_control::GblBootControlProtocol, gbl_efi_boot_memory::GblBootMemoryProtocol,
+        gbl_efi_fastboot::GblFastbootProtocol,
         gbl_efi_fastboot_transport::GblFastbootTransportProtocol,
     },
     EfiAllocator,
@@ -33,6 +34,7 @@ use efi_types::{
 use efi_virtio_vsock::{gbl_vsock_init, FastbootTransport};
 use gbl_efi_boot_control::GblEfiBootControlImpl;
 use gbl_efi_boot_memory::GblEfiBootMemoryImpl;
+use gbl_efi_fastboot_protocol::GblEfiFastbootImpl;
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
@@ -79,6 +81,9 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
     static GBL_EFI_BOOT_CONTROL_IMPL: GblEfiBootControlImpl = GblEfiBootControlImpl;
     bs.install_protocol_from_rust::<GblBootControlProtocol, _>(None, &GBL_EFI_BOOT_CONTROL_IMPL)
         .unwrap();
+
+    static GBL_EFI_FASTBOOT_IMPL: GblEfiFastbootImpl = GblEfiFastbootImpl;
+    bs.install_protocol_from_rust::<GblFastbootProtocol, _>(None, &GBL_EFI_FASTBOOT_IMPL).unwrap();
 
     // Fastboot over vsock
     efi_println!(entry, "Initializing vsock {:?}", gbl_vsock_init(&entry));
