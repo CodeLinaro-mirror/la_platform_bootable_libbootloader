@@ -1285,6 +1285,7 @@ gbl_rust_crate_repository(
         "backend-bitmap",
         "backend-mmap",
         "default",
+        "rawfd",
     ],
     path = "external/rust/android-crates-io/crates/vm-memory",
     deps = [
