@@ -280,6 +280,7 @@ gbl_rust_crate_repository(
 
 gbl_rust_crate_repository(
     name = "env_filter",
+    features = ["std"],
     path = "external/rust/android-crates-io/crates/env_filter",
     deps = ["@log"],
 )
