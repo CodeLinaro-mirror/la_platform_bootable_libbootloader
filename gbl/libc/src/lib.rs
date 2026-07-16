@@ -25,7 +25,7 @@ extern crate libc_deps_posix;
 use alloc::alloc::{alloc, dealloc};
 use core::{
     alloc::Layout,
-    ffi::{c_char, c_int, c_ulong, c_void},
+    ffi::{c_char, c_int, c_ulong, c_void, CStr},
     mem::size_of_val,
     ptr::{null_mut, NonNull},
 };
@@ -302,6 +302,25 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, maxlen: usize) -> usize {
 #[no_mangle]
 pub extern "C" fn abort() -> ! {
     panic!("aborted by 3d party code")
+}
+
+/// Rust panic handler called from C/C++ code.
+///
+/// # Safety
+///
+/// `msg` must be a valid pointer to a null-terminated C-string.
+#[no_mangle]
+pub unsafe extern "C" fn gbl_panic_from_c(msg: *const c_char) -> ! {
+    // SAFETY:
+    // * by function safety, the input is a valid null-terminated C-string
+    // * the input outlives the returned `CStr`
+    let msg = unsafe { CStr::from_ptr(msg) };
+    match msg.to_str() {
+        Ok(s) => panic!("{}", s),
+        // If the string wasn't UTF-8 try to debug-print it, which surrounds it with quotes and
+        // replaces any invalid characters as hex escape sequences.
+        _ => panic!("[gbl_panic_from_c] {:?}", msg),
+    }
 }
 
 #[cfg(test)]

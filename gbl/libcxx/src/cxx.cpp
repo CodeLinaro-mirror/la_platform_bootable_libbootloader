@@ -19,9 +19,23 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-void* operator new(size_t size) { return malloc(size); }
+extern "C" [[noreturn]] void gbl_panic_from_c(const char* msg);
 
-void* operator new[](size_t size) { return malloc(size); }
+void* operator new(size_t size) {
+  void* ptr = malloc(size);
+  if (!ptr) {
+    gbl_panic_from_c("new() failed to allocate memory");
+  }
+  return ptr;
+}
+
+void* operator new[](size_t size) {
+  void* ptr = malloc(size);
+  if (!ptr) {
+    gbl_panic_from_c("new[]() failed to allocate memory");
+  }
+  return ptr;
+}
 
 void operator delete(void* ptr) noexcept { free(ptr); }
 
