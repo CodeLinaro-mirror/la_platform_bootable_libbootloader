@@ -1383,6 +1383,7 @@ gbl_rust_crate_repository(
 
 gbl_rust_crate_repository(
     name = "zeroize",
+    compile_data = ["README.md"],
     path = "external/rust/android-crates-io/crates/zeroize",
     rustc_flags = ["--cap-lints=allow"],
 )
