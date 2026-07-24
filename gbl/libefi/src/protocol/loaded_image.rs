@@ -19,6 +19,7 @@ use crate::{
     protocol::{device_path::DevicePathProtocol, Protocol, ProtocolInfo, Requirement},
     versioned_protocol,
 };
+use core::ffi::c_void;
 use core::ptr::{null_mut, NonNull};
 use efi_types::{EfiGuid, EfiLoadedImageProtocol, EFI_LOADED_IMAGE_PROTOCOL_REVISION};
 use liberror::{Error, Result};
@@ -59,5 +60,21 @@ impl<'a> Protocol<'a, LoadedImageProtocol> {
     /// Returns the `EFI_LOADED_IMAGE_PROTOCOL.image_base` field.
     pub fn image_base(&self) -> usize {
         self.interface().image_base as _
+    }
+
+    /// Sets `EFI_LOADED_IMAGE_PROTOCOL.LoadOptions` and `LoadOptionsSize`.
+    ///
+    /// # Safety
+    ///
+    /// If `options` is non-null, it must point to valid memory of at least `options_size` bytes
+    /// that outlives the loaded image execution.
+    pub unsafe fn set_load_options(&mut self, options: *const c_void, options_size: u32) {
+        let lip = self.interface_ptr();
+        // SAFETY: `lip` is a valid protocol interface pointer.
+        // Caller guarantees non-null `options` outlives the loaded image execution.
+        unsafe {
+            (*lip).load_options = options as *mut _;
+            (*lip).load_options_size = options_size;
+        }
     }
 }
