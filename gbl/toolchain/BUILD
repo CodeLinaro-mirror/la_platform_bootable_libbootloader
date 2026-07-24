@@ -81,6 +81,14 @@ constraint_value(
     constraint_setting = ":board_class",
 )
 
+# Specifies whether we're booting Linux with the EFI boot stub.
+constraint_setting(name = "linux_jump_mode")
+
+constraint_value(
+    name = "efi_boot_stub",
+    constraint_setting = ":linux_jump_mode",
+)
+
 # Rustc flags to add based on the dev/prod board class.
 # This is intended to be used inside a `select()` statement.
 rustc_dev_prod_flags_select = {
@@ -241,6 +249,22 @@ platform(
 platform(
     name = "gbl_elf_aarch64_prod",
     constraint_values = elf_aarch64_constraint_values + [":prod"],
+)
+
+platform(
+    name = "gbl_uefi_x86_64_dev_bootstub",
+    constraint_values = uefi_x86_64_constraint_values + [
+        ":dev",
+        ":efi_boot_stub",
+    ],
+)
+
+platform(
+    name = "gbl_uefi_aarch64_dev_bootstub",
+    constraint_values = uefi_aarch64_constraint_values + [
+        ":dev",
+        ":efi_boot_stub",
+    ],
 )
 
 bool_setting(
@@ -673,8 +697,16 @@ pause_boot_in_fastboot_switch = select({
     "//conditions:default": [],
 })
 
+efi_boot_stub_switch = select({
+    ":efi_boot_stub": [
+        "--cfg",
+        "feature=\"efi_boot_stub\"",
+    ],
+    "//conditions:default": [],
+})
+
 rustc_common_flags = common_lint_opts + uefi_rustc_flags + select(rustc_dev_prod_flags_select) + \
-                     wait_gdb_switch + pause_boot_in_fastboot_switch
+                     wait_gdb_switch + pause_boot_in_fastboot_switch + efi_boot_stub_switch
 
 # x86_64 UEFI toolchain
 rust_toolchain(

@@ -120,6 +120,9 @@ APP_NAME = select({
     "@gbl//toolchain:prod": "prod",
     "//conditions:default": "unknown",
 }) + select({
+    "@gbl//toolchain:efi_boot_stub": "_bootstub",
+    "//conditions:default": "",
+}) + select({
     "@gbl//toolchain:uefi_debug": "_debug",
     "//conditions:default": "",
 })
@@ -242,6 +245,18 @@ build_with_platform(
 )
 
 build_with_platform(
+    name = "x86_64_dev_bootstub",
+    platform = "@gbl//toolchain:gbl_uefi_x86_64_dev_bootstub",
+    deps = [":gbl_signed"],
+)
+
+build_with_platform(
+    name = "x86_64_dev_bootstub_pdb",
+    platform = "@gbl//toolchain:gbl_uefi_x86_64_dev_bootstub",
+    deps = [":app_pdb"],
+)
+
+build_with_platform(
     name = "x86_64_prod",
     platform = "@gbl//toolchain:gbl_uefi_x86_64_prod",
     deps = [":gbl_signed"],
@@ -276,6 +291,18 @@ build_with_platform(
 build_with_platform(
     name = "aarch64_dev_pdb",
     platform = "@gbl//toolchain:gbl_uefi_aarch64_dev",
+    deps = [":app_pdb"],
+)
+
+build_with_platform(
+    name = "aarch64_dev_bootstub",
+    platform = "@gbl//toolchain:gbl_uefi_aarch64_dev_bootstub",
+    deps = [":gbl_signed"],
+)
+
+build_with_platform(
+    name = "aarch64_dev_bootstub_pdb",
+    platform = "@gbl//toolchain:gbl_uefi_aarch64_dev_bootstub",
     deps = [":app_pdb"],
 )
 
@@ -349,6 +376,8 @@ filegroup(
     name = "all_platforms",
     srcs = [
         ":aarch64_dev",
+        ":aarch64_dev_bootstub",
+        ":aarch64_dev_bootstub_pdb",
         ":aarch64_dev_pdb",
         ":aarch64_prod",
         ":aarch64_prod_pdb",
@@ -356,6 +385,8 @@ filegroup(
         ":riscv64_dev",
         ":riscv64_prod",
         ":x86_64_dev",
+        ":x86_64_dev_bootstub",
+        ":x86_64_dev_bootstub_pdb",
         ":x86_64_dev_pdb",
         ":x86_64_prod",
         ":x86_64_prod_pdb",
