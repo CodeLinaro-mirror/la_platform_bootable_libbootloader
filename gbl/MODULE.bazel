@@ -844,6 +844,7 @@ gbl_rust_crate_repository(
 
 gbl_rust_crate_repository(
     name = "safe_mmio",
+    edition = "2024",
     path = "external/rust/android-crates-io/crates/safe-mmio",
     deps = ["@zerocopy_alloc"],
 )
