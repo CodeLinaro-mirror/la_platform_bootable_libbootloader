@@ -828,8 +828,13 @@ impl<'a> BootServices<'a> {
     /// # Safety
     ///
     /// Caller must guarantee that `src` is a valid EFI application
-    pub unsafe fn load_image(&self, src: &mut [u8]) -> Result<LoadedEfiImage<'a>> {
+    pub unsafe fn load_image(&self, src: &[u8]) -> Result<LoadedEfiImage<'a>> {
         let mut image_handle: EfiHandle = null_mut();
+
+        // NOTE: UEFI spec defines the "source" buffer as a non-const pointer, which
+        // technically allows modification of the buffer in the backend. However, in practice
+        // it is treated as read-only. We pass an immutable slice pointer here as it is
+        // unlikely to be modified and more idiomatic for our APIs.
 
         // SAFETY:
         // * `image_handle` is an output parameter. It is not retained and outlives the call.

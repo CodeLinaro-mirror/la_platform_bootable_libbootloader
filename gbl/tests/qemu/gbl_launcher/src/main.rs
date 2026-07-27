@@ -109,7 +109,7 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
     // SAFETY:
     // `gbl_buffer` contains a valid PE image.
     let loaded_gbl =
-        unsafe { entry.system_table().boot_services().load_image(&mut gbl_buffer).unwrap() };
+        unsafe { entry.system_table().boot_services().load_image(&gbl_buffer).unwrap() };
     let range = loaded_gbl.loaded_range();
     efi_println!(entry, "GBL loaded at {:#x}:{:#x}", range.start, range.end);
 
