@@ -43,6 +43,7 @@ rust_library(
         "@gbl//libefi:libefi_rng",
         "@gbl//libefi_types",
         "@gbl//liberror",
+        "@gbl//libfastboot",
         "@gbl//libgbl",
         "@gbl//libstack",
         "@gbl//libutils",
