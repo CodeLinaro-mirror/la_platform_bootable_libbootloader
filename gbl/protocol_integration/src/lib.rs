@@ -56,6 +56,7 @@ use efi::{
     utils::parse_fw_api_level,
     EfiEntry, GBL_EFI_FW_API_LEVEL, GBL_EFI_VENDOR_GUID,
 };
+use fastboot::MAX_RESPONSE_SIZE;
 use liberror::{Error, Result};
 use libgbl::{
     android_boot::device_tree::RNG_SEED_SIZE_BYTES, gbl_avb::MAX_SPECIALIZED_PARTITIONS,
@@ -400,7 +401,7 @@ fn test_gbl_fastboot(entry: &EfiEntry) -> Result<()> {
         .inspect_err(|_| efi_println!(entry, "get_var_all failed"));
 
     let mut res = if let Some(args) = vars.pop() {
-        let mut buf = [0u8; 32];
+        let mut buf = [0u8; MAX_RESPONSE_SIZE];
         protocol
             .get_var(args[0].as_c_str(), args[1..].iter().map(|a| a.as_c_str()), &mut buf)
             .map(|_| ())
