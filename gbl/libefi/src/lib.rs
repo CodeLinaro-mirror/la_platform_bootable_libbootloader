@@ -148,7 +148,8 @@ use efi_types::{
 use liberror::{Error, Result};
 use libutils::{aligned_subslice, base_type_name};
 use protocol::{
-    simple_text_output::SimpleTextOutputProtocol, Protocol, ProtocolImpl, ProtocolInfo, Revision,
+    loaded_image::LoadedImageProtocol, simple_text_output::SimpleTextOutputProtocol, Protocol,
+    ProtocolImpl, ProtocolInfo, Revision,
 };
 use zerocopy::{FromBytes, Ref};
 
@@ -221,6 +222,16 @@ impl EfiEntry {
     pub fn image_handle(&self) -> DeviceHandle {
         DeviceHandle(self.image_handle)
     }
+
+    /// Gets the image handle pointer.
+    pub fn image_handle_ptr(&self) -> *mut core::ffi::c_void {
+        self.image_handle as *mut _
+    }
+
+    /// Gets the system table pointer.
+    pub fn system_table_ptr(&self) -> *mut core::ffi::c_void {
+        self.systab_ptr as *mut _
+    }
 }
 
 /// Implement `TplControl` here for convenience so callers don't have to
@@ -248,6 +259,14 @@ pub const EFI_MEMORY_ATTRIBUTES_GUID: EfiGuid =
 /// GUID for UEFI Global variables
 pub const EFI_GLOBAL_VARIABLE_GUID: EfiGuid =
     EfiGuid::new(0x8be4df61, 0x93ca, 0x11d2, [0xaa, 0x0d, 0x00, 0xe0, 0x98, 0x03, 0x2b, 0x8c]);
+
+/// GUID for Device Tree (DTB) configuration table in system table.
+pub const EFI_DTB_TABLE_GUID: EfiGuid =
+    EfiGuid::new(0xb1b621d5, 0xf19c, 0x41a5, [0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0]);
+
+/// GUID for Linux EFI loaded image fixed placement protocol.
+pub const LINUX_EFI_LOADED_IMAGE_FIXED_GUID: EfiGuid =
+    EfiGuid::new(0xf5a37b6d, 0x3344, 0x42a5, [0xb6, 0xbb, 0x97, 0x86, 0x48, 0xc1, 0x89, 0x0a]);
 
 /// The name of the UEFI variable that GBL defines to determine whether to boot Fuchsia.
 /// The value of the variable is ignored: if the variable is present,
@@ -593,7 +612,7 @@ impl<'a> BootServices<'a> {
             .and_then(|handle| self.open_protocol::<T>(handle))
     }
 
-    /// Wrapper of `EFI_BOOT_SERVICE.GetMemoryMap()`.
+    /// Wrapper of `EFI_BOOT_SERVICES.GetMemoryMap()`.
     pub fn get_memory_map<'b>(&self, mmap_buffer: &'b mut [u8]) -> Result<EfiMemoryMap<'b>> {
         let mut mmap_size = mmap_buffer.len();
         let mut map_key: usize = 0;
@@ -608,14 +627,33 @@ impl<'a> BootServices<'a> {
                 &mut map_key,
                 &mut descriptor_size,
                 &mut descriptor_version
-            )
-        }?;
+            )?;
+        }
         Ok(EfiMemoryMap::new(
             &mut mmap_buffer[..mmap_size],
             map_key,
             descriptor_size,
             descriptor_version,
         ))
+    }
+
+    /// Wrapper of `EFI_BOOT_SERVICES.InstallConfigurationTable()`.
+    ///
+    /// # Safety
+    ///
+    /// If `table` is non-NULL, the memory pointed to by `table` must remain allocated and valid
+    /// for as long as it is accessed via the System Table.
+    pub unsafe fn install_configuration_table(
+        &self,
+        guid: &EfiGuid,
+        table: *mut core::ffi::c_void,
+    ) -> Result<()> {
+        // SAFETY:
+        // * `self.boot_services.install_configuration_table` points to an EFIAPI function or NULL.
+        // * `guid` and `table` outlives the call.
+        unsafe {
+            efi_call!(self.boot_services.install_configuration_table, guid as *const _, table)
+        }
     }
 
     /// Wrapper of `EFI_BOOT_SERVICE.ExitBootServices()`.
@@ -803,6 +841,29 @@ impl<'a> BootServices<'a> {
         })
     }
 
+    /// Installs a null protocol interface on a handle with
+    /// `EFI_BOOT_SERVICES.InstallProtocolInterface()`.
+    ///
+    /// A null interface can be installed if no data structure are associated with protocol.
+    pub fn install_null_protocol_interface(
+        &self,
+        handle: &mut EfiHandle,
+        protocol: &EfiGuid,
+    ) -> Result<()> {
+        // SAFETY:
+        // * `self.boot_services.install_protocol_interface` points to an EFIAPI function or NULL.
+        // * `handle` and `protocol` outlives the call.
+        unsafe {
+            efi_call!(
+                self.boot_services.install_protocol_interface,
+                handle as *mut _,
+                protocol as *const _,
+                EFI_INTERFACE_TYPE_EFI_NATIVE_INTERFACE,
+                null_mut()
+            )
+        }
+    }
+
     /// Installs a protocol interface from a Rust implementation.
     ///
     /// This is a convenience function that creates a [Provider] from a Rust implementation
@@ -869,29 +930,26 @@ impl<'a> BootServices<'a> {
             )?;
         }
 
-        let loaded_image = self
-            .open_protocol::<protocol::loaded_image::LoadedImageProtocol>(DeviceHandle::new(
-                image_handle,
-            ))
+        let protocol = self
+            .open_protocol::<LoadedImageProtocol>(DeviceHandle::new(image_handle))
             .inspect_err(|e| {
-                efi_println!(
-                    self.efi_entry,
-                    "Failed to open LoadedImageProtocol on image handle: {e:?}",
-                )
-            })?;
+            efi_println!(
+                self.efi_entry,
+                "Failed to open LoadedImageProtocol on image handle: {e:?}",
+            )
+        })?;
 
-        let base = loaded_image.image_base();
-        let size = usize::try_from(loaded_image.interface().image_size)?;
-        let range = base..base.checked_add(size).unwrap();
-        Ok(LoadedEfiImage { efi_entry: self.efi_entry, image_handle, range })
+        Ok(LoadedEfiImage { efi_entry: self.efi_entry, image_handle, protocol })
     }
 }
 
 /// A loaded EFI image.
 pub struct LoadedEfiImage<'a> {
     efi_entry: &'a EfiEntry,
-    image_handle: EfiHandle,
-    range: core::ops::Range<usize>,
+    /// Handle of the loaded EFI image.
+    pub image_handle: EfiHandle,
+    /// `LoadedImageProtocol` for the loaded image.
+    pub protocol: Protocol<'a, LoadedImageProtocol>,
 }
 
 impl LoadedEfiImage<'_> {
@@ -908,7 +966,9 @@ impl LoadedEfiImage<'_> {
 
     /// Returns the memory range occupied by the loaded EFI image.
     pub fn loaded_range(&self) -> core::ops::Range<usize> {
-        self.range.clone()
+        let base = self.protocol.image_base();
+        let size = usize::try_from(self.protocol.interface().image_size).unwrap();
+        base..base.checked_add(size).unwrap()
     }
 }
 

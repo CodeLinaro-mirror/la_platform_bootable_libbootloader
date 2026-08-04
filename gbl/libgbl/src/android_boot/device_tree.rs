@@ -174,6 +174,15 @@ pub(crate) fn fdt_build_bootargs<'a, 'b>(
     }
 
     fdt_append_bootargs(ops, fdt, bootargs_to_append)?;
+
+    // Disable EFI runtime services support.
+    #[cfg(feature = "efi_boot_stub")]
+    fdt_append_bootargs(
+        ops,
+        fdt,
+        if cfg!(feature = "gbl_dev") { ["efi=noruntime,debug"] } else { ["efi=noruntime"] },
+    )?;
+
     // Appends `/chosen/bootargs_ext` to `/chosen/bootargs` after overlays are applied:
     // https://source.android.com/docs/core/architecture/dto/optimize#kernel
     //
@@ -313,6 +322,13 @@ pub(crate) fn fdt_propagate_random<'a>(
     dt: &mut Fdt<&mut [u8]>,
 ) -> Result<()> {
     fdt_propagate_random_seed(ops, dt, NODE_CHOSEN, RNG_SEED_PROP, RNG_SEED_SIZE_BYTES)?;
+    // NOTE: We ensure that KASLR SEED is generated even for the Linux EFI boot stub flow.
+    // The  EFI boot stub expects the EFI RNG protocol to be optional. If the RNG protocol is
+    // somehow inaccessible from the boot stub, then it would continue boot without a KASLR seed.
+    // To prevent this, we unconditionally inject the /chosen/kaslr-seed node from the bootloader.
+    // This ensures that failing to initialize an RNG device and seed is treated as an error.
+    // The EFI boot stub can choose to generate a new seed (thus ignoring the bootloader injected
+    // one), or fallback to the bootloader injected one when it fails to generate a seed.
     fdt_propagate_random_seed(ops, dt, NODE_CHOSEN, KASLR_SEED_PROP, KASLR_SEED_SIZE_BYTES)?;
 
     Ok(())

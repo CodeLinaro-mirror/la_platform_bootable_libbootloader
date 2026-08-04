@@ -78,7 +78,7 @@ pub fn image_base(entry: &EfiEntry) -> Result<usize> {
         .image_base())
 }
 
-#[cfg(any(target_arch = "x86_64"))]
+#[cfg(all(target_arch = "x86_64", not(feature = "efi_boot_stub")))]
 pub(crate) fn efi_to_e820_mem_type(efi_mem_type: EfiMemoryType) -> u32 {
     match efi_mem_type {
         efi_types::EFI_MEMORY_TYPE_LOADER_CODE
