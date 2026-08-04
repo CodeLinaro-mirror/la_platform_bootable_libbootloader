@@ -52,7 +52,7 @@ use liberror::{Error, Result};
 #[cfg(feature = "fuchsia")]
 use zbi::ZbiContainer;
 
-pub use x86_bootparam_defs::{boot_e820_entry as e820entry, boot_params, setup_header};
+pub use x86_bootparam_defs::{boot_e820_entry as e820entry, boot_params, efi_info, setup_header};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Ref};
 
 // Sector size is fixed to 512
@@ -156,6 +156,16 @@ impl BootParams {
     pub fn e820_map(&mut self) -> &mut [e820entry] {
         &mut self.0.e820_table[..]
     }
+
+    /// Gets efi_info by copying.
+    pub fn get_efi_info(&self) -> efi_info {
+        self.0.efi_info
+    }
+
+    /// Sets efi_info by copying.
+    pub fn set_efi_info(&mut self, info: efi_info) {
+        self.0.efi_info = info;
+    }
 }
 
 /// Helper to setup boot params and relocate bzimage kernel.
@@ -255,14 +265,16 @@ pub unsafe fn boot_linux_bzimage<F>(
     low_mem_addr: usize,
 ) -> Result<!>
 where
-    F: FnOnce(&mut [e820entry]) -> Result<u8>,
+    F: FnOnce(&mut [e820entry], &mut efi_info) -> Result<u8>,
 {
     // SAFETY: Forwarding safety requirements to helper.
     let bootparam_fixup =
         unsafe { setup_bzimage_boot_params(kernel, ramdisk, cmdline, low_mem_addr)? };
 
     // Fix up e820 memory map.
-    let num_entries = mmap_cb(bootparam_fixup.e820_map())?;
+    let mut efi_info = bootparam_fixup.get_efi_info();
+    let num_entries = mmap_cb(bootparam_fixup.e820_map(), &mut efi_info)?;
+    bootparam_fixup.set_efi_info(efi_info);
     bootparam_fixup.0.e820_entries = num_entries;
 
     // Clears stack pointers, interrupt and jumps to protected mode kernel.
