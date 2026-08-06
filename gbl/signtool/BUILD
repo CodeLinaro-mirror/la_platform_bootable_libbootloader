@@ -38,8 +38,10 @@ genrule(
     srcs = [":gblsigntool_zip"],
     outs = ["gblsigntool"],
     cmd = """
-cat -<<PRELUDE $(SRCS) > $(OUTS)
-#!/usr/bin/env python3
+cat -<<'PRELUDE' $(SRCS) > $(OUTS)
+#!/bin/bash
+unset PYTHONPATH RUNFILES_DIR RUNFILES_MANIFEST_FILE
+exec python3 "$$0" "$$@"
 PRELUDE
     """,
     executable = True,
