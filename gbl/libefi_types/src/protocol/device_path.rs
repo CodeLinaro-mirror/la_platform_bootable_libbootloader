@@ -1,4 +1,4 @@
-// Copyright 2025, The Android Open Source Project
+// Copyright 2026, The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! This module provides platform-specific implementations required by GBL libc.
-//! See `libc/src/lib.rs` for more details.
-//!
-//! This implementation relies on the EFI framework, so can be only used where
-//! it's available.
+//! Rust trait for
+//! [`EFI_DEVICE_PATH_PROTOCOL`](https://uefi.org/specs/UEFI/2.11/10_Protocols_Device_Path_Protocol.html).
 
-use crate::efi_try_print;
+use crate::{
+    defs::{EfiDevicePathProtocol, EfiGuid},
+    Identified, EFI_DEVICE_PATH_PROTOCOL_GUID_U64_0, EFI_DEVICE_PATH_PROTOCOL_GUID_U64_1,
+};
 
-/// EFI framework-based print implementation required by GBL `libc`.
-#[no_mangle]
-pub extern "Rust" fn gbl_print(s: &dyn core::fmt::Display) {
-    efi_try_print!("{}", s);
+impl Identified for EfiDevicePathProtocol {
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        EFI_DEVICE_PATH_PROTOCOL_GUID_U64_0,
+        EFI_DEVICE_PATH_PROTOCOL_GUID_U64_1,
+    );
 }

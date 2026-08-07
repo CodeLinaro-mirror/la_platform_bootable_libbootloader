@@ -51,6 +51,7 @@ rust_library(
         "@gbl//libtrace",
         "@gbl//libutils",
         "@spin",
+        "@static_assertions",
         "@zerocopy",
     ],
 )

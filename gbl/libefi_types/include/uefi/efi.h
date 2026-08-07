@@ -46,6 +46,7 @@
 #include "protocols/gbl_efi_fastboot_transport_protocol.h"
 #include "protocols/gbl_efi_os_configuration_protocol.h"
 #include "protocols/hash2_protocol.h"
+#include "protocols/load_file2_protocol.h"
 #include "protocols/loaded_image_protocol.h"
 #include "protocols/random_number_generator_protocol.h"
 #include "protocols/riscv_efi_boot_protocol.h"

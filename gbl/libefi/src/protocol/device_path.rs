@@ -19,16 +19,18 @@ use crate::{efi_println, EfiEntry};
 use core::ffi::CStr;
 use core::fmt::Display;
 use core::marker::PhantomData;
+use core::mem::size_of;
 use efi_types::{
-    EfiDevicePathProtocol, EfiDevicePathToTextProtocol, EfiGuid,
-    EFI_DEVICE_PATH_PROTOCOL_GUID_U64_0, EFI_DEVICE_PATH_PROTOCOL_GUID_U64_1,
-    EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID_U64_0, EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID_U64_1,
-    EFI_DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH, EFI_DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH,
+    protocol::BridgeToRust, EfiDevicePathProtocol, EfiDevicePathToTextProtocol, EfiGuid,
+    Identified, EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID_U64_0,
+    EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID_U64_1, EFI_DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH,
+    EFI_DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH,
     EFI_END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH,
     EFI_MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR, GBL_VENDOR_MEDIA_DEVICE_PATH_GUID_U64_0,
     GBL_VENDOR_MEDIA_DEVICE_PATH_GUID_U64_1,
 };
 use liberror::{Error, Result};
+use static_assertions::{const_assert, const_assert_eq};
 use zerocopy::byteorder::little_endian;
 use zerocopy::FromBytes;
 
@@ -39,12 +41,7 @@ pub struct DevicePathProtocol;
 
 impl ProtocolInfo for DevicePathProtocol {
     type InterfaceType = EfiDevicePathProtocol;
-
-    const GUID: EfiGuid = EfiGuid::from_u64s(
-        EFI_DEVICE_PATH_PROTOCOL_GUID_U64_0,
-        EFI_DEVICE_PATH_PROTOCOL_GUID_U64_1,
-    );
-
+    const GUID: EfiGuid = EfiDevicePathProtocol::GUID;
     const REQUIREMENT: Requirement = Requirement::Optional;
 }
 
@@ -82,7 +79,7 @@ impl<'a> Iterator for EfiDevicePathNodeIter<'a> {
         let length = little_endian::U16::from_bytes(header.length).get() as usize;
         // SAFETY: Buffer was established by UEFI firmware. Buffer outlives the call.
         let aux = unsafe { core::slice::from_raw_parts(self.0 as *const u8, length) };
-        let aux = aux.get(core::mem::size_of::<EfiDevicePathProtocol>()..)?;
+        let aux = aux.get(size_of::<EfiDevicePathProtocol>()..)?;
         // SAFETY: UEFI spec requires `EfiDevicePathProtocol` to be byte-packed and shifting by
         // `length` bytes would point to the next `EfiDevicePathProtocol` object.
         unsafe { self.0 = self.0.byte_add(length) };
@@ -121,6 +118,65 @@ impl<'a> Protocol<'a, DevicePathProtocol> {
             }
         }
         Ok(None)
+    }
+}
+
+/// Linux Initrd Vendor Media Path.
+pub struct InitrdDevicePathProtocol;
+
+/// Device Path Protocol for the Linux EFI initrd vendor media path.
+#[repr(C, packed)]
+pub struct EfiInitrdDevicePathProtocol {
+    vendor: EfiDevicePathProtocol,
+    guid: EfiGuid,
+    end: EfiDevicePathProtocol,
+}
+
+impl EfiInitrdDevicePathProtocol {
+    /// GUID for the Linux EFI Initrd vendor media device path node.
+    const LINUX_EFI_INITRD_MEDIA_GUID: EfiGuid =
+        EfiGuid::new(0x5568e427, 0x68fc, 0x4f3d, [0xac, 0x74, 0xca, 0x55, 0x52, 0x31, 0xcc, 0x68]);
+
+    /// Creates a new instance.
+    pub const fn new() -> Self {
+        Self {
+            vendor: EfiDevicePathProtocol {
+                type_: EFI_DEVICE_PATH_TYPE_MEDIA_DEVICE_PATH,
+                sub_type: EFI_MEDIA_DEVICE_PATH_SUB_TYPE_VENDOR,
+                length: ((size_of::<EfiDevicePathProtocol>() + size_of::<EfiGuid>()) as u16)
+                    .to_le_bytes(),
+            },
+            guid: Self::LINUX_EFI_INITRD_MEDIA_GUID,
+            end: EfiDevicePathProtocol {
+                type_: EFI_DEVICE_PATH_TYPE_END_OF_HARDWARE_DEVICE_PATH,
+                sub_type: EFI_END_OF_HARDWARE_DEVICE_PATH_SUB_TYPE_END_ENTIRE_DEVICE_PATH,
+                length: (size_of::<EfiDevicePathProtocol>() as u16).to_le_bytes(),
+            },
+        }
+    }
+}
+
+// NOTE: Cannot use `const_assert_eq` here because PartialEq is not const-aware for slices.
+const_assert!(matches!(EfiInitrdDevicePathProtocol::new().vendor.length, [20, 0]));
+const_assert!(matches!(EfiInitrdDevicePathProtocol::new().end.length, [4, 0]));
+const_assert_eq!(size_of::<EfiInitrdDevicePathProtocol>(), 24);
+
+impl Identified for EfiInitrdDevicePathProtocol {
+    const GUID: EfiGuid = EfiDevicePathProtocol::GUID;
+}
+
+impl MaybeVersioned for EfiInitrdDevicePathProtocol {}
+
+impl ProtocolInfo for InitrdDevicePathProtocol {
+    type InterfaceType = EfiInitrdDevicePathProtocol;
+    const GUID: EfiGuid = EfiInitrdDevicePathProtocol::GUID;
+    const REQUIREMENT: Requirement = Requirement::Optional;
+}
+
+// SAFETY: EfiInitrdDevicePathProtocol has only one valid value, which is returned by `Self::new()`.
+unsafe impl BridgeToRust<InitrdDevicePathProtocol> for EfiInitrdDevicePathProtocol {
+    unsafe fn create_bridge(_rust_impl: &InitrdDevicePathProtocol) -> Self {
+        Self::new()
     }
 }
 
@@ -297,8 +353,8 @@ mod test {
                 generate_protocol::<DevicePathProtocol>(&efi_entry, efi_protocol.as_mut().unwrap())
             };
 
-            assert_eq!(core::mem::size_of::<EfiDevicePathProtocol>(), 4);
-            assert_eq!(core::mem::size_of::<EfiGuid>(), 16);
+            assert_eq!(size_of::<EfiDevicePathProtocol>(), 4);
+            assert_eq!(size_of::<EfiGuid>(), 16);
             assert_eq!(
                 unsafe { EfiDevicePathNodeIter::new(protocol.interface_ptr()) }.collect::<Vec<_>>(),
                 vec![
