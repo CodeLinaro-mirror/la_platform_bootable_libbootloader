@@ -68,7 +68,7 @@ pub fn efi_fuchsia_load<'a>(ops: &mut Ops, load: &'a mut [u8]) -> Result<LoadedV
 }
 
 /// Exits boot services and boots loaded fuchsia images.
-pub fn efi_fuchsia_boot(efi_entry: EfiEntry, images: LoadedVerifiedZircon<'_>) -> Result<()> {
+pub fn efi_fuchsia_boot(efi_entry: EfiEntry, images: LoadedVerifiedZircon<'_>) -> Result<!> {
     let LoadedVerifiedZircon { zbi_items, kernel, .. } = images;
     efi_println!(
         efi_entry,

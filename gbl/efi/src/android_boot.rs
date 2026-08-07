@@ -39,7 +39,7 @@ pub fn efi_android_boot(
     ramdisk: &'static [u8],
     fdt: &'static [u8],
     remains: &'static mut [u8],
-) -> Result<()> {
+) -> Result<!> {
     efi_println!(entry, "");
     efi_println!(
         entry,

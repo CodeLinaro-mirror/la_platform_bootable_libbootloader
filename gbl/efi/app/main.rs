@@ -192,5 +192,4 @@ pub unsafe extern "C" fn efi_main(image_handle: EfiHandle, systab_ptr: *mut EfiS
     let _ = wait_gdb(&entry).inspect_err(|_| efi_println!(entry, "Failed to wait gdb connection."));
 
     app_main(entry).unwrap();
-    loop {}
 }

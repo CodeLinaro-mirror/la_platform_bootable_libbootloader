@@ -101,7 +101,7 @@ fn get_target_os(_entry: &EfiEntry, _disks: &[EfiGblDisk]) -> TargetOs {
 
 /// GBL EFI application logic entry point.
 #[cfg(not(test))]
-pub fn app_main(entry: EfiEntry) -> Result<()> {
+pub fn app_main(entry: EfiEntry) -> Result<!> {
     use libutils::get_sp;
     efi_println!(entry, "**** Generic Bootloader (GBL) ****");
     efi_println!(entry, "Fingerprint: {}", format_build_fingerprint!());
@@ -132,6 +132,4 @@ pub fn app_main(entry: EfiEntry) -> Result<()> {
             android_boot::efi_android_boot(entry, kernel, ramdisk, fdt, remains)?;
         }
     }
-
-    Ok(())
 }
