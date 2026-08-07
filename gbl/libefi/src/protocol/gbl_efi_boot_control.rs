@@ -73,7 +73,7 @@ impl TryFrom<GblSlot> for libgbl::slots::Slot {
             suffix: Suffix::try_from(char::try_from(info.suffix)?)?,
             priority: info.priority.into(),
             bootability: match (info.successful != 0, info.remaining_tries) {
-                (true, _) => Bootability::Successful,
+                (true, t) => Bootability::Successful(t.into()),
                 (false, 0) => {
                     Bootability::Unbootable(from_efi_unbootable_reason(info.unbootable_reason as _))
                 }
