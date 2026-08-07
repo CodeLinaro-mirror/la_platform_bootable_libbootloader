@@ -220,6 +220,8 @@ fn cose_alg_to_dice_key_algorithm(alg: i64) -> Result<DiceKeyAlgorithm> {
         cbor::kCoseAlgEdDsa => Ok(DiceKeyAlgorithm::kDiceKeyAlgorithmEd25519),
         cbor::kCoseAlgEs256 => Ok(DiceKeyAlgorithm::kDiceKeyAlgorithmP256),
         cbor::kCoseAlgEs384 => Ok(DiceKeyAlgorithm::kDiceKeyAlgorithmP384),
+        cbor::kCoseAlgMldsa65 => Ok(DiceKeyAlgorithm::kDiceKeyAlgorithmMldsa65),
+        cbor::kCoseAlgMldsa87 => Ok(DiceKeyAlgorithm::kDiceKeyAlgorithmMldsa87),
         _ => Err(DiceError::UnsupportedKeyAlgorithm),
     }
 }
@@ -386,6 +388,40 @@ mod tests {
         assert_eq!(
             extract_subject_algorithm_from_dice_chain(&bcc).unwrap(),
             DiceKeyAlgorithm::kDiceKeyAlgorithmP384,
+        );
+    }
+
+    #[test]
+    fn extracts_mldsa65() {
+        // MLDSA65 = -49 is encoded in CBOR as [0x38, 0x30].
+        let bcc: [u8; 33] = [
+            0x82, //
+            0xa6, 0x01, 0x02, 0x03, 0x27, 0x04, 0x02, 0x20, 0x01, 0x21, 0x40, 0x22, 0x40, //
+            0x84, 0x43, 0xa1, 0x01, 0x27, 0xa0, //
+            0x4b, 0xa1, 0x3a, 0x00, 0x47, 0x44, 0x57, //
+            0x44, 0xa1, 0x03, 0x38, 0x30, //
+            0x40, //
+        ];
+        assert_eq!(
+            extract_subject_algorithm_from_dice_chain(&bcc).unwrap(),
+            DiceKeyAlgorithm::kDiceKeyAlgorithmMldsa65,
+        );
+    }
+
+    #[test]
+    fn extracts_mldsa87() {
+        // MLDSA87 = -50 is encoded in CBOR as [0x38, 0x31].
+        let bcc: [u8; 33] = [
+            0x82, //
+            0xa6, 0x01, 0x02, 0x03, 0x27, 0x04, 0x02, 0x20, 0x01, 0x21, 0x40, 0x22, 0x40, //
+            0x84, 0x43, 0xa1, 0x01, 0x27, 0xa0, //
+            0x4b, 0xa1, 0x3a, 0x00, 0x47, 0x44, 0x57, //
+            0x44, 0xa1, 0x03, 0x38, 0x31, //
+            0x40, //
+        ];
+        assert_eq!(
+            extract_subject_algorithm_from_dice_chain(&bcc).unwrap(),
+            DiceKeyAlgorithm::kDiceKeyAlgorithmMldsa87,
         );
     }
 
