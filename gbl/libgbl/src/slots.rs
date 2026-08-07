@@ -175,8 +175,9 @@ impl From<UnbootableReason> for u8 {
 /// why it is not a valid boot target OR the number of attempts it has left.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Bootability {
-    /// This slot has successfully booted.
-    Successful,
+    /// This slot has successfully booted. Carries the remaining tries value
+    /// from the underlying metadata (used for informational reporting).
+    Successful(Tries),
     /// This slot cannot be booted.
     Unbootable(UnbootableReason),
     /// This slot has not successfully booted yet but has

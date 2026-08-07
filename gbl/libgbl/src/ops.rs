@@ -1988,7 +1988,7 @@ pub(crate) mod test {
     pub(crate) fn slot_successful(suffix: char) -> Slot {
         Slot {
             suffix: suffix.try_into().unwrap(),
-            bootability: Bootability::Successful,
+            bootability: Bootability::Successful(7u8.into()),
             ..Default::default()
         }
     }

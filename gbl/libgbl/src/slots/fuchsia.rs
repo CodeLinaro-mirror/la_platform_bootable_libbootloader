@@ -168,7 +168,7 @@ impl super::private::SlotGet for SlotBlock<AbrData> {
             .ok_or(Error::BadIndex(number))?;
 
         let bootability = match (abr_slot.successful, abr_slot.tries) {
-            (s, _) if s != 0 => Bootability::Successful,
+            (s, t) if s != 0 => Bootability::Successful(t.into()),
             (0, t) if t > 0 => Bootability::Retriable(t.into()),
             (_, _) => Bootability::Unbootable(abr_slot.unbootable_reason.into()),
         };
@@ -238,7 +238,7 @@ impl Manager for SlotBlock<AbrData> {
                 let token = self.take_boot_token().ok_or(Error::OperationProhibited)?;
                 Ok(token)
             }
-            Bootability::Successful => {
+            Bootability::Successful(_) => {
                 let token = self.take_boot_token().ok_or(Error::OperationProhibited)?;
                 Ok(token)
             }
@@ -428,7 +428,7 @@ mod test {
         let target = BootTarget::NormalBoot(Slot {
             suffix: 'a'.try_into().unwrap(),
             priority: DEFAULT_PRIORITY.into(),
-            bootability: Bootability::Successful,
+            bootability: Bootability::Successful(DEFAULT_RETRIES.into()),
         });
         assert_eq!(sb.mark_boot_attempt(), Ok(BootToken(())));
         assert_eq!(sb.get_boot_target().unwrap(), target);
@@ -603,7 +603,10 @@ mod test {
         abr_data.crc32.set(abr_data.calculate_crc32());
         let sb = SlotBlock::<AbrData>::deserialize(abr_data.as_bytes(), BootToken(()));
         assert_eq!(sb.cache_status(), CacheStatus::Clean);
-        assert_eq!(sb.slots_iter().next().unwrap().bootability, Bootability::Successful);
+        assert_eq!(
+            sb.slots_iter().next().unwrap().bootability,
+            Bootability::Successful(DEFAULT_RETRIES.into())
+        );
     }
 
     type TestDisk = Disk<RamBlockIo<Vec<u8>>, ArrayVec<Option<Box<[u8]>>, 2>>;

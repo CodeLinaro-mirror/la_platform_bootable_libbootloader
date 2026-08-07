@@ -278,7 +278,7 @@ impl super::private::SlotGet for SlotBlock<BootloaderControl> {
             .ok_or(Error::BadIndex(number))?;
 
         let bootability = match (slot_data.successful(), slot_data.tries()) {
-            (true, _) => Bootability::Successful,
+            (true, t) => Bootability::Successful(t.into()),
             (false, t) if t > 0 => Bootability::Retriable(t.into()),
             (_, _) => Bootability::Unbootable(UnbootableReason::Unknown),
         };
@@ -348,7 +348,7 @@ impl Manager for SlotBlock<BootloaderControl> {
                 let token = self.take_boot_token().ok_or(Error::OperationProhibited)?;
                 Ok(token)
             }
-            Bootability::Successful => {
+            Bootability::Successful(_) => {
                 let token = self.take_boot_token().ok_or(Error::OperationProhibited)?;
                 Ok(token)
             }
@@ -568,7 +568,7 @@ mod test {
         let target = BootTarget::NormalBoot(Slot {
             suffix: 'a'.try_into().unwrap(),
             priority: DEFAULT_PRIORITY.into(),
-            bootability: Bootability::Successful,
+            bootability: Bootability::Successful(initial_tries.into()),
         });
         assert_eq!(sb.mark_boot_attempt(), Ok(BootToken(())));
         assert_eq!(BootTarget::NormalBoot(sb.slots_iter().next().unwrap()), target);

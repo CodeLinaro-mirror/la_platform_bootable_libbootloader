@@ -2376,7 +2376,7 @@ pub(crate) mod test {
         check_var(&mut gbl_fb, "slot-retry-count", "a", "7");
         check_var(&mut gbl_fb, "slot-successful", "b", "yes");
         check_var(&mut gbl_fb, "slot-unbootable", "b", "no");
-        check_var(&mut gbl_fb, "slot-retry-count", "b", "0");
+        check_var(&mut gbl_fb, "slot-retry-count", "b", "7");
         check_var(&mut gbl_fb, "slot-successful", "c", "no");
         check_var(&mut gbl_fb, "slot-unbootable", "c", "yes");
         check_var(&mut gbl_fb, "slot-retry-count", "c", "0");
