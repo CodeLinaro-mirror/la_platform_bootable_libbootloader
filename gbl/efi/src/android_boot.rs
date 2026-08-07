@@ -150,25 +150,23 @@ pub fn efi_android_boot(
         unsafe { boot::riscv64::jump_linux(kernel, boot_hart_id, fdt) };
     }
 
-    #[cfg(all(target_arch = "aarch64", feature = "efi_boot_stub"))]
+    #[cfg(feature = "efi_boot_stub")]
     {
         use libgbl::android_boot::device_tree::PROP_BOOTARGS;
 
         /// Maximum length of kernel command line in bytes, matching Linux `COMMAND_LINE_SIZE`.
         const COMMAND_LINE_SIZE: usize = 2048;
 
-        efi_println!(entry, "Loading PE/COFF kernel image");
+        efi_println!(entry, "Loading kernel PE/COFF image (EFI boot stub)");
+
+        if !is_efi_boot_stub(kernel) {
+            efi_println!(entry, "Unsupported PE/COFF format");
+            return Err(liberror::Error::Unsupported.into());
+        }
 
         let bs = entry.system_table().boot_services();
 
-        // SAFETY: `fdt` points to memory within `boot_buffer`. Because this function transfers
-        // execution directly to the kernel and never returns from the kernel, `boot_buffer` is
-        // never dropped nor deallocated during EFI execution.
-        unsafe {
-            bs.install_configuration_table(&efi::EFI_DTB_TABLE_GUID, fdt.as_ptr() as *mut _)?;
-        }
-
-        // SAFETY: `kernel` points to valid kernel image bytes.
+        // SAFETY: `kernel` points to valid PE/COFF kernel image bytes.
         let mut loaded_image = unsafe { bs.load_image(kernel)? };
 
         // Convert FDT bootargs to UTF-16 and install into LoadOptions.
@@ -187,7 +185,7 @@ pub fn efi_android_boot(
             };
 
         if !options.is_empty() {
-            // SAFETY: `options` is stack-allocated on the current function frame and outlives
+            // SAFETY: `options` is stack-allocated and the current stack frame outlives
             // `loaded_image.start()`.
             unsafe {
                 loaded_image.protocol.set_load_options(
@@ -197,57 +195,70 @@ pub fn efi_android_boot(
             }
         }
 
-        // Install the fixed placement protocol to disable physical KASLR (does NOT disable virtual
-        // KASLR which is controlled via kaslr-seed FDT node).
-        bs.install_null_protocol_interface(
-            &mut loaded_image.image_handle,
-            &efi::LINUX_EFI_LOADED_IMAGE_FIXED_GUID,
-        )?;
+        #[cfg(target_arch = "aarch64")]
+        {
+            // SAFETY: The boot app should either succeed by never returning, or fail by triggering
+            // an infinite loop or system reset, so `fdt` with 'static lifetime is never
+            // deallocated during EFI execution.
+            unsafe {
+                bs.install_configuration_table(&efi::EFI_DTB_TABLE_GUID, fdt.as_ptr() as *mut _)?;
+            }
 
-        efi_println!(entry, "Starting kernel EFI boot stub");
-        loaded_image.start()?;
-        unreachable!();
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "efi_boot_stub"))]
-    {
-        use libgbl::android_boot::device_tree::PROP_BOOTARGS;
-
-        let fdt = fdt::Fdt::new(&fdt[..])?;
-        let cmdline = fdt.get_property("chosen", PROP_BOOTARGS).unwrap();
-        // TODO(b/477970734): The EFI handover protocol is deprecated per
-        // https://www.kernel.org/doc/html/v6.6/arch/x86/boot.html#efi-handover-protocol-deprecated
-        // We should shift to the standard BS.load_image() && .start_image() in the future.
-
-        // Mark the boot sector (loaded at LOW_MEMORY_ADDR) and kernel image (loaded at
-        // HIGH_MEMORY_ADDR) as used, so that BOOT_SERVICES.allocate_pages() don't allocate these
-        // regions for others to use.
-        const EFI_PAGE_SIZE: usize = efi_types::EFI_PAGE_SIZE as _;
-        const LOW_MEMORY_ADDR: u64 = 0x9_0000;
-        const HIGH_MEMORY_ADDR: u64 = 0x10_0000;
-        // Boot sector must fit within [0x9_0000, 0xA_0000]
-        const BOOT_SECTOR_MAX_SIZE: usize = 0x1_0000;
-        let _ = entry.system_table().boot_services().allocate_pages(
-            efi_types::EFI_MEMORY_TYPE_LOADER_DATA,
-            efi::AllocationAddress::Fixed(LOW_MEMORY_ADDR),
-            BOOT_SECTOR_MAX_SIZE / EFI_PAGE_SIZE,
-        )?;
-        let _ = entry.system_table().boot_services().allocate_pages(
-            efi_types::EFI_MEMORY_TYPE_LOADER_DATA,
-            efi::AllocationAddress::Fixed(HIGH_MEMORY_ADDR),
-            (kernel.len() + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE,
-        )?;
-
-        // SAFETY: We currently target at Cuttlefish emulator where images are provided valid.
-        unsafe {
-            boot::x86::boot_linux_bzimage_efi_handover(
-                kernel,
-                ramdisk,
-                cmdline,
-                LOW_MEMORY_ADDR as _,
-                entry.image_handle_ptr(),
-                entry.system_table_ptr(),
+            // Install the fixed placement protocol to disable physical KASLR (does NOT disable
+            // virtual KASLR which is controlled via kaslr-seed FDT node).
+            // TODO: Do we really want this? Do we want the firmware to handle KASLR or rely on the
+            // kernel to relocate itself?
+            bs.install_null_protocol_interface(
+                &mut loaded_image.image_handle,
+                &efi::LINUX_EFI_LOADED_IMAGE_FIXED_GUID,
             )?;
         }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            use efi::protocol::{
+                device_path::InitrdDevicePathProtocol,
+                load_file2::{InitrdLoadFile2Protocol, LoadFile2Protocol},
+            };
+            use spin::{Mutex, MutexGuard};
+
+            let initrd_load_file2 = {
+                static INITRD_LOAD_FILE2: Mutex<Option<InitrdLoadFile2Protocol>> = Mutex::new(None);
+                let lf2 = MutexGuard::leak(INITRD_LOAD_FILE2.lock());
+                *lf2 = Some(InitrdLoadFile2Protocol(ramdisk));
+                lf2.as_mut().unwrap()
+            };
+            let initrd_device_path = {
+                static INITRD_DEVICE_PATH: Mutex<InitrdDevicePathProtocol> =
+                    Mutex::new(InitrdDevicePathProtocol);
+                MutexGuard::leak(INITRD_DEVICE_PATH.lock())
+            };
+
+            let mut initrd_handle: efi_types::EfiHandle = core::ptr::null_mut();
+            bs.install_protocol_from_rust::<LoadFile2Protocol, _>(
+                Some(&mut initrd_handle),
+                initrd_load_file2,
+            )?;
+            bs.install_protocol_from_rust::<InitrdDevicePathProtocol, _>(
+                Some(&mut initrd_handle),
+                initrd_device_path,
+            )?;
+
+            efi_println!(entry, "Installed initrd LoadFile2 protocol and handle");
+        }
+
+        efi_println!(entry, "Starting kernel EFI boot stub");
+        let res = loaded_image.start();
+        panic!("Failed to start kernel boot stub or kernel boot stub returned with error: {res:?}");
     }
+}
+
+/// Returns true if the kernel is compiled as a PE/COFF EFI binary (`CONFIG_EFI_STUB=y`).
+#[cfg(feature = "efi_boot_stub")]
+fn is_efi_boot_stub(kernel: &[u8]) -> bool {
+    if kernel.len() < 0x40 || &kernel[0..2] != b"MZ" {
+        return false;
+    }
+    let pe_offset = u32::from_le_bytes(kernel[0x3c..0x40].try_into().unwrap()) as usize;
+    kernel.get(pe_offset..).unwrap_or_default().starts_with(b"PE\0\0")
 }

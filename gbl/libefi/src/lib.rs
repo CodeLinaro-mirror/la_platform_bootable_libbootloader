@@ -222,16 +222,6 @@ impl EfiEntry {
     pub fn image_handle(&self) -> DeviceHandle {
         DeviceHandle(self.image_handle)
     }
-
-    /// Gets the image handle pointer.
-    pub fn image_handle_ptr(&self) -> *mut core::ffi::c_void {
-        self.image_handle as *mut _
-    }
-
-    /// Gets the system table pointer.
-    pub fn system_table_ptr(&self) -> *mut core::ffi::c_void {
-        self.systab_ptr as *mut _
-    }
 }
 
 /// Implement `TplControl` here for convenience so callers don't have to

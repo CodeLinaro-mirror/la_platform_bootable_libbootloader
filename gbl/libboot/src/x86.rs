@@ -45,8 +45,7 @@
 //! detail.
 
 use core::arch::asm;
-use core::ffi::c_void;
-use core::mem::{size_of, transmute};
+use core::mem::size_of;
 use core::slice::from_raw_parts_mut;
 use liberror::{Error, Result};
 #[cfg(feature = "fuchsia")]
@@ -289,55 +288,6 @@ where
             ep = in(reg) LOAD_ADDR_HIGH + ENTRY_POINT_OFFSET,
             in("rsi") low_mem_addr,
             options(noreturn)
-        );
-    }
-}
-
-/// Boots an x86_64 bzImage using the EFI handover protocol.
-///
-/// # Safety
-///
-/// * Caller must ensure that `kernel` contains a valid Linux kernel and `low_mem_addr` is valid.
-/// * Caller must ensure that there is enough memory at address 0x10_0000 for relocating `kernel`.
-/// * `image_handle` and `system_table` must be valid pointers.
-pub unsafe fn boot_linux_bzimage_efi_handover(
-    kernel: &[u8],
-    ramdisk: &[u8],
-    cmdline: &[u8],
-    low_mem_addr: usize,
-    image_handle: *mut c_void,
-    system_table: *mut c_void,
-) -> Result<!> {
-    let boot_params_ptr = low_mem_addr as *mut _;
-
-    // SAFETY: Forwarding safety requirements to helper.
-    let bootparam_fixup =
-        unsafe { setup_bzimage_boot_params(kernel, ramdisk, cmdline, low_mem_addr)? };
-
-    let handover_offset = bootparam_fixup.setup_header_ref().handover_offset as usize;
-    let handover_entry = LOAD_ADDR_HIGH + ENTRY_POINT_OFFSET + handover_offset;
-
-    // Function prototype for the 64-bit Linux EFI Handover Protocol entry point.
-    //
-    // # Safety
-    //
-    // * `image_handle` points to the loaded image handle of the bootloader application.
-    // * `system_table` points to the UEFI system table.
-    // * `boot_params` points to a `boot_params` structure that outlives the call.
-    type EfiHandoverEntry = unsafe extern "sysv64" fn(
-        image_handle: *mut c_void,
-        system_table: *mut c_void,
-        boot_params: *mut c_void,
-    ) -> !;
-
-    // SAFETY:
-    // * `handover_entry` points to a valid EFI handover entry point using System V AMD64 ABI.
-    // * `boot_params_ptr` outlives the call.
-    unsafe {
-        transmute::<_, EfiHandoverEntry>(handover_entry as *const ())(
-            image_handle,
-            system_table,
-            boot_params_ptr,
         );
     }
 }
