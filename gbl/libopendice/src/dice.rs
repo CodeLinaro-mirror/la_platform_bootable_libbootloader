@@ -24,7 +24,7 @@ use crate::{
 use core::{marker::PhantomData, ptr};
 use opendice_android_bindgen::DiceAndroidHandoverParse;
 
-pub use opendice_cbor_bindgen::{DiceConfigType, DiceInputValues, DiceMode};
+pub use opendice_cbor_bindgen::{DiceConfigType, DiceInputValues, DiceKeyAlgorithm, DiceMode};
 
 /// The size of a CDI.
 pub const CDI_SIZE: usize = opendice_cbor_bindgen::DICE_CDI_SIZE as usize;

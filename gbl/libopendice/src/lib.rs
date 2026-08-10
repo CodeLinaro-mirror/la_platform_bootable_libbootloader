@@ -227,7 +227,7 @@ fn cose_alg_to_dice_key_algorithm(alg: i64) -> Result<DiceKeyAlgorithm> {
 /// Recovers the algorithm of the leaf certificate's subject public key. Per the
 /// Android Profile for DICE this is the current stage's signing key, i.e. the
 /// `authority_algorithm` for the next [`DiceAndroidHandoverMainFlow`] call.
-fn extract_subject_algorithm_from_dice_chain(bcc: &[u8]) -> Result<DiceKeyAlgorithm> {
+pub fn extract_subject_algorithm_from_dice_chain(bcc: &[u8]) -> Result<DiceKeyAlgorithm> {
     let cose_alg =
         DiceChain::new(bcc).leaf_certificate()?.payload()?.subject_public_key()?.algorithm()?;
     cose_alg_to_dice_key_algorithm(cose_alg)
