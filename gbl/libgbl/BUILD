@@ -79,6 +79,7 @@ rust_library(
         "@gbl//libmisc",
         "@gbl//libopendice",
         "@gbl//libprofile",
+        "@gbl//libpvmfwconfig",
         "@gbl//libsafemath",
         "@gbl//libstorage",
         "@gbl//libtrace",

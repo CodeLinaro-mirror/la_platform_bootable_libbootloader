@@ -22,14 +22,11 @@ use crate::{
     },
     device_tree::{entry_is_vmdtbo, DtComponentSourceMetadata, DtSourceLocation},
     gbl_avb::state::BootStateColor,
-    gbl_println, GblOps, KiB,
+    gbl_println, GblOps,
 };
 use avb::{SlotVerifyData, VbmetaVerifyError};
 use bootparams::bootconfig::BootConfigBuilder;
-use core::{
-    ffi::CStr,
-    mem::{align_of, size_of},
-};
+use core::ffi::CStr;
 use dttable::DtTableImage;
 use fdt::{fdt_encode_cell_sized_property, fdt_ensure_reserved_memory_initialized, std_props, Fdt};
 use liberror::{Error, Result};
@@ -37,11 +34,11 @@ use opendice::{
     dice::{Config, DiceMode, InputValues, HASH_SIZE, HIDDEN_SIZE},
     dice_android_format_config_descriptor, dice_android_handover_main_flow, DiceAndroidConfig,
 };
+use pvmfwconfig::{
+    PvmfwConfEntry, PvmfwConfHeader, PvmfwConfigEntryType, NUM_PVMFW_CONFIG_ENTRIES,
+};
 use safemath::SafeNum;
-use static_assertions::const_assert;
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
-
-const NUM_PVMFW_CONFIG_ENTRIES: usize = 4;
+use zerocopy::FromBytes;
 
 fn align_up(size: usize, alignment: usize) -> Result<usize> {
     Ok(SafeNum::from(size).round_up(alignment).try_into().map_err(Error::ArithmeticOverflow)?)
@@ -53,11 +50,6 @@ fn check_alignment(buf: &[u8], alignment: usize) -> Result<()> {
         0 => Ok(()),
         _ => Err(Error::InvalidAlignment),
     }
-}
-
-const fn align_up_const(size: usize, alignment: usize) -> usize {
-    let offset = alignment.checked_sub(1).unwrap();
-    size.checked_add(offset).unwrap() & !offset
 }
 
 /// Represents an object contains AVF verification data
@@ -323,7 +315,7 @@ pub(crate) fn inject_vmdtbo(
     vmdtbo: &[u8],
 ) -> Result<usize> {
     check_alignment(pvmfw_data_buf, kernel_attrs.page_size)?;
-    const VMDTBO_ENTRY_IDX: usize = 2;
+    const VMDTBO_ENTRY_IDX: usize = PvmfwConfigEntryType::VmDtbo as usize;
 
     let vmdtbo_entry_sz = vmdtbo.len();
     let vmdtbo_entry_sz_padded = align_up(vmdtbo_entry_sz, PvmfwConfEntry::ALIGNMENT)?;
@@ -407,69 +399,36 @@ where
     Ok(())
 }
 
-// TODO: Try to encapsulate building the pvmfw configuration buffer as suggested:
-// http://aosp/3674715/comment/3fa5f59f_d119abc8/
-
-/// Pvmfw configuration entry implementation; see:
-/// https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/guest/pvmfw/README.md
-#[repr(C, packed)]
-#[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, Immutable, KnownLayout, FromBytes, IntoBytes,
-)]
-struct PvmfwConfEntry {
-    offset: u32,
-    size: u32,
-}
-
-const_assert!(PvmfwConfEntry::ALIGNMENT >= align_of::<PvmfwConfEntry>());
-
-impl PvmfwConfEntry {
-    const ALIGNMENT: usize = 8;
-}
-
-/// Pvmfw configuration header implementation; see:
-/// https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Virtualization/guest/pvmfw/README.md
-#[repr(C, packed)]
-#[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, Immutable, KnownLayout, FromBytes, IntoBytes,
-)]
-struct PvmfwConfHeader {
-    magic: u32,
-    version: u32,
-    total_size: u32,
-    flags: u32,
-    entries: [PvmfwConfEntry; NUM_PVMFW_CONFIG_ENTRIES],
-}
-
-const_assert!(PvmfwConfHeader::ALIGNMENT >= align_of::<PvmfwConfHeader>());
-
 type EntryBufsSizes = [(usize, usize); NUM_PVMFW_CONFIG_ENTRIES];
 
-impl PvmfwConfHeader {
-    const MAGIC: u32 = u32::from_ne_bytes(*b"pvmf");
-    const DEFAULT_FLAGS: u32 = 0; // Flags field is currently unused and must be zero
-    const ALIGNMENT: usize = KiB!(4);
-    const PADDED_SIZE: usize = align_up_const(size_of::<Self>(), PvmfwConfEntry::ALIGNMENT);
+// TODO: Move to libpvmfwconfig to encapsulate building the pvmfw configuration buffer details as
+// suggested: http://aosp/3674715/comment/3fa5f59f_d119abc8/.
 
-    fn init_padded_prefix_mut<'a>(buffer: &'a mut [u8]) -> Result<(&'a mut Self, &'a mut [u8])> {
-        if buffer.as_ptr().align_offset(PvmfwConfHeader::ALIGNMENT.into()) != 0 {
-            return Err(Error::InvalidAlignment.into());
-        }
-        let (header_buf, remains) = split(buffer, Self::PADDED_SIZE)?;
+/// Writes the pvmfw configuration header in place and populates its entry table.
+struct PvmfwConfigBuilder<'a> {
+    header: &'a mut PvmfwConfHeader,
+}
+
+impl<'a> PvmfwConfigBuilder<'a> {
+    /// Initializes a configuration header at the start of `buffer`, returning the builder and
+    /// the remaining buffer for the configuration entries.
+    fn init_padded_prefix_mut(buffer: &'a mut [u8]) -> Result<(Self, &'a mut [u8])> {
+        check_alignment(buffer, PvmfwConfHeader::DATA_ALIGNMENT)?;
+        let (header_buf, remains) = split(buffer, PvmfwConfHeader::PADDED_SIZE)?;
         let (header, header_pad) =
-            Self::mut_from_prefix(header_buf).map_err(|_| Error::BadBufferSize)?;
-        header.magic = Self::MAGIC;
-        header.version = Self::encode_pvmfw_config_version(1, 2);
-        header.flags = Self::DEFAULT_FLAGS;
-        header.total_size = Self::PADDED_SIZE.try_into()?;
+            PvmfwConfHeader::mut_from_prefix(header_buf).map_err(|_| Error::BadBufferSize)?;
+        header.magic = PvmfwConfHeader::MAGIC;
+        header.version = PvmfwConfHeader::SUPPORTED_VERSION;
+        header.flags = PvmfwConfHeader::DEFAULT_FLAGS;
+        header.total_size = PvmfwConfHeader::PADDED_SIZE.try_into()?;
         header_pad.fill(0u8);
-        Ok((header, remains))
+        Ok((Self { header }, remains))
     }
 
     fn set_config_entries(&mut self, entry_sizes: EntryBufsSizes) -> Result<()> {
-        let mut total_size = SafeNum::from(Self::PADDED_SIZE);
+        let mut total_size = SafeNum::from(PvmfwConfHeader::PADDED_SIZE);
 
-        for (entry, (entry_len, padded_len)) in self.entries.iter_mut().zip(entry_sizes) {
+        for (entry, (entry_len, padded_len)) in self.header.entries.iter_mut().zip(entry_sizes) {
             if entry_len > padded_len || padded_len % PvmfwConfEntry::ALIGNMENT != 0 {
                 return Err(Error::BadBufferSize.into());
             }
@@ -477,12 +436,12 @@ impl PvmfwConfHeader {
             entry.size = entry_len.try_into()?;
             total_size += padded_len;
         }
-        self.total_size = total_size.try_into().map_err(Error::ArithmeticOverflow)?;
+        self.header.total_size = total_size.try_into().map_err(Error::ArithmeticOverflow)?;
         Ok(())
     }
 
-    const fn encode_pvmfw_config_version(major: u16, minor: u16) -> u32 {
-        ((major as u32) << 16) | (minor as u32)
+    fn total_size(&self) -> u32 {
+        self.header.total_size
     }
 }
 
@@ -494,7 +453,7 @@ fn write_pvmfw_config<'a, T: AVFVerificationData>(
     scratch_buffer: &mut [u8],
     boot_info: &BootInfo<T>,
 ) -> Result<usize> {
-    let (header, entries) = PvmfwConfHeader::init_padded_prefix_mut(config_out)?;
+    let (mut config, entries) = PvmfwConfigBuilder::init_padded_prefix_mut(config_out)?;
 
     // Write pvmfw config entries
     let (bcc_len, bcc_padded_len, rest) =
@@ -503,8 +462,8 @@ fn write_pvmfw_config<'a, T: AVFVerificationData>(
     let entry_sizes = [(bcc_len, bcc_padded_len), (0, 0), (0, 0), (ref_dt_len, ref_dt_padded_len)];
 
     // Finally, update header config entries
-    header.set_config_entries(entry_sizes)?;
-    Ok(header.total_size.try_into()?)
+    config.set_config_entries(entry_sizes)?;
+    Ok(config.total_size().try_into()?)
 }
 
 fn pad_entry_split_rest(buffer: &mut [u8], entry_size: usize) -> Result<(usize, &mut [u8])> {
@@ -711,9 +670,11 @@ pub(crate) mod test {
         constants::{PAGE_SIZE, PVMFW_DATA_ALIGNMENT},
         device_tree::DtComponentSource,
         ops::test::{FakeGblOps, FakeGblOpsStorage},
+        KiB,
     };
     use fdt::{DEFAULT_ADDRESS_CELLS, DEFAULT_SIZE_CELLS};
     use libtestutils::AlignedBuffer;
+    use pvmfwconfig::PvmfwConfig;
 
     struct TestVerifyData<T: AsRef<[u8]>> {
         vendor_digest: Option<T>,
@@ -765,7 +726,7 @@ pub(crate) mod test {
 
     fn dummy_pvmfw_binary(fill_value: u8, fill_count: usize) -> Vec<u8> {
         let mut pvmfw_bin_buf = vec![fill_value; fill_count];
-        pvmfw_bin_buf.resize(align_up(fill_count, PAGE_SIZE).unwrap(), 0);
+        pvmfw_bin_buf.resize(fill_count.next_multiple_of(PAGE_SIZE), 0);
         pvmfw_bin_buf
     }
 
@@ -789,7 +750,7 @@ pub(crate) mod test {
         partition.resize(HEADER_SIZE + binary.len(), 0);
         partition[8..12].copy_from_slice(&(fill_count as u32).to_le_bytes());
         partition[HEADER_SIZE..].copy_from_slice(&binary);
-        (partition, align_up(fill_count, PAGE_SIZE).unwrap() + PvmfwConfHeader::PADDED_SIZE)
+        (partition, fill_count.next_multiple_of(PAGE_SIZE) + PvmfwConfHeader::PADDED_SIZE)
     }
 
     pub(crate) const DUMMY_VENDOR_HANDOVER: [u8; 112] = [
@@ -866,41 +827,28 @@ pub(crate) mod test {
         assert!(matches!(err, Error::InvalidAlignment));
     }
 
-    fn parse_pvmfw_data_conf(
-        pvmfw_data: &[u8],
-        bin_size: usize,
-    ) -> (&PvmfwConfHeader, [Vec<u8>; NUM_PVMFW_CONFIG_ENTRIES]) {
-        let (_, conf_buf) = pvmfw_data.split_at_checked(bin_size).unwrap();
-        let (conf_header_buf, _) = conf_buf.split_at_checked(size_of::<PvmfwConfHeader>()).unwrap();
-        let header = PvmfwConfHeader::ref_from_bytes(conf_header_buf).unwrap();
-        let mut entries: [Vec<u8>; NUM_PVMFW_CONFIG_ENTRIES] = std::array::from_fn(|_| Vec::new());
-        for i in 0..NUM_PVMFW_CONFIG_ENTRIES {
-            let size = header.entries[i].size as usize;
-            let offset = header.entries[i].offset as usize;
-            entries[i] = conf_buf[offset..offset + size].into();
-        }
-        (header, entries)
-    }
-
     #[test]
     fn test_inject_vmdtbo_aligned_to_kernel_page_size_4k() {
         const BIN_SIZE: usize = 0x1000;
-        const VMDTBO_ENTRY_IDX: usize = 2;
         let vmdtbo = [0xcd; 50];
         let dtbo_part = include_bytes!("../../testdata/android/dtbo_a.img").to_vec();
         let attrs = KernelAttributes { reserved_size: 0, page_size: 4 * KiB!(1) };
         let mut out_pvmfw_buf = AlignedBuffer::new(0x100000, attrs.page_size);
         build_test_pvmfw_data(&mut out_pvmfw_buf, BIN_SIZE, &attrs, &dtbo_part).unwrap();
-        let (conf_header, mut conf_entries) = parse_pvmfw_data_conf(&out_pvmfw_buf, BIN_SIZE);
-        let old_conf_size = conf_header.total_size;
-        assert_eq!(conf_entries[VMDTBO_ENTRY_IDX].len(), 0);
+        let config = PvmfwConfig::from_bytes(&out_pvmfw_buf[BIN_SIZE..]).unwrap();
+        let old_conf_size = config.total_size();
+        let old_handover = config.entry(PvmfwConfigEntryType::DiceHandover).unwrap().to_vec();
+        let old_ref_dt = config.entry(PvmfwConfigEntryType::VmReferenceDt).unwrap().to_vec();
+        assert_eq!(config.entry(PvmfwConfigEntryType::VmDtbo).unwrap(), &[]);
 
         let total_sz = inject_vmdtbo(&mut out_pvmfw_buf, BIN_SIZE, &attrs, &vmdtbo).unwrap();
-        let (conf_header, new_conf_entries) = parse_pvmfw_data_conf(&out_pvmfw_buf, BIN_SIZE);
+        let config = PvmfwConfig::from_bytes(&out_pvmfw_buf[BIN_SIZE..]).unwrap();
 
-        conf_entries[VMDTBO_ENTRY_IDX] = vmdtbo.into(); // VMDTBO entry should contain data now
-        assert!(old_conf_size < conf_header.total_size);
-        assert_eq!(conf_entries, new_conf_entries);
+        assert!(old_conf_size < config.total_size());
+        assert_eq!(config.entry(PvmfwConfigEntryType::DiceHandover).unwrap(), &old_handover[..]);
+        assert_eq!(config.entry(PvmfwConfigEntryType::DebugPolicy).unwrap(), &[]);
+        assert_eq!(config.entry(PvmfwConfigEntryType::VmDtbo).unwrap(), &vmdtbo);
+        assert_eq!(config.entry(PvmfwConfigEntryType::VmReferenceDt).unwrap(), &old_ref_dt[..]);
         assert_eq!(total_sz % attrs.page_size, 0);
     }
 
@@ -986,7 +934,7 @@ pub(crate) mod test {
         let exp_refdt_size = 0x203u32;
         let exp_handover_size = 0x256u32;
         let exp_refdt_offset = (PvmfwConfHeader::PADDED_SIZE
-            + align_up(exp_handover_size as usize, PvmfwConfEntry::ALIGNMENT).unwrap())
+            + (exp_handover_size as usize).next_multiple_of(PvmfwConfEntry::ALIGNMENT))
             as u32;
         let expected_entries = [
             PvmfwConfEntry { offset: PvmfwConfHeader::PADDED_SIZE as u32, size: exp_handover_size },
@@ -996,7 +944,7 @@ pub(crate) mod test {
         ];
         let expected_header = PvmfwConfHeader {
             magic: PvmfwConfHeader::MAGIC,
-            version: PvmfwConfHeader::encode_pvmfw_config_version(1, 2),
+            version: PvmfwConfHeader::SUPPORTED_VERSION,
             total_size: sz as u32,
             flags: PvmfwConfHeader::DEFAULT_FLAGS,
             entries: expected_entries,

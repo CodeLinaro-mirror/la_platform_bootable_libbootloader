@@ -65,6 +65,7 @@ build_and_run_tests(
         "@gbl//libgbl:libgbl_test_dev",
         "@gbl//libmisc:libmisc_test",
         "@gbl//libopendice:libopendice_test",
+        "@gbl//libpvmfwconfig:libpvmfwconfig_test",
         "@gbl//libsafemath:libsafemath_test",
         "@gbl//libstorage:libstorage_test",
         "@gbl//libutils:test",

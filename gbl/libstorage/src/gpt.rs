@@ -1264,19 +1264,12 @@ pub(crate) mod test {
     use gbl_async::block_on;
     use libtestutils::AlignedBuffer;
 
-    // helper functions for constant calculation
-    const fn round_down(v: usize, blk: usize) -> usize {
-        v - (v % blk)
-    }
-    const fn round_up(v: usize, blk: usize) -> usize {
-        round_down((v + blk) - 1, blk)
-    }
     const BLOCK_SIZE: usize = 512;
     const MBR_BLKS: usize = 1;
     const MBR_SIZE: usize = MBR_BLKS * BLOCK_SIZE;
     const GPT_HEADER_NO_ENTRIES_SIZE: usize = size_of::<GptHeader>();
     const GPT_HEADER_NO_ENTRIES_FULL_BLOCK_SIZE: usize =
-        round_up(GPT_HEADER_NO_ENTRIES_SIZE, BLOCK_SIZE);
+        GPT_HEADER_NO_ENTRIES_SIZE.next_multiple_of(BLOCK_SIZE);
 
     /// A helper to calculate bytes to read for a GPT header depending on the entries count.
     fn gpt_header_size_block_align<T>(entries_count: T) -> usize
@@ -2006,8 +1999,8 @@ pub(crate) mod test {
             // `gpt_test_1.bin` has a 8k "boot_a" and a 12k "boot_b". Thus partitions space is 40
             // blocks (512 bytes block size) and in total the GPT disk needs (40 + 1 + (33) * 2) = 107
             // blocks.
-            let partitions_size: usize =
-                round_up(8 * 1024, BLOCK_SIZE) + round_up(12 * 1024, BLOCK_SIZE);
+            let partitions_size: usize = (8 * 1024usize).next_multiple_of(BLOCK_SIZE)
+                + (12 * 1024usize).next_multiple_of(BLOCK_SIZE);
             let len = partitions_size
                 + mbr_gpt_header_size_block_align(entries_count)
                 + gpt_header_size_block_align(entries_count);
@@ -2227,8 +2220,7 @@ pub(crate) mod test {
             );
             let expected_start: u64 = expected_end;
             let expected_end = expected_start
-                + u64::try_from(round_up(NEW_PARTITION_1_SIZE.try_into().unwrap(), BLOCK_SIZE))
-                    .unwrap();
+                + NEW_PARTITION_1_SIZE.next_multiple_of(BLOCK_SIZE.try_into().unwrap());
             assert_eq!(
                 gpt.find_partition("new_1").unwrap().absolute_range().unwrap(),
                 (expected_start, expected_end)
