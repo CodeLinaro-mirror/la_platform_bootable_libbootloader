@@ -35,10 +35,10 @@ pub fn efi_android_load<'a>(
 #[cfg_attr(feature = "efi_boot_stub", allow(unused_variables))]
 pub fn efi_android_boot(
     entry: EfiEntry,
-    kernel: &[u8],
-    ramdisk: &[u8],
-    fdt: &[u8],
-    remains: &mut [u8],
+    kernel: &'static [u8],
+    ramdisk: &'static [u8],
+    fdt: &'static [u8],
+    remains: &'static mut [u8],
 ) -> Result<()> {
     efi_println!(entry, "");
     efi_println!(
