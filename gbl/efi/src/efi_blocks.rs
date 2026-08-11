@@ -105,6 +105,17 @@ unsafe impl BlockIo for EfiBlockDeviceIo<'_> {
     fn write_blocks_sync(&self, blk_offset: u64, data: &mut [u8]) -> Result<(), Error> {
         self.block_io.write_blocks(self.media_id, blk_offset, data).or(Err(Error::BlockIoError))
     }
+
+    async fn flush(&self) -> Result<(), Error> {
+        let res = match &self.block_io2 {
+            Some(v) => v.flush_blocks_ex().await,
+            _ => self.block_io.flush_blocks().map_err(Into::into),
+        };
+        match res {
+            Ok(()) | Err(Error::Unsupported) | Err(Error::NotFound) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /// The [GblDisk] type in the GBL EFI context.

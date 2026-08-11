@@ -27,7 +27,7 @@ use crate::{
     metrics::{FirmwareVersionMetrics, GblMetrics, GblTime},
     partition::{
         check_part_unique, read_unique_partition, read_unique_partition_sync,
-        write_unique_partition, GblDisk,
+        write_unique_partition, write_unique_partition_sync, GblDisk,
     },
 };
 pub use abr::{set_one_shot_bootloader, set_one_shot_recovery, Ops as AbrOps, SlotIndex};
@@ -39,7 +39,6 @@ use core::{
     ops::{Deref, DerefMut},
     result::Result,
 };
-use gbl_async::block_on;
 use libprofile::ProfileBackend;
 #[cfg(feature = "fuchsia")]
 use libutils::aligned_subslice;
@@ -224,7 +223,7 @@ pub trait GblOps<'a> {
         off: u64,
         data: &mut [u8],
     ) -> Result<(), Error> {
-        block_on(self.write_to_partition(part, off, data))
+        write_unique_partition_sync(self.disks(), part, off, data)
     }
 
     /// Returns the size of a partition. Returns Ok(None) if partition doesn't exist.
