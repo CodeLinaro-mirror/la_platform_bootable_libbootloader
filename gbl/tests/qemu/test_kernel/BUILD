@@ -41,6 +41,8 @@ rust_binary(
         "@gbl//libboot",
         "@gbl//libbootparams",
         "@gbl//libfdt",
+        "@gbl//libopendice",
+        "@gbl//libpvmfwconfig",
         "@gbl//libsemihosting",
         "@gbl//libtrace",
         "@gbl//libutils",

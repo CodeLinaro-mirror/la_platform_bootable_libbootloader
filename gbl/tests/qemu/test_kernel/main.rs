@@ -24,6 +24,8 @@ use core::{
 };
 use fdt::Fdt;
 use libutils::FromHexStr;
+use opendice::{dice::bcc_handover_parse, extract_subject_algorithm_from_dice_chain};
+use pvmfwconfig::{PvmfwConfig, PvmfwConfigEntryType};
 use semihosting::{File, OpenMode};
 use trace::trace_total_size;
 // Noop allocator to meet dependency requirement.
@@ -62,6 +64,8 @@ pub extern "C" fn rust_eh_personality() {}
 ///   address range if specified
 /// * Caller must guarantee that `androidboot.gbl.trace_addr` and `androidboot.gbl.trace_size`
 ///   mark a valid GBL trace address range if specified.
+/// * Caller must guarantee that the `reg` property of `/reserved-memory/pkvm_guest_firmware`
+///   marks a valid pvmfw address range if the node is present.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_main(fdt_addr: *const u8) -> ! {
     semihosting::println!("GBL Custom Kernel loaded and self-relocated successfully from Rust!");
@@ -109,9 +113,57 @@ pub unsafe extern "C" fn kernel_main(fdt_addr: *const u8) -> ! {
 
     let is_normal = find_bootconfig(bootconfig, "androidboot.force_normal_boot") == Some("1");
     semihosting::println!("Normal Mode: {is_normal:?}",);
+
+    // SAFETY: By safety contract, the `reg` property of `/reserved-memory/pkvm_guest_firmware`
+    // marks a valid pvmfw address range.
+    if let Some(config_data) = unsafe { pvmfw_config_data(&fdt) } {
+        let config = PvmfwConfig::from_bytes(config_data).expect("Failed to parse pvmfw config");
+        let dice_handover = config
+            .entry(PvmfwConfigEntryType::DiceHandover)
+            .expect("Failed to read DICE handover entry");
+        assert!(!dice_handover.is_empty());
+        let parsed = bcc_handover_parse(dice_handover).expect("Failed to parse DICE handover");
+        let bcc = parsed.bcc.expect("Missing BCC in DICE handover");
+        let extracted_alg =
+            extract_subject_algorithm_from_dice_chain(bcc).expect("Failed to extract subject alg");
+        semihosting::println!("[DICE-TEST] Extracted algorithm: {:?}", extracted_alg);
+    }
+
     semihosting::println!("Exiting QEMU test via semihosting.");
     // Terminate QEMU cleanly via libsemihosting
     semihosting::shutdown(0);
+}
+
+/// Returns the pvmfw configuration data from the region described by
+/// `/reserved-memory/pkvm_guest_firmware`, or `None` if the region is not described.
+///
+/// # Safety
+///
+/// Caller must guarantee that the `reg` property of `/reserved-memory/pkvm_guest_firmware`, if
+/// present, marks a valid pvmfw address range.
+unsafe fn pvmfw_config_data(fdt: &Fdt<&[u8]>) -> Option<&'static [u8]> {
+    const PVMFW_NODE_PATH: &str = "/reserved-memory/pkvm_guest_firmware";
+    let reg_prop = fdt.get_property(PVMFW_NODE_PATH, c"reg").ok()?;
+
+    // `reg` is encoded with the cell counts declared on `/reserved-memory`.
+    let address_cells = fdt.get_property_u32("/reserved-memory", c"#address-cells").unwrap();
+    let size_cells = fdt.get_property_u32("/reserved-memory", c"#size-cells").unwrap();
+    let (base_bytes, size_bytes) = reg_prop.split_at(4 * address_cells as usize);
+    assert_eq!(size_bytes.len(), 4 * size_cells as usize, "unexpected pvmfw `reg` length");
+
+    let config_offset = fdt.get_property_u32(PVMFW_NODE_PATH, c"config-data-offset").unwrap();
+
+    // SAFETY: By safety contract, `reg` marks a valid pvmfw address range.
+    let pvmfw =
+        unsafe { from_raw_parts(read_cells(base_bytes) as *const u8, read_cells(size_bytes)) };
+    Some(&pvmfw[config_offset as usize..])
+}
+
+/// Decodes a big-endian device tree cell sequence of up to 64 bits.
+fn read_cells(bytes: &[u8]) -> usize {
+    let mut buf = [0u8; 8];
+    buf[8 - bytes.len()..].copy_from_slice(bytes);
+    u64::from_be_bytes(buf).try_into().unwrap()
 }
 
 /// Helper function to find a bootconfig value by key. If multiple entries with the same

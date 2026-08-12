@@ -222,3 +222,76 @@ qemu_test(
     runfiles = [("@gbl//efi:aarch64_dev_pdb", "gbl.pdb")],
     test_script = ":lldb_debugging_test",
 )
+
+gpt_gen(
+    name = "test_gpt_pvmfw_boot",
+    disk_size = "12M",
+    partitions = {
+        "boot_a": {
+            "size": "1M",
+            "file": ":test_boot_img",
+        },
+        "boot_b": {"size": "1M"},
+        "vendor_boot_a": {
+            "size": "1M",
+            "file": "@gbl//libgbl/testdata:android/vendor_boot_v4_a.img",
+        },
+        "vendor_boot_b": {"size": "1M"},
+        "init_boot_a": {
+            "size": "1M",
+            "file": "@gbl//libgbl/testdata:android/init_boot_a.img",
+        },
+        "init_boot_b": {"size": "1M"},
+        "pvmfw_a": {
+            "size": "1M",
+            "file": "@gbl//libgbl/testdata:android/boot_v4_a.img",
+        },
+        "pvmfw_b": {"size": "1M"},
+    },
+)
+
+py_binary(
+    name = "dice_boot_test",
+    srcs = ["dice_boot_test.py"],
+    imports = ["."],
+    deps = [":qemu_test_utils"],
+)
+
+qemu_test(
+    name = "qemu_dice_boot_test_ed25519",
+    disk = [
+        ":test_gpt_pvmfw_boot",
+        ":test_gpt_misc_normal_mode",
+    ],
+    env = {
+        "GBL_DICE_ALG": "kDiceKeyAlgorithmEd25519",
+    },
+    gbl = "@gbl//efi:aarch64_dev",
+    test_script = ":dice_boot_test",
+)
+
+qemu_test(
+    name = "qemu_dice_boot_test_p256",
+    disk = [
+        ":test_gpt_pvmfw_boot",
+        ":test_gpt_misc_normal_mode",
+    ],
+    env = {
+        "GBL_DICE_ALG": "kDiceKeyAlgorithmP256",
+    },
+    gbl = "@gbl//efi:aarch64_dev",
+    test_script = ":dice_boot_test",
+)
+
+qemu_test(
+    name = "qemu_dice_boot_test_p384",
+    disk = [
+        ":test_gpt_pvmfw_boot",
+        ":test_gpt_misc_normal_mode",
+    ],
+    env = {
+        "GBL_DICE_ALG": "kDiceKeyAlgorithmP384",
+    },
+    gbl = "@gbl//efi:aarch64_dev",
+    test_script = ":dice_boot_test",
+)

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "bool_setting", "int_flag")
 load("@gbl_config//:variables.bzl", "ENABLE_CROSS_LANG_LTO")
 load(
@@ -179,6 +180,15 @@ elf_aarch64_constraint_values = [
 config_setting(
     name = "gbl_rust_elf_aarch64",
     constraint_values = elf_aarch64_constraint_values,
+)
+
+selects.config_setting_group(
+    name = "gbl_rust_aarch64",
+    match_any = [
+        ":gbl_rust_uefi_aarch64",
+        ":gbl_rust_uefi_aarch64_debug",
+        ":gbl_rust_elf_aarch64",
+    ],
 )
 
 platform(

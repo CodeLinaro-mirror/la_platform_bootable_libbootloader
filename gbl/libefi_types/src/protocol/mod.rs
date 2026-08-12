@@ -85,6 +85,7 @@
 //! details on how to safely meet these requirements.
 
 pub mod block_io;
+pub mod gbl_efi_avf;
 pub mod gbl_efi_boot_control;
 pub mod gbl_efi_boot_memory;
 pub mod gbl_efi_fastboot;
