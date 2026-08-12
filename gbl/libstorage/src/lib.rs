@@ -274,6 +274,18 @@ pub unsafe trait BlockIo {
     fn erase_blocks_sync(&self, blk_offset: u64, num_blks: u64) -> Result<()> {
         block_on(self.erase_blocks(blk_offset, num_blks))
     }
+
+    /// Flushes any cached write data to the physical storage device.
+    ///
+    /// The default implementation is a no-op that returns `Ok(())`.
+    async fn flush(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Same as `Self::flush()` but is blocking.
+    fn flush_sync(&self) -> Result<()> {
+        block_on(self.flush())
+    }
 }
 
 /// `BlockIoSync` wraps another BlockIo implementation and only uses its blocking IO interface
@@ -303,6 +315,14 @@ unsafe impl<T: BlockIo> BlockIo for BlockIoSync<T> {
 
     async fn erase_blocks(&self, blk_offset: u64, num_blks: u64) -> Result<()> {
         self.erase_blocks_sync(blk_offset, num_blks)
+    }
+
+    async fn flush(&self) -> Result<()> {
+        self.0.flush_sync()
+    }
+
+    fn flush_sync(&self) -> Result<()> {
+        self.0.flush_sync()
     }
 }
 
@@ -347,6 +367,14 @@ where
 
     fn erase_blocks_sync(&self, blk_offset: u64, num_blks: u64) -> Result<()> {
         self.deref().erase_blocks_sync(blk_offset, num_blks)
+    }
+
+    async fn flush(&self) -> Result<()> {
+        self.deref().flush().await
+    }
+
+    fn flush_sync(&self) -> Result<()> {
+        self.deref().flush_sync()
     }
 }
 
@@ -681,6 +709,16 @@ impl<T: BlockIo, P: BufferPool> Disk<T, P> {
     /// Creates a view of self as a purely synchronous disk.
     pub fn as_sync(&self) -> Disk<BlockIoSync<&T>, PoolRef<'_, P>> {
         Disk::new(BlockIoSync(&self.io), PoolRef::new(self.pool.borrow_mut())).unwrap()
+    }
+
+    /// Flushes modified data to the physical block device.
+    pub async fn flush(&self) -> Result<()> {
+        self.io.flush().await
+    }
+
+    /// Flushes modified data to the physical block device synchronously.
+    pub fn flush_sync(&self) -> Result<()> {
+        self.io.flush_sync()
     }
 }
 

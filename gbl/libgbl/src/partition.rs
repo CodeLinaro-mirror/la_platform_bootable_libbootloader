@@ -485,6 +485,19 @@ impl<'a, B: BlockIo, P: BufferPool, const N: usize> MultiPartitionIo<'a, B, P, N
         }
         Ok(())
     }
+
+    /// Flushes all disks for this partition.
+    pub async fn flush(&self) -> Result<(), Error> {
+        for (disk_idx, _, _) in self.parts.iter() {
+            self.disks[*disk_idx].flush().await?;
+        }
+        Ok(())
+    }
+
+    /// Flushes all disks for this partition synchronously.
+    pub fn flush_sync(&self) -> Result<(), Error> {
+        block_on(self.flush())
+    }
 }
 
 /// Single-partition implementation.
@@ -584,6 +597,19 @@ pub async fn write_unique_partition(
     data: &mut [u8],
 ) -> Result<(), Error> {
     devs[check_part_unique(devs, part)?.0].partition_io(Some(part))?.write(off, data).await
+}
+
+/// Same as `write_unique_partition` but IO is blocking and flushed to storage.
+pub fn write_unique_partition_sync(
+    devs: &'_ [GblDisk<Disk<impl BlockIo, impl BufferPool>, Gpt<impl DerefMut<Target = [u8]>>>],
+    part: &str,
+    off: u64,
+    data: &mut [u8],
+) -> Result<(), Error> {
+    let sync_disk = devs[check_part_unique(devs, part)?.0].as_sync()?;
+    let part_io = sync_disk.partition_io(Some(part))?;
+    block_on(part_io.write(off, data))?;
+    part_io.flush_sync()
 }
 
 /// Syncs all GPT type partition devices.
@@ -1012,6 +1038,12 @@ pub(crate) mod test {
         seg.iter_mut().for_each(|v| *v = !(*v));
         block_on(write_unique_partition(devs, part, off, seg)).unwrap();
         // Checks that data is written.
+        check_read_partition(devs, part, &part_content, off, sz);
+
+        // Flips again and writes synchronously.
+        let seg = &mut part_content[to_usize(off)..][..to_usize(sz)];
+        seg.iter_mut().for_each(|v| *v = !(*v));
+        write_unique_partition_sync(devs, part, off, seg).unwrap();
         check_read_partition(devs, part, &part_content, off, sz);
     }
 
