@@ -28,13 +28,14 @@ generate_license(
 
 exports_files(glob(["include/**/*.h"]))
 
-# Multialg variant supporting Ed25519, P-256 and P-384.
+# Multialg variant supporting Ed25519, P-256, P-384, ML-DSA-65, and ML-DSA-87.
 cbor_baremetal_multialg_srcs = [
     "src/boringssl_hash_kdf_ops.c",
     "src/cbor_cert_op.c",
     "src/cbor_writer.c",
     "src/boringssl_multialg_ops.c",
     "src/boringssl_ecdsa_utils.c",
+    "src/boringssl_mldsa_utils.c",
     "src/dice.c",
     "src/utils.c",
 ]
