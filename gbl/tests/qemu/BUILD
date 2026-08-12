@@ -258,6 +258,32 @@ py_binary(
 )
 
 qemu_test(
+    name = "qemu_dice_boot_test_mldsa65",
+    disk = [
+        ":test_gpt_pvmfw_boot",
+        ":test_gpt_misc_normal_mode",
+    ],
+    env = {
+        "GBL_DICE_ALG": "kDiceKeyAlgorithmMldsa65",
+    },
+    gbl = "@gbl//efi:aarch64_dev",
+    test_script = ":dice_boot_test",
+)
+
+qemu_test(
+    name = "qemu_dice_boot_test_mldsa87",
+    disk = [
+        ":test_gpt_pvmfw_boot",
+        ":test_gpt_misc_normal_mode",
+    ],
+    env = {
+        "GBL_DICE_ALG": "kDiceKeyAlgorithmMldsa87",
+    },
+    gbl = "@gbl//efi:aarch64_dev",
+    test_script = ":dice_boot_test",
+)
+
+qemu_test(
     name = "qemu_dice_boot_test_ed25519",
     disk = [
         ":test_gpt_pvmfw_boot",
