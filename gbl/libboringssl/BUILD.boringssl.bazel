@@ -14,6 +14,7 @@
 
 load("@gbl//licensing:licenses.bzl", "generate_license")
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
+load("@gbl//toolchain:nasm.bzl", "nasm_cc_library")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 load(
@@ -21,11 +22,14 @@ load(
     "bcm_internal_headers",
     "bcm_sources",
     "bcm_sources_asm",
+    "bcm_sources_nasm",
     "crypto_headers",
     "crypto_internal_headers",
     "crypto_sources",
     "crypto_sources_asm",
+    "crypto_sources_nasm",
     "rust_bssl_crypto_sources",
+    "test_support_sources_nasm",
 )
 
 package(
@@ -57,6 +61,7 @@ boringssl_baremetal_copts = [
     "-fno-exceptions",
     "-fno-rtti",
     "-Wno-macro-redefined",
+    "-Wno-pass-failed",
 ] + select({
     "@platforms//cpu:aarch64": [
         "-DOPENSSL_AARCH64",
@@ -69,8 +74,7 @@ boringssl_baremetal_copts = [
         "-msse2",
         "-Wno-unused-function",
     ],
-    "@gbl//toolchain:gbl_rust_uefi_x86_64": [
-        "-DOPENSSL_NO_ASM",
+    "@gbl//toolchain:gbl_rust_uefi_x86_64_any": [
         "-DOPENSSL_X86_64",
         "-msse2",
         "-DANDROID_BAREMETAL",
@@ -81,13 +85,33 @@ boringssl_baremetal_copts = [
     ],
 })
 
+x86_64_asm_sources = [
+    "src/" + f
+    for f in bcm_sources_nasm + crypto_sources_nasm + test_support_sources_nasm
+    if "x86_64" in f or "avx2" in f
+]
+
+nasm_cc_library(
+    name = "crypto_asm_nasm",
+    srcs = x86_64_asm_sources,
+    hdrs = ["src/gen/boringssl_prefix_symbols_internal_x86_64_win_asm.inc"],
+    includes = ["src/gen"],
+)
+
 cc_library(
     name = "crypto_asm",
-    srcs = ["src/" + f for f in bcm_sources_asm + crypto_sources_asm],
+    srcs = select({
+        "@gbl//toolchain:gbl_rust_uefi_x86_64_any": [],
+        "//conditions:default": ["src/" + f for f in bcm_sources_asm + crypto_sources_asm],
+    }),
     hdrs = ["src/" + f for f in crypto_headers],
     copts = boringssl_baremetal_copts,
     includes = ["src/include"],
     visibility = ["//visibility:public"],
+    deps = select({
+        "@gbl//toolchain:gbl_rust_uefi_x86_64_any": [":crypto_asm_nasm"],
+        "//conditions:default": [],
+    }),
 )
 
 cc_library(

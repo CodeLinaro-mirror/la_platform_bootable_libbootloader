@@ -15,21 +15,21 @@
 //! This library provides implementation for strtoul libc functions family.
 //! https://en.cppreference.com/w/cpp/string/byte/strtoul
 
-use core::ffi::{c_char, c_int, c_ulong, CStr};
+use core::ffi::{c_char, c_int, c_ulong, c_ulonglong, CStr};
 use safemath::SafeNum;
 
-/// unsigned long int strtoul(const char *s, char **endptr, int base);
+/// Helper function to parse unsigned long integer.
+/// Returns (result, negative).
 ///
 /// # Safety
 ///
 /// * `s` must be valid pointer to null terminated C string
 /// * `endptr` must be a valid pointer that is available for writing or null
-#[no_mangle]
-pub unsafe extern "C" fn strtoul(
+unsafe fn strtou_helper(
     s: *const c_char,
     endptr: *mut *const c_char,
     base: c_int,
-) -> c_ulong {
+) -> (SafeNum, bool) {
     assert!(!s.is_null());
     assert!(base == 0 || base == 8 || base == 10 || base == 16);
 
@@ -94,10 +94,54 @@ pub unsafe extern "C" fn strtoul(
         unsafe { *endptr = s.add(pos) };
     }
 
+    (result, negative)
+}
+
+/// unsigned long int strtoul(const char *s, char **endptr, int base);
+///
+/// # Safety
+///
+/// * `s` must be valid pointer to null terminated C string
+/// * `endptr` must be a valid pointer that is available for writing or null
+// SAFETY: This is the only function named `strtoul` in the binary and must be exported unmangled
+// to satisfy standard C library linkage requirements in freestanding/baremetal UEFI environments
+// (used by C dependencies such as libfdt).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strtoul(
+    s: *const c_char,
+    endptr: *mut *const c_char,
+    base: c_int,
+) -> c_ulong {
+    // SAFETY: Caller guarantees `s` points to a null terminated C string and `endptr` is either null or writable.
+    let (result, negative) = unsafe { strtou_helper(s, endptr, base) };
     match c_ulong::try_from(result) {
         Ok(result) if negative => result.overflowing_neg().0,
         Ok(result) => result,
         _ => c_ulong::MAX,
+    }
+}
+
+/// unsigned long long strtoull(const char *s, char **endptr, int base);
+///
+/// # Safety
+///
+/// * `s` must be valid pointer to null terminated C string
+/// * `endptr` must be a valid pointer that is available for writing or null
+// SAFETY: This is the only function named `strtoull` in the binary and must be exported unmangled
+// to satisfy standard C library linkage requirements in freestanding/baremetal UEFI environments
+// (specifically required by BoringSSL in `src/crypto/cpu_intel.cc` for CPU capability flag parsing).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strtoull(
+    s: *const c_char,
+    endptr: *mut *const c_char,
+    base: c_int,
+) -> c_ulonglong {
+    // SAFETY: Caller guarantees `s` points to a null terminated C string and `endptr` is either null or writable.
+    let (result, negative) = unsafe { strtou_helper(s, endptr, base) };
+    match c_ulonglong::try_from(result) {
+        Ok(result) if negative => result.overflowing_neg().0,
+        Ok(result) => result,
+        _ => c_ulonglong::MAX,
     }
 }
 
@@ -345,5 +389,36 @@ mod test {
         let (r, end) = do_strtoul("0xFFFFFFFFFFFFFFFFFFFF", 0);
         assert_eq!(r, c_ulong::MAX);
         assert_eq!(end, Some(22));
+    }
+
+    fn do_strtoull(input: &str, base: i32) -> (c_ulonglong, Option<usize>) {
+        let input_cstr = to_cstr(input);
+        let mut end_ptr: *const c_char = null_mut();
+        // SAFETY: `input_cstr` is a null terminated string, `end_ptr` is initialized null pointer
+        let result = unsafe { strtoull(input_cstr.as_ptr(), &mut end_ptr, base) };
+
+        let end_position = if end_ptr.is_null() {
+            None
+        } else {
+            let start_ptr = input_cstr.as_ptr();
+            // SAFETY: `end_ptr` is a pointer within the string that `start_ptr` points to
+            Some(unsafe { end_ptr.offset_from(start_ptr) } as usize)
+        };
+
+        (result, end_position)
+    }
+
+    #[test]
+    fn strtoull_decimal() {
+        let (r, end) = do_strtoull("12345", 10);
+        assert_eq!(r, 12345);
+        assert_eq!(end, Some(5));
+    }
+
+    #[test]
+    fn strtoull_overflow() {
+        let (r, end) = do_strtoull("18446744073709551616", 10);
+        assert_eq!(r, c_ulonglong::MAX);
+        assert_eq!(end, Some(20));
     }
 }

@@ -653,6 +653,15 @@ gbl_rust_crate_repository(
     ],
 )
 
+gbl_new_local_repository(
+    name = "nasm",
+    build_file = "@gbl//libboringssl:BUILD.nasm.bazel",
+    exclude_files = [
+        "config/config.h",
+    ],
+    path = "external/nasm",
+)
+
 gbl_rust_crate_repository(
     name = "nix",
     features = [

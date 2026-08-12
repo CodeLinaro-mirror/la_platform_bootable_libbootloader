@@ -45,13 +45,14 @@ lldiv_t lldiv(long long numer, long long denom);
 void* bsearch(const void* key, const void* base, size_t nmemb, size_t size,
               int (*compar)(const void*, const void*));
 
-void qsort(void *base, size_t nmemb, size_t size,
-           int (*compar)(const void *, const void *));
+void qsort(void* base, size_t nmemb, size_t size,
+           int (*compar)(const void*, const void*));
 
 void* malloc(size_t size);
 void* realloc(void* ptr, size_t size);
 void free(void* ptr);
 unsigned long int strtoul(const char* s, char** endptr, int base);
+unsigned long long strtoull(const char* s, char** endptr, int base);
 char* getenv(const char* name);
 
 __attribute__((noreturn)) void abort();

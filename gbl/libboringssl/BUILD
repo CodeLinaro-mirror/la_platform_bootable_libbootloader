@@ -102,3 +102,10 @@ rust_library(
         ":bssl-sys-raw__bindgen_c_thunks_library",
     ],
 )
+
+cc_library(
+    name = "nasm_config",
+    hdrs = glob(["nasm_config/**/*.h"]),
+    includes = ["nasm_config"],
+    visibility = ["//visibility:public"],
+)
