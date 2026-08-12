@@ -167,8 +167,8 @@ struct FastbootSlotInfo {
 impl From<Slot> for FastbootSlotInfo {
     fn from(slot: Slot) -> Self {
         match slot.bootability {
-            Bootability::Successful => {
-                FastbootSlotInfo { successful: "yes", unbootable: "no", retry_count: 0 }
+            Bootability::Successful(t) => {
+                FastbootSlotInfo { successful: "yes", unbootable: "no", retry_count: t.0 }
             }
             Bootability::Unbootable(_) => {
                 FastbootSlotInfo { successful: "no", unbootable: "yes", retry_count: 0 }

@@ -239,7 +239,7 @@ pub fn avb_verify_slot<'a, 'b: 'c, 'c>(
     if let (Some(verify_data), Some(slot)) = (verify_data, slot) {
         // Update rollback indices if the slot has successfully booted following:
         // https://android.googlesource.com/platform/external/avb/+/android16-release/README.md#updating-stored-rollback-indexes
-        if !status.is_unlocked && slot.bootability == Bootability::Successful {
+        if !status.is_unlocked && matches!(slot.bootability, Bootability::Successful(_)) {
             avb_ops.update_rollback_indexes(verify_data)?;
         }
     }
