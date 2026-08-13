@@ -419,12 +419,34 @@ pkg_zip(
     visibility = ["//visibility:private"],
 )
 
+# Export the docs and headers so that devices can easily get the exact matching
+# definitions for their specific build of GBL, otherwise it's quite difficult
+# to find the version needed to match a given GBL binary.
+pkg_files(
+    name = "resources_files",
+    srcs = glob(["resources/**"]),
+    strip_prefix = strip_prefix.from_pkg("resources"),
+    visibility = ["//visibility:private"],
+)
+
+pkg_zip(
+    name = "gbl_resources_zip",
+    srcs = [
+        ":resources_files",
+        "@gbl//:gbl_docs_files",
+        "@gbl//libefi_types:gbl_uefi_headers_files",
+    ],
+    out = "gbl-resources-{}.zip".format(IMG_ARCHIVE_TAG),
+    visibility = ["//visibility:private"],
+)
+
 pkg_files(
     name = "gbl_efi_dist_files",
     srcs = [
         ":all_platforms",
         ":all_platforms_merged_license",
         ":gbl_efi_prod_zip",
+        ":gbl_resources_zip",
     ],
     strip_prefix = strip_prefix.files_only(),
     visibility = ["//visibility:private"],

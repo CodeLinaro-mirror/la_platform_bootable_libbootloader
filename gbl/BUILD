@@ -12,11 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 load(":readme.bzl", "readme_test")
 
 package(
     default_visibility = ["//visibility:public"],
 )
+
+# If we change the path to these files, update the top-level README to match.
+# LINT.IfChange
+pkg_files(
+    name = "gbl_docs_files",
+    srcs = glob(["docs/**"]),
+    strip_prefix = strip_prefix.from_pkg(),
+)
+# LINT.ThenChange(/gbl/efi/resources/README.md)
 
 readme_test(
     name = "readme_test",

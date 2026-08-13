@@ -15,6 +15,7 @@
 load("@gbl//toolchain:gbl_workspace_util.bzl", "ANDROID_RUST_LINTS")
 load("@gbl_llvm_prebuilts//:info.bzl", "LLVM_PREBUILTS_C_INCLUDE")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 load("@rules_rust//rust:defs.bzl", "rust_doc_test", "rust_library", "rust_test")
 load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
 load(":license.bzl", "spdx_license_test")
@@ -138,3 +139,12 @@ spdx_license_test(
     srcs = glob(["include/**/*.h"]),
     expected_spdx_identifier = "Apache-2.0 OR BSD-2-Clause-Patent",
 )
+
+# If we change the path to these files, update the top-level README to match.
+# LINT.IfChange
+pkg_files(
+    name = "gbl_uefi_headers_files",
+    srcs = glob(["include/uefi/**"]),
+    strip_prefix = strip_prefix.from_pkg(),
+)
+# LINT.ThenChange(/gbl/efi/resources/README.md)
