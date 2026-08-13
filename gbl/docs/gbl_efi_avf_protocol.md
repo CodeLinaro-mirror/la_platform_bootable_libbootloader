@@ -23,7 +23,7 @@ available on such devices.
 
 ```c
 // {e7f1c4a6-0a52-4f61-bd98-9e60b559452a}
-#define GBL_EFI_AVF_PROTOCOL_UUID                    \
+#define GBL_EFI_AVF_PROTOCOL_GUID                    \
   {                                                  \
     0xe7f1c4a6, 0x0a52, 0x4f61, {                    \
       0xbd, 0x98, 0x9e, 0x60, 0xb5, 0x59, 0x45, 0x2a \
@@ -200,7 +200,7 @@ GBL will then allocate a larger buffer and repeat the
 `ReadSecretKeeperPublicKey` call.
 
 `PublicKeySize` must be also updated on success to let GBL determine the
-provided handover size.
+provided public key size.
 
 #### PublicKey
 
