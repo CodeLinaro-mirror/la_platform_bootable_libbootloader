@@ -157,18 +157,18 @@ EFI_STATUS
 
 ### Related Definitions
 
-#### GBL_EFI_SLOT_UNBOOTABLE_REASON
+#### GBL_EFI_UNBOOTABLE_REASON
 
 ```c
 enum {
-  GBL_EFI_SLOT_UNBOOTABLE_REASON_UNKNOWN_REASON = 0,
-  GBL_EFI_SLOT_UNBOOTABLE_REASON_NO_MORE_TRIES,
-  GBL_EFI_SLOT_UNBOOTABLE_REASON_SYSTEM_UPDATE,
-  GBL_EFI_SLOT_UNBOOTABLE_REASON_USER_REQUESTED,
-  GBL_EFI_SLOT_UNBOOTABLE_REASON_VERIFICATION_FAILURE,
+  GBL_EFI_UNBOOTABLE_REASON_UNKNOWN_REASON = 0,
+  GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES,
+  GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE,
+  GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED,
+  GBL_EFI_UNBOOTABLE_REASON_VERIFICATION_FAILURE,
 };
 
-typedef UINT8 GBL_EFI_SLOT_UNBOOTABLE_REASON;
+typedef UINT8 GBL_EFI_UNBOOTABLE_REASON;
 ```
 
 #### GBL_EFI_SLOT_INFO
@@ -176,11 +176,11 @@ typedef UINT8 GBL_EFI_SLOT_UNBOOTABLE_REASON;
 ```c
 typedef struct _GBL_EFI_SLOT_INFO {
   // One UTF-8 encoded single character
-  UINT32                         Suffix;
-  GBL_EFI_SLOT_UNBOOTABLE_REASON UnbootableReason;
-  UINT8                          Priority;
-  UINT8                          RemainingTries;
-  UINT8                          Successful;
+  UINT32                    Suffix;
+  GBL_EFI_UNBOOTABLE_REASON UnbootableReason;
+  UINT8                     Priority;
+  UINT8                     RemainingTries;
+  UINT8                     Successful;
 } GBL_EFI_SLOT_INFO;
 ```
 
@@ -191,7 +191,7 @@ A single UTF-8 encoded character representing the slot suffix (e.g., 'a' or
 
 ##### UnbootableReason
 
-A `GBL_EFI_SLOT_UNBOOTABLE_REASON` value indicating why the slot is considered
+A `GBL_EFI_UNBOOTABLE_REASON` value indicating why the slot is considered
 unbootable. This field is only used when the slot is in an unbootable state
 (`RemainingTries` and `Successful` are both zero).
 

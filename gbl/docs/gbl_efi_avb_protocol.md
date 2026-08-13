@@ -23,7 +23,7 @@ boards. However, this protocol must be implemented on production devices.
 
 ```c
 // {6bc66b9a-d5c9-4c02-9da9-50af198d912c}
-#define GBL_EFI_AVB_PROTOCOL_UUID                    \
+#define GBL_EFI_AVB_PROTOCOL_GUID                    \
   {                                                  \
     0x6bc66b9a, 0xd5c9, 0x4c02, {                    \
       0x9d, 0xa9, 0x50, 0xaf, 0x19, 0x8d, 0x91, 0x2c \
@@ -873,7 +873,7 @@ typedef struct {
   CONST GBL_EFI_AVB_LOADED_PARTITION *Partitions;
   UINTN                              NumProperties;
   CONST GBL_EFI_AVB_PROPERTY         *Properties;
-  UINT32                             Reserved[8];
+  UINT64                             Reserved[8];
 } GBL_EFI_AVB_VERIFICATION_RESULT;
 ```
 

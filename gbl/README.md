@@ -367,7 +367,7 @@ Unless stated otherwise, all GBL source files are licensed under the Apache
 License, Version 2.0.
 
 UEFI definitions, along with UEFI, community, and GBL-specific protocol headers
-located in `libefi_types/defs/**/*.h`, may alternatively be used under the
+located in `libefi_types/include/**/*.h`, may alternatively be used under the
 BSD-2-Clause-Patent license.
 
 See `../LICENSES/Apache-2.0.txt` and `../LICENSES/BSD-2-Clause-Patents.txt` for

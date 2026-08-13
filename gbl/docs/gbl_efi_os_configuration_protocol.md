@@ -340,8 +340,7 @@ distinguish between different types of device tree components:
    it's a pure copy of corresponding `entry.id`.
 
 The `GBL_EFI_DEVICE_TREE_METADATA.Source` field identifies the origin partition
-of each loaded device tree component (`BOOT`, `VENDOR_BOOT`, `DTBO`, `DTB`,
-`FIT`).
+of each loaded device tree component (`BOOT`, `VENDOR_BOOT`, `DTBO`, `DTB`).
 
 Selection is performed by setting `GBL_EFI_VERIFIED_DEVICE_TREE.Selected` to
 `TRUE` on the firmware side, following these rules:
@@ -456,7 +455,6 @@ traditional device tree selection and ignore the FIT image entirely.
 [select_device_trees]: #gbl_efi_os_configuration_protocol_selectdevicetrees
 [select_fit_configuration]:
   #gbl_efi_os_configuration_protocol_selectfitconfiguration
-[fixup_zbi]: #gbl_efi_os_configuration_protocol_fixupzbi
 [custom_protocol_revisions]: efi_integration.md#gbl-custom-protocol-revisions
 [avf]: https://source.android.com/docs/core/virtualization
 [bootconfig]:
