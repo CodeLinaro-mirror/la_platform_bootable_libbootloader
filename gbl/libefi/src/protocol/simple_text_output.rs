@@ -17,7 +17,10 @@
 use crate::efi_call;
 use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo};
 use core::fmt::{Error, Write};
-use efi_types::{EfiGuid, EfiSimpleTextOutputProtocol};
+use efi_types::{
+    EfiGuid, EfiSimpleTextOutputProtocol, EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL_GUID_U64_0,
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL_GUID_U64_1,
+};
 use liberror::Result;
 
 impl MaybeVersioned for EfiSimpleTextOutputProtocol {}
@@ -28,8 +31,10 @@ pub struct SimpleTextOutputProtocol;
 impl ProtocolInfo for SimpleTextOutputProtocol {
     type InterfaceType = EfiSimpleTextOutputProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0x387477c2, 0x69c7, 0x11d2, [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL_GUID_U64_0,
+        EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL_GUID_U64_1,
+    );
 }
 
 impl Protocol<'_, SimpleTextOutputProtocol> {

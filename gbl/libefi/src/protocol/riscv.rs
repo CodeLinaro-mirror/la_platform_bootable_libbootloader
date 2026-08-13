@@ -19,7 +19,10 @@ use crate::{
     protocol::{Protocol, ProtocolInfo},
     versioned_protocol,
 };
-use efi_types::{EfiGuid, EfiRiscvBootProtocol, EFI_RISCV_BOOT_PROTOCOL_REVISION};
+use efi_types::{
+    EfiGuid, EfiRiscvBootProtocol, EFI_RISCV_BOOT_PROTOCOL_GUID_U64_0,
+    EFI_RISCV_BOOT_PROTOCOL_GUID_U64_1, EFI_RISCV_BOOT_PROTOCOL_REVISION,
+};
 use liberror::Result;
 
 /// RISCV_EFI_BOOT_PROTOCOL
@@ -31,7 +34,7 @@ impl ProtocolInfo for RiscvBootProtocol {
     type InterfaceType = EfiRiscvBootProtocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0xccd15fec, 0x6f73, 0x4eec, [0x83, 0x95, 0x3e, 0x69, 0xe4, 0xb9, 0x40, 0xbf]);
+        EfiGuid::from_u64s(EFI_RISCV_BOOT_PROTOCOL_GUID_U64_0, EFI_RISCV_BOOT_PROTOCOL_GUID_U64_1);
 }
 
 impl<'a> Protocol<'a, RiscvBootProtocol> {

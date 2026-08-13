@@ -21,7 +21,10 @@ use crate::{
 };
 use core::ffi::c_void;
 use core::ptr::{null_mut, NonNull};
-use efi_types::{EfiGuid, EfiLoadedImageProtocol, EFI_LOADED_IMAGE_PROTOCOL_REVISION};
+use efi_types::{
+    EfiGuid, EfiLoadedImageProtocol, EFI_LOADED_IMAGE_PROTOCOL_GUID_U64_0,
+    EFI_LOADED_IMAGE_PROTOCOL_GUID_U64_1, EFI_LOADED_IMAGE_PROTOCOL_REVISION,
+};
 use liberror::{Error, Result};
 
 /// EFI_LOADED_IMAGE_PROTOCOL
@@ -32,8 +35,10 @@ versioned_protocol!(LoadedImageProtocol, EFI_LOADED_IMAGE_PROTOCOL_REVISION);
 impl ProtocolInfo for LoadedImageProtocol {
     type InterfaceType = EfiLoadedImageProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0x5b1b31a1, 0x9562, 0x11d2, [0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        EFI_LOADED_IMAGE_PROTOCOL_GUID_U64_0,
+        EFI_LOADED_IMAGE_PROTOCOL_GUID_U64_1,
+    );
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }

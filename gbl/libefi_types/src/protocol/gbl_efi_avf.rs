@@ -53,8 +53,10 @@ pub trait GblEfiAvf {
 }
 
 impl Identified for GblEfiAvfProtocol {
-    const GUID: EfiGuid =
-        EfiGuid::new(0xe7f1c4a6, 0x0a52, 0x4f61, [0xbd, 0x98, 0x9e, 0x60, 0xb5, 0x59, 0x45, 0x2a]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        crate::defs::GBL_EFI_AVF_PROTOCOL_GUID_U64_0,
+        crate::defs::GBL_EFI_AVF_PROTOCOL_GUID_U64_1,
+    );
 }
 
 // SAFETY:

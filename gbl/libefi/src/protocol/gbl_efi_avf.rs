@@ -19,7 +19,7 @@ use crate::{
     protocol::{Protocol, ProtocolInfo, Requirement},
     versioned_protocol,
 };
-use efi_types::{EfiGuid, GblEfiAvfProtocol, GBL_EFI_AVF_PROTOCOL_REVISION};
+use efi_types::{EfiGuid, GblEfiAvfProtocol, Identified, GBL_EFI_AVF_PROTOCOL_REVISION};
 use liberror::{Error, Result};
 
 /// `GBL_EFI_AVF_PROTOCOL` implementation.
@@ -30,8 +30,7 @@ versioned_protocol!(GblAvfProtocol, GBL_EFI_AVF_PROTOCOL_REVISION);
 impl ProtocolInfo for GblAvfProtocol {
     type InterfaceType = GblEfiAvfProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0xe7f1c4a6, 0x0a52, 0x4f61, [0xbd, 0x98, 0x9e, 0x60, 0xb5, 0x59, 0x45, 0x2a]);
+    const GUID: EfiGuid = GblEfiAvfProtocol::GUID;
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 

@@ -21,8 +21,8 @@ use crate::{
 };
 use core::sync::atomic::{AtomicBool, Ordering};
 use efi_types::{
-    EfiEraseBlockProtocol, EfiEraseBlockToken, EfiGuid, EFI_ERASE_BLOCK_PROTOCOL_REVISION,
-    EFI_STATUS_NOT_READY,
+    EfiEraseBlockProtocol, EfiEraseBlockToken, EfiGuid, EFI_ERASE_BLOCK_PROTOCOL_GUID_U64_0,
+    EFI_ERASE_BLOCK_PROTOCOL_GUID_U64_1, EFI_ERASE_BLOCK_PROTOCOL_REVISION, EFI_STATUS_NOT_READY,
 };
 use gbl_async::assert_return;
 use liberror::{efi_status_to_result, Result};
@@ -35,8 +35,10 @@ pub struct EraseBlockProtocol;
 impl ProtocolInfo for EraseBlockProtocol {
     type InterfaceType = EfiEraseBlockProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0x95A9A93E, 0xa86e, 0x4926, [0xaa, 0xef, 0x99, 0x18, 0xe7, 0x72, 0xd9, 0x87]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        EFI_ERASE_BLOCK_PROTOCOL_GUID_U64_0,
+        EFI_ERASE_BLOCK_PROTOCOL_GUID_U64_1,
+    );
 }
 
 // Protocol interface wrappers.

@@ -92,8 +92,10 @@ pub unsafe trait GblEfiBootMemory {
 }
 
 impl Identified for GblEfiBootMemoryProtocol {
-    const GUID: EfiGuid =
-        EfiGuid::new(0x309f2874, 0xad59, 0x4fd2, [0xaf, 0x5e, 0xce, 0x0f, 0x4a, 0xb4, 0x01, 0xa6]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        crate::defs::GBL_EFI_BOOT_MEMORY_PROTOCOL_GUID_U64_0,
+        crate::defs::GBL_EFI_BOOT_MEMORY_PROTOCOL_GUID_U64_1,
+    );
 }
 
 // SAFETY:

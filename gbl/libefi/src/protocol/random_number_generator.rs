@@ -17,7 +17,10 @@
 use crate::efi_call;
 use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo};
 use core::default::Default;
-use efi_types::{EfiGuid, EfiRngProtocol};
+use efi_types::{
+    EfiGuid, EfiRngProtocol, EFI_RNG_ALGORITHM_RAW_GUID_U64_0, EFI_RNG_ALGORITHM_RAW_GUID_U64_1,
+    EFI_RNG_PROTOCOL_GUID_U64_0, EFI_RNG_PROTOCOL_GUID_U64_1,
+};
 use liberror::Result;
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -30,7 +33,7 @@ impl ProtocolInfo for RandomNumberGeneratorProtocol {
     type InterfaceType = EfiRngProtocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0x3152bca5, 0xeade, 0x433d, [0x86, 0x2e, 0xc0, 0x1c, 0xdc, 0x29, 0x1f, 0x44]);
+        EfiGuid::from_u64s(EFI_RNG_PROTOCOL_GUID_U64_0, EFI_RNG_PROTOCOL_GUID_U64_1);
 }
 
 /// Requested random number generator algorithm.
@@ -45,7 +48,7 @@ pub enum RngAlgorithm {
 /// Raw entropy GUID:
 /// https://uefi.org/specs/UEFI/2.10/37_Secure_Technologies.html#efi-rng-algorithm-definitions
 const RAW_ALGORITHM_GUID: EfiGuid =
-    EfiGuid::new(0xe43176d7, 0xb6e8, 0x4827, [0xb7, 0x84, 0x7f, 0xfd, 0xc4, 0xb6, 0x85, 0x61]);
+    EfiGuid::from_u64s(EFI_RNG_ALGORITHM_RAW_GUID_U64_0, EFI_RNG_ALGORITHM_RAW_GUID_U64_1);
 
 impl Protocol<'_, RandomNumberGeneratorProtocol> {
     /// `get_info` is deliberately not provided. See b/413744208 for details.

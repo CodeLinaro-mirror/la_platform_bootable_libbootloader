@@ -29,6 +29,11 @@ use crate::{
 use core::marker::PhantomData;
 use efi_types::{
     EfiGuid, EfiHash2Output, EfiHash2Protocol, EfiSha1Hash2, EfiSha256Hash2, EfiSha512Hash2,
+    EFI_HASH2_PROTOCOL_GUID_U64_0, EFI_HASH2_PROTOCOL_GUID_U64_1,
+    EFI_HASH2_SERVICE_BINDING_PROTOCOL_GUID_U64_0, EFI_HASH2_SERVICE_BINDING_PROTOCOL_GUID_U64_1,
+    EFI_HASH_ALGORITHM_SHA1_GUID_U64_0, EFI_HASH_ALGORITHM_SHA1_GUID_U64_1,
+    EFI_HASH_ALGORITHM_SHA256_GUID_U64_0, EFI_HASH_ALGORITHM_SHA256_GUID_U64_1,
+    EFI_HASH_ALGORITHM_SHA512_GUID_U64_0, EFI_HASH_ALGORITHM_SHA512_GUID_U64_1,
 };
 use liberror::Result;
 use zerocopy::{FromBytes, Immutable, IntoBytes};
@@ -76,7 +81,7 @@ impl private::Sealed for Sha1 {}
 ///   for a message of type Sha1.
 unsafe impl HashAlgorithm for Sha1 {
     const GUID: EfiGuid =
-        EfiGuid::new(0x2ae9d80f, 0x3fb2, 0x4095, [0xb7, 0xb1, 0xe9, 0x31, 0x57, 0xb9, 0x46, 0xb6]);
+        EfiGuid::from_u64s(EFI_HASH_ALGORITHM_SHA1_GUID_U64_0, EFI_HASH_ALGORITHM_SHA1_GUID_U64_1);
 
     type DigestType = EfiSha1Hash2;
 
@@ -98,8 +103,10 @@ impl private::Sealed for Sha256 {}
 /// * `sha256_hash` is the correct field to access
 ///   for a message of type Sha256.
 unsafe impl HashAlgorithm for Sha256 {
-    const GUID: EfiGuid =
-        EfiGuid::new(0x51aa59de, 0xfdf2, 0x4ea3, [0xbc, 0x63, 0x87, 0x5f, 0xb7, 0x84, 0x2e, 0xe9]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        EFI_HASH_ALGORITHM_SHA256_GUID_U64_0,
+        EFI_HASH_ALGORITHM_SHA256_GUID_U64_1,
+    );
 
     type DigestType = EfiSha256Hash2;
 
@@ -121,8 +128,10 @@ impl private::Sealed for Sha512 {}
 /// * `sha512_hash` is the correct field to access
 ///   for a message of type Sha512.
 unsafe impl HashAlgorithm for Sha512 {
-    const GUID: EfiGuid =
-        EfiGuid::new(0xcaa4381e, 0x750c, 0x4770, [0xb8, 0x70, 0x7a, 0x23, 0xb4, 0xe4, 0x21, 0x30]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        EFI_HASH_ALGORITHM_SHA512_GUID_U64_0,
+        EFI_HASH_ALGORITHM_SHA512_GUID_U64_1,
+    );
 
     type DigestType = EfiSha512Hash2;
 
@@ -146,7 +155,7 @@ impl ProtocolInfo for Hash2Protocol {
     type InterfaceType = EfiHash2Protocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0x55b1d734, 0xc5e1, 0x49db, [0x96, 0x47, 0xb1, 0x6a, 0xfb, 0xe, 0x30, 0x5b]);
+        EfiGuid::from_u64s(EFI_HASH2_PROTOCOL_GUID_U64_0, EFI_HASH2_PROTOCOL_GUID_U64_1);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }
@@ -214,8 +223,10 @@ impl Protocol<'_, Hash2Protocol> {
 struct Hash2ServiceBindingProtocol;
 
 impl ServiceBindingProtocolInfo for Hash2ServiceBindingProtocol {
-    const GUID: EfiGuid =
-        EfiGuid::new(0xda836f8d, 0x217f, 0x4ca0, [0x99, 0xc2, 0x1c, 0xa4, 0xe1, 0x60, 0x77, 0xea]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        EFI_HASH2_SERVICE_BINDING_PROTOCOL_GUID_U64_0,
+        EFI_HASH2_SERVICE_BINDING_PROTOCOL_GUID_U64_1,
+    );
 
     type ChildProtocol = Hash2Protocol;
 }

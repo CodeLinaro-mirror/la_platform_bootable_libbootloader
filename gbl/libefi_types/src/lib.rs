@@ -41,6 +41,25 @@ impl EfiGuid {
     pub const fn new(data1: u32, data2: u16, data3: u16, data4: [u8; 8usize]) -> Self {
         EfiGuid { data1, data2, data3, data4 }
     }
+
+    /// Reconstructs a GUID from two 64-bit integers (high and low).
+    pub const fn from_u64s(high: u64, low: u64) -> Self {
+        Self {
+            data1: (high >> 32) as u32,
+            data2: (high >> 16) as u16,
+            data3: high as u16,
+            data4: [
+                (low >> 56) as u8,
+                (low >> 48) as u8,
+                (low >> 40) as u8,
+                (low >> 32) as u8,
+                (low >> 24) as u8,
+                (low >> 16) as u8,
+                (low >> 8) as u8,
+                low as u8,
+            ],
+        }
+    }
 }
 
 /// Any object that can be identified by a GUID.

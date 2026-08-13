@@ -26,7 +26,8 @@ use efi_types::{
     GblEfiAvbLockType, GblEfiAvbPartitionAttributes, GblEfiAvbProtocol,
     GblEfiAvbVerificationResult, GBL_EFI_AVB_PARTITION_FLAG_FDR,
     GBL_EFI_AVB_PARTITION_FLAG_FLASH_CRITICAL, GBL_EFI_AVB_PARTITION_FLAG_VERIFY,
-    GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS, GBL_EFI_AVB_PROTOCOL_REVISION,
+    GBL_EFI_AVB_PARTITION_FLAG_VERIFY_IF_EXISTS, GBL_EFI_AVB_PROTOCOL_GUID_U64_0,
+    GBL_EFI_AVB_PROTOCOL_GUID_U64_1, GBL_EFI_AVB_PROTOCOL_REVISION,
 };
 use liberror::{Error, Result};
 use libgbl::gbl_avb::{Critical, Fdr, SpecializedPartition, Verification};
@@ -40,7 +41,7 @@ impl ProtocolInfo for GblAvbProtocol {
     type InterfaceType = GblEfiAvbProtocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0x6bc66b9a, 0xd5c9, 0x4c02, [0x9d, 0xa9, 0x50, 0xaf, 0x19, 0x8d, 0x91, 0x2c]);
+        EfiGuid::from_u64s(GBL_EFI_AVB_PROTOCOL_GUID_U64_0, GBL_EFI_AVB_PROTOCOL_GUID_U64_1);
 
     const METRICS_TAG: Option<&'static str> = Some("gbl_avb");
 

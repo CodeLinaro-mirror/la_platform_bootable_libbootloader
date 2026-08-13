@@ -19,7 +19,10 @@ use crate::{
     protocol::{Protocol, ProtocolInfo, Requirement},
     versioned_protocol,
 };
-use efi_types::{EfiDtFixupProtocol, EfiGuid, EFI_DT_FIXUP_PROTOCOL_REVISION};
+use efi_types::{
+    EfiDtFixupProtocol, EfiGuid, EFI_DT_FIXUP_PROTOCOL_GUID_U64_0,
+    EFI_DT_FIXUP_PROTOCOL_GUID_U64_1, EFI_DT_FIXUP_PROTOCOL_REVISION,
+};
 use liberror::Result;
 
 /// `EFI_DT_FIXUP_PROTOCOL` implementation.
@@ -29,7 +32,7 @@ impl ProtocolInfo for DtFixupProtocol {
     type InterfaceType = EfiDtFixupProtocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0x60ed6ba9, 0xdfef, 0x4799, [0xac, 0x7b, 0x75, 0xe0, 0xf8, 0x33, 0x45, 0x6c]);
+        EfiGuid::from_u64s(EFI_DT_FIXUP_PROTOCOL_GUID_U64_0, EFI_DT_FIXUP_PROTOCOL_GUID_U64_1);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }

@@ -25,7 +25,8 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use efi_types::{
-    EfiBlockIo2Protocol, EfiBlockIo2Token, EfiBlockIoMedia, EfiGuid, EFI_STATUS_NOT_READY,
+    EfiBlockIo2Protocol, EfiBlockIo2Token, EfiBlockIoMedia, EfiGuid,
+    EFI_BLOCK_IO2_PROTOCOL_GUID_U64_0, EFI_BLOCK_IO2_PROTOCOL_GUID_U64_1, EFI_STATUS_NOT_READY,
 };
 use gbl_async::{assert_return, yield_now};
 use liberror::{efi_status_to_result, Result};
@@ -39,7 +40,7 @@ impl ProtocolInfo for BlockIo2Protocol {
     type InterfaceType = EfiBlockIo2Protocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0xa77b2472, 0xe282, 0x4e9f, [0xa2, 0x45, 0xc2, 0xc0, 0xe2, 0x7b, 0xbc, 0xc1]);
+        EfiGuid::from_u64s(EFI_BLOCK_IO2_PROTOCOL_GUID_U64_0, EFI_BLOCK_IO2_PROTOCOL_GUID_U64_1);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }

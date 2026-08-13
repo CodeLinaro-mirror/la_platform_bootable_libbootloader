@@ -25,8 +25,10 @@ use crate::{
 use core::{mem::MaybeUninit, slice};
 
 impl Identified for EfiBlockIoProtocol {
-    const GUID: EfiGuid =
-        EfiGuid::new(0x964e5b21, 0x6459, 0x11d2, [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        crate::defs::EFI_BLOCK_IO_PROTOCOL_GUID_U64_0,
+        crate::defs::EFI_BLOCK_IO_PROTOCOL_GUID_U64_1,
+    );
 }
 
 /// Protocol Rust API.

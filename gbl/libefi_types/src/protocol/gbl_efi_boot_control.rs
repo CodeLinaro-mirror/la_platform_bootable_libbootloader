@@ -51,8 +51,10 @@ pub trait GblEfiBootControl {
 }
 
 impl Identified for GblEfiBootControlProtocol {
-    const GUID: EfiGuid =
-        EfiGuid::new(0xd382db1b, 0x9ac2, 0x11f0, [0x84, 0xc7, 0x04, 0x7b, 0xcb, 0xa9, 0x60, 0x19]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        crate::defs::GBL_EFI_BOOT_CONTROL_PROTOCOL_GUID_U64_0,
+        crate::defs::GBL_EFI_BOOT_CONTROL_PROTOCOL_GUID_U64_1,
+    );
 }
 
 // SAFETY:

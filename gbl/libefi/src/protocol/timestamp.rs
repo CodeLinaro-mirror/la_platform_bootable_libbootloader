@@ -16,7 +16,10 @@
 
 use crate::efi_call;
 use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo, Requirement};
-use efi_types::{EfiGuid, EfiTimestampProperties, EfiTimestampProtocol};
+use efi_types::{
+    EfiGuid, EfiTimestampProperties, EfiTimestampProtocol, EFI_TIMESTAMP_PROTOCOL_GUID_U64_0,
+    EFI_TIMESTAMP_PROTOCOL_GUID_U64_1,
+};
 use liberror::{Error, Result};
 
 impl MaybeVersioned for EfiTimestampProtocol {}
@@ -28,7 +31,7 @@ impl ProtocolInfo for TimestampProtocol {
     type InterfaceType = EfiTimestampProtocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0xafbfde41, 0x2e6e, 0x4262, [0xba, 0x65, 0x62, 0xb9, 0x23, 0x6e, 0x54, 0x95]);
+        EfiGuid::from_u64s(EFI_TIMESTAMP_PROTOCOL_GUID_U64_0, EFI_TIMESTAMP_PROTOCOL_GUID_U64_1);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }

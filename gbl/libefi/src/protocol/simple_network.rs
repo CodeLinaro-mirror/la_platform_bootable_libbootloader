@@ -23,6 +23,7 @@ use core::ffi::c_void;
 use core::ptr::null_mut;
 use efi_types::{
     EfiGuid, EfiMacAddress, EfiSimpleNetworkMode, EfiSimpleNetworkProtocol,
+    EFI_SIMPLE_NETWORK_PROTOCOL_GUID_U64_0, EFI_SIMPLE_NETWORK_PROTOCOL_GUID_U64_1,
     EFI_SIMPLE_NETWORK_PROTOCOL_REVISION, EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS,
     EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS_MULTICAST, EFI_SIMPLE_NETWORK_RECEIVE_UNICAST,
 };
@@ -36,8 +37,10 @@ versioned_protocol!(SimpleNetworkProtocol, EFI_SIMPLE_NETWORK_PROTOCOL_REVISION)
 impl ProtocolInfo for SimpleNetworkProtocol {
     type InterfaceType = EfiSimpleNetworkProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0xa19832b9, 0xac25, 0x11d3, [0x9a, 0x2d, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        EFI_SIMPLE_NETWORK_PROTOCOL_GUID_U64_0,
+        EFI_SIMPLE_NETWORK_PROTOCOL_GUID_U64_1,
+    );
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }

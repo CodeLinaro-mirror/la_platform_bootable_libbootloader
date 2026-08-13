@@ -52,8 +52,10 @@ pub trait GblEfiFastbootTransport {
 }
 
 impl Identified for GblEfiFastbootTransportProtocol {
-    const GUID: EfiGuid =
-        EfiGuid::new(0xedade92c, 0x5c48, 0x440d, [0x84, 0x9c, 0xe2, 0xa0, 0xc7, 0xe5, 0x51, 0x43]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        crate::defs::GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_GUID_U64_0,
+        crate::defs::GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_GUID_U64_1,
+    );
 }
 
 // SAFETY:

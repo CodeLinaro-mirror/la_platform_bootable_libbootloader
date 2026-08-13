@@ -19,7 +19,8 @@ use crate::{
     versioned_protocol,
 };
 use efi_types::{
-    EfiGuid, GblEfiDebugErrorTag, GblEfiDebugProtocol, GBL_EFI_DEBUG_PROTOCOL_REVISION,
+    EfiGuid, GblEfiDebugErrorTag, GblEfiDebugProtocol, GBL_EFI_DEBUG_PROTOCOL_GUID_U64_0,
+    GBL_EFI_DEBUG_PROTOCOL_GUID_U64_1, GBL_EFI_DEBUG_PROTOCOL_REVISION,
 };
 use libutils::get_frame_ptr;
 
@@ -32,7 +33,7 @@ impl ProtocolInfo for GblDebugProtocol {
     type InterfaceType = GblEfiDebugProtocol;
 
     const GUID: EfiGuid =
-        EfiGuid::new(0x98ca3da1, 0xc1ac, 0x4402, [0x9c, 0x16, 0x75, 0x58, 0xd3, 0xed, 0x57, 0x05]);
+        EfiGuid::from_u64s(GBL_EFI_DEBUG_PROTOCOL_GUID_U64_0, GBL_EFI_DEBUG_PROTOCOL_GUID_U64_1);
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 

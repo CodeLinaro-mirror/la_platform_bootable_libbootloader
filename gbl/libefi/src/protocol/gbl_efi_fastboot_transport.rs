@@ -20,7 +20,7 @@ use crate::{
     versioned_protocol,
 };
 use efi_types::{
-    EfiGuid, GblEfiFastbootRxMode, GblEfiFastbootTransportProtocol,
+    EfiGuid, GblEfiFastbootRxMode, GblEfiFastbootTransportProtocol, Identified,
     GBL_EFI_FASTBOOT_RX_MODE_FIXED_LENGTH, GBL_EFI_FASTBOOT_RX_MODE_SINGLE_PACKET,
     GBL_EFI_FASTBOOT_TRANSPORT_PROTOCOL_REVISION,
 };
@@ -35,8 +35,7 @@ versioned_protocol!(GblFastbootTransportProtocol, GBL_EFI_FASTBOOT_TRANSPORT_PRO
 impl ProtocolInfo for GblFastbootTransportProtocol {
     type InterfaceType = GblEfiFastbootTransportProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0xedade92c, 0x5c48, 0x440d, [0x84, 0x9c, 0xe2, 0xa0, 0xc7, 0xe5, 0x51, 0x43]);
+    const GUID: EfiGuid = GblEfiFastbootTransportProtocol::GUID;
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 

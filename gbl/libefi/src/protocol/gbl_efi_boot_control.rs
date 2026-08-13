@@ -22,7 +22,7 @@ use crate::{
 };
 use efi_types::{
     EfiGuid, GblEfiBootControlProtocol, GblEfiLoadedOs, GblEfiOneShotBootMode, GblEfiSlotInfo,
-    GblEfiUnbootableReason, GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION,
+    GblEfiUnbootableReason, Identified, GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISION,
     GBL_EFI_ONE_SHOT_BOOT_MODE_NONE, GBL_EFI_UNBOOTABLE_REASON_NO_MORE_TRIES as NO_MORE_TRIES,
     GBL_EFI_UNBOOTABLE_REASON_SYSTEM_UPDATE as SYSTEM_UPDATE,
     GBL_EFI_UNBOOTABLE_REASON_USER_REQUESTED as USER_REQUESTED,
@@ -40,8 +40,7 @@ versioned_protocol!(GblBootControlProtocol, GBL_EFI_BOOT_CONTROL_PROTOCOL_REVISI
 impl ProtocolInfo for GblBootControlProtocol {
     type InterfaceType = GblEfiBootControlProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0xd382db1b, 0x9ac2, 0x11f0, [0x84, 0xc7, 0x04, 0x7b, 0xcb, 0xa9, 0x60, 0x19]);
+    const GUID: EfiGuid = GblEfiBootControlProtocol::GUID;
 
     const METRICS_TAG: Option<&'static str> = Some("gbl_boot_control");
 }

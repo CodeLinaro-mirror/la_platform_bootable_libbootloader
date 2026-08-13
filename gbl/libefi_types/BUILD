@@ -67,12 +67,12 @@ rust_bindgen(
         "newtype_global",
         # Cannot yet use arbitrary types as const generics.
         "--constified-enum",
-        "EfiTpl",
+        "EfiTpl|.*_U64_ENUM",
         "--no-layout-tests",
         "--override-abi",
         ".*=efiapi",
         "--allowlist-type",
-        "(Efi.*)|(EFI.*)|(GblEfi.*)|(GBL_EFI_.*)",
+        "(Efi.*)|(EFI.*)|(Gbl.*)|(GBL_.*)",
         "--allowlist-var",
         "PARTITION_NAME_LEN_U16|EFI_.*|GBL_.*",
         "--raw-line",
@@ -90,6 +90,9 @@ use zerocopy::{Immutable, IntoBytes, FromBytes, KnownLayout, Unaligned};""",
         # It's much, much easier to enable newtype enums with C++ explicit enum width
         "-x",
         "c++",
+        # Allow conditional compilation so we can make C- or Rust-specific
+        # definitions without polluting the other's namespace.
+        "-DRUST_BINDGEN",
     ],
     header = "include/uefi/efi.h",
 )

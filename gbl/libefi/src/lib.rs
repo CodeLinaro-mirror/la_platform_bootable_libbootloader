@@ -250,7 +250,7 @@ impl TplControl for EfiEntry {
 
 /// The vendor GUID for UEFI variables defined by GBL.
 pub const GBL_EFI_VENDOR_GUID: EfiGuid =
-    EfiGuid::new(0x5a6d92f3, 0xa2d0, 0x4083, [0x91, 0xa1, 0xa5, 0x0f, 0x6c, 0x3d, 0x98, 0x30]);
+    EfiGuid::from_u64s(efi_types::GBL_EFI_VENDOR_GUID_U64_0, efi_types::GBL_EFI_VENDOR_GUID_U64_1);
 
 /// GUID for UEFI Memory Attributes Table
 pub const EFI_MEMORY_ATTRIBUTES_GUID: EfiGuid =

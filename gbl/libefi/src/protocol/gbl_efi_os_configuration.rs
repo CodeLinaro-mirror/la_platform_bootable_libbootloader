@@ -22,6 +22,7 @@ use crate::{
 use core::ptr::null;
 use efi_types::{
     EfiGuid, GblEfiOsConfigurationProtocol, GblEfiVerifiedDeviceTree,
+    GBL_EFI_OS_CONFIGURATION_PROTOCOL_GUID_U64_0, GBL_EFI_OS_CONFIGURATION_PROTOCOL_GUID_U64_1,
     GBL_EFI_OS_CONFIGURATION_PROTOCOL_REVISION,
 };
 use liberror::{Error, Result};
@@ -34,8 +35,10 @@ versioned_protocol!(GblOsConfigurationProtocol, GBL_EFI_OS_CONFIGURATION_PROTOCO
 impl ProtocolInfo for GblOsConfigurationProtocol {
     type InterfaceType = GblEfiOsConfigurationProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0xdda0d135, 0xaa5b, 0x42ff, [0x85, 0xac, 0xe3, 0xad, 0x6e, 0xfb, 0x46, 0x19]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        GBL_EFI_OS_CONFIGURATION_PROTOCOL_GUID_U64_0,
+        GBL_EFI_OS_CONFIGURATION_PROTOCOL_GUID_U64_1,
+    );
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 

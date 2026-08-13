@@ -16,7 +16,10 @@
 
 use crate::efi_call;
 use crate::protocol::{MaybeVersioned, Protocol, ProtocolInfo, Requirement};
-use efi_types::{EfiGuid, EfiInputKey, EfiSimpleTextInputProtocol};
+use efi_types::{
+    EfiGuid, EfiInputKey, EfiSimpleTextInputProtocol, EFI_SIMPLE_TEXT_INPUT_PROTOCOL_GUID_U64_0,
+    EFI_SIMPLE_TEXT_INPUT_PROTOCOL_GUID_U64_1,
+};
 use liberror::{Error, Result};
 
 /// EFI_SIMPLE_TEXT_INPUT_PROTOCOL
@@ -27,8 +30,10 @@ impl MaybeVersioned for EfiSimpleTextInputProtocol {}
 impl ProtocolInfo for SimpleTextInputProtocol {
     type InterfaceType = EfiSimpleTextInputProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0x387477c1, 0x69c7, 0x11d2, [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b]);
+    const GUID: EfiGuid = EfiGuid::from_u64s(
+        EFI_SIMPLE_TEXT_INPUT_PROTOCOL_GUID_U64_0,
+        EFI_SIMPLE_TEXT_INPUT_PROTOCOL_GUID_U64_1,
+    );
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 }

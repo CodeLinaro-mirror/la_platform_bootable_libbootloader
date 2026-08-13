@@ -27,7 +27,7 @@ use core::{
 };
 use efi_types::{
     EfiGuid, EfiStatus, GblEfiFastbootCommandExecResult, GblEfiFastbootMessageType,
-    GblEfiFastbootProtocol, GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
+    GblEfiFastbootProtocol, Identified, GBL_EFI_FASTBOOT_COMMAND_EXEC_RESULT_DEFAULT_IMPL,
     GBL_EFI_FASTBOOT_PROTOCOL_REVISION,
 };
 use liberror::{result_to_efi_status, Error, Result};
@@ -45,8 +45,7 @@ const MAX_ARGS: usize = 16;
 impl ProtocolInfo for GblFastbootProtocol {
     type InterfaceType = GblEfiFastbootProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0xc67e48a0, 0x5eb8, 0x4127, [0xbe, 0x89, 0xdf, 0x2e, 0xd9, 0x3d, 0x8a, 0x9a]);
+    const GUID: EfiGuid = GblEfiFastbootProtocol::GUID;
 
     const REQUIREMENT: Requirement = Requirement::Optional;
 

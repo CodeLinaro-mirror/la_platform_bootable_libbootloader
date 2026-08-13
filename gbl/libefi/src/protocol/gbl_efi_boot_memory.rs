@@ -27,13 +27,16 @@ use core::{
     ptr::null_mut,
     slice::from_raw_parts_mut,
 };
-use efi_types::defs::{
-    EfiGuid, GblEfiBootBufferType, GblEfiBootMemoryProtocol, GblEfiPartitionBufferFlag,
-    GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD, GBL_EFI_BOOT_BUFFER_TYPE_FDT,
-    GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
-    GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA, GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK,
-    GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION, GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED,
-    PARTITION_NAME_LEN_U16,
+use efi_types::{
+    defs::{
+        EfiGuid, GblEfiBootBufferType, GblEfiBootMemoryProtocol, GblEfiPartitionBufferFlag,
+        GBL_EFI_BOOT_BUFFER_TYPE_FASTBOOT_DOWNLOAD, GBL_EFI_BOOT_BUFFER_TYPE_FDT,
+        GBL_EFI_BOOT_BUFFER_TYPE_GENERAL_LOAD, GBL_EFI_BOOT_BUFFER_TYPE_KERNEL,
+        GBL_EFI_BOOT_BUFFER_TYPE_PVMFW_DATA, GBL_EFI_BOOT_BUFFER_TYPE_RAMDISK,
+        GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION, GBL_EFI_PARTITION_BUFFER_FLAG_PRELOADED,
+        PARTITION_NAME_LEN_U16,
+    },
+    Identified,
 };
 use liberror::{Error, Result};
 use spin::{Mutex, Spin};
@@ -165,8 +168,7 @@ versioned_protocol!(GblBootMemoryProtocol, GBL_EFI_BOOT_MEMORY_PROTOCOL_REVISION
 impl ProtocolInfo for GblBootMemoryProtocol {
     type InterfaceType = GblEfiBootMemoryProtocol;
 
-    const GUID: EfiGuid =
-        EfiGuid::new(0x309f2874, 0xad59, 0x4fd2, [0xaf, 0x5e, 0xce, 0x0f, 0x4a, 0xb4, 0x01, 0xa6]);
+    const GUID: EfiGuid = GblEfiBootMemoryProtocol::GUID;
 
     const METRICS_TAG: Option<&'static str> = Some("gbl_boot_memory");
 }
