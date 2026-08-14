@@ -206,14 +206,18 @@ TODO (b/353272981): Add limitations
 These protocols are defined by GBL to provide specific functionality that is not
 available elsewhere.
 
-The majority of these custom protocols aren't required, with the intention that
-dev boards that support a typical set of UEFI protocols should be able to use
-GBL with minimal firmware modifications and still get some basic booting
-functionality.
+### Dev vs Prod
 
-However, without these protocols GBL will be missing key features such as USB
-fastboot and verified boot, so production targets and more full-featured dev
-boards will need to implement them.
+For GBL dev builds, none of these protocols are required. The goal is that dev
+boards should be able to get at least rudimentary Android boot support with
+an out-of-the-box UEFI implementation, no GBL customizations required. This
+also allows more iterative development, bringing up GBL protocols one at a time
+on a dev build.
+
+GBL prod builds do require some GBL-specific protocols, but not all. Specific
+protocol requirements are listed below, but the general guideline is that
+security-critical protocols such as verified boot are required for prod, whereas
+customization protocols such as the fastboot protocol are optional.
 
 ### GBL Custom Protocol Revisions
 
