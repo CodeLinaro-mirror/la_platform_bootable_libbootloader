@@ -20,7 +20,7 @@
 pub const BUILD_NUMBER: &str = env!("BUILD_NUMBER", "BUILD_NUMBER must be defined");
 
 /// The string describing the GBL version release.
-pub const VERSION: &str = "17.0";
+pub const VERSION: &str = "17.1";
 
 /// The string describing the branch this is built on.
 pub const BUILD_BRANCH: &str = match option_env!("BUILD_BRANCH") {
