@@ -34,6 +34,7 @@ pub mod gbl_efi_debug;
 pub mod gbl_efi_fastboot;
 pub mod gbl_efi_fastboot_transport;
 pub mod gbl_efi_os_configuration;
+pub mod load_file2;
 pub mod loaded_image;
 pub mod random_number_generator;
 pub mod riscv;

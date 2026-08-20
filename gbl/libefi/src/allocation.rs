@@ -100,7 +100,7 @@ pub(crate) fn internal_efi_entry_and_rt(
 macro_rules! efi_try_print {
     ($( $x:expr ),* $(,)? ) => {
         {
-            let _ = (|| -> Result<()> {
+            let _ = (|| -> liberror::Result<()> {
                 use core::fmt::Write;
                 if let Some(entry) = crate::allocation::internal_efi_entry_and_rt().0 {
                     write!(entry.system_table_checked()?.con_out()?, $($x,)*)?;

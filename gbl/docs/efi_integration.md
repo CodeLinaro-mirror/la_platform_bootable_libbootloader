@@ -80,6 +80,22 @@ This logging requires all three of:
 - Device Path to Text Protocol
 - Loaded Image Protocol
 
+### InitrdDevicePathProtocol
+
+- [`LINUX_EFI_INITRD_MEDIA_GUID`][linux_efi_initrd_media_guid]
+- optional: used by the Linux kernel efi boot stub to load the initrd
+
+GBL installs the Initrd Device Path Protocol on the initrd device handle, so
+the Linux kernel efi boot stub can identify it.
+
+### LoadFile2Protocol
+
+- [`EFI_LOAD_FILE2_PROTOCOL`][efi_load_file2_protocol]
+- optional: used by the Linux kernel efi boot stub to load the initrd
+
+GBL installs a Load File 2 Protocol on the Linux initrd device handle, and the
+Linux kernel efi boot stub uses it to load the ramdisk.
+
 ### ServiceBindingProtocol
 
 - [`EFI_SERVICE_BINDING_PROTOCOL`][efi_service_binding_protocol]
@@ -397,3 +413,7 @@ If this variable is defined, boot as Fuchsia OS.
   https://github.com/u-boot/u-boot/blob/master/include/efi_dt_fixup.h
 [android_vendor_api_level]:
   https://source.android.com/docs/core/architecture/api-flags
+[efi_load_file2_protocol]:
+  https://uefi.org/specs/UEFI/2.11/13_Protocols_Media_Access.html#efi-load-file-2-protocol
+[linux_efi_initrd_media_guid]:
+  https://www.kernel.org/doc/html/v6.6/arch/x86/boot.html

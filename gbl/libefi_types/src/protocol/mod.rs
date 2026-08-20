@@ -85,11 +85,13 @@
 //! details on how to safely meet these requirements.
 
 pub mod block_io;
+pub mod device_path;
 pub mod gbl_efi_avf;
 pub mod gbl_efi_boot_control;
 pub mod gbl_efi_boot_memory;
 pub mod gbl_efi_fastboot;
 pub mod gbl_efi_fastboot_transport;
+pub mod load_file2;
 
 use crate::Identified;
 use core::{marker::PhantomPinned, pin::Pin};

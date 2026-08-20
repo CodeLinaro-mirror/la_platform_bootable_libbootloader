@@ -1,0 +1,132 @@
+// Copyright 2026, The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Rust implementation of `EFI_LOAD_FILE2_PROTOCOL` for loading Linux initrd.
+
+use crate::{
+    efi_try_print,
+    protocol::{MaybeVersioned, ProtocolInfo, Requirement},
+};
+use core::{mem::MaybeUninit, ptr::copy_nonoverlapping};
+use efi_types::{
+    protocol::load_file2::LoadFile2,
+    status::{EfiError, EfiResult},
+    EfiDevicePathProtocol, EfiGuid, EfiLoadFile2Protocol, Identified,
+};
+
+impl MaybeVersioned for EfiLoadFile2Protocol {}
+
+/// `EFI_LOAD_FILE2_PROTOCOL`
+pub struct LoadFile2Protocol;
+
+impl ProtocolInfo for LoadFile2Protocol {
+    type InterfaceType = EfiLoadFile2Protocol;
+    const GUID: EfiGuid = EfiLoadFile2Protocol::GUID;
+    const REQUIREMENT: Requirement = Requirement::Optional;
+}
+
+/// An `EFI_LOAD_FILE2_PROTOCOL` that loads the Linux initrd from memory.
+pub struct InitrdLoadFile2Protocol<'a>(pub &'a [u8]);
+
+impl<'a> LoadFile2 for InitrdLoadFile2Protocol<'a> {
+    fn load_file(
+        &self,
+        _file_path: Option<&EfiDevicePathProtocol>,
+        buffer: Option<&mut [MaybeUninit<u8>]>,
+    ) -> EfiResult<usize> {
+        let len = self.0.len();
+        match buffer {
+            Some(buf) if buf.len() >= len => {
+                // SAFETY:
+                // * `self.0` points to a valid slice for reads of `len` bytes.
+                // * `buf` points to valid slice for writes of `len` bytes.
+                // * `u8` has no alignment requirements.
+                // * src and dst does not overlap within `len` bytes.
+                unsafe {
+                    copy_nonoverlapping(self.0.as_ptr(), buf.as_mut_ptr() as *mut u8, len);
+                }
+                efi_try_print!("InitrdLoadFile2: successfully copied {len} bytes\r\n");
+                Ok(len)
+            }
+            _ => {
+                let provided = buffer.map(|b| b.len());
+                efi_try_print!(
+                    "InitrdLoadFile2: buffer too small (required: {len}, provided: {provided:?})\r\n"
+                );
+                Err(EfiError::BufferTooSmall(len))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::transmute;
+
+    const TEST_RAMDISK: &[u8] = b"mock_initrd_ramdisk_payload_for_testing";
+
+    #[test]
+    fn test_initrd_load_file2_null_buffer_returns_buffer_too_small() {
+        let loader = InitrdLoadFile2Protocol(TEST_RAMDISK);
+
+        let res = loader.load_file(None, None);
+
+        assert_eq!(res, Err(EfiError::BufferTooSmall(TEST_RAMDISK.len())));
+    }
+
+    #[test]
+    fn test_initrd_load_file2_insufficient_buffer_returns_buffer_too_small() {
+        let loader = InitrdLoadFile2Protocol(TEST_RAMDISK);
+        let mut buffer = vec![0u8; TEST_RAMDISK.len() - 1];
+
+        // SAFETY: `MaybeUninit<u8>` has the same size as `u8` and can contain any value.
+        let res = loader.load_file(
+            None,
+            Some(unsafe { transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(&mut buffer) }),
+        );
+
+        assert_eq!(res, Err(EfiError::BufferTooSmall(TEST_RAMDISK.len())));
+    }
+
+    #[test]
+    fn test_initrd_load_file2_exact_buffer_size_success() {
+        let loader = InitrdLoadFile2Protocol(TEST_RAMDISK);
+        let mut buffer = vec![0u8; TEST_RAMDISK.len()];
+
+        // SAFETY: `MaybeUninit<u8>` has the same size as `u8` and can contain any value.
+        let res = loader.load_file(
+            None,
+            Some(unsafe { transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(&mut buffer) }),
+        );
+
+        assert_eq!(res, Ok(TEST_RAMDISK.len()));
+        assert_eq!(&buffer[..], TEST_RAMDISK);
+    }
+
+    #[test]
+    fn test_initrd_load_file2_larger_buffer_size_success() {
+        let loader = InitrdLoadFile2Protocol(TEST_RAMDISK);
+        let mut buffer = vec![0u8; TEST_RAMDISK.len() + 16];
+
+        // SAFETY: `MaybeUninit<u8>` has the same size as `u8` and can contain any value.
+        let res = loader.load_file(
+            None,
+            Some(unsafe { transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(&mut buffer) }),
+        );
+
+        assert_eq!(res, Ok(TEST_RAMDISK.len()));
+        assert_eq!(&buffer[..TEST_RAMDISK.len()], TEST_RAMDISK);
+    }
+}
