@@ -29,11 +29,16 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = [
         "@gbl//libasync",
-        "@gbl//libboot",
         "@gbl//liberror",
         "@gbl//libsafemath",
         "@static_assertions",
-    ],
+        "@zeroize",
+    ] + select({
+        "@gbl//toolchain:gbl_rust_aarch64": [
+            "@gbl//libboot/aarch64_cache_helper:aarch64_cache_helper_staticlib",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 rust_library(
