@@ -1179,7 +1179,6 @@ rust_bindgen_toolchain(
     bindgen = ":bindgen_prebuilt",
     clang = "@gbl_llvm_prebuilts//:clang-bin",
     libclang = "@gbl_llvm_prebuilts//:libclang",
-    libstdcxx = "@gbl_llvm_prebuilts//:libc++",
 )
 
 toolchain(
