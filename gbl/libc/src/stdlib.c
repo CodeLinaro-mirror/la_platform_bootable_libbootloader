@@ -39,4 +39,19 @@ void free(void* ptr) { gbl_free(ptr, 8); }
 
 void* realloc(void* ptr, size_t size) { return gbl_realloc(ptr, size, 8); }
 
+char* getenv(const char* name) { return NULL; }
+
+extern void gbl_panic_from_c(const char* msg);
+
+static void* RtlVirtualUnwind_stub(void* HandlerType, void* ImageBase,
+                                   void* ControlPc, void* FunctionEntry,
+                                   void* ContextRecord, void** HandlerData,
+                                   void* EstablisherFrame,
+                                   void* ContextPointers) {
+  gbl_panic_from_c("Unexpected call to RtlVirtualUnwind in baremetal assembly");
+  return NULL;
+}
+
+void* __imp_RtlVirtualUnwind = (void*)&RtlVirtualUnwind_stub;
+
 #endif  // __GBL_LIBC_STUBS__

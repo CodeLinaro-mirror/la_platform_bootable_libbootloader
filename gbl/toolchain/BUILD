@@ -157,6 +157,14 @@ config_setting(
     constraint_values = uefi_x86_64_debug_constraint_values,
 )
 
+selects.config_setting_group(
+    name = "gbl_rust_uefi_x86_64_any",
+    match_any = [
+        ":gbl_rust_uefi_x86_64",
+        ":gbl_rust_uefi_x86_64_debug",
+    ],
+)
+
 config_setting(
     name = "gbl_rust_uefi_aarch64",
     constraint_values = uefi_aarch64_constraint_values,
