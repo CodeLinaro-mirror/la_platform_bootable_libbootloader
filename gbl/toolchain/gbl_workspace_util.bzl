@@ -101,14 +101,9 @@ LINUX_SYSROOT_LIB_DIR = "{}"
     # direct access.
     repo_ctx.symlink("llvm-linux-x86/bin/clang", "clang")
 
-    # In some prebuilt versions, "libc++.so" is a symlink to "libc++.so.1" etc. We need to use the
-    # same name as the actual library file name in cc_import(). Otherwise it complains it can't
+    # In some prebuilt versions, "libclang.so" is a symlink to "libclang.so.xx" etc. We need to use
+    # the same name as the actual library file name in cc_import(). Otherwise it complains it can't
     # find the shared object.
-    libcpp_sharelib_path = _abs_path(repo_ctx, "llvm-linux-x86/lib/x86_64-unknown-linux-gnu/libc++.so")
-    libcpp_base_name = repo_ctx.execute(["basename", libcpp_sharelib_path]).stdout.strip("\n")
-    repo_ctx.symlink(libcpp_sharelib_path, libcpp_base_name)
-
-    # Do the same for libclang.so in case it's a symlink.
     libclang_sharelib_path = _abs_path(repo_ctx, "llvm-linux-x86/lib/libclang.so")
     libclang_basename = repo_ctx.execute(["basename", libclang_sharelib_path]).stdout.strip("\n")
     repo_ctx.symlink(libclang_sharelib_path, libclang_basename)
@@ -130,15 +125,10 @@ sh_binary(
 )
 
 cc_import(
-    name = "libc++",
-    shared_library = ":{}",
-)
-
-cc_import(
     name = "libclang",
     shared_library = ":{}",
 )
-""".format(libcpp_base_name, libclang_basename))
+""".format(libclang_basename))
 
 gbl_llvm_prebuilts = repository_rule(
     implementation = _gbl_llvm_prebuilts_impl,
