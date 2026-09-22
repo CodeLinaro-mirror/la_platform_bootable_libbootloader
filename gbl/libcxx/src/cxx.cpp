@@ -14,17 +14,26 @@
  * limitations under the License.
  */
 
-#ifdef __GBL_LIBC_STUBS__
-
 #include <stddef.h>
 #include <stdlib.h>
 
+#ifdef __GBL_LIBC_STUBS__
 extern "C" [[noreturn]] void gbl_panic_from_c(const char* msg);
+#endif
+
+[[noreturn]] static void allocation_failed(const char* msg) {
+#ifdef __GBL_LIBC_STUBS__
+  gbl_panic_from_c(msg);
+#else
+  (void)msg;
+  abort();
+#endif
+}
 
 void* operator new(size_t size) {
   void* ptr = malloc(size);
   if (!ptr) {
-    gbl_panic_from_c("new() failed to allocate memory");
+    allocation_failed("new() failed to allocate memory");
   }
   return ptr;
 }
@@ -32,7 +41,7 @@ void* operator new(size_t size) {
 void* operator new[](size_t size) {
   void* ptr = malloc(size);
   if (!ptr) {
-    gbl_panic_from_c("new[]() failed to allocate memory");
+    allocation_failed("new[]() failed to allocate memory");
   }
   return ptr;
 }
@@ -46,5 +55,3 @@ void operator delete[](void* ptr) noexcept { free(ptr); }
 void operator delete(void* ptr, size_t _size) noexcept { free(ptr); }
 
 void operator delete[](void* ptr, size_t _size) noexcept { free(ptr); }
-
-#endif  // __GBL_LIBC_STUBS__
