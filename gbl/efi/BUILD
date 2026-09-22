@@ -112,8 +112,8 @@ dev_test(
 
 APP_NAME = select({
     "@gbl//toolchain:gbl_rust_elf_riscv64": "gbl_riscv64",
-    "@gbl//toolchain:gbl_rust_uefi_x86_64": "gbl_x86_64",
     "@gbl//toolchain:gbl_rust_uefi_aarch64": "gbl_aarch64",
+    "@gbl//toolchain:gbl_rust_uefi_x86_64": "gbl_x86_64",
     "//conditions:default": "gbl_unknown",
 }) + "_" + select({
     "@gbl//toolchain:dev": "dev",
@@ -191,8 +191,8 @@ genrule(
             # 1. `llvm-objcopy <elf image> -O binary <efi image>`
             # 2. `elf_static_relocation_checker <elf image> <efi image>`
             "@gbl//toolchain:gbl_rust_elf_riscv64": """
-{} -O binary $(location @gbl//efi:app) $(OUTS) &&
-$(location @gbl//libelf:elf_static_relocation_checker) $(SRCS) $(OUTS)
+{} -O binary $(execpath @gbl//efi:app) $(OUTS) &&
+$(execpath @gbl//libelf:elf_static_relocation_checker) $(SRCS) $(OUTS)
         """.format(
                 gbl_llvm_tool_path("llvm-objcopy"),
             ),
@@ -213,8 +213,8 @@ genrule(
     name = "gbl_efi_testkey",
     srcs = [":gbl_efi"],
     outs = ["testkey_signed/gbl.efi"],
-    cmd = "$(location @gbl//signtool:gblsigntool_py) sign $(SRCS) -o $(OUTS)" +
-          " --avbtool_args '--key $(location @gbl//signtool/testkeys:testkey_RSA4096)'" +
+    cmd = "$(execpath @gbl//signtool:gblsigntool_py) sign $(SRCS) -o $(OUTS)" +
+          " --avbtool_args '--key $(execpath @gbl//signtool/testkeys:testkey_RSA4096)'" +
           " --avbtool_args '--algorithm SHA256_RSA4096'" +
           " --avbtool_args '--prop testkey:true'",
     tools = [
@@ -366,9 +366,9 @@ genrule(
     # create symlinks in genrules, so we do a full copy here. The images are
     # small enough that it's fine either way.
     cmd = """
-        cp $(location :aarch64_dev) $(RULEDIR)/gbl_aarch64.efi
-        cp $(location :riscv64_dev) $(RULEDIR)/gbl_riscv64.efi
-        cp $(location :x86_64_dev) $(RULEDIR)/gbl_x86_64.efi
+        cp $(execpath :aarch64_dev) $(RULEDIR)/gbl_aarch64.efi
+        cp $(execpath :riscv64_dev) $(RULEDIR)/gbl_riscv64.efi
+        cp $(execpath :x86_64_dev) $(RULEDIR)/gbl_x86_64.efi
     """,
 )
 
