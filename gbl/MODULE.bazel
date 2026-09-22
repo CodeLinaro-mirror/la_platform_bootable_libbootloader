@@ -565,8 +565,8 @@ gbl_rust_crate_repository(
 gbl_rust_crate_repository(
     name = "log",
     crate_features = [
-        "alloc",
         "std",
+        "alloc",
     ],
     path = "external/rust/android-crates-io/crates/log",
 )
