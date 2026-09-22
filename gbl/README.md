@@ -179,7 +179,7 @@ configurations:
    mkdir -p /tmp/esp/EFI/BOOT && \
    cp <path to EFI image> /tmp/esp/EFI/BOOT/bootx64.efi && \
    qemu-system-x86_64 -nographic -m 1G \
-       -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
+       -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
        -drive format=raw,file=fat:rw:/tmp/esp
    ```
 
