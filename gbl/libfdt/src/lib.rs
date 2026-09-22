@@ -114,6 +114,10 @@ fn fdt_add_subnode(fdt: &mut [u8], parent: c_int, name: &str) -> Result<c_int> {
 
 /// Wrapper of fdt_subnode_offset_namelen()
 fn fdt_subnode_offset(fdt: &[u8], parent: c_int, name: &str) -> Result<c_int> {
+    // When FDT is large and complicated, fdt_subnode_offset can generate a lots of noisy
+    // traces such as memcpy, memcmp which significantly bloat trace data size. Disable tracing
+    // to avoid excessive trace data.
+    let _guard = trace::TraceGuard::new(false);
     // SAFETY: API from libfdt_c.
     map_result(unsafe {
         fdt_subnode_offset_namelen(
@@ -514,6 +518,10 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
 
     /// Set the value of a node's property. Create the node and property if it doesn't exist.
     pub fn set_property(&mut self, path: &str, name: &CStr, val: &[u8]) -> Result<()> {
+        // When FDT is large and complicated, fdt_setprop can generate a lots of noisy traces
+        // such as memcpy, memcmp which significantly bloat trace data size. Disable tracing to
+        // avoid excessive trace data.
+        let _guard = trace::TraceGuard::new(false);
         let node = self.find_or_add_node(path)?;
         // SAFETY: API from libfdt_c.
         map_result(unsafe {
@@ -542,8 +550,14 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
         name: &CStr,
         len: usize,
     ) -> Result<&mut [u8]> {
+        // When FDT is large and complicated, fdt_setprop_placeholder can generate a lots of
+        // noisy traces such as memcpy, memcmp which significantly bloat trace data size.
+        // Disable tracing to avoid excessive trace data.
+        let _guard = trace::TraceGuard::new(false);
+
         let node = self.find_or_add_node(path)?;
         let mut out_ptr: *mut u8 = core::ptr::null_mut();
+
         // SAFETY:
         // * `self.0` is guaranteed to be a valid FDT buffer.
         // * `node` is offset of the node within the `self.0` FDT buffer.
@@ -605,17 +619,23 @@ impl<T: AsMut<[u8]> + AsRef<[u8]>> Fdt<T> {
 
         self.shrink_to_fit()?;
 
-        // SAFETY: The `ufdt_apply_multioverlay` function guarantees that `self.0` is accessed
-        // within the specified length boundaries. The `pointers` are non-null and are accessed
-        // by indexes only within the provided length.
-        map_result_libufdt(unsafe {
-            ufdt_apply_multioverlay(
-                self.0.as_mut().as_mut_ptr() as *mut _,
-                self.0.as_ref().len(),
-                pointers.as_ptr().cast(),
-                pointers.len(),
-            )
-        })?;
+        // When FDT is large and complicated, ufdt_apply_multioverlay can generate a lots of
+        // noisy traces such as memcpy, memcmp which significantly bloat trace data size.
+        // Disable tracing to avoid excessive trace data.
+        {
+            let _guard = trace::TraceGuard::new(false);
+            // SAFETY: The `ufdt_apply_multioverlay` function guarantees that `self.0` is accessed
+            // within the specified length boundaries. The `pointers` are non-null and are accessed
+            // by indexes only within the provided length.
+            map_result_libufdt(unsafe {
+                ufdt_apply_multioverlay(
+                    self.0.as_mut().as_mut_ptr() as *mut _,
+                    self.0.as_ref().len(),
+                    pointers.as_ptr().cast(),
+                    pointers.len(),
+                )
+            })?;
+        }
 
         self.expand_to_buffer()?;
 

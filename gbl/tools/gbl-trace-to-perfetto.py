@@ -150,7 +150,8 @@ def main():
     )
 
   print("Converting to trace event format...")
-  trace_bin = trace_bin[struct.calcsize(META_FORMAT) :]
+  meta_size = struct.calcsize(META_FORMAT)
+  trace_bin = trace_bin[meta_size : meta_size + sz]
 
   # Parses all trace entries and collect addresses that need to be symbolized.
   entries = []
@@ -468,7 +469,7 @@ def main():
     )
 
   print(f"Serializing to json...")
-  serialized = json.dumps(traces)
+  serialized = json.dumps(traces, indent=2)
   print(f"Writing to {args.out} ({len(serialized)} bytes)")
   pathlib.Path(args.out).write_text(serialized)
   print("Done")
