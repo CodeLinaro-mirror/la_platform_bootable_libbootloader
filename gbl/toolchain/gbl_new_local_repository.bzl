@@ -51,6 +51,9 @@ def _symlink_tree(repo_ctx, source_root):
         source_dir = source_root.get_child(relative_dir)
 
         for source_path in source_dir.readdir():
+            if source_path.basename == ".git":
+                continue
+
             relative_path = paths.join(relative_dir, source_path.basename)
 
             # Add directories to the stack to process on a future iteration,
