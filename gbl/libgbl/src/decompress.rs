@@ -77,6 +77,8 @@ impl<'a> Iterator for LZ4BlocksIterator<'a> {
 
 /// Decompresses lz4 `content` into `out`.
 fn decompress_lz4(content: &[u8], out: &mut [u8]) -> Result<usize> {
+    // Disable tracing by default to avoid having too many memcpy related calls.
+    let _guard = trace::TraceGuard::new(false);
     let blocks = LZ4BlocksIterator::new(content);
     let mut out_pos = 0;
 

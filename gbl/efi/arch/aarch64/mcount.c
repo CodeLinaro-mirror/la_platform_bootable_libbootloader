@@ -214,7 +214,9 @@ __attribute__((no_instrument_function)) void _gbl_trace_take_buffer(
 
 // Returns the trace buffer address.
 __attribute__((no_instrument_function)) size_t _gbl_trace_buffer_address() {
-  return (trace_buffer.buffer == (uint8_t*)&null_meta) ? 0 : (size_t)trace_buffer.buffer;
+  return (trace_buffer.buffer == (uint8_t*)&null_meta)
+             ? 0
+             : (size_t)trace_buffer.buffer;
 }
 
 // Returns the trace buffer size.
@@ -329,10 +331,19 @@ __attribute__((no_instrument_function)) static void* AllocPage(
   EfiPhysicalAddr out = 0;
   if (st->boot_services->allocate_pages(EFI_ALLOCATOR_TYPE_ALLOCATE_ANY_PAGES,
                                         EFI_MEMORY_TYPE_LOADER_DATA, pages,
-                                        &out) != EFI_STATUS_SUCCESS) {
-    Reset(L"Trace: failed to allocate pages\n");
+                                        &out) == EFI_STATUS_SUCCESS) {
+    return (void*)out;
   }
-  return (void*)out;
+  // Fall back to allocate_pool with an extra page to ensure page alignment.
+  void* pool_out = NULL;
+  if (st->boot_services->allocate_pool(EFI_MEMORY_TYPE_LOADER_DATA,
+                                       (pages + 1) * EFI_PAGE_SIZE,
+                                       &pool_out) == EFI_STATUS_SUCCESS) {
+    return (void*)(((size_t)pool_out + EFI_PAGE_SIZE - 1) &
+                   ~((size_t)EFI_PAGE_SIZE - 1));
+  }
+  Reset(L"Trace: failed to allocate pages\n");
+  return NULL;
 }
 
 // Top level efi_main entry that allocates separate stack and setup mcount.

@@ -120,6 +120,7 @@ rust_library(
         "@gbl//libc",
         "@gbl//liberror",
         "@gbl//libsafemath",
+        "@gbl//libtrace",
         "@zerocopy",
     ],
 )
