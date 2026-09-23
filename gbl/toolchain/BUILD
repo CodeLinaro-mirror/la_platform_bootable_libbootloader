@@ -490,13 +490,13 @@ gbl_clang_cc_toolchain(
         "-mbranch-protection=standard",
         "-march=armv8-a",
     ] + select({
-        "//conditions:default": [],
         ":tracing_enabled": ["-pg"],  # mcount instrumentation
+        "//conditions:default": [],
     }),
     ld_flags = uefi_ld_flags_common + select({
-        "//conditions:default": [],
         # Switch to a dedicate main entry that sets up tracing.
         ":tracing_enabled": ["/entry:efi_main_tracing"],
+        "//conditions:default": [],
     }),
     target_cpu = "aarch64",
     target_system_triple = "aarch64-windows-msvc",
